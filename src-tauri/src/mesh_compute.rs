@@ -5,6 +5,8 @@ mod agent;
 pub(crate) mod sharing;
 pub(crate) use agent::prepare_agent;
 #[cfg(feature = "mesh")]
+mod coordinator;
+#[cfg(feature = "mesh")]
 mod discovery;
 #[cfg(feature = "mesh")]
 mod lease;
@@ -27,6 +29,10 @@ pub struct MeshHost {
     lease: lease::Lease,
     #[cfg(feature = "mesh")]
     publisher: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    #[cfg(feature = "mesh")]
+    coordinator: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    #[cfg(feature = "mesh")]
+    admission: std::sync::Mutex<Option<(String, String, Vec<String>)>>,
 }
 
 impl MeshHost {
@@ -37,6 +43,12 @@ impl MeshHost {
         }
     }
     pub fn shutdown(&self) {
+        #[cfg(feature = "mesh")]
+        if let Ok(mut task) = self.coordinator.lock() {
+            if let Some(task) = task.take() {
+                task.abort();
+            }
+        }
         #[cfg(feature = "mesh")]
         if let Ok(mut publisher) = self.publisher.lock() {
             if let Some(task) = publisher.take() {
@@ -95,6 +107,10 @@ pub async fn mesh_compute_stop(host: tauri::State<'_, MeshHost>) -> Result<(), S
             *sharing = None;
         }
         host.lease.clear();
+        *host
+            .admission
+            .lock()
+            .map_err(|_| "Mesh admission unavailable")? = None;
         host.lifecycle.stop();
         host.lifecycle
             .stop_and_wait()
@@ -130,6 +146,16 @@ async fn start(
     lease: &str,
 ) -> Result<(), String> {
     let _guard = host.preparing.lock().await;
+    start_prepared(app, host, identity, lease).await
+}
+
+#[cfg(feature = "mesh")]
+async fn start_prepared(
+    app: &tauri::AppHandle,
+    host: &MeshHost,
+    identity: &crate::identity::IdentityHost,
+    lease: &str,
+) -> Result<(), String> {
     host.lease.community(lease)?;
     if matches!(
         host.lifecycle.phase(),
@@ -141,7 +167,12 @@ async fn start(
         return Err("Previous Mesh runtime shutdown is not confirmed".into());
     }
     let community = host.lease.community(lease)?;
-    let (mut owners, targets) = discovery::read(identity, &community).await?;
+    let (mut owners, targets) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        discovery::read(identity, &community),
+    )
+    .await
+    .map_err(|_| "Community discovery timed out")??;
     let viewer = identity.viewer().await?;
     let sharing = host
         .sharing
@@ -158,6 +189,11 @@ async fn start(
         let owner = buzz_mesh_compute::identity::ensure_owner_at(&path)
             .map_err(|error| error.to_string())?;
         owners.push(owner.clone());
+        let admission = (
+            uuid::Uuid::new_v4().to_string(),
+            owner.clone(),
+            owners.clone(),
+        );
         let mut targets = targets.into_iter();
         let node = buzz_mesh_compute::config::ClientConfig {
             api_port: mesh_port("BUZZ_MESH_API_PORT", 19337)?,
@@ -183,6 +219,14 @@ async fn start(
             None => host.lifecycle.start(node),
         }
         .map_err(|error| error.to_string())?;
+        *host
+            .admission
+            .lock()
+            .map_err(|_| "Mesh admission unavailable")? = Some(admission);
+        host.preferences
+            .lock()
+            .map_err(|_| "Mesh settings unavailable")?
+            .clear_runtime_error();
         queue_targets(targets, |token| {
             host.lifecycle
                 .dial(token)
@@ -249,6 +293,7 @@ pub async fn mesh_compute_select(
         .filter(|config| config.enabled && restore_sharing.unwrap_or(true))
         .cloned();
     publisher::ensure_started(app.clone(), &host)?;
+    coordinator::ensure_started(app.clone(), &host)?;
     let restore = if host
         .sharing
         .lock()
@@ -303,6 +348,10 @@ pub async fn mesh_compute_release(
             Ok(())
         })?;
         host.lease.revoke(&lease)?;
+        *host
+            .admission
+            .lock()
+            .map_err(|_| "Mesh admission unavailable")? = None;
     }
     Ok(())
 }
@@ -410,5 +459,60 @@ mod persistence_tests {
         let next = host.lease.select(community.into()).unwrap();
         mesh_compute_release(app.state(), lease).await.unwrap();
         assert!(host.lease.community(&next).is_ok());
+    }
+}
+
+/// Read verified community advertisements without starting a node or touching cloud credentials.
+pub(crate) async fn agent_models<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    relay: Option<&str>,
+) -> Result<Vec<(String, String)>, String> {
+    #[cfg(feature = "mesh")]
+    {
+        use tauri::Manager;
+        let host = app.state::<MeshHost>();
+        let identity = app.state::<crate::identity::IdentityHost>();
+        let (lease, community) = host
+            .lease
+            .current()?
+            .ok_or("Enable Shared compute in this community first")?;
+        if let Some(relay) = relay {
+            let mut url = url::Url::parse(relay).map_err(|_| "Invalid agent community")?;
+            let scheme = match url.scheme() {
+                "wss" => "https",
+                "ws" => "http",
+                other => other,
+            }
+            .to_owned();
+            url.set_scheme(&scheme)
+                .map_err(|_| "Invalid agent community")?;
+            let selected = url::Url::parse(&community).map_err(|_| "Invalid Mesh community")?;
+            let same = url.scheme() == selected.scheme()
+                && url.host_str().map(|host| host.trim_end_matches('.'))
+                    == selected.host_str().map(|host| host.trim_end_matches('.'))
+                && url.port_or_known_default() == selected.port_or_known_default();
+            if !same {
+                return Err("Select the agent’s community before browsing shared models".into());
+            }
+        }
+        let inventory = discovery::inventory(&identity, &community).await?;
+        host.lease.community(&lease)?;
+        if let Some(error) = inventory.unavailable {
+            return Err(error);
+        }
+        let mut models = std::collections::BTreeMap::new();
+        for entry in inventory.entries {
+            if !matches!(entry.model_id.trim(), "" | "auto" | "mesh") {
+                models
+                    .entry(entry.model_id.clone())
+                    .or_insert(entry.model_name.unwrap_or(entry.model_id));
+            }
+        }
+        Ok(models.into_iter().collect())
+    }
+    #[cfg(not(feature = "mesh"))]
+    {
+        let _ = (app, relay);
+        Err("Mesh native runtime is not included in this build".into())
     }
 }

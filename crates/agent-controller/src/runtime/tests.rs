@@ -2662,3 +2662,40 @@ fn mesh_preflight_and_launch_resolve_the_same_environment_without_persistence() 
         .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
     assert!(config.apply(&saved).is_err());
 }
+
+#[test]
+fn shared_compute_model_context_resolves_defaults_and_environment_without_cloud_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut agent = agent(dir.path());
+    agent.harness.provider = "relay-mesh".into();
+    agent
+        .environment
+        .insert("DATABRICKS_TOKEN".into(), "unused".into());
+    let context = model_context(&agent.harness, &agent.environment).unwrap();
+    assert!(context.mesh);
+    assert!(context.host.is_none());
+    assert!(context.filter.is_none());
+    let mut defaults = deployment_defaults();
+    defaults.provider = "relay-mesh".into();
+    agent.harness.provider.clear();
+    assert!(
+        model_context_with_defaults(&agent.harness, &agent.environment, &defaults)
+            .unwrap()
+            .mesh
+    );
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "openai".into());
+    assert!(model_context_with_defaults(&agent.harness, &agent.environment, &defaults).is_err());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_PROVIDER".into(), "relay-mesh".into());
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "saved".into());
+    assert!(
+        model_context(&agent.harness, &agent.environment)
+            .unwrap()
+            .model_overridden
+    );
+}

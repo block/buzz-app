@@ -130,6 +130,12 @@ imageObserver.observe(document.documentElement, {
   attributeFilter: ["src"],
 });
 const fixture = controlFixture();
+if (new URLSearchParams(location.search).has("mesh")) {
+  fixture.data.harnessOptions?.[0]?.providers?.push({
+    value: "relay-mesh",
+    label: "Buzz shared compute",
+  });
+}
 // Browser journeys start with an explicitly manual-start agent. The shared
 // control fixture remains explicit-on for the profile preference tests.
 fixture.agent.startOnAppLaunch = false;

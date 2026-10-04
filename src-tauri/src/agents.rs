@@ -210,7 +210,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
                 #[cfg(feature = "mesh")]
                 ProviderOption {
                     value: "relay-mesh",
-                    label: "Shared compute",
+                    label: "Buzz shared compute",
                 },
             ][usize::from(cfg!(windows))..],
         },

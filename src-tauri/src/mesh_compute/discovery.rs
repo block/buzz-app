@@ -10,7 +10,7 @@ pub(super) async fn read(
     host: &IdentityHost,
     community: &str,
 ) -> Result<(Vec<String>, Vec<String>), String> {
-    let events = read_events(host, community).await?;
+    let events = member_events(host, community).await?;
     let owners = owner_ids_from_events(&events);
     let targets = availability_from_events(events)
         .serve_targets
@@ -20,7 +20,7 @@ pub(super) async fn read(
     Ok((owners, targets))
 }
 
-async fn read_events(
+pub(super) async fn read_events(
     host: &IdentityHost,
     community: &str,
 ) -> Result<Vec<nostr::event::Event>, String> {
@@ -45,9 +45,6 @@ async fn read_events(
     if host.viewer().await? != viewer {
         return Err("Identity changed during Mesh discovery".into());
     }
-    if !current_member_pubkeys(&events).contains(&viewer) {
-        return Err("Current identity is not a member of this Mesh community".into());
-    }
     Ok(events)
 }
 
@@ -55,8 +52,19 @@ pub(super) async fn inventory(
     host: &IdentityHost,
     community: &str,
 ) -> Result<buzz_mesh_compute::inventory::Inventory, String> {
-    let events = read_events(host, community).await?;
+    let events = member_events(host, community).await?;
     Ok(buzz_mesh_compute::inventory::project(
         availability_from_events(events),
     ))
+}
+
+async fn member_events(
+    host: &IdentityHost,
+    community: &str,
+) -> Result<Vec<nostr::event::Event>, String> {
+    let events = read_events(host, community).await?;
+    if !current_member_pubkeys(&events).contains(&host.viewer().await?) {
+        return Err("Current identity is not a member of this Mesh community".into());
+    }
+    Ok(events)
 }

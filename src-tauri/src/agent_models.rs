@@ -361,6 +361,39 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             })
             .await;
     }
+    let context = if request.action != Operation::Disconnect {
+        match request.edit.clone() {
+            Some(edit) => {
+                controller
+                    .model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
+            }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        }
+    } else {
+        Err("Disconnect has no model context".to_owned())
+    };
+    if context.as_ref().is_ok_and(|context| context.mesh) {
+        return host
+            .run(ticket, async move {
+                let context = context?;
+                if request.action == Operation::Test {
+                    return Err("Start the agent to test Buzz shared compute".into());
+                }
+                let entries =
+                    crate::mesh_compute::agent_models(&app, context.relay.as_deref()).await?;
+                Ok(Catalog {
+                    host: String::new(),
+                    models: entries
+                        .into_iter()
+                        .map(|(id, name)| Model { id, name })
+                        .collect(),
+                    model_overridden: context.model_overridden,
+                    disconnected: false,
+                })
+            })
+            .await;
+    }
     if request.action == Operation::Test {
         return host
             .run(ticket, async {
@@ -393,14 +426,6 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             })
     } else {
         // Short settings read only; never hold the controller across network waits.
-        let context = match request.edit.clone() {
-            Some(edit) => {
-                controller
-                    .model_context(request.id.as_deref(), request.expected_revision, edit)
-                    .await
-            }
-            None => Err("Agent draft is required for model lookup".to_owned()),
-        };
         context
             .and_then(|context| {
                 resolve(&request, &context)

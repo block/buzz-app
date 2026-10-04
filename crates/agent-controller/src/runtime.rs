@@ -364,6 +364,8 @@ impl Drop for Running {
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
 pub struct ModelContext {
+    pub mesh: bool,
+    pub relay: Option<String>,
     pub host: Option<String>,
     pub filter: Option<String>,
     pub model_overridden: bool,
@@ -477,7 +479,9 @@ impl Controller {
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        model_context(&agent.harness, &agent.environment)
+        let mut context = model_context(&agent.harness, &agent.environment)?;
+        context.relay = Some(agent.relay_url);
+        Ok(context)
     }
     pub fn goose_model_context(
         &self,
@@ -991,6 +995,15 @@ fn model_context_with_defaults(
     let provider = environment
         .get("BUZZ_AGENT_PROVIDER")
         .unwrap_or(&harness.provider);
+    if provider == "relay-mesh" {
+        return Ok(ModelContext {
+            mesh: true,
+            relay: None,
+            host: None,
+            filter: None,
+            model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+        });
+    }
     if !matches!(provider.as_str(), "databricks_v2" | "databricks-v2") {
         return Err(
             "Effective provider is not Databricks v2; check the provider and environment overrides"
@@ -1001,6 +1014,8 @@ fn model_context_with_defaults(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
+        mesh: false,
+        relay: None,
         host: environment
             .get("DATABRICKS_HOST")
             .cloned()

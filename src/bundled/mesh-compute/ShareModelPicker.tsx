@@ -75,6 +75,7 @@ export function ShareModelPicker({
       {catalog && (
         <Select
           label="Model to share"
+          variant="field"
           value={custom || (model && !entry) ? CUSTOM : model}
           disabled={disabled}
           onValueChange={(value) => {

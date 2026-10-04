@@ -245,3 +245,78 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     await server.close();
   }
 });
+
+// Browser boundary: provider switch replaces the generic cloud editor with the
+// real shared Select popup, and its chosen value survives native-shaped Save.
+test("Buzz shared compute selects Auto or a community model and saves without cloud fields", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  const errors = watchPageErrors(page);
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html?mesh`,
+    );
+    await page
+      .getByRole("article", { name: "Agent Fixture agent", exact: true })
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    const editor = page.getByRole("dialog", {
+      name: "Edit agent",
+      exact: true,
+    });
+    await editor
+      .getByRole("button", { name: "Environment", exact: true })
+      .click();
+    await editor
+      .getByRole("combobox", { name: "Harness", exact: true })
+      .click();
+    await page.getByRole("option", { name: "Buzz Agent", exact: true }).click();
+    await editor
+      .getByRole("combobox", { name: "Provider", exact: true })
+      .click();
+    await page
+      .getByRole("option", { name: "Buzz shared compute", exact: true })
+      .click();
+    await expect(editor.getByText(/No API key required/)).toBeVisible();
+    await expect(
+      editor.getByLabel("Databricks workspace (HTTPS origin)"),
+    ).toHaveCount(0);
+    await expect(
+      editor.getByRole("textbox", {
+        name: "Model ID (custom or blank)",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await editor.getByRole("combobox", { name: "Model", exact: true }).click();
+    await expect(
+      page.getByRole("option", {
+        name: "Auto (collective when available)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("option", { name: "Friendly Model", exact: true })
+      .click();
+    await editor
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => ({
+        provider: window.agentControlFixture.agent.harness.provider,
+        model: window.agentControlFixture.agent.harness.model,
+      })),
+    ).toEqual({ provider: "relay-mesh", model: "catalog.schema.real-model" });
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});

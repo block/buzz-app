@@ -48,6 +48,8 @@ test("literal frontend IPC commands are declared and allowed by the main capabil
   }
   // Prevent accidental loss of coverage if the scanner stops matching Mesh.
   for (const command of [
+    "mesh_compute_catalog",
+    "mesh_compute_share",
     "mesh_compute_select",
     "mesh_compute_release",
     "mesh_compute_start",

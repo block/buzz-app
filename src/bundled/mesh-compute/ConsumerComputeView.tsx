@@ -52,8 +52,7 @@ export function ConsumerComputeView({
           <p role="status">{status}</p>
           {status === "Running" && (
             <p className="text-body-sm text-secondary">
-              The local consumer is running. This does not confirm that a
-              provider is reachable.
+              The local Mesh node is running. Start an agent to check inference.
             </p>
           )}
           <Button

@@ -433,7 +433,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         providers
             .as_array_mut()
             .unwrap()
-            .push(json!({"value":"relay-mesh", "label":"Shared compute"}));
+            .push(json!({"value":"relay-mesh", "label":"Buzz shared compute"}));
     }
     assert_eq!(
         before["harnessOptions"][0],

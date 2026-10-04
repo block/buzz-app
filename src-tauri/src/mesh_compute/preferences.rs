@@ -77,6 +77,13 @@ impl Preferences {
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
     }
+    pub fn clear_runtime_error(&mut self) {
+        if self.error.as_ref().is_some_and(|error| {
+            error.starts_with("Shared compute could not restart after membership changed:")
+        }) {
+            self.error = None;
+        }
+    }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -242,5 +249,20 @@ mod tests {
         let mut prefs = store(blocked.join("mesh-sharing.json"));
         assert!(prefs.checkpoint(config()).is_err());
         assert!(prefs.hint().is_none());
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::Preferences;
+    #[test]
+    fn reconnect_clears_runtime_error_without_hiding_storage_failure() {
+        let mut prefs = Preferences::default();
+        prefs.set_error("Shared compute could not restart after membership changed: offline. Reconnect to retry.".into());
+        prefs.clear_runtime_error();
+        assert!(prefs.error().is_none());
+        prefs.set_error("Could not write sharing settings".into());
+        prefs.clear_runtime_error();
+        assert_eq!(prefs.error(), Some("Could not write sharing settings"));
     }
 }

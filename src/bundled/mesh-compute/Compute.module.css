@@ -3,5 +3,7 @@
   max-width: 60rem;
   margin-inline: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
   gap: var(--space-control-inset);
 }

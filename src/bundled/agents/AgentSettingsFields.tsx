@@ -20,6 +20,7 @@ import {
 } from "./agent-edit";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
+import { SharedComputeModelPicker } from "./SharedComputeModelPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 
 function effectiveGooseProvider(draft: AgentDraft, savedKeys: string[]) {
@@ -295,18 +296,28 @@ export function AgentSettingsFields({
               </p>
             </div>
           )}
-          <AgentModelPicker
-            onPiProviders={setPiProviders}
-            disabled={disabled}
-            id={id}
-            savedRevision={savedRevision}
-            control={control}
-            defaults={state.data?.databricksDefaults}
-            defaultModel={defaultModel}
-            inheritedWorkspace={inheritedWorkspace}
-            draft={draft}
-            onChange={change}
-          />
+          {buzzAgent && buzzProvider === "relay-mesh" ? (
+            <SharedComputeModelPicker
+              id={id}
+              draft={draft}
+              control={control}
+              disabled={disabled}
+              onChange={change}
+            />
+          ) : (
+            <AgentModelPicker
+              onPiProviders={setPiProviders}
+              disabled={disabled}
+              id={id}
+              savedRevision={savedRevision}
+              control={control}
+              defaults={state.data?.databricksDefaults}
+              defaultModel={defaultModel}
+              inheritedWorkspace={inheritedWorkspace}
+              draft={draft}
+              onChange={change}
+            />
+          )}
           <Select
             label="Conversation context"
             variant="field"

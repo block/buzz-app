@@ -411,7 +411,8 @@ function PreparedMessageMarkdown({
     return (
       <MessageLink
         url={url}
-        label={label ?? channelLinkLabel(url, directory.channels)}
+        label={label}
+        directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
         onOpenLink={onOpenLink}
         session={session}

@@ -201,9 +201,50 @@ describe("serializeNode", () => {
     );
     expect(each(query("[data-message-id]", body))).toEqual({
       text: "bold it gone ls\nnext\necho hi\nls",
-      markdown: "**bold** _it_ ~~gone~~ `ls`\nnext\n```sh\necho hi\nls\n```",
-      html: "<p><strong>bold</strong> <em>it</em> <s>gone</s> <code>ls</code><br>next</p>\n<pre><code>echo hi\nls</code></pre>",
+      markdown: "**bold** _it_ ~~gone~~ `ls`\nnext\n\n```sh\necho hi\nls\n```",
+      html: '<p><strong>bold</strong> <em>it</em> <s>gone</s> <code>ls</code><br>next</p>\n<pre><code class="language-sh">echo hi\nls</code></pre>',
     });
+  });
+
+  it("keeps whitespace outside emphasis delimiters and inside code", () => {
+    const paragraph = query(
+      "p",
+      mount(
+        row("<p>a<strong> bold </strong>b <em>it </em>c <code> ls </code></p>"),
+      ),
+    );
+    expect(each(paragraph)).toEqual({
+      text: "a bold b it c  ls ",
+      markdown: "a **bold** b _it_ c ` ls `",
+      html: "<p>a<strong> bold </strong>b <em>it </em>c <code> ls </code></p>",
+    });
+  });
+
+  it("writes lists, quotes and fences as Markdown blocks", () => {
+    // The timeline renderer's shapes, with its whitespace between blocks; only
+    // Markdown drops that whitespace, since its blocks bring their own breaks.
+    const body = mount(
+      row(
+        '<ul><li>one</li><li>two <strong>b</strong></li></ul>\n<ol start="3"><li><p>first</p>\n<ul><li>sub</li></ul></li></ol>\n<blockquote><p>quoted</p>\n<blockquote><p>deep</p></blockquote></blockquote>\n<pre data-language="sh"><code>ls</code></pre>',
+      ),
+    );
+    expect(each(query("[data-message-id]", body))).toEqual({
+      text: "one\ntwo b\nfirst\nsub\nquoted\ndeep\nls",
+      markdown:
+        "- one\n- two **b**\n\n3. first\n   \n   - sub\n\n> quoted\n>\n> > deep\n\n```sh\nls\n```",
+      // The HTML flavor flattens list and quote structure to paragraphs.
+      html: '<p>one</p><p>two <strong>b</strong></p>\n<p>first</p>\n<p>sub</p>\n<p>quoted</p>\n<p>deep</p>\n<pre><code class="language-sh">ls</code></pre>',
+    });
+    // A partial selection keeps each item's own number.
+    const { range } = select(
+      lastText(query("ol li p", body)),
+      2,
+      lastText(query("blockquote p", body)),
+      3,
+    );
+    expect(
+      serializeNode(query("[data-message-id]", body), "markdown", range),
+    ).toBe("3. rst\n   \n   - sub\n\n> quo");
   });
 
   it("degrades unknown elements to text and escapes HTML", () => {
@@ -265,7 +306,7 @@ describe("useMessageSelectionCopy", () => {
               id: "m1",
               channelId: "general",
               authorId: mic,
-              content: "Hi @Mic, see #design and https://example.com/docs",
+              content: `Hi @Mic, see #design and https://example.com/docs, ${message} or [Alias](${message})`,
               createdAt: 1,
               mentions: [mic],
               participants: [],
@@ -282,6 +323,7 @@ describe("useMessageSelectionCopy", () => {
               agents: [],
               channels: [
                 { id: "design", name: "design", channelType: "forum" },
+                { id: "general", name: "General", channelType: "forum" },
               ],
             }}
           />
@@ -291,16 +333,23 @@ describe("useMessageSelectionCopy", () => {
         </div>
       </StrictMode>,
     );
+    // The raw message link shows its channel's name but copies as its URL.
+    expect(view.getByRole("link", { name: "General" }).textContent).toBe(
+      "General",
+    );
     const paragraph = query("[data-message-id] p", view.container);
     expect(
       copy(paragraph, paragraph, 0, paragraph, paragraph.childNodes.length),
     ).toEqual({
       prevented: true,
       data: [
-        ["text/plain", "Hi @Mic, see #design and https://example.com/docs"],
+        [
+          "text/plain",
+          `Hi @Mic, see #design and https://example.com/docs, ${message} or Alias (${message})`,
+        ],
         [
           "text/html",
-          `<div data-buzz-copy="timeline"><p>Hi <a href="${profileTarget(mic)}">@Mic</a>, see <a href="buzz://channel/design">#design</a> and <a href="https://example.com/docs">https://example.com/docs</a></p></div>`,
+          `<div data-buzz-copy="timeline"><p>Hi <a href="${profileTarget(mic)}">@Mic</a>, see <a href="buzz://channel/design">#design</a> and <a href="https://example.com/docs">https://example.com/docs</a>, <a href="${messageHtml}">${messageHtml}</a> or <a href="${messageHtml}">Alias</a></p></div>`,
         ],
       ],
     });

@@ -68,7 +68,12 @@ const serializer = new DOMSerializer(
   {
     paragraph: () => ["p", 0],
     blockquote: () => ["blockquote", 0],
-    code_block: () => ["pre", ["code", 0]],
+    code_block: (node) => [
+      "pre",
+      node.attrs.language
+        ? ["code", { class: `language-${node.attrs.language}` }, 0]
+        : ["code", 0],
+    ],
     bullet_list: () => ["ul", 0],
     ordered_list: (node) => [
       "ol",

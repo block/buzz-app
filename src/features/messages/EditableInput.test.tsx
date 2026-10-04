@@ -2594,9 +2594,66 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
     text: h.markdown(),
     html: copyHtml("<p>first ||secret||<br>next</p><pre><code>ls</code></pre>"),
   });
-  // Blocks join on one line break, as timeline copies do; CommonMark still
-  // opens the fence after the paragraph.
-  expect(readBack(copied.html)).toBe("first ||secret||\nnext\n```\nls\n```");
+  expect(readBack(copied.html)).toBe(h.markdown());
+});
+
+it("copies marked whitespace, lists, a quote and a fence as HTML that reads back as the same Markdown", () => {
+  const paragraph = (text: string) => ({
+    type: "paragraph",
+    content: [{ type: "text", text }],
+  });
+  const item = (text: string) => ({
+    type: "list_item",
+    content: [paragraph(text)],
+  });
+  const h = mount({
+    text: "",
+    recipients: [],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "a " },
+              { type: "text", text: "bold ", marks: [{ type: "bold" }] },
+              { type: "text", text: "b" },
+            ],
+          },
+          { type: "bullet_list", content: [item("one"), item("two")] },
+          {
+            type: "ordered_list",
+            attrs: { order: 3 },
+            content: [item("first")],
+          },
+          { type: "blockquote", content: [paragraph("quoted")] },
+          {
+            type: "code_block",
+            attrs: { language: "sh" },
+            content: [{ type: "text", text: "ls" }],
+          },
+        ],
+      },
+    },
+  });
+  expect(h.markdown()).toBe(
+    "a **bold** b\n\n- one\n- two\n\n3. first\n\n> quoted\n\n```sh\nls\n```",
+  );
+  act(() => h.input.setSelectionRange(0, h.input.value.length));
+  const copied = clipboard(h.input, "copy");
+  expect(copied).toEqual({
+    text: h.markdown(),
+    html: copyHtml(
+      '<p>a <strong>bold </strong>b</p><ul><li><p>one</p></li><li><p>two</p></li></ul><ol start="3"><li><p>first</p></li></ol><blockquote><p>quoted</p></blockquote><pre><code class="language-sh">ls</code></pre>',
+    ),
+  });
+  expect(readBack(copied.html)).toBe(h.markdown());
+  // Pasted into another composer, the message sends with the same source.
+  const target = mount();
+  paste(target.input, copied.text ?? "", copied.html);
+  expect(target.markdown()).toBe(h.markdown());
 });
 
 it("pastes this app's HTML as identity Markdown and other HTML as its text/plain", () => {

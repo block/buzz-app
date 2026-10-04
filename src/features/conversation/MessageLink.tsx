@@ -56,6 +56,7 @@ export function MessageLink({
   registry,
   onOpenLink,
   label,
+  directoryLabel,
   session,
   scope,
   interactive = true,
@@ -66,6 +67,9 @@ export function MessageLink({
   registry: ContributionReader<LinkRenderer> | undefined;
   onOpenLink(url: string): boolean;
   label?: string | undefined;
+  /** The receiving community's name for a raw destination. Display only: a raw
+   * link copies as its URL. */
+  directoryLabel?: string | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
   interactive?: boolean;
@@ -82,6 +86,7 @@ export function MessageLink({
   const [previewOpen, setPreviewOpen] = useState(false);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
+  const display = label ?? directoryLabel;
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -163,14 +168,14 @@ export function MessageLink({
     const content = Content ? (
       <Content url={url} />
     ) : (
-      (children ?? label ?? url)
+      (children ?? display ?? url)
     );
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
         ref={trigger}
         href={url}
-        aria-label={label}
+        aria-label={display}
         data-link-label={label ?? ""}
         title={!preview ? url : undefined}
         className={entry?.className}
@@ -275,7 +280,7 @@ export function MessageLink({
   );
   return (
     <LinkChannelPrivateContext value={channelPrivate}>
-      <LinkLabelContext value={label}>
+      <LinkLabelContext value={display}>
         <LinkContentContext value={children}>{result}</LinkContentContext>
       </LinkLabelContext>
     </LinkChannelPrivateContext>

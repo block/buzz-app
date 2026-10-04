@@ -4,10 +4,12 @@ import { open } from "./timeline.mjs";
 
 test.use({ productionBroker: true });
 
-// The timeline labels a message link with its channel name.
+// The timeline shows a raw message link under its channel's name, but only an
+// authored label copies.
 const link = `buzz://message?channel=alpha&id=${"b".repeat(64)}`;
+const linkHtml = link.replace("&", "&amp;");
 const anchors = (viewer) =>
-  `Ping <a href="nostr:${npubEncode(viewer)}">@Fixture Reader</a> about <a href="buzz://channel/beta">#Beta</a> and <a href="${link.replace("&", "&amp;")}">Alpha</a>`;
+  `Ping <a href="nostr:${npubEncode(viewer)}">@Fixture Reader</a> about <a href="buzz://channel/beta">#Beta</a>, <a href="${linkHtml}">${linkHtml}</a> and <a href="${linkHtml}">Alpha</a>`;
 
 /** Deliver both flavors at once, as a real clipboard does. */
 const pasteInto = (input, payload) =>
@@ -37,7 +39,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
   const event = app.append(
     "primary",
     "alpha",
-    `Ping @Fixture Reader about #Beta and ${link}`,
+    `Ping @Fixture Reader about #Beta, ${link} and [Alpha](${link})`,
     true,
     true,
     undefined,
@@ -51,6 +53,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
     row.getByRole("button", { name: "View Fixture Reader profile" }),
   ).toBeVisible();
   await expect(row.getByRole("link", { name: "#Beta" })).toBeVisible();
+  await expect(row.getByRole("link", { name: "Alpha" })).toHaveCount(2);
   const paragraph = row.locator("p").first();
   const box = await paragraph.boundingBox();
   await page.mouse.move(box.x + 1, box.y + box.height / 2);
@@ -77,7 +80,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
     expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
   else await page.keyboard.press("ControlOrMeta+c");
   const timeline = {
-    text: `Ping @Fixture Reader about #Beta and Alpha (${link})`,
+    text: `Ping @Fixture Reader about #Beta, ${link} and Alpha (${link})`,
     html: `<div data-buzz-copy="timeline"><p>${anchors(app.viewer)}</p></div>`,
   };
   await expect
@@ -89,11 +92,11 @@ test("pasting copied messages into the composer restores chips, the recipient an
     exact: true,
   });
   const recipients = page.getByRole("region", { name: "Explicit mentions" });
-  const source = `Ping @Fixture Reader about [#Beta](buzz://channel/beta) and [Alpha](${link})`;
+  const source = `Ping @Fixture Reader about [#Beta](buzz://channel/beta), ${link} and [Alpha](${link})`;
   await input.click();
   await pasteInto(input, timeline);
   await expect(input).toHaveJSProperty("value", source);
-  await expect(input.locator("[data-source]")).toHaveCount(3);
+  await expect(input.locator("[data-source]")).toHaveCount(4);
   await expect(input.locator(".inline-chip").first()).toHaveText(
     "@Fixture Reader",
   );
@@ -117,7 +120,7 @@ test("pasting copied messages into the composer restores chips, the recipient an
   });
   // text/plain stays Markdown source except for identity and channel locators.
   expect(composer).toEqual({
-    text: `Ping @Fixture Reader about #Beta and [Alpha](${link})`,
+    text: `Ping @Fixture Reader about #Beta, ${link} and [Alpha](${link})`,
     html: `<div data-buzz-copy="composer"><p>${anchors(app.viewer)}</p></div>`,
   });
   await input.fill("");

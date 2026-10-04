@@ -452,6 +452,9 @@ async fn issuing_adapter(pubkey: String, hold: bool) -> IssuingAdapter {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+/// Preparation coverage: a refusal that lands while identity access and
+/// signing wait is honored once they finish. Not a regression test for
+/// admission being one step with the refusal.
 async fn a_session_refused_while_signing_is_held_is_not_sent() {
     let identity = IdentityHost::fixture();
     let viewer = identity.viewer().await.unwrap();
@@ -523,7 +526,7 @@ async fn a_badge_that_arrives_after_its_session_is_refused_is_dropped() {
 }
 
 #[tokio::test]
-async fn relay_http_does_not_carry_a_badge_of_a_refused_session() {
+async fn attaching_a_badge_to_relay_http_skips_a_refused_session() {
     let identity = IdentityHost::fixture();
     let viewer = identity.viewer().await.unwrap();
     let adapter = issuing_adapter(viewer.clone(), false).await;
@@ -580,83 +583,74 @@ async fn relay_http_does_not_carry_a_badge_of_a_refused_session() {
     assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-/// Runs `refusal` while the badge cache is held, after `racing` has passed
-/// its admission and waits on the cache. Returns whether the refusal finished
-/// before the cache was released, and what `racing` answered. Waits block
-/// this thread rather than use the runtime's timer, since a runtime worker
-/// is blocked on the cache meanwhile.
-async fn refuse_while_the_cache_is_held(
+/// Arranges for a refusal of `token` to land the moment a use of it has
+/// passed its admission check and is about to run; whether it landed. It
+/// cannot land while admission holds the refusals.
+fn refuse_once_admitted(
     enterprise: &EnterpriseAuthHost,
-    refused: SavedSession,
-    racing: tokio::task::JoinHandle<Result<Option<Assertion>>>,
-    reached_cache: impl Fn() -> bool,
-    cache: std::sync::MutexGuard<'_, HashMap<String, Cached>>,
-) -> (bool, Result<Option<Assertion>>) {
-    while !reached_cache() && !racing.is_finished() {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    std::thread::sleep(Duration::from_millis(100));
-    let refusal = {
-        let enterprise = enterprise.clone();
-        tokio::spawn(async move { enterprise.reject(refused).await })
-    };
-    std::thread::sleep(Duration::from_millis(200));
-    let refused_first = refusal.is_finished();
-    drop(cache);
-    let answer = racing.await.unwrap();
-    refusal.await.unwrap().unwrap();
-    (refused_first, answer)
+    token: &'static str,
+) -> Arc<std::sync::atomic::AtomicBool> {
+    let landed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    crate::enterprise_auth::seams::at(crate::enterprise_auth::seams::Point::Admitted, token, {
+        let (enterprise, landed) = (enterprise.clone(), landed.clone());
+        move || {
+            landed.store(
+                enterprise.refuse_unless_admitting(token),
+                std::sync::atomic::Ordering::SeqCst,
+            )
+        }
+    });
+    landed
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
 async fn a_cached_badge_is_not_returned_once_its_refusal_returns() {
+    const TOKEN: &str = "reused-badge-session";
     let identity = IdentityHost::fixture();
     let viewer = identity.viewer().await.unwrap();
     let adapter = issuing_adapter(viewer.clone(), false).await;
-    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, TOKEN);
     let assertions = RelayAssertions::new(enterprise.clone());
     let badge = |saved| {
-        let (assertions, identity) = (assertions.clone(), identity.clone());
-        tokio::spawn(async move {
-            assertions
-                .badge(
-                    &identity,
-                    RELAY.into(),
-                    async move { Ok(saved) },
-                    false,
-                    Instant::now() + DEADLINE,
-                )
-                .await
-        })
+        assertions.badge(
+            &identity,
+            RELAY.into(),
+            async move { Ok(saved) },
+            false,
+            Instant::now() + DEADLINE,
+        )
     };
     let first = enterprise.saved_at(&adapter.base, &viewer).await;
-    assert!(badge(first).await.unwrap().unwrap().is_some());
+    assert!(badge(first).await.unwrap().is_some());
     let reusing = enterprise.saved_at(&adapter.base, &viewer).await;
     let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
-    // The reuse passes its refusal check and waits on the cache.
-    let cache = assertions.lock();
-    let reuse = badge(reusing);
-    let (refused_first, answer) =
-        refuse_while_the_cache_is_held(&enterprise, refused, reuse, || true, cache).await;
-    // Either the reuse was admitted before the refusal (and the refusal
-    // returned after it), or it returned no badge.
-    assert!(!(refused_first && matches!(answer, Ok(Some(_)))));
-    assert!(!refused_first);
+    let late = enterprise.saved_at(&adapter.base, &viewer).await;
+    // The refusal tries to land between the reuse's check and its cache read.
+    let landed = refuse_once_admitted(&enterprise, TOKEN);
+    let answer = badge(reusing).await;
+    let landed = landed.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(!(landed && matches!(answer, Ok(Some(_)))));
+    assert!(!landed);
+    // Admitted before the refusal, the reuse finished; after it returns,
+    // nothing is reused.
+    assert!(answer.unwrap().is_some());
+    assert_eq!(
+        enterprise.reject(refused).await.unwrap(),
+        Rejection::Removed
+    );
+    assert_eq!(badge(late).await.unwrap_err(), SESSION_REPLACED);
     assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
 async fn a_badge_is_not_cached_or_returned_once_its_refusal_returns() {
+    const TOKEN: &str = "accepted-badge-session";
     let identity = IdentityHost::fixture();
     let viewer = identity.viewer().await.unwrap();
-    let adapter = issuing_adapter(viewer.clone(), false).await;
-    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let adapter = issuing_adapter(viewer.clone(), true).await;
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, TOKEN);
     let assertions = RelayAssertions::new(enterprise.clone());
     let issuing = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
-    let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
-    // The badge arrives and passes its refusal check, then waits on the cache
-    // to store it.
-    let cache = assertions.lock();
     let request = {
         let (assertions, identity) = (assertions.clone(), identity.clone());
         tokio::spawn(async move {
@@ -671,11 +665,15 @@ async fn a_badge_is_not_cached_or_returned_once_its_refusal_returns() {
                 .await
         })
     };
-    let arrived = || adapter.calls.load(std::sync::atomic::Ordering::SeqCst) > 0;
-    let (refused_first, answer) =
-        refuse_while_the_cache_is_held(&enterprise, refused, request, arrived, cache).await;
-    assert!(!(refused_first && matches!(answer, Ok(Some(_)))));
-    assert!(!refused_first);
-    // The refusal then removed what that admitted request cached.
-    assert!(enterprise.saved_at(&adapter.base, &viewer).await.is_none());
+    // Past its request's admission, the refusal tries to land between the
+    // badge's check and its caching.
+    adapter.started.notified().await;
+    let landed = refuse_once_admitted(&enterprise, TOKEN);
+    adapter.release.notify_one();
+    let answer = request.await.unwrap();
+    let landed = landed.load(std::sync::atomic::Ordering::SeqCst);
+    let cached = assertions.lock().get(RELAY).is_some();
+    assert!(!(landed && (cached || matches!(answer, Ok(Some(_))))));
+    assert!(!landed);
+    assert!(answer.unwrap().is_some());
 }

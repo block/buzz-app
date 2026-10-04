@@ -128,6 +128,36 @@ it("retries the same community after a completed browser login", async () => {
   expect(communities.snapshot().enterprise).toBeUndefined();
 });
 
+it("notes a failed prune once after a successful login, which stands", async () => {
+  const auth = authFixture();
+  auth.get
+    .mockResolvedValueOnce(null)
+    .mockResolvedValue({ expiresAt: "2030-01-01T00:00:00Z" });
+  auth.cleanup.mockResolvedValue({
+    retained: false,
+    unrecorded: false,
+    unpruned: true,
+  });
+  const { communities, connect } = setup(auth);
+  await flush();
+  communities.joined(
+    { id: "https://enterprise.test", name: "Enterprise" },
+    {
+      name: "Local",
+      picture: "",
+    },
+  );
+  await flush();
+  await communities.startEnterpriseLogin();
+  await flush();
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  expect(communities.snapshot().enterpriseNotice).toBe("unpruned");
+  expect(communities.snapshot().enterprise).toBeUndefined();
+  communities.dismissEnterpriseNotice();
+  expect(communities.snapshot().enterpriseNotice).toBeUndefined();
+  expect(communities.snapshot().enterprise).toBeUndefined();
+});
+
 it("fences a canceled browser result so it cannot acquire a session", async () => {
   const auth = authFixture();
   let complete!: (value: { expiresAt: string }) => void;

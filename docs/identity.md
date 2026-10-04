@@ -149,9 +149,10 @@ moment cannot adopt it again) before it asks secure storage to remove it.
 Every use of the token is admitted under the same lock as the refusal: a badge
 request or session check about to send it (checked after identity access and
 signing), and a badge being reused, cached or returned. Once the refusal
-returns, nothing new is admitted and no badge of that session is cached or
-returned; a request admitted just before it may still go out and finish, since
-admission comes before the request reaches the wire. The refusal is recorded in
+returns, there is no new admission or acceptance with that token: no request
+starts with it and no badge of that session is cached or returned. A request or
+badge admitted before the refusal may still finish, since admission comes
+before the request reaches the wire. The refusal is recorded in
 `enterprise-refused-sessions` in the app data directory, one file per refused
 token digest under the keychain service's directory, before removal starts. A
 record is taken out only once removal succeeds or a new login replaces that
@@ -160,13 +161,17 @@ session refused, and other scopes and Buzz processes sharing the directory
 keep their records. If the app data directory cannot be resolved, or the
 records cannot be read at startup, stored sessions are not used until a new
 login in that scope, which means signing in again after every restart while
-the records stay unreadable. Not covered: if Buzz quits before the record is
-written (removal has not started then), or writing the record and removing the
-session from secure storage both fail and Buzz then restarts, the stored
-session reads as saved again and can be sent to the adapter. A removal that
-fails, a refusal that cannot be recorded, or an outdated record that cannot be
-removed is shown in the sign-in prompt when it settles, without delaying the
-prompt. While a sign-out is still
+the records stay unreadable. Two cases are not covered after a restart: Buzz quits after the refusal
+arrives but before its record reaches disk (removal has not started then),
+which on restart is the same as quitting before the refusal arrived; or
+writing the record and removing the session from secure storage both fail and
+Buzz then restarts. Either way the stored session reads as saved again and can
+be sent to the adapter, which refuses it again. A removal that fails, a
+refusal that cannot be recorded, or an outdated record that cannot be removed
+is shown in the sign-in prompt when it settles, without delaying the prompt.
+An outdated record stays outstanding, and is retried on the next login or
+removal in its scope, until it is removed; one left by a successful login is
+noted once in a toast, and the login stands. While a sign-out is still
 finishing, the prompt shows sign-in as waiting. When
 native reports sign-in required, the selected enterprise community shows
 sign-in without rechecking the refused session, rediscovering the relay or

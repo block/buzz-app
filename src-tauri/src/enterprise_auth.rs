@@ -246,9 +246,9 @@ struct ActiveLogin {
 /// token again. Every reader skips a refused token, and every use of a token
 /// is admitted under this owner's lock (`admit`): a badge request or session
 /// check about to send it, and a badge being reused, cached or returned. Once
-/// a refusal returns, no use of the token is admitted; one admitted just
-/// before it may still go out and finish, and a request admitted is not
-/// necessarily on the wire yet.
+/// a refusal returns, there is no new admission or acceptance with the token;
+/// a request or badge admitted before it may still finish, and a request
+/// admitted is not necessarily on the wire yet.
 ///
 /// The refusal is also recorded on disk, one empty file per digest under the
 /// keychain service's directory, before secure storage is asked to remove the
@@ -258,10 +258,12 @@ struct ActiveLogin {
 /// records. If the records cannot be resolved or read at startup, stored
 /// sessions are not used (`distrusts`) until a new login in that scope.
 ///
-/// Not covered: if Buzz quits before the record is written (removal has not
-/// started then), or if writing the record and removing the session from
-/// secure storage both fail and Buzz then restarts, the stored session reads
-/// as saved again and can be sent to the adapter.
+/// Two cases are not covered after a restart: Buzz quits after the refusal
+/// arrives but before its record reaches disk (removal has not started then),
+/// which on restart is the same as quitting before the refusal arrived; or
+/// writing the record and removing the session from secure storage both fail and
+/// Buzz then restarts. Either way the stored session reads as saved again and can
+/// be sent to the adapter, which refuses it again.
 #[derive(Default)]
 struct Refusals {
     tokens: HashSet<[u8; 32]>,
@@ -269,8 +271,9 @@ struct Refusals {
     kept: HashSet<[u8; 32]>,
     /// Writing a refusal that still mattered to disk failed.
     unrecorded: bool,
-    /// Removing a refusal record that no longer mattered failed.
-    unpruned: bool,
+    /// Records that no longer matter but could not be removed, by keychain
+    /// service; retried on the next login or removal in that service.
+    unpruned: HashSet<(&'static str, [u8; 32])>,
     /// The records could not be read at startup: stored sessions are not
     /// used, except in scopes a new login has replaced since.
     distrust_stored: bool,
@@ -372,7 +375,7 @@ impl Refusals {
         let cleanup = EnterpriseCleanup {
             retained: !self.kept.is_empty(),
             unrecorded: self.unrecorded,
-            unpruned: self.unpruned,
+            unpruned: !self.unpruned.is_empty(),
         };
         (cleanup.retained || cleanup.unrecorded || cleanup.unpruned).then_some(cleanup)
     }
@@ -579,10 +582,14 @@ impl EnterpriseAuthHost {
 
     /// Runs `admitted`, a use of `token` that must not start once it is
     /// refused, unless it already was; one step with `refuse`. `admitted`
-    /// must not wait: it may create a request but not await it.
+    /// does no async or network work (waiting on a mutex is fine): it may
+    /// create a request but not await it.
     pub(crate) fn admit<T>(&self, token: &str, admitted: impl FnOnce() -> T) -> Option<T> {
         let refusals = self.refusals();
-        (!refusals.tokens.contains(&token_digest(token))).then(admitted)
+        let admissible = !refusals.tokens.contains(&token_digest(token));
+        #[cfg(test)]
+        seams::reach(seams::Point::Admitted, token);
+        admissible.then(admitted)
     }
 
     /// Forgets `saved` after the adapter said it is gone, but only while it
@@ -645,6 +652,7 @@ impl EnterpriseAuthHost {
         let records = {
             let mut refusals = self.refusals();
             refusals.tokens.insert(digest);
+            refusals.unpruned.remove(&(scope.service, digest));
             refusals.records.clone()
         };
         Self::bump_generation(&mut state);
@@ -655,7 +663,7 @@ impl EnterpriseAuthHost {
     /// Records the outcome of removing a refused session from secure storage;
     /// a removed session's record is no longer needed.
     fn settle(&self, scope: &Scope, digest: [u8; 32], removed: bool) {
-        let records = {
+        {
             let mut refusals = self.refusals();
             if !removed {
                 refusals.kept.insert(digest);
@@ -666,10 +674,31 @@ impl EnterpriseAuthHost {
             if refusals.kept.is_empty() {
                 refusals.unrecorded = false;
             }
-            refusals.records.clone()
+        }
+        self.prune(scope.service, Some(digest));
+    }
+
+    /// Removes the record of `digest`, no longer needed, in `service`, and
+    /// retries that service's records that earlier failed to be removed. A
+    /// record stays outstanding until its own removal succeeds.
+    fn prune(&self, service: &'static str, digest: Option<[u8; 32]>) {
+        let (records, outstanding) = {
+            let mut refusals = self.refusals();
+            if let Some(digest) = digest {
+                refusals.unpruned.insert((service, digest));
+            }
+            let outstanding: Vec<_> = refusals
+                .unpruned
+                .iter()
+                .filter(|(of, _)| *of == service)
+                .map(|(_, digest)| *digest)
+                .collect();
+            (refusals.records.clone(), outstanding)
         };
-        if records.remove(scope.service, digest).is_err() {
-            self.refusals().unpruned = true;
+        for digest in outstanding {
+            if records.remove(service, digest).is_ok() {
+                self.refusals().unpruned.remove(&(service, digest));
+            }
         }
     }
 
@@ -1005,25 +1034,19 @@ impl EnterpriseAuthHost {
     /// stored session is trusted again, and the refusal record and outcome of
     /// the session it replaced, if any, are pruned. Other scopes keep theirs.
     fn adopted(&self, scope: &Scope, replaced: Option<[u8; 32]>) {
-        let records = {
+        {
             let mut refusals = self.refusals();
             refusals
                 .trusted
                 .insert((scope.service, scope.account.clone()));
-            refusals.unpruned = false;
             if let Some(replaced) = replaced {
                 refusals.kept.remove(&replaced);
             }
             if refusals.kept.is_empty() {
                 refusals.unrecorded = false;
             }
-            refusals.records.clone()
-        };
-        if let Some(replaced) = replaced {
-            if records.remove(scope.service, replaced).is_err() {
-                self.refusals().unpruned = true;
-            }
         }
+        self.prune(scope.service, replaced);
     }
 
     fn remember(&self, scope: Scope, session: StoredSession) {
@@ -1436,6 +1459,8 @@ async fn check_session(
         Err(error) => return SessionCheck::Transient(error),
     };
     let authorization = Zeroizing::new(format!("Bearer {}", session.token.as_str()));
+    #[cfg(test)]
+    seams::reach(seams::Point::SessionAdmission, session.token.as_str());
     if !admit() {
         return SessionCheck::Refused;
     }
@@ -1640,9 +1665,57 @@ impl EnterpriseAuthHost {
             .unwrap()
     }
 
+    /// Lands a refusal's in-memory step for `token` unless admission holds
+    /// the refusals right now; whether it landed.
+    pub(crate) fn refuse_unless_admitting(&self, token: &str) -> bool {
+        self.refusals
+            .try_lock()
+            .map(|mut refusals| refusals.tokens.insert(token_digest(token)))
+            .is_ok()
+    }
+
     /// Holds the commit owner, as a slow secure-storage commit would.
     pub(crate) async fn hold_commit(&self) -> tokio::sync::OwnedMutexGuard<()> {
         self.commit.clone().lock_owned().await
+    }
+}
+
+/// Test-only points where a test lands a refusal at an exact step of a use
+/// of `token`, instead of guessing the timing.
+#[cfg(test)]
+pub(crate) mod seams {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(crate) enum Point {
+        /// A session check holds its token and is about to ask admission.
+        SessionAdmission,
+        /// Admission has checked the refusals and is about to run the use.
+        Admitted,
+    }
+
+    type Hook = Box<dyn FnOnce() + Send>;
+    static HOOKS: Mutex<Vec<(Point, String, Hook)>> = Mutex::new(Vec::new());
+
+    /// Runs `hook` once, the next time a use of `token` reaches `point`.
+    pub(crate) fn at(point: Point, token: &str, hook: impl FnOnce() + Send + 'static) {
+        HOOKS
+            .lock()
+            .unwrap()
+            .push((point, token.to_owned(), Box::new(hook)));
+    }
+
+    pub(crate) fn reach(point: Point, token: &str) {
+        let hook = {
+            let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
+            hooks
+                .iter()
+                .position(|(at, of, _)| *at == point && of == token)
+                .map(|index| hooks.remove(index).2)
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 }
 
@@ -2539,7 +2612,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn a_refusal_record_that_cannot_be_pruned_is_reported() {
+    async fn a_refusal_record_that_cannot_be_pruned_is_reported_until_its_scope_removes_it() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
         let refusals = directory.path().join("enterprise-refused-sessions");
@@ -2554,15 +2627,25 @@ mod tests {
         // A new login replaces the refused session, but its record stays.
         host.adopted(&scope, Some(token_digest("refused-session")));
         std::fs::set_permissions(&service, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            host.cleanup().await,
-            Some(EnterpriseCleanup {
-                retained: false,
-                unrecorded: false,
-                unpruned: true,
-            })
-        );
+        let unpruned = Some(EnterpriseCleanup {
+            retained: false,
+            unrecorded: false,
+            unpruned: true,
+        });
+        assert_eq!(host.cleanup().await, unpruned);
         assert!(recorded(&refusals, &scope, "refused-session"));
+        // A login in another scope neither clears nor removes it.
+        let release = Scope {
+            service: "release-service",
+            ..scope.clone()
+        };
+        host.adopted(&release, None);
+        assert_eq!(host.cleanup().await, unpruned);
+        assert!(recorded(&refusals, &scope, "refused-session"));
+        // The next login in its own scope retries and removes it.
+        host.adopted(&scope, None);
+        assert_eq!(host.cleanup().await, None);
+        assert!(!recorded(&refusals, &scope, "refused-session"));
     }
 
     #[tokio::test]
@@ -2644,7 +2727,7 @@ mod tests {
         assert!(restarted.saved_scope(second).await.unwrap().is_none());
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn a_session_refused_before_a_session_check_sends_is_not_sent() {
         let calls = Arc::new(AtomicUsize::new(0));
         let app = Router::new().route(
@@ -2665,31 +2748,25 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
         .unwrap();
-        let session = StoredSession {
-            token: Zeroizing::new("refused-session".into()),
+        let token = "refused-before-its-session-check";
+        let raw = encode_session(&StoredSession {
+            token: Zeroizing::new(token.into()),
             expires_at: "2030-01-01T00:00:00Z".into(),
-        };
-        let raw = encode_session(&session).unwrap();
-        let (started_sender, started_receiver) = mpsc::channel();
-        let (release_sender, release_receiver) = mpsc::channel();
-        let store = Arc::new(ReadGatedStore::new(started_sender, release_receiver));
+        })
+        .unwrap();
+        let store = Arc::new(FixtureStore::default());
         store.replace(scope.service, &scope.account, &raw).unwrap();
-        let host = EnterpriseAuthHost::with_store(store.clone());
-        // The session check has read the token when the refusal lands.
-        let check = tokio::spawn({
+        let host = EnterpriseAuthHost::with_store(store);
+        // The check has read the token and passed its earlier refusal check;
+        // the refusal lands just before it asks admission to send it.
+        seams::at(seams::Point::SessionAdmission, token, {
             let (host, scope) = (host.clone(), scope.clone());
-            async move { host.get_scope(scope).await }
+            move || {
+                host.refuse(&scope, &Zeroizing::new(token.into()), token_digest(token))
+                    .unwrap();
+            }
         });
-        tokio::task::spawn_blocking(move || started_receiver.recv().unwrap())
-            .await
-            .unwrap();
-        let saved = SavedSession {
-            scope: scope.clone(),
-            persisted: PersistedSession { raw, session },
-        };
-        assert_eq!(host.reject(saved).await.unwrap(), Rejection::Removed);
-        release_sender.send(()).unwrap();
-        assert!(check.await.unwrap().unwrap().is_none());
+        assert!(host.get_scope(scope).await.unwrap().is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 

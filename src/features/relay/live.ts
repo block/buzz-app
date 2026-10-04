@@ -197,6 +197,22 @@ export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
   39005, 20002,
 ];
+/** Close code a socket reports for a planned relay badge rotation; the live
+ * connection reconnects at once, outside the failure count and backoff. */
+export const BADGE_ROTATION_CLOSE = 4900;
+/** Close code a socket reports when the enterprise adapter denies this relay;
+ * the live connection stops retrying and shows access denied. */
+export const BADGE_DENIED_CLOSE = 4901;
+/** Close code a socket reports when the adapter refuses the badge request
+ * itself; the live connection stops retrying and shows the close reason. */
+export const BADGE_REFUSED_CLOSE = 4902;
+/** Bounds getting a socket open. Native bounds its whole connect (saved
+ * session, proof signing, badge request, refusal handling and handshake) at
+ * 30 s (`nip_fi_assertion::DEADLINE`), so its final answer always arrives
+ * first; NIP-42 authentication is timed from open. */
+export const LIVE_SETUP_TIMEOUT = 35_000;
+const LIVE_AUTH_TIMEOUT = 10_000;
+
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -650,11 +666,17 @@ export function subscribeRelayTraffic(
     let authId: string | undefined;
     let authenticating = false;
     deadline = setTimeout(
-      () => reconnect("Live authentication timed out"),
-      10000,
+      () => reconnect("Live connection timed out"),
+      LIVE_SETUP_TIMEOUT,
     );
     ws.onopen = () => {
-      if (valid()) log.info(`${peer} connected`);
+      if (!valid()) return;
+      log.info(`${peer} connected`);
+      clearTimeout(deadline);
+      deadline = setTimeout(
+        () => reconnect("Live authentication timed out"),
+        LIVE_AUTH_TIMEOUT,
+      );
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
@@ -848,7 +870,18 @@ export function subscribeRelayTraffic(
       }
     };
     ws.onerror = () => reconnect("Live connection interrupted");
-    ws.onclose = () => reconnect("Live connection closed");
+    ws.onclose = (event) => {
+      if (event?.code === BADGE_DENIED_CLOSE)
+        return terminal("Enterprise access to this relay was denied");
+      if (event?.code === BADGE_REFUSED_CLOSE)
+        return terminal(event.reason || "Relay badge was refused");
+      // A planned badge rotation is not a failure: reconnect now, uncounted.
+      if (event?.code !== BADGE_ROTATION_CLOSE)
+        return reconnect("Live connection closed");
+      if (!valid()) return;
+      log.info(`${peer} rotating relay badge`);
+      connect();
+    };
   }
   connect();
   return {

@@ -1,6 +1,9 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 mod agent;
-use crate::identity::{EventTemplate, IdentityHost};
+use crate::{
+    identity::{EventTemplate, IdentityHost},
+    nip_fi_assertion::RelayAssertions,
+};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
     relay_agent_resolve,
@@ -140,12 +143,22 @@ pub(crate) struct WorkflowCursor {
 #[tauri::command]
 pub(crate) async fn relay_workflow_runs(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, RelayAssertions>,
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
 ) -> Result<RelayResponse> {
     let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(host.inner(), url, "GET", None, true, 1024 * 1024).await
+    send(
+        host.inner(),
+        assertions.inner(),
+        url,
+        "GET",
+        None,
+        true,
+        1024 * 1024,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -418,6 +431,7 @@ pub(crate) async fn relay_sign_read_state(
 #[tauri::command]
 pub(crate) async fn relay_publish_read_state(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, RelayAssertions>,
     community: String,
     event: serde_json::Value,
 ) -> Result<RelayResponse> {
@@ -427,7 +441,16 @@ pub(crate) async fn relay_publish_read_state(
         return Err("Invalid read-state event".into());
     }
     host.decode_read_state(vec![event]).await?;
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        assertions.inner(),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -523,6 +546,7 @@ fn client() -> Result<&'static reqwest::Client> {
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, RelayAssertions>,
     community: String,
     path: String,
     method: String,
@@ -562,6 +586,7 @@ pub(crate) async fn relay_http(
     }
     send(
         host.inner(),
+        assertions.inner(),
         url,
         &method,
         body,
@@ -573,6 +598,7 @@ pub(crate) async fn relay_http(
 
 async fn send(
     host: &IdentityHost,
+    assertions: &RelayAssertions,
     url: Url,
     method: &str,
     body: Option<String>,
@@ -623,6 +649,7 @@ async fn send(
         if let Some(body) = body {
             request = request.body(body);
         }
+        request = assertions.attach(host, &url, request).await?;
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
@@ -800,6 +827,7 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
 #[tauri::command]
 pub(crate) async fn relay_upload(
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, RelayAssertions>,
     uploads: tauri::State<'_, Uploads>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<RelayResponse> {
@@ -832,10 +860,18 @@ pub(crate) async fn relay_upload(
             Err(error)
         }
     } else if let Some(mode) = preparation.as_deref() {
-        upload_prepared(host.inner(), url, body.clone(), mode, &mut cancelled).await
+        upload_prepared(
+            host.inner(),
+            assertions.inner(),
+            url,
+            body.clone(),
+            mode,
+            &mut cancelled,
+        )
+        .await
     } else {
         tokio::select! {
-            result = upload(host.inner(), url, kind, body.clone()) => result,
+            result = upload(host.inner(), assertions.inner(), url, kind, body.clone()) => result,
             _ = &mut cancelled => Err("Upload cancelled".into()),
         }
     };
@@ -851,6 +887,7 @@ pub(crate) fn relay_upload_cancel(uploads: tauri::State<'_, Uploads>, id: String
 
 async fn upload_prepared(
     host: &IdentityHost,
+    assertions: &RelayAssertions,
     url: Url,
     body: Vec<u8>,
     mode: &str,
@@ -870,7 +907,7 @@ async fn upload_prepared(
         }
     };
     tokio::select! {
-        result = upload(host, url, Some(kind), body) => result,
+        result = upload(host, assertions, url, Some(kind), body) => result,
         _ = cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -896,6 +933,7 @@ async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
 
 async fn upload(
     host: &IdentityHost,
+    assertions: &RelayAssertions,
     url: Url,
     kind: Option<&str>,
     body: Vec<u8>,
@@ -912,14 +950,17 @@ async fn upload(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    let response = client()?
-        .put(url)
+    let request = client()?
+        .put(url.clone())
         // Matches UPLOAD_TIMEOUT_MS; the shared client's 30 s suits JSON calls only.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth)
         .header("Content-Type", kind)
         .header("X-SHA-256", hash)
-        .body(body)
+        .body(body);
+    let response = assertions
+        .attach(host, &url, request)
+        .await?
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;
@@ -949,9 +990,10 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
 ) {
     use tauri::Manager as _;
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
+    let assertions = ctx.app_handle().state::<RelayAssertions>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, range)) => fetch_media(&host, url, range).await,
+            Ok((url, range)) => fetch_media(&host, &assertions, url, range).await,
             Err(status) => Err(status),
         };
         responder.respond(response.unwrap_or_else(|status| {
@@ -1119,6 +1161,7 @@ fn save_download(
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    assertions: tauri::State<'_, RelayAssertions>,
     source: String,
     name: String,
 ) -> Result<()> {
@@ -1129,7 +1172,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), assertions.inner(), url, None)
         .await
         .map_err(|_| "Media download failed")?;
     let body = response.into_body();
@@ -1196,18 +1239,23 @@ fn media_range(value: &str) -> Option<String> {
 
 async fn fetch_media(
     host: &IdentityHost,
+    assertions: &RelayAssertions,
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     let auth = blossom_auth(host, &url, "get", "Get buzz-media", Vec::new())
         .await
         .map_err(|_| 401u16)?;
-    let mut request = client()
+    let request = client()
         .map_err(|_| 502u16)?
-        .get(url)
+        .get(url.clone())
         // Match the broker's whole-media deadline; large documents may take minutes.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth);
+    let mut request = assertions
+        .attach(host, &url, request)
+        .await
+        .map_err(|_| 401u16)?;
     if let Some(range) = &range {
         request = request.header("Range", range);
     }

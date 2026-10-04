@@ -1,6 +1,9 @@
 import { getLogger, setLogLevel } from "../developer/logging";
 import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  BADGE_DENIED_CLOSE,
+  BADGE_REFUSED_CLOSE,
+  BADGE_ROTATION_CLOSE,
   createLiveAdmission,
   liveChannels,
   subscribeRelayTraffic,
@@ -23,6 +26,7 @@ const scopeOf = (request: WireRequest) =>
 class Socket {
   readyState = 1;
   onmessage?: (event: { data: string }) => Promise<void>;
+  onopen?: () => void;
   onclose?: () => void;
   onerror?: () => void;
   sent: unknown[][] = [];
@@ -66,6 +70,8 @@ function setup(channels = ["a", "b"]) {
     () => {
       const socket = new Socket();
       sockets.push(socket);
+      // Opens once the owner has attached its handlers, as a real socket does.
+      void Promise.resolve().then(() => socket.onopen?.());
       return socket as unknown as WebSocket;
     },
   );
@@ -2210,4 +2216,69 @@ it("reports the remaining presence gate without extending it and honors cooldown
   vi.advanceTimersByTime(1);
   expect(admission.presenceDelay()).toBe(0);
   admission.tryPresence()?.();
+});
+
+it("relay badge rotation reconnects at once without spending the reconnect budget", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  // More rotations than the five-attempt failure cap.
+  for (let i = 0; i < 8; i++) {
+    const socket = h.sockets.at(-1);
+    assert.exists(socket);
+    (socket.onclose as (event: { code: number }) => void)({
+      code: BADGE_ROTATION_CLOSE,
+    });
+    expect(h.sockets).toHaveLength(i + 2);
+  }
+  expect(h.callbacks.state.mock.lastCall?.[0]).not.toMatchObject({
+    status: "error",
+  });
+  // An ordinary close still waits for backoff.
+  h.sockets.at(-1)?.onclose?.();
+  expect(h.sockets).toHaveLength(9);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(h.sockets).toHaveLength(10);
+  h.owner.dispose();
+});
+
+it("relay access denial stops reconnecting until a manual retry connects", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const socket = h.sockets.at(-1);
+  assert.exists(socket);
+  (socket.onclose as (event: { code: number }) => void)({
+    code: BADGE_DENIED_CLOSE,
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(h.sockets).toHaveLength(1);
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "error",
+    error: "Enterprise access to this relay was denied",
+  });
+  // Once access is granted, a manual retry connects with a fresh badge.
+  h.owner.retry();
+  expect(h.sockets).toHaveLength(2);
+  await h.sockets[1]?.auth();
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "connected",
+  });
+  h.owner.dispose();
+});
+
+it("a refused relay badge stops reconnecting and shows the refusal", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const socket = h.sockets.at(-1);
+  assert.exists(socket);
+  (socket.onclose as (event: { code: number; reason: string }) => void)({
+    code: BADGE_REFUSED_CLOSE,
+    reason: "Relay badge was refused (401 invalid_proof)",
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(h.sockets).toHaveLength(1);
+  expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+    status: "error",
+    error: "Relay badge was refused (401 invalid_proof)",
+  });
+  h.owner.dispose();
 });

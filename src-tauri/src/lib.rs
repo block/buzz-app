@@ -19,8 +19,10 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+mod nip_fi_assertion;
 mod notifications;
 mod os_idle;
+mod relay_socket;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
@@ -57,14 +59,18 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_auth::{
-    cancel_enterprise_auth_login, clear_enterprise_auth, get_enterprise_auth,
-    start_enterprise_auth_login, EnterpriseAuthHost,
+    cancel_enterprise_auth_login, clear_enterprise_auth, enterprise_auth_cleanup,
+    get_enterprise_auth, start_enterprise_auth_login, EnterpriseAuthHost,
 };
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
+use nip_fi_assertion::RelayAssertions;
 use notifications::{notification_show, Notifications};
+use relay_socket::{
+    relay_socket_close, relay_socket_connect, relay_socket_send, relay_socket_start, RelaySockets,
+};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -398,7 +404,12 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         get_enterprise_auth,
         start_enterprise_auth_login,
         cancel_enterprise_auth_login,
+        relay_socket_connect,
+        relay_socket_start,
+        relay_socket_send,
+        relay_socket_close,
         clear_enterprise_auth,
+        enterprise_auth_cleanup,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -494,6 +505,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
+            let enterprise = app.state::<EnterpriseAuthHost>();
+            match app.path().app_data_dir() {
+                Ok(root) => enterprise.keep_refusals_at(root.join("enterprise-refused-sessions")),
+                Err(_) => enterprise.refusals_unavailable(),
+            }
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -536,9 +552,12 @@ pub fn run() {
     } else {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
+    let enterprise_auth = EnterpriseAuthHost::default();
     builder
         .manage(IdentityHost::default())
-        .manage(EnterpriseAuthHost::default())
+        .manage(RelayAssertions::new(enterprise_auth.clone()))
+        .manage(enterprise_auth)
+        .manage(RelaySockets::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

@@ -131,8 +131,59 @@ preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Member changes, repository HTTP and other broker-only helpers are not claimed
-by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+by this adapter. For relays on the build's trusted enterprise list, the native
+host obtains a NIP-FI assertion from the enterprise adapter (session in
+`Authorization: Bearer`, a host-signed NIP-98 proof in `Nostr-Authorization`)
+and sends it as `Nostr-Federated-Identity` on protected relay HTTP, upload and
+media requests. The live socket for those relays is a native WebSocket
+(`relay_socket.rs`) that fetches a fresh assertion and sends the same header
+itself, so neither the assertion nor the session token reaches JavaScript.
+Frames are delivered only after JavaScript starts the socket, and every ended
+connection releases its native stream. Only 401
+`session_required`/`session_expired` clear the session and reopen sign-in, and
+only while the refused token is still the current session: a refusal of a
+session already removed or replaced is retried, and never cancels or undoes a
+newer login, including one still in the browser. Native refuses the token in
+one short step with the login state (so a session check running at the same
+moment cannot adopt it again) before it asks secure storage to remove it.
+Every use of the token is admitted under the same lock as the refusal: a badge
+request or session check about to send it (checked after identity access and
+signing), and a badge being reused, cached or returned. Once the refusal
+returns, there is no new admission or acceptance with that token: no request
+starts with it and no badge of that session is cached or returned. A request or
+badge admitted before the refusal may still finish, since admission comes
+before the request reaches the wire. The refusal is recorded in
+`enterprise-refused-sessions` in the app data directory, one file per refused
+token digest under the keychain service's directory, before removal starts. A
+record is taken out only once removal succeeds or a new login replaces that
+session, so a restart while removal waits or after it fails keeps the stored
+session refused, and other scopes and Buzz processes sharing the directory
+keep their records. If the app data directory cannot be resolved, or the
+records cannot be read at startup, stored sessions are not used until a new
+login in that scope, which means signing in again after every restart while
+the records stay unreadable. Two cases are not covered after a restart: Buzz quits after the refusal
+arrives but before its record reaches disk (removal has not started then),
+which on restart is the same as quitting before the refusal arrived; or
+writing the record and removing the session from secure storage both fail and
+Buzz then restarts. Either way the stored session reads as saved again and can
+be sent to the adapter, which refuses it again. A removal that fails, a
+refusal that cannot be recorded, or an outdated record that cannot be removed
+is shown in the sign-in prompt when it settles, without delaying the prompt.
+An outdated record stays outstanding, and is retried on the next login or
+removal in its scope, until it is removed. A retry already under way may also
+remove a record that a duplicate refusal of that same, already deleted or
+replaced token wrote again meanwhile. One left by a successful login is
+noted once in a toast, and the login stands. While a sign-out is still
+finishing, the prompt shows sign-in as waiting. When
+native reports sign-in required, the selected enterprise community shows
+sign-in without rechecking the refused session, rediscovering the relay or
+waiting for a sign-out already in progress, and a background community's
+prompt does not replace it. A login in progress is never canceled by it. 403 `authorization_denied` keeps the session and stops that relay with
+access denied. Every other refusal, and a malformed badge response, keeps the
+session, stops that relay and shows the error. Only 429, 503, network
+failures and a native connect that misses its 30 s bound (which covers secure
+storage, signing, the badge request and the handshake) use the bounded
+reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

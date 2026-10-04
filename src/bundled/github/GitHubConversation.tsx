@@ -511,15 +511,13 @@ function EventMessage({
   event: ConversationEvent;
   url: string;
 }) {
+  const commentUrl = new URL(url);
+  commentUrl.hash = `${event.kind === "review" ? "pullrequestreview" : "issuecomment"}-${event.message.id}`;
   return (
     <Message
       message={event.message}
       url={url}
-      commentUrl={
-        event.kind === "merge"
-          ? undefined
-          : `${url}#${event.kind === "review" ? "pullrequestreview" : "issuecomment"}-${event.message.id}`
-      }
+      commentUrl={event.kind === "merge" ? undefined : commentUrl.href}
       label={
         event.kind === "merge"
           ? "Merged"

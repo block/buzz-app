@@ -10,6 +10,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { GitHubPanel } from "./index";
 import styles from "./GitHub.module.css";
 
@@ -25,6 +27,7 @@ const branchLabelClass = styles.branchLabel;
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it.each([
@@ -362,6 +365,83 @@ it.each([403, 404, 429, 500])(
     ).not.toBeInTheDocument();
     expect(fetch.mock.calls[1]?.[0]).toBe(
       "https://api.github.com/repos/block/buzz-app/pulls/629",
+    );
+  },
+);
+
+it.each([
+  ["discussion", "", "Comment", "issuecomment-456"],
+  ["reviews", "", "Approved", "pullrequestreview-789"],
+  ["discussion", "#issuecomment-123", "Comment", "issuecomment-456"],
+  ["reviews", "#issuecomment-123", "Approved", "pullrequestreview-789"],
+  ["discussion", "#pullrequestreview-123", "Comment", "issuecomment-456"],
+  ["reviews", "#pullrequestreview-123", "Approved", "pullrequestreview-789"],
+])(
+  "copies the selected %s permalink with input fragment '%s' without changing the PR title URL",
+  async (_source, inputFragment, label, expectedFragment) => {
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    const base = "https://github.com/sample/project/pull/1";
+    const target = `${base}${inputFragment}`;
+    const fetch = vi.fn(async (destination: string) => {
+      let data: unknown;
+      if (destination.includes("/comments?")) {
+        data = [
+          {
+            id: 456,
+            created_at: "2026-10-01T13:00:00Z",
+            body: "Neutral comment",
+            user: { login: "reader" },
+          },
+        ];
+      } else if (destination.includes("/reviews?")) {
+        data = [
+          {
+            id: 789,
+            submitted_at: "2026-10-01T14:00:00Z",
+            state: "APPROVED",
+            body: "",
+            user: { login: "reviewer" },
+          },
+        ];
+      } else {
+        data = { title: "Neutral PR", state: "open", body: "Summary" };
+      }
+      return new Response(JSON.stringify(data));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <ToastProvider>
+        <GitHubPanel target={target} close={() => {}} />
+      </ToastProvider>,
+    );
+    const row = await screen.findByRole("group", { name: label });
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/some sources are incomplete/),
+      ).not.toBeInTheDocument(),
+    );
+    const title = screen.getByRole("link", { name: "Neutral PR #1" });
+    expect(title).toHaveAttribute("href", target);
+    fireEvent.contextMenu(
+      within(row).getByText(label === "Comment" ? "reader" : "reviewer"),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Copy link" }),
+    );
+    await screen.findByText("Comment link copied");
+    expect(write).toHaveBeenCalledExactlyOnceWith(
+      `${base}#${expectedFragment}`,
+    );
+    expect(title).toHaveAttribute("href", target);
+    expect(fetch.mock.calls.map(([destination]) => destination).sort()).toEqual(
+      [
+        "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
+        "https://api.github.com/repos/sample/project/pulls/1",
+        "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
+      ],
     );
   },
 );

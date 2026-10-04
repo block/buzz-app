@@ -32,6 +32,9 @@ export type ClientSnapshot = Saved & {
   viewer?: string;
   error?: string;
   enterprise?: EnterpriseLoginSnapshot | undefined;
+  /** A login succeeded, but an outdated sign-in record couldn't be removed;
+   * shown once, then dismissed. */
+  enterpriseNotice?: "unpruned" | undefined;
 };
 export type EnterpriseLoginSnapshot = {
   communityId: string;
@@ -259,6 +262,22 @@ export function createCommunities(
           },
           false,
         );
+      })
+      .catch((error) => {
+        console.warn("Couldn't read enterprise sign-in cleanup", error);
+      });
+  };
+  // Pruning the replaced session's record can fail during a successful
+  // login; that login stands, and the failure is noted once.
+  const showEnterpriseNotice = () => {
+    if (!enterpriseAuth) return;
+    const mark = enterpriseLoginMark();
+    enterpriseAuth
+      .cleanup()
+      .then((cleanup) => {
+        if (disposed || enterpriseAttempt || mark !== enterpriseLoginMark())
+          return;
+        if (cleanup?.unpruned) update({ enterpriseNotice: "unpruned" }, false);
       })
       .catch((error) => {
         console.warn("Couldn't read enterprise sign-in cleanup", error);
@@ -613,6 +632,7 @@ export function createCommunities(
         session.disconnect();
         session.retry();
       }
+      showEnterpriseNotice();
     } catch (reason) {
       if (disposed || enterpriseAttempt?.attemptId !== attempt.attemptId)
         return;
@@ -752,6 +772,10 @@ export function createCommunities(
     startEnterpriseLogin,
     cancelEnterpriseLogin,
     dismissEnterpriseLogin,
+    dismissEnterpriseNotice() {
+      if (state.enterpriseNotice)
+        update({ enterpriseNotice: undefined }, false);
+    },
     retryEnterpriseGate,
     clearEnterpriseAuth,
     select(id: string | null) {

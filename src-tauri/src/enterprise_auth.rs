@@ -586,10 +586,7 @@ impl EnterpriseAuthHost {
     /// create a request but not await it.
     pub(crate) fn admit<T>(&self, token: &str, admitted: impl FnOnce() -> T) -> Option<T> {
         let refusals = self.refusals();
-        let admissible = !refusals.tokens.contains(&token_digest(token));
-        #[cfg(test)]
-        seams::reach(seams::Point::Admitted, token);
-        admissible.then(admitted)
+        (!refusals.tokens.contains(&token_digest(token))).then(admitted)
     }
 
     /// Forgets `saved` after the adapter said it is gone, but only while it
@@ -680,7 +677,10 @@ impl EnterpriseAuthHost {
 
     /// Removes the record of `digest`, no longer needed, in `service`, and
     /// retries that service's records that earlier failed to be removed. A
-    /// record stays outstanding until its own removal succeeds.
+    /// record stays outstanding until its own removal succeeds. A retry
+    /// already under way can still remove a record that a duplicate refusal
+    /// of the same token wrote again meanwhile; that token was already
+    /// deleted or replaced, so the record it loses is redundant.
     fn prune(&self, service: &'static str, digest: Option<[u8; 32]>) {
         let (records, outstanding) = {
             let mut refusals = self.refusals();
@@ -1690,8 +1690,12 @@ pub(crate) mod seams {
     pub(crate) enum Point {
         /// A session check holds its token and is about to ask admission.
         SessionAdmission,
-        /// Admission has checked the refusals and is about to run the use.
-        Admitted,
+        /// A badge request is about to access identity and sign.
+        Preparing,
+        /// An admitted reuse is about to read the badge cache.
+        CacheRead,
+        /// An admitted badge is about to be cached.
+        CacheInsert,
     }
 
     type Hook = Box<dyn FnOnce() + Send>;

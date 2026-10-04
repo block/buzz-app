@@ -138,6 +138,11 @@ impl RelayAssertions {
             // Reusing a cached badge is a use of the session, admitted with
             // the cache read as one step (see `EnterpriseAuthHost::admit`).
             let reused = self.enterprise.admit(saved.token(), || {
+                #[cfg(test)]
+                crate::enterprise_auth::seams::reach(
+                    crate::enterprise_auth::seams::Point::CacheRead,
+                    saved.token(),
+                );
                 self.lock()
                     .get(&relay)
                     .filter(|cached| {
@@ -184,10 +189,15 @@ impl RelayAssertions {
             }
             Err(error) => return Err(error),
         };
-        // Accepting the badge is admitted with its caching as one step, so a
-        // badge of a refused session is never cached or returned.
+        // Accepting the badge is admitted with its caching as one step, so no
+        // badge is newly accepted or cached once its refusal returns.
         self.enterprise
             .admit(saved.token(), || {
+                #[cfg(test)]
+                crate::enterprise_auth::seams::reach(
+                    crate::enterprise_auth::seams::Point::CacheInsert,
+                    saved.token(),
+                );
                 self.lock().insert(
                     relay,
                     Cached {
@@ -309,6 +319,8 @@ async fn issue(
     relay: &str,
     now: u64,
 ) -> Result<Assertion> {
+    #[cfg(test)]
+    crate::enterprise_auth::seams::reach(crate::enterprise_auth::seams::Point::Preparing, session);
     // The signer, not local key storage, decides whose badge is requested.
     let pubkey = identity.viewer().await?;
     let body = serde_json::to_vec(&IssueRequest {

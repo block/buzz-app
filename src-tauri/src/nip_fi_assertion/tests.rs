@@ -456,16 +456,23 @@ async fn issuing_adapter(pubkey: String, hold: bool) -> IssuingAdapter {
 /// signing wait is honored once they finish. Not a regression test for
 /// admission being one step with the refusal.
 async fn a_session_refused_while_signing_is_held_is_not_sent() {
+    const TOKEN: &str = "held-signing-session";
     let identity = IdentityHost::fixture();
     let viewer = identity.viewer().await.unwrap();
     let adapter = issuing_adapter(viewer.clone(), false).await;
-    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, "old");
+    let enterprise = EnterpriseAuthHost::with_saved(&adapter.base, &viewer, TOKEN);
     let assertions = RelayAssertions::new(enterprise.clone());
     let preparing = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
     let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
     // The request has read the session and waits on identity access and
     // signing when another request's refusal lands.
     let held = identity.hold();
+    let (reached, preparing_reached) = tokio::sync::oneshot::channel();
+    crate::enterprise_auth::seams::at(crate::enterprise_auth::seams::Point::Preparing, TOKEN, {
+        move || {
+            let _ = reached.send(());
+        }
+    });
     let request = {
         let (assertions, identity) = (assertions.clone(), identity.clone());
         tokio::spawn(async move {
@@ -480,7 +487,7 @@ async fn a_session_refused_while_signing_is_held_is_not_sent() {
                 .await
         })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    preparing_reached.await.unwrap();
     assert!(!request.is_finished());
     assert_eq!(
         enterprise.reject(refused).await.unwrap(),
@@ -583,24 +590,27 @@ async fn attaching_a_badge_to_relay_http_skips_a_refused_session() {
     assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-/// Arranges for a refusal of `token` to land the moment a use of it has
-/// passed its admission check and is about to run; whether it landed. It
-/// cannot land while admission holds the refusals.
-fn refuse_once_admitted(
+/// Arranges for a refusal of `token` to land the moment a use of it reaches
+/// `point`, its cache read or insert; whether the hook was reached, and
+/// whether the refusal landed. It cannot land while admission holds the
+/// refusals, which it must around the cache operation itself.
+fn refuse_at(
+    point: crate::enterprise_auth::seams::Point,
     enterprise: &EnterpriseAuthHost,
     token: &'static str,
-) -> Arc<std::sync::atomic::AtomicBool> {
-    let landed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    crate::enterprise_auth::seams::at(crate::enterprise_auth::seams::Point::Admitted, token, {
-        let (enterprise, landed) = (enterprise.clone(), landed.clone());
+) -> Arc<[std::sync::atomic::AtomicBool; 2]> {
+    let flags = Arc::new([false, false].map(std::sync::atomic::AtomicBool::new));
+    crate::enterprise_auth::seams::at(point, token, {
+        let (enterprise, flags) = (enterprise.clone(), flags.clone());
         move || {
-            landed.store(
+            flags[0].store(true, std::sync::atomic::Ordering::SeqCst);
+            flags[1].store(
                 enterprise.refuse_unless_admitting(token),
                 std::sync::atomic::Ordering::SeqCst,
             )
         }
     });
-    landed
+    flags
 }
 
 #[tokio::test]
@@ -626,9 +636,16 @@ async fn a_cached_badge_is_not_returned_once_its_refusal_returns() {
     let refused = enterprise.saved_at(&adapter.base, &viewer).await.unwrap();
     let late = enterprise.saved_at(&adapter.base, &viewer).await;
     // The refusal tries to land between the reuse's check and its cache read.
-    let landed = refuse_once_admitted(&enterprise, TOKEN);
+    let flags = refuse_at(
+        crate::enterprise_auth::seams::Point::CacheRead,
+        &enterprise,
+        TOKEN,
+    );
     let answer = badge(reusing).await;
-    let landed = landed.load(std::sync::atomic::Ordering::SeqCst);
+    let [reached, landed] = flags
+        .each_ref()
+        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(reached);
     assert!(!(landed && matches!(answer, Ok(Some(_)))));
     assert!(!landed);
     // Admitted before the refusal, the reuse finished; after it returns,
@@ -668,10 +685,17 @@ async fn a_badge_is_not_cached_or_returned_once_its_refusal_returns() {
     // Past its request's admission, the refusal tries to land between the
     // badge's check and its caching.
     adapter.started.notified().await;
-    let landed = refuse_once_admitted(&enterprise, TOKEN);
+    let flags = refuse_at(
+        crate::enterprise_auth::seams::Point::CacheInsert,
+        &enterprise,
+        TOKEN,
+    );
     adapter.release.notify_one();
     let answer = request.await.unwrap();
-    let landed = landed.load(std::sync::atomic::Ordering::SeqCst);
+    let [reached, landed] = flags
+        .each_ref()
+        .map(|f| f.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(reached);
     let cached = assertions.lock().get(RELAY).is_some();
     assert!(!(landed && (cached || matches!(answer, Ok(Some(_))))));
     assert!(!landed);

@@ -773,7 +773,8 @@ export function createCommunities(
     cancelEnterpriseLogin,
     dismissEnterpriseLogin,
     dismissEnterpriseNotice() {
-      if (state.enterpriseNotice) update({ enterpriseNotice: undefined }, false);
+      if (state.enterpriseNotice)
+        update({ enterpriseNotice: undefined }, false);
     },
     retryEnterpriseGate,
     clearEnterpriseAuth,

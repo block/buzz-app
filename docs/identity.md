@@ -170,7 +170,9 @@ be sent to the adapter, which refuses it again. A removal that fails, a
 refusal that cannot be recorded, or an outdated record that cannot be removed
 is shown in the sign-in prompt when it settles, without delaying the prompt.
 An outdated record stays outstanding, and is retried on the next login or
-removal in its scope, until it is removed; one left by a successful login is
+removal in its scope, until it is removed. A retry already under way may also
+remove a record that a duplicate refusal of that same, already deleted or
+replaced token wrote again meanwhile. One left by a successful login is
 noted once in a toast, and the login stands. While a sign-out is still
 finishing, the prompt shows sign-in as waiting. When
 native reports sign-in required, the selected enterprise community shows

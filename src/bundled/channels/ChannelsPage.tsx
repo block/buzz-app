@@ -1021,6 +1021,10 @@ function ChannelWorkspace({
       setThread,
     ],
   );
+  const openThreadLink = useCallback(
+    (url: string) => openLink(url, true),
+    [openLink],
+  );
   const panelActive = (entry: Opening) => {
     const connection = relay.snapshot();
     return !!(
@@ -1775,7 +1779,7 @@ function ChannelWorkspace({
                                     afterClose("thread");
                                     closeThread();
                                   }}
-                                  onOpenLink={(url) => openLink(url, true)}
+                                  onOpenLink={openThreadLink}
                                   onOpenMediaReview={openMediaReview}
                                   canOpenLink={canOpenLink}
                                 />

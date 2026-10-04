@@ -96,7 +96,6 @@ function setup(
             attachment={attachment}
             url={attachment.url}
             source={attachment.url}
-            onOpenLink={() => false}
             onOpenReview={() => {
               opener.current = document.activeElement as HTMLElement;
               setOpen(true);

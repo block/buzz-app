@@ -1265,6 +1265,10 @@ Inline video previews and their posters also fill their bounded frames with `cov
 Image and video thumbnails share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas; thumbnail cropping does not change the original.
+An ordinary click always opens the original in-app from the same authenticated
+media source as the thumbnail: the media review where a surface hosts one, and
+otherwise a plain fullscreen viewer (Inbox, Sessions, drafts and previews). It
+never hands the raw attachment URL to the browser, which has no credentials.
 
 For non-thumbnail attachment surfaces, the following reserved-layout contract applies.
 Image attachments reserve their preview geometry before loading and across virtualized

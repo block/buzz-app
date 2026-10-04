@@ -9,6 +9,8 @@ import {
   fireEvent,
   render as renderDom,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
 import { profileTarget } from "../profiles/target";
@@ -968,6 +970,53 @@ it.each([
     cleanup();
   },
 );
+
+// The desktop opener's injected listener launches the system browser for any
+// unprevented `_blank` HTTP(S) anchor click, where the raw attachment URL has no
+// credentials. Without a review host the photo must still open in-app, from the
+// same media source that loaded the thumbnail.
+it("opens a photo in-app from its media source when no review host is present", async () => {
+  const external: string[] = [];
+  const opener = (event: MouseEvent) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    const anchor = event
+      .composedPath()
+      .find(
+        (node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement,
+      );
+    if (anchor?.target === "_blank" && /^https?:$/.test(anchor.protocol))
+      external.push(anchor.href);
+  };
+  window.addEventListener("click", opener);
+  const view = renderMessage({
+    row: {
+      ...row,
+      attachments: [{ kind: "image", url: "https://relay.test/media/a.png" }],
+    },
+    media: (url) => `http://buzz-media.localhost/${encodeURIComponent(url)}`,
+  });
+  try {
+    const thumbnail = screen.getByRole("link", {
+      name: "Open image attachment",
+    });
+    fireEvent.click(thumbnail, { detail: 1 });
+    const dialog = screen.getByRole("dialog", { name: "Image attachment" });
+    expect(dialog.querySelector("img")).toHaveAttribute(
+      "src",
+      "http://buzz-media.localhost/https%3A%2F%2Frelay.test%2Fmedia%2Fa.png",
+    );
+    expect(external).toEqual([]);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close fullscreen viewer" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // The modal boundary hands focus back on the next frame.
+    await waitFor(() => expect(thumbnail).toHaveFocus());
+  } finally {
+    window.removeEventListener("click", opener);
+    view.unmount();
+  }
+});
 
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",

@@ -577,7 +577,6 @@ export const MessageRow = memo(function MessageRow({
                         ? `Open image ${index + 1} of ${group.length}`
                         : "Open image attachment"
                     }
-                    onOpenLink={onOpenLink}
                     {...(onOpenMediaReview
                       ? {
                           onOpenReview: (item, seconds) =>

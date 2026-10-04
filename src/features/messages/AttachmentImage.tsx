@@ -1,6 +1,9 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
+import { MediaViewer } from "./MediaAttachment";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { validatedBlurhash } from "../relay/blurhash";
 import { BLURHASH_SIZE, paintBlurhash } from "./blurhash";
@@ -11,7 +14,6 @@ export function AttachmentImage({
   url,
   source,
   cached = false,
-  onOpenLink,
   onOpenReview,
   thumbnail = false,
   label = "Open image attachment",
@@ -22,10 +24,12 @@ export function AttachmentImage({
   url: string;
   source: string | undefined;
   cached?: boolean;
-  onOpenLink(url: string): boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
 }) {
+  const active = useConversationPresentation();
   const corners = useMediaCorners();
+  const [viewerOpen, setViewerOpen] = useState(false);
+  if (!active && viewerOpen) setViewerOpen(false);
   const style =
     !thumbnail && attachment.dimensions
       ? {
@@ -57,42 +61,56 @@ export function AttachmentImage({
       </span>
     );
   return (
-    <a
-      ref={corners}
-      className={styles.attachmentImage}
-      data-thumbnail={thumbnail || undefined}
-      style={style}
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      aria-label={label}
-      data-media-preview=""
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-        if (onOpenReview) {
+    <>
+      <a
+        ref={corners}
+        className={styles.attachmentImage}
+        data-thumbnail={thumbnail || undefined}
+        style={style}
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        data-media-preview=""
+        onClick={(event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+          // An unprevented `_blank` click reaches the desktop opener, which
+          // launches the browser on the raw URL without the app's credentials.
           event.preventDefault();
           prepareReviewEntrance(event);
-          onOpenReview(attachment, 0);
-        } else if (onOpenLink(url)) event.preventDefault();
-      }}
-    >
-      {/* Retargeting retires both the DOM pixels and all pending callbacks before
-          the new source can paint. Session switches also remount the workspace. */}
-      <span className={styles.attachmentImagePixels}>
-        <ImagePixels
-          key={JSON.stringify([source, attachment.blurhash])}
-          source={source}
-          blurhash={attachment.blurhash}
-        />
-      </span>
-      <svg
-        className={styles.imageOutline}
-        data-image-outline=""
-        aria-hidden="true"
+          if (onOpenReview) onOpenReview(attachment, 0);
+          else setViewerOpen(true);
+        }}
       >
-        <path />
-      </svg>
-    </a>
+        {/* Retargeting retires both the DOM pixels and all pending callbacks before
+            the new source can paint. Session switches also remount the workspace. */}
+        <span className={styles.attachmentImagePixels}>
+          <ImagePixels
+            key={JSON.stringify([source, attachment.blurhash])}
+            source={source}
+            blurhash={attachment.blurhash}
+          />
+        </span>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
+        >
+          <path />
+        </svg>
+      </a>
+      {active &&
+        viewerOpen &&
+        createPortal(
+          <MediaViewer
+            title="Image attachment"
+            close={() => setViewerOpen(false)}
+          >
+            <img className={styles.mediaViewerImage} src={source} alt="" />
+          </MediaViewer>,
+          document.body,
+        )}
+    </>
   );
 }
 

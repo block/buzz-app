@@ -536,6 +536,8 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     exact: true,
     includeHidden: true,
   });
+  // The popup owns modal semantics; the active step owns the visible card.
+  const surface = dialog.locator(".buzz-dialog-step:not([inert])");
   const body = dialog.locator(".buzz-dialog-body");
   const group = dialog.getByRole("region", { name: "Members", exact: true });
   const list = dialog.getByRole("region", { name: "Member list", exact: true });
@@ -548,8 +550,8 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     }, mode);
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 320 });
-      await expect(dialog).toBeInViewport({ ratio: 1 });
-      await expect(dialog).toHaveCSS(
+      await expect(surface).toBeInViewport({ ratio: 1 });
+      await expect(surface).toHaveCSS(
         "background-color",
         mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
       );
@@ -557,15 +559,15 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await expect(body).toHaveCSS("border-top-width", "0px");
       await expect(body).toHaveCSS("overflow-y", "hidden");
       await expect(body).toHaveCSS("padding-bottom", "0px");
-      const dialogBounds = await dialog.boundingBox();
+      const surfaceBounds = await surface.boundingBox();
       const frameBounds = await list.boundingBox();
       // A footerless flex body must not double the outer bottom gutter.
       expect(
-        dialogBounds.y +
-          dialogBounds.height -
+        surfaceBounds.y +
+          surfaceBounds.height -
           frameBounds.y -
           frameBounds.height,
-      ).toBeCloseTo(frameBounds.x - dialogBounds.x, 0);
+      ).toBeCloseTo(frameBounds.x - surfaceBounds.x, 0);
       await expect(list).toHaveCSS("overflow-y", "auto");
       await expect(list).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       // The viewport owns the border, not a scrolling child: the native

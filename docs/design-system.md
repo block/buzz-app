@@ -236,9 +236,10 @@ Anchored emoji, mention, completion, account and diagnostics surfaces use
 `popover-surface` for their border, fill, elevation and layer. Their placement,
 scrolling and specialized keyboard/editor interactions remain feature-owned.
 Completion highlights use `affordance-popover-selected` so they remain visible on the
-raised dark surface. The shared popover recipe maps selection to this same role. Compact
-completion/emoji layouts may select shared radius
-tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+raised dark surface. The shared popover recipe maps selection to this same role.
+Completion and picker containers use the 16px container role. Nested fills follow
+the shared [corner scale and nesting rule](../src/shared/design-system/DESIGN.md#corner-scale-and-nesting),
+including the actual padding and border inset. Shared Button/IconButton `title` props render
 a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
 
 Explicit exceptions: GIF and image tiles use native media buttons, image zoom

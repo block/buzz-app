@@ -48,6 +48,7 @@ export function AgentDeleteDialog({
       <Dialog.Portal>
         <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
+          aria-modal="true"
           data-buzz-ui=""
           className="buzz-dialog agent-dialog text-body"
         >

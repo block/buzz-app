@@ -80,6 +80,7 @@ export function ReplyBranch({
           <Button
             variant="link"
             size="sm"
+            data-thread-summary=""
             aria-label={label}
             aria-expanded={false}
             aria-controls={panelId}

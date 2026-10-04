@@ -190,6 +190,114 @@ test("GitHub API errors offer prominent external opening before retry", async ({
   ).toHaveCount(0);
 });
 
+// Browser-only: actual _blank handoff through the portaled menu, plugin precedence,
+// keyboard focus return and rendered menu geometry; clipboard failure matrices stay in Vitest.
+test("message link context menus bypass the pane and return keyboard focus", async ({
+  page,
+  context,
+  app,
+}, testInfo) => {
+  const target = `${github}?view=all#discussion_r1`;
+  for (const destination of [github, ordinary]) {
+    await context.route(`${destination}**`, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>External destination</title>",
+      }),
+    );
+  }
+  await page.route("https://api.github.com/repos/block/buzz/pulls/1", (route) =>
+    route.fulfill({ json: { title: "A useful change", state: "open" } }),
+  );
+  await page.addInitScript(() => {
+    window.copiedLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (value) => window.copiedLinks.push(value) },
+    });
+  });
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append("primary", "alpha", `[Review this PR](${target}) ${ordinary}`);
+  await expect(link(page, target)).toBeAttached();
+  await end(page);
+  const anchor = page.getByRole("link", {
+    name: "Review this PR",
+    exact: true,
+  });
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await page.screenshot({
+    path: testInfo.outputPath("link-before-menu-dark.png"),
+  });
+  await anchor.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  const external = menu.getByRole("menuitem", {
+    name: "Open in browser",
+    exact: true,
+  });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in browser",
+    "Copy link",
+  ]);
+  await expect(external).toHaveAttribute("href", target);
+  await expect(panel).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await menu.screenshot({
+      path: testInfo.outputPath(`link-menu-${mode}.png`),
+    });
+    await page.screenshot({
+      path: testInfo.outputPath(`link-menu-context-${mode}.png`),
+    });
+  }
+  expect(await popup(page, external)).toBe(target);
+  await expect(menu).toHaveCount(0);
+  await expect(panel).toHaveCount(0);
+
+  await anchor.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(external).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Link copied", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.copiedLinks))
+    .toEqual([target]);
+  await expect(anchor).toBeFocused();
+  await expect(panel).toHaveCount(0);
+
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(anchor).toBeFocused();
+  await expect(menu).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(
+    panel.getByRole("heading", { name: "A useful change #1" }),
+  ).toBeVisible();
+  expect(context.pages()).toHaveLength(1);
+
+  await link(page, ordinary).filter({ visible: true }).focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(external).toBeFocused();
+  expect(await popup(page, external)).toBe(ordinary);
+  await expect(menu).toHaveCount(0);
+  await expect(panel).toBeVisible();
+});
+
 test("GitHub object identities use their intended artwork at one size", async ({
   page,
   app,

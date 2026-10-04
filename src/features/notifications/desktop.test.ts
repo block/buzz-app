@@ -120,7 +120,7 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(sdk.show).toHaveBeenCalledTimes(2);
 });
 
-it("desktop settings expose app-owned sound with the reference desktop copy", async () => {
+it("desktop settings expose app-owned sounds and collapse them when alerts are disabled", async () => {
   const { service } = setup();
   await flush();
   const html = renderToStaticMarkup(
@@ -128,35 +128,31 @@ it("desktop settings expose app-owned sound with the reference desktop copy", as
   );
   expect(html).toContain("Desktop alerts");
   expect(html).toContain("Mentions");
-  expect(html).toContain("Fine-tune what gets through below.");
-  expect(html).toContain(
-    "Native desktop alerts are enabled for the categories you have armed below.",
-  );
   // Sound is app-owned on desktop: the switch and per-event sound rows render.
-  expect(html).toContain("Alert with a sound for the events below.");
+  expect(html).toContain('aria-label="Sound"');
+  expect(html).toContain("Choose a sound to preview it.");
   expect(html).toContain("Direct messages");
   expect(html).toContain("@Mentions");
   expect(html).toContain("Thread replies");
-  expect(html).toContain("Preview flutter");
+  expect(html.match(/role="combobox"/g)).toHaveLength(3);
+  expect(html).not.toContain("Preview flutter");
   expect(html).not.toContain("Permission granted");
   expect(html).not.toContain("Check permission");
   expect(html).not.toContain("Allow notifications");
-  // Disabling desktop alerts swaps in the reference's disabled description.
+  // Keep the parent control visible while hiding dependent delivery settings.
   service.updatePreferences({ enabled: false });
   const disabled = renderToStaticMarkup(
     createElement(NotificationSettings, {
       notifications: service,
-      // Keep this a pure copy render: `active` gates only preview and toasts,
+      // Keep this a static render: `active` gates only preview and toasts,
       // and this harness has no Toast.Provider.
       active: false,
     }),
   );
-  expect(disabled).toContain(
-    "Request OS permission and surface new mentions or needs-action items outside the app.",
-  );
-  expect(disabled).not.toContain(
-    "Native desktop alerts are enabled for the categories you have armed below.",
-  );
+  expect(disabled).toContain('aria-label="Desktop alerts"');
+  expect(disabled).not.toContain('aria-label="Sound"');
+  expect(disabled).not.toContain('role="combobox"');
+  expect(disabled).not.toContain("Notify while viewing");
 });
 
 it("non-Tauri runs select the unchanged browser adapter, never the native SDK", async () => {

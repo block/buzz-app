@@ -1903,7 +1903,7 @@ it("keeps failed template reads retryable in the header and opens the existing d
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(copy);
-    await screen.findByRole("dialog", { name: "Channel template" });
+    await screen.findByRole("dialog", { name: "New template" });
     expect(read).toHaveBeenCalledTimes(2);
     await waitFor(() =>
       expect(screen.queryByRole("menu")).not.toBeInTheDocument(),

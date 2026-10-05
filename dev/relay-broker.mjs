@@ -1068,164 +1068,63 @@ export function relayBrokerPlugin({
               sidebarUploads--;
             }
           }
-          if (route === "/api/relay/sidebar-sort" && req.method === "POST") {
-            let raw = "";
+          if (
+            [
+              "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-star",
+              "/api/relay/sidebar-sort",
+              "/api/relay/sidebar-mute",
+            ].includes(route) &&
+            req.method === "POST"
+          ) {
+            const [coordinate, assertIntent, mutate] = {
+              "/api/relay/sidebar-assignment": [
+                "channel-sections",
+                assertSidebarAssignmentIntent,
+                mutateSidebarAssignment,
+              ],
+              "/api/relay/sidebar-star": [
+                "channel-stars",
+                assertSidebarStarIntent,
+                mutateSidebarStar,
+              ],
+              "/api/relay/sidebar-sort": [
+                "channel-sort",
+                assertSidebarSortIntent,
+                mutateSidebarSort,
+              ],
+              "/api/relay/sidebar-mute": [
+                "channel-mutes",
+                assertSidebarMuteIntent,
+                mutateSidebarMute,
+              ],
+            }[route];
+            const sorting = coordinate === "channel-sort";
+            const muting = coordinate === "channel-mutes";
+            const chunks = [];
+            let bytes = 0;
             for await (const part of req) {
-              raw += part;
-              if (Buffer.byteLength(raw) > 32 * 1024)
+              bytes += part.length;
+              if (bytes > (sorting ? 32 * 1024 : 2048))
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
+              chunks.push(part);
             }
             let intent;
             try {
-              intent = JSON.parse(raw);
-              assertSidebarSortIntent(intent);
+              intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              assertIntent(intent);
             } catch {
               return json(res, 400, {
                 error: `Invalid sidebar preference intent`,
               });
             }
-            const request = new AbortController();
-            const close = () => request.abort();
-            res.once("close", close);
-            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
-            const mutation = previous
-              .catch(() => {})
-              .then(async () => {
-                request.signal.throwIfAborted();
-                const filter = [
-                  {
-                    kinds: [30078],
-                    authors: [viewer],
-                    "#d": ["channel-sort"],
-                    limit: 1,
-                    consistency: "strong",
-                  },
-                ];
-                const lane = admissions(relay, viewer).api;
-                const requestSignal = AbortSignal.any([
-                  request.signal,
-                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-                ]);
-                const dispatch = (path, body) =>
-                  admittedApiRequest(
-                    lane,
-                    () => {
-                      requestSignal.throwIfAborted();
-                      const value = JSON.stringify(body);
-                      const auth = finalizeEvent(
-                        {
-                          kind: 27235,
-                          created_at: Math.floor(Date.now() / 1000),
-                          content: "",
-                          tags: [
-                            ["u", `${relay}${path}`],
-                            ["method", "POST"],
-                            [
-                              "payload",
-                              createHash("sha256").update(value).digest("hex"),
-                            ],
-                            ["nonce", randomBytes(16).toString("hex")],
-                          ],
-                        },
-                        key,
-                      );
-                      return fetchUpstream(`${relay}${path}`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization:
-                            "Nostr " +
-                            Buffer.from(JSON.stringify(auth)).toString(
-                              "base64",
-                            ),
-                        },
-                        body: value,
-                        redirect: "error",
-                        signal: requestSignal,
-                      });
-                    },
-                    requestSignal,
-                  );
-                const readHead = async () => {
-                  const response = await dispatch("/query", filter);
-                  if (!response.ok)
-                    throw new Error(
-                      `Sidebar preference query failed (${response.status})`,
-                    );
-                  return readSidebarHead(response);
-                };
-                const publishEvent = async (event) => {
-                  const response = await dispatch("/events", event);
-                  if (!response.ok)
-                    throw new Error(
-                      `Sidebar preference publish failed (${response.status})`,
-                    );
-                  const receipt = await readSidebarHead(
-                    response,
-                    "publication",
-                  );
-                  if (
-                    receipt.event_id !== event.id ||
-                    receipt.accepted !== true
-                  )
-                    throw new Error(
-                      "Sidebar preference publication was not accepted",
-                    );
-                };
-                return {
-                  groups: await mutateSidebarSort(
-                    intent,
-                    key,
-                    readHead,
-                    publishEvent,
-                  ),
-                };
-              });
-            sidebarMutations.set(relay, mutation);
-            try {
-              return json(res, 200, await mutation);
-            } catch (error) {
-              if (error instanceof ApiPaused)
-                return json(res, 429, {
-                  error: error.message,
-                  sent: false,
-                  paused: true,
-                  retryAfterMs: error.retryAfterMs,
-                });
-              return json(res, 502, {
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : `Sidebar preference failed`,
-              });
-            } finally {
-              res.off("close", close);
-              if (sidebarMutations.get(relay) === mutation)
-                sidebarMutations.delete(relay);
-            }
-          }
-          if (route === "/api/relay/sidebar-mute" && req.method === "POST") {
-            let raw = "";
-            for await (const part of req) {
-              raw += part;
-              if (Buffer.byteLength(raw) > 2048)
-                return json(res, 413, {
-                  error: `Sidebar preference intent is too large`,
-                });
-            }
-            let intent;
-            try {
-              intent = JSON.parse(raw);
-              assertSidebarMuteIntent(intent);
-            } catch {
-              return json(res, 400, {
-                error: `Invalid sidebar preference intent`,
-              });
-            }
-            const stream = streams.get(req.headers["x-buzz-live-id"]);
-            if (!stream || stream.relay !== relay)
+            // Mute belongs to this requesting live session; never fall back to HTTP.
+            const stream = muting
+              ? streams.get(req.headers["x-buzz-live-id"])
+              : undefined;
+            if (muting && (!stream || stream.relay !== relay))
               return json(res, 503, {
                 error: "Publication socket unavailable",
                 sent: false,
@@ -1242,132 +1141,7 @@ export function relayBrokerPlugin({
                   {
                     kinds: [30078],
                     authors: [viewer],
-                    "#d": ["channel-mutes"],
-                    limit: 1,
-                    consistency: "strong",
-                  },
-                ];
-                const lane = admissions(relay, viewer).api;
-                const requestSignal = AbortSignal.any([
-                  request.signal,
-                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-                ]);
-                const dispatch = (path, body) =>
-                  admittedApiRequest(
-                    lane,
-                    () => {
-                      requestSignal.throwIfAborted();
-                      const value = JSON.stringify(body);
-                      const auth = finalizeEvent(
-                        {
-                          kind: 27235,
-                          created_at: Math.floor(Date.now() / 1000),
-                          content: "",
-                          tags: [
-                            ["u", `${relay}${path}`],
-                            ["method", "POST"],
-                            [
-                              "payload",
-                              createHash("sha256").update(value).digest("hex"),
-                            ],
-                            ["nonce", randomBytes(16).toString("hex")],
-                          ],
-                        },
-                        key,
-                      );
-                      return fetchUpstream(`${relay}${path}`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization:
-                            "Nostr " +
-                            Buffer.from(JSON.stringify(auth)).toString(
-                              "base64",
-                            ),
-                        },
-                        body: value,
-                        redirect: "error",
-                        signal: requestSignal,
-                      });
-                    },
-                    requestSignal,
-                  );
-                const readHead = async () => {
-                  const response = await dispatch("/query", filter);
-                  if (!response.ok)
-                    throw new Error(
-                      `Sidebar preference query failed (${response.status})`,
-                    );
-                  return readSidebarHead(response);
-                };
-                const publishEvent = (event) =>
-                  stream.traffic.publish(event, requestSignal);
-                return mutateSidebarMute(intent, key, readHead, publishEvent);
-              });
-            sidebarMutations.set(relay, mutation);
-            try {
-              return json(res, 200, await mutation);
-            } catch (error) {
-              if (error instanceof ApiPaused)
-                return json(res, 429, {
-                  error: error.message,
-                  sent: false,
-                  paused: true,
-                  retryAfterMs: error.retryAfterMs,
-                });
-              return json(res, 502, {
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : `Sidebar preference failed`,
-              });
-            } finally {
-              res.off("close", close);
-              if (sidebarMutations.get(relay) === mutation)
-                sidebarMutations.delete(relay);
-            }
-          }
-          if (
-            [
-              "/api/relay/sidebar-assignment",
-              "/api/relay/sidebar-star",
-            ].includes(route) &&
-            req.method === "POST"
-          ) {
-            const starring = route === "/api/relay/sidebar-star";
-            const chunks = [];
-            let bytes = 0;
-            for await (const part of req) {
-              bytes += part.length;
-              if (bytes > 2048)
-                return json(res, 413, {
-                  error: `Sidebar preference intent is too large`,
-                });
-              chunks.push(part);
-            }
-            let intent;
-            try {
-              intent = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-              if (starring) assertSidebarStarIntent(intent);
-              else assertSidebarAssignmentIntent(intent);
-            } catch {
-              return json(res, 400, {
-                error: `Invalid sidebar preference intent`,
-              });
-            }
-            const request = new AbortController();
-            const close = () => request.abort();
-            res.once("close", close);
-            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
-            const mutation = previous
-              .catch(() => {})
-              .then(async () => {
-                request.signal.throwIfAborted();
-                const filter = [
-                  {
-                    kinds: [30078],
-                    authors: [viewer],
-                    "#d": [starring ? "channel-stars" : "channel-sections"],
+                    "#d": [coordinate],
                     limit: 1,
                     consistency: "strong",
                   },
@@ -1426,6 +1200,8 @@ export function relayBrokerPlugin({
                   return readSidebarHead(response);
                 };
                 const publishEvent = async (event) => {
+                  if (muting)
+                    return stream.traffic.publish(event, requestSignal);
                   const response = await dispatch("/events", event);
                   if (!response.ok)
                     throw new Error(
@@ -1443,12 +1219,13 @@ export function relayBrokerPlugin({
                       "Sidebar preference publication was not accepted",
                     );
                 };
-                return (starring ? mutateSidebarStar : mutateSidebarAssignment)(
+                const result = await mutate(
                   intent,
                   key,
                   readHead,
                   publishEvent,
                 );
+                return sorting ? { groups: result } : result;
               });
             sidebarMutations.set(relay, mutation);
             try {

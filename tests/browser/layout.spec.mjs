@@ -9,7 +9,14 @@ import {
 import { test, expect } from "./fixture.mjs";
 
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+import {
+  wheel,
+  anchor,
+  settle,
+  upper,
+  expectAnchor,
+  keyScroll,
+} from "./timeline.mjs";
 
 // These layout/navigation journeys exercise the opt-in Bestie surface.
 test.beforeEach(async ({ page }) => {
@@ -1382,7 +1389,10 @@ for (const containment of ["auto", "contain"])
       await inner.evaluate((el, value) => {
         el.style.overscrollBehaviorY = value;
       }, containment);
-      await page.keyboard.press("PageUp");
+      // Linux WebKit can pause native PageUp and resume it after the anchor is
+      // captured; only the history scrollend completes that gesture.
+      if (nativeScroll) await keyScroll(page, "PageUp");
+      else await page.keyboard.press("PageUp");
       if (nativeScroll) {
         await expect
           .poll(() => history.evaluate((el) => el.scrollTop))

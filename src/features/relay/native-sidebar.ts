@@ -1,8 +1,9 @@
+import { projectSidebarRecord } from "./sidebar-registers";
 import {
-  editSidebarRecord,
-  nextSidebarSectionOrder,
-  projectSidebarRecord,
-} from "./sidebar-registers";
+  editSidebarAssignment,
+  editSidebarSort,
+  editSidebarToggle,
+} from "./sidebar-edits";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
 import {
@@ -162,44 +163,7 @@ export function nativeSidebar(transport: ReadTransport) {
         throw new Error("Invalid sidebar assignment intent");
       const section = createSection?.id ?? sectionId;
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const existing = current.sections as SidebarGroups["sections"];
-        const sections = [...existing];
-        if (createSection) {
-          const name = createSection.name.trim();
-          const found = sections.find((entry) => entry.id === section);
-          if (found && found.name !== name)
-            throw new Error("The new section changed; reload and try again");
-          if (!found)
-            sections.push({
-              id: createSection.id,
-              name,
-              order: nextSidebarSectionOrder(current),
-            });
-        }
-        if (
-          section !== undefined &&
-          !sections.some((entry) => entry.id === section)
-        )
-          throw new Error("Sidebar group no longer exists");
-        const writes: [string[], unknown][] = [
-          [["a", channelId], section ?? null],
-        ];
-        if (createSection && !existing.some(({ id }) => id === section)) {
-          const added = sections.find(({ id }) => id === section);
-          if (!added) throw new Error("Sidebar group no longer exists");
-          writes.push(
-            [["s", added.id, "name"], added.name],
-            [["s", added.id, "icon"], null],
-            [["s", added.id, "order"], added.order],
-            [["s", added.id, "live"], true],
-          );
-        }
-        const next = editSidebarRecord(
-          "channel-sections",
-          current,
-          createdAt,
-          writes,
-        );
+        const next = editSidebarAssignment(current, createdAt, intent);
         const { sections: projected, assignments: mapped } = project(
           "channel-sections",
           next,
@@ -267,9 +231,7 @@ export function nativeSidebar(transport: ReadTransport) {
       )
         throw new Error("Invalid sidebar sort intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const next = editSidebarRecord("channel-sort", current, createdAt, [
-          [["g", group], mode === "alpha" ? null : mode],
-        ]);
+        const next = editSidebarSort(current, createdAt, group, mode);
         return {
           next,
           result: project("channel-sort", next, sectionIds).sort ?? {},
@@ -303,35 +265,7 @@ export function nativeSidebar(transport: ReadTransport) {
         `Invalid sidebar ${field === "starred" ? "star" : "mute"} intent`,
       );
     const prepare = (current: Record<string, unknown>) => {
-      const channels = current.channels as Record<
-        string,
-        Record<string, unknown>
-      >;
-      const previous = Object.hasOwn(channels, channelId)
-        ? channels[channelId]
-        : undefined;
-      if (
-        previous?.[field] === enabled ||
-        (!previous && !enabled && field === "starred")
-      )
-        return {
-          next: current,
-          result: project(coordinate, current)[
-            field === "starred" ? "starred" : "muted"
-          ],
-        };
-      const now = Date.now();
-      const next = {
-        ...current,
-        channels: {
-          ...channels,
-          [channelId]: {
-            ...previous,
-            [field]: enabled,
-            updatedAt: Math.max(now, Number(previous?.updatedAt ?? 0) + 1),
-          },
-        },
-      };
+      const next = editSidebarToggle(current, channelId, field, enabled);
       return {
         next,
         result: project(coordinate, next)[

@@ -1,7 +1,5 @@
-import {
-  editSidebarRecord,
-  projectSidebarRecord,
-} from "../src/features/relay/sidebar-registers.ts";
+import { editSidebarSort } from "../src/features/relay/sidebar-edits.ts";
+import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { projectSidebarPreferences } from "../src/features/relay/sidebar-preferences.ts";
 import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
@@ -83,11 +81,11 @@ export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
   assertSidebarSortIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSortEvent(events, secret, intent.sectionIds);
-  const blob = editSidebarRecord(
-    SORT_COORDINATE,
+  const blob = editSidebarSort(
     current.blob,
     current.createdAt,
-    [[["g", intent.group], intent.mode === "alpha" ? null : intent.mode]],
+    intent.group,
+    intent.mode,
     now,
   );
   const projected =

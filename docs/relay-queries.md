@@ -279,6 +279,26 @@ An older metadata replay cannot undo a newer private event or an explicit denial
 A newer signed public event can regrant a never-joined preview; membership loss
 still requires fresh signed membership, not metadata, to reverse it.
 
+### Public channel name search and Join
+
+The relay has no text search for channel metadata. For a typed, unscoped palette
+query, `channels.searchPublic(query)` reads one page (500) of relay-authored
+`39000` metadata without applying it, matches names locally and keeps only
+explicit active public channels the viewer has not joined. It then resolves at
+most eight matches through the same exact `resolve` path as message hits, so
+`channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
+joined-only. A full page reports partial coverage; read failures show a retry.
+The search waits for a ready channel list.
+
+A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
+through the purpose-bound channel-lifecycle sign/publish route; generic signing
+rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
+the viewer roster: a current roster entry needs no request, and only active public
+metadata may be joined. Success is the viewer in a fresh relay-signed `39002`
+roster, applied through shared discovery. That makes the channel a sidebar
+member and enables the composer, which then receives focus. An accepted but
+unconfirmed join reports that it may have taken effect and stays retryable.
+
 ## Ownership and reconciliation
 
 | Internal owner | Responsibility |
@@ -506,7 +526,7 @@ spans show elapsed time. **Export timings** downloads JSON for comparison.
 - `outbox.load`, `outbox.queue`, `outbox.persist`: hydration, queueing and durable transactions.
 - `send.sign`, `send.verify`: host signing and verification of the returned event.
 - `send.publish`: publication through receipt validation.
-- `http.auth`, `http.fetch`: signed host authentication and HTTP request latency.
+- `http.fetch`: host-authenticated HTTP request latency, including host signing.
 - `broker.sign`, `broker.auth`, `broker.connect`, `broker.ttfb`, `broker.relay`, `broker.upstream`:
   dev broker Server-Timing measurements. `connect` appears only when a request had to open a
   new upstream connection; `relay` is the relay's own reported service time, so

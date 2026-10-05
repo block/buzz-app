@@ -18,6 +18,20 @@ export type IdentityArchiveSnapshot = Readonly<{
   readAt?: number;
   error?: string;
 }>;
+export type IdentityArchives = ReturnType<
+  typeof createIdentityArchives
+>["queries"];
+
+/** Base Buzz discovery rule: known-archived identities leave forward-looking
+ * choices, fail open while archive state is unknown, and never hide the viewer
+ * from themself (NIP-IA archival stays visible to its subject). */
+export function archiveHides(
+  archives: Pick<IdentityArchives, "state"> | undefined,
+  pubkey: string,
+  viewer: string | undefined,
+) {
+  return pubkey !== viewer && archives?.state(pubkey) === "archived";
+}
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 2 * 1024 * 1024;

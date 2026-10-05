@@ -475,6 +475,8 @@ test("dialog steps keep one labelled modal and make outgoing controls inert", as
       open
       onOpenChange={() => {}}
       title={confirm ? "Confirm change" : "Edit notes"}
+      height={confirm ? "content" : "stable"}
+      bodyLayout={confirm ? "flow" : "flex"}
       description={confirm ? "Applies only after Save." : undefined}
       step={
         confirm ? { key: "confirm", scale: 1.05 } : { key: "edit", scale: 0.95 }
@@ -494,6 +496,13 @@ test("dialog steps keep one labelled modal and make outgoing controls inert", as
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(document.querySelectorAll(".buzz-dialog-backdrop")).toHaveLength(1);
   expect(popup).toHaveAccessibleDescription("Applies only after Save.");
+  expect(outgoing).toHaveAttribute("data-height", "stable");
+  expect(outgoing).toHaveAttribute("data-body-layout", "flex");
+  const incoming = screen
+    .getByRole("button", { name: "Continue" })
+    .closest(".buzz-dialog-step");
+  expect(incoming).toHaveAttribute("data-height", "content");
+  expect(incoming).toHaveAttribute("data-body-layout", "flow");
   expect(outgoing).toHaveAttribute("inert");
   expect(outgoing).toHaveAttribute("aria-hidden", "true");
   expect(

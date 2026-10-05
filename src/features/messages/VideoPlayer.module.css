@@ -89,7 +89,7 @@
   margin: 0;
   height: 1.5rem;
   border: 0;
-  border-radius: calc(var(--radius-row) * 0.8);
+  border-radius: var(--radius-row);
   background: var(
     --media-range-background,
     linear-gradient(
@@ -300,7 +300,7 @@
   left: 0.75rem;
   right: 0.75rem;
   padding: var(--space-2);
-  border-radius: calc(var(--radius-row) * 0.8);
+  border-radius: var(--radius-row);
   background: var(--surface-inset);
   font-size: var(--text-caption);
 }

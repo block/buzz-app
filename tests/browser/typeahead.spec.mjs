@@ -5,6 +5,16 @@ const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
+// Wait until the directory page for this query has settled, so a late page
+// cannot race the step under test.
+const settled = async (page, query) => {
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.searches()))
+    .toContain(query);
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
+    .toBe(0);
+};
 const expectAvatarShape = async (target, shape) => {
   await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
@@ -64,6 +74,7 @@ test("open completion republishes library-only display hints without changing th
     .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
     .toBe(1);
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: new RegExp(keys.first),
   });
@@ -108,6 +119,7 @@ for (const mode of ["light", "dark"]) {
       // Keep pointer hover from supplying a second highlight during keyboard use.
       await page.mouse.move(0, 0);
       await input.fill(kind === "mention" ? "@Ho" : ":smile");
+      if (kind === "mention") await settled(page, "Ho");
       const popup = page.getByRole("region", {
         name: kind === "mention" ? "Mention suggestions" : "Emoji suggestions",
         exact: true,
@@ -115,7 +127,7 @@ for (const mode of ["light", "dark"]) {
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
       if (kind === "mention") {
-        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("border-radius", "16px");
         await expect(popup).toHaveCSS("padding", "12px");
         await expect(popup).toHaveCSS("width", "380px");
         await expect(options.first()).toHaveCSS("padding", "8px");
@@ -595,8 +607,8 @@ test("current custom catalog drives typeahead and signed tags across community r
   const selectedParty = partyOptions.first();
   const hoveredParty = partyOptions.nth(1);
   await expect(selectedParty).toHaveAttribute("aria-selected", "true");
-  await expect(suggestions).toHaveCSS("border-radius", "24px");
-  await expect(selectedParty).toHaveCSS("border-radius", "18px");
+  await expect(suggestions).toHaveCSS("border-radius", "16px");
+  await expect(selectedParty).toHaveCSS("border-radius", "9px");
   const nativeEmoji = partyOptions.locator("[data-native-emoji]").first();
   await expect(nativeEmoji).toBeVisible();
   expect(
@@ -843,14 +855,13 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     second: window.mentionFixture.second,
   }));
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: `Honey ${keys.first}`,
     exact: true,
   });
-  const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
-  });
+  // The directory labels the second Honey as an agent, so match its key.
+  const second = page.getByRole("option", { name: new RegExp(keys.second) });
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.refresh());
   await expect(first).toBeVisible();
@@ -866,7 +877,12 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     .toBe("Unrelated preview");
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.removeFirst());
+  // The removed member is now outside the channel. Its row stays but is
+  // disabled: adding them needs a fresh review.
   await expect(first).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: /Channel membership changed/ }),
+  ).toHaveAttribute("aria-disabled", "true");
   await expect(second).toBeVisible();
   await second.click();
   await expect(input).toHaveJSProperty("value", "@Honey ");

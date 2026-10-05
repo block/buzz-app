@@ -258,16 +258,11 @@ function ManagedAgents({
           const identity = snapshot.identities.find(
             (entry) => entry.pubkey === agent.pubkey,
           );
-          const avatar =
-            identity?.avatar ??
-            snapshot.definitions.find(
-              (entry) => entry.id === identity?.definitionId,
-            )?.avatar;
           return (
             <AgentCard
               key={agent.id}
               name={label(agent)}
-              avatar={avatar}
+              avatar={identity?.avatar}
               identities={[agent]}
               session={connection.session}
               editable={[agent]}

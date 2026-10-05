@@ -7,6 +7,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
+  allowsOutsideMentions,
   archivedMention,
   mentionCandidates,
   rememberMention,
@@ -800,15 +801,16 @@ function Composer({
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
-        if (
-          (channel?.channelType === "stream" ||
-            channel?.channelType === "forum") &&
-          channel.members
-        ) {
+        if (channel?.members && allowsOutsideMentions(channel)) {
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
-          if (missing.length) {
+          if (missing.length && channel?.channelType === "dm") {
+            // Nobody can be added to a DM, so there is no choice to offer:
+            // outside people become references without a prompt.
+            references = missing.map((person) => person.pubkey);
+            recipients = recipients.filter((key) => !references.includes(key));
+          } else if (missing.length) {
             setSending(true);
             setError(undefined);
             const decision = await nonmembers.prepare(
@@ -1235,7 +1237,6 @@ function Composer({
               draft.trim() || attachments.items.length ? "primary" : "ghost"
             }
             size="toolbar"
-            shape="round"
             type="submit"
             aria-label={editing.target ? "Save changes" : "Send message"}
             title={editing.target ? "Save changes" : "Send message"}

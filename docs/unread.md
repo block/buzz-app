@@ -148,7 +148,8 @@ and agents use squircles. Avatar artwork is decorative; the button's accessible
 name gives the conversation count and direction without implying a DM-first target.
 The controls use shared prominent buttons with an inverse surface, with
 interruptible tooltip-style transitions and reduced-motion support. Hidden cues
-remain inert during exit. Thread-only rows participate.
+remain inert during exit. They share 12px corners with Jump to latest, including
+their backing surfaces. Thread-only rows participate.
 The controls measure existing rendered badges/dots—no extra unread
 subscriptions or relay reads just to show them. Search-filtered rows do not
 participate. Collapsed sections use the summary's position and expand when revealed.
@@ -275,9 +276,27 @@ bounded lead rather than running indefinitely into the future.
 
 Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
 The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
-plaintext budget. Persisted local interaction order prioritizes newly read old
-history as well as current traffic. Only frontier-only hints can be pruned; older
-messages may look unread again. No synthetic channel prefix is introduced to fit.
+plaintext budget. Under pressure, up to three quarters of each budget keeps channel
+marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
+(`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
+many messages, so losing it makes much more old history unread, and recent catch-up
+must never push out a quiet channel's mark. The last quarter, and any room the broad
+marks leave, goes by persisted local interaction order across all marks, so the newest
+read is never dropped because old broad marks fill the budget. Interaction order also
+ranks marks within each group, which prioritizes newly read old history as well as
+current traffic. After the budget chooses what to keep, each save drops marks that a
+kept broader mark already covers, and gives the freed space to the next marks in line.
+A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
+its cover, so the smaller wire budget protects the cover as it would have protected the
+dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
+channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
+replaces a message mark: a reply finds its channel from its own event, but finds its
+thread only while its root is loaded. Catch-up marks never make another mark redundant:
+older clients ignore them and read through the message, thread and channel marks.
+Marks without retained evidence are kept, and nothing is dropped while any override
+exists. Reading an already covered message saves nothing. Only frontier-only hints can
+be pruned; older messages may look unread again. No synthetic channel prefix is
+introduced to fit.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.

@@ -1,6 +1,7 @@
 @reference "../shared/styles/globals.css";
 
 .root {
+  --radius-capsule: var(--radius-control);
   height: 100%;
   min-height: 0;
   container-type: inline-size;

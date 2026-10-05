@@ -393,6 +393,59 @@ describe("durable read-state owner", () => {
     expect(f.journal()?.state.frontiers[id(0)]).toBeUndefined();
     expect(published()[id(1599)]).toBe(1);
   }, 15000);
+  it("a fresh read stays read, locally and published, when a peer's thread mark covers it", async () => {
+    const hex = (prefix: string, n: number) =>
+      `${prefix}${n.toString(16).padStart(64, "0")}`;
+    const root = "9".repeat(64);
+    const read = `thread-activity:${root}`,
+      cover = `thread:${root}`;
+    // Review fixtures: 500 message marks overflow locally; 200 fit locally
+    // but overflow the smaller published blob.
+    for (const messages of [500, 200]) {
+      const f = fixture();
+      const frontiers: Record<string, number> = {};
+      for (let n = 0; n < 295; n++) frontiers[crypto.randomUUID()] = 10;
+      for (let n = 0; n < 458; n++) frontiers[hex("thread:", n)] = 100 + n;
+      for (let n = 0; n < messages; n++) frontiers[hex("msg:", n)] = 10;
+      f.setJournal({
+        ...newReadJournal(),
+        state: { frontiers, overrides: {} },
+      });
+      const owner = f.make();
+      owner.setCoverage((key, frontier) =>
+        key === read && (frontier(cover) ?? -1) >= (frontier(read) ?? 0)
+          ? cover
+          : undefined,
+      );
+      await owner.ready;
+      await owner.read(read, 50, () => true);
+      // A peer's blob: 401 thread marks this device never used. The one that
+      // covers the read is older than the rest, so it ranks last among them.
+      const contexts: Record<string, number> = { [cover]: 50 };
+      for (let n = 0; n < 400; n++)
+        contexts[hex("thread:", 5000 + n)] = 100 + n;
+      const peer = await signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts },
+        },
+        f.key.secret,
+        100,
+      );
+      f.reader.read.mockResolvedValueOnce([peer]);
+      await owner.refresh();
+      const stillRead = (marks: Readonly<Record<string, number>>) =>
+        (marks[read] ?? 0) >= 50 || (marks[cover] ?? 0) >= 50;
+      expect(stillRead(f.journal()?.state.frontiers ?? {})).toBe(true);
+      await owner.flush();
+      const published = decodeReadState(
+        [f.host.publish.mock.calls.at(-1)?.[0]],
+        f.key.secret,
+      )[0].blob.contexts;
+      expect(stillRead(published)).toBe(true);
+    }
+  }, 15000);
   it("rejects saved corruption and changed signatures without overwriting it", () => {
     const f = fixture();
     expect(() =>

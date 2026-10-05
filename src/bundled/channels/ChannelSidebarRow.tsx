@@ -133,7 +133,6 @@ export function ChannelSidebarRow({
             <IconButton
               type="button"
               size="compact"
-              shape="round"
               aria-label={`Remove ${channel.name} from DMs`}
               onClick={(event) => {
                 const section = event.currentTarget.closest(

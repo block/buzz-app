@@ -543,6 +543,37 @@ export function validAgentEnrollment(event) {
   );
 }
 /** Base Buzz agent delete: only removal of one member, relay-authorized. */
+/** The owner's NIP-09 deletion of one of their own kind 30177 agent records. */
+export function validAgentRecordDeletion(event, owner) {
+  const hex = /^[0-9a-f]{64}$/;
+  const [coordinate, clientId, ...extra] = Array.isArray(event?.tags)
+    ? event.tags
+    : [];
+  const [kind, author, agent, ...rest] =
+    Array.isArray(coordinate) &&
+    coordinate.length === 2 &&
+    coordinate[0] === "a" &&
+    typeof coordinate[1] === "string"
+      ? coordinate[1].split(":")
+      : [];
+  return (
+    event?.kind === 5 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    !extra.length &&
+    (clientId === undefined ||
+      (Array.isArray(clientId) &&
+        clientId.length === 2 &&
+        clientId[0] === "client-id" &&
+        typeof clientId[1] === "string")) &&
+    kind === "30177" &&
+    !rest.length &&
+    author === owner &&
+    hex.test(author) &&
+    hex.test(agent ?? "")
+  );
+}
 export function validAgentRemoval(event) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const [h, p, clientId, ...extra] = Array.isArray(event?.tags)
@@ -1069,6 +1100,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-sort"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1212,6 +1244,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-mutes"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1336,6 +1369,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": [starring ? "channel-stars" : "channel-sections"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -2548,7 +2582,11 @@ export function relayBrokerPlugin({
                 });
             } else if (
               ![7, 9, 40003].includes(filters?.kind) &&
-              !validMessageDeletion(filters)
+              !validMessageDeletion(filters) &&
+              !validAgentRecordDeletion(
+                filters,
+                signing ? viewer : filters?.pubkey,
+              )
             ) {
               try {
                 validateWorkflowEvent(

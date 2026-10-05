@@ -32,7 +32,7 @@ test("settings-enabled mentions fixture renders the composer and preference", as
   }
 });
 
-test("actual composer selects namesakes by exact key, publishes channel/reply tags, and blocks removed members", async ({
+test("actual composer selects namesakes by exact key, publishes channel/reply tags, and asks before mentioning removed members", async ({
   page,
 }) => {
   // This journey exercises one-message recipients; prefill-on has separate coverage.
@@ -71,7 +71,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       expect(
         await popup.evaluate((element) => element.closest("form") === null),
       ).toBe(true);
-      await expect(popup).toHaveCSS("border-radius", "24px");
+      await expect(popup).toHaveCSS("border-radius", "16px");
       await expect
         .poll(() =>
           popup.evaluate((element) => {
@@ -428,9 +428,14 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
-    await expect(page.getByRole("alert")).toContainText(
-      "no longer a channel member",
-    );
+    // An untyped channel is an ordinary channel: the removed member is now
+    // outside it, so the sender chooses. Closing keeps the draft unsent.
+    const outside = page.getByRole("dialog", {
+      name: "Mention people outside this channel?",
+    });
+    await expect(outside).toContainText("Honey is not in this channel.");
+    await outside.getByRole("button", { name: "Close" }).click();
+    await expect(outside).toHaveCount(0);
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
@@ -439,6 +444,10 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     ).toBe(2);
     // A child layout effect sees disabled DOM before parent command props refresh.
     // Both commands must fail, even with the previous render's enabled closures.
+    // The outside-person prompt above also disabled the composer once.
+    const before = await page.evaluate(
+      () => window.mentionFixture.disabledCalls.length,
+    );
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -448,7 +457,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(recipients.getByRole("button")).toBeDisabled();
     expect(
       await page.evaluate(() => window.mentionFixture.disabledCalls),
-    ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
+    ).toEqual(
+      Array(before + 1).fill({
+        inputDisabled: true,
+        text: false,
+        mention: false,
+      }),
+    );
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");

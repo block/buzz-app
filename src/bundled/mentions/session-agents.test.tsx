@@ -43,6 +43,7 @@ import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
 import { npubEncode } from "nostr-tools/nip19";
+import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -331,7 +332,13 @@ it("selects filtered results from search, ignores IME Enter, and keeps rejected 
   await user.clear(search);
   // Public keys are not completion matches; search by the member's name.
   await user.type(search, "Member");
-  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  // Synthetic coverage checks the guard, not native IME behavior.
+  for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+    fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Enter", ...composition });
+    expect(select).not.toHaveBeenCalled();
+  }
   expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
     false,
   );
@@ -1061,48 +1068,151 @@ it("qualifies outside directory namesakes that have no cached profile", async ()
   names.dispose();
 });
 
-it.each(["dm", "session"] as const)(
-  "never expands %s candidates from the community directory",
-  async (channelType) => {
-    const t = setup();
-    const people = vi.fn(async () => ({
-      people: [{ pubkey: "e".repeat(64), name: "Outside" }],
-      hasMore: false,
-    }));
-    const list = {
-      status: "ready" as const,
-      channels: [
-        {
-          id: "parent",
-          name: "Conversation",
-          channelType,
-          members: ["a".repeat(64)],
-        },
-      ],
-    };
-    const session = {
-      ...t.session,
-      directMessages: { ...t.session.directMessages, people },
-      channels: { ...t.session.channels, list: () => list },
-    };
-    render(
+it("never expands session candidates from the community directory", async () => {
+  vi.useFakeTimers();
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Conversation",
+        channelType: "session" as const,
+        members: ["a".repeat(64)],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  // Neither surface passes inviteAgents, like a session media comment.
+  const publish = vi.fn();
+  render(
+    <>
       <MentionPicker
         session={session}
         scope="test"
         channelId="parent"
         disabled={false}
         select={() => true}
-      />,
-    );
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Mention a member" }));
-    expect(people).not.toHaveBeenCalled();
+      />
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+      />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Mention a member" }));
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "Out" },
+  });
+  // Past the directory delay, so a search would have started.
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS * 2));
+  expect(people).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /Outside/ }),
+  ).not.toBeInTheDocument();
+  const result = publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  expect(result?.items.map((item) => item.label) ?? []).not.toContain(
+    "Outside",
+  );
+  expect(result?.status).toBeUndefined();
+});
+
+it("offers outside directory people in a DM, like a channel", async () => {
+  const t = setup();
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="dm"
+      observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+      publish={publish}
+      query={{ start: 0, end: 4, query: "Out" }}
+    />,
+  );
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
     expect(
-      screen.queryByRole("button", { name: /Outside/ }),
-    ).not.toBeInTheDocument();
-  },
-);
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toEqual(["Outside"]),
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items[0]
+      ?.detail,
+  ).toBe("Not in DM · Will not be notified");
+});
+
+it("labels outside directory people in the DM toolbar picker", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="dm"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = await screen.findByRole("button", { name: /Outside/ });
+  expect(row).toHaveTextContent("Not in DM · Will not be notified");
+});
 
 it("shows local rows before the directory, appends outside rows, and reuses settled pages", async () => {
   vi.useFakeTimers();

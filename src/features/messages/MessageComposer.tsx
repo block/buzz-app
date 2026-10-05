@@ -15,6 +15,7 @@ import {
 import {
   readComposerSnapshot,
   composerMarkdownContext,
+  markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { npubEncode } from "nostr-tools/nip19";
@@ -726,6 +727,7 @@ function Composer({
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
+    terminator?: ":",
   ) {
     if (
       !permitted.current ||
@@ -760,7 +762,7 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range)) {
+    if (!input.current.insertText(text, recipient, range, terminator)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -872,9 +874,11 @@ function Composer({
     // A typed terminator (Space, the closing emoji colon) stays literal in code.
     if (key === " " || key === ":") {
       const doc = readComposerSnapshot(valueRef.current.document);
+      const context = doc
+        ? composerMarkdownContext(doc)
+        : { text: observation.text, protected: [] };
       if (
-        doc &&
-        composerMarkdownContext(doc).protected.some(
+        [...context.protected, ...markdownRanges(context.text).literal].some(
           (r) => query.start < r.end && query.end > r.start,
         )
       )
@@ -890,6 +894,7 @@ function Composer({
         `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
         undefined,
         query,
+        key === ":" ? key : undefined,
       )
     );
   }

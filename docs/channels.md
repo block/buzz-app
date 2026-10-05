@@ -1214,7 +1214,11 @@ to insert at the cursor; Enter selects a search result and Escape closes the pic
 and returns focus. You can also type `:shortcode:`: the closing colon after one
 exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with
 that emoji, while partial names, namesakes, times, URLs and code keep the typed
-text. The picker follows the host Light/Dark choice, including while already
+text, including raw Markdown code in pasted or restored drafts. Replacement requires
+both catalogs to load successfully; partial suggestions and retry remain available
+without automatically accepting the colon. One undo restores the full typed shortcode,
+including its closing colon, with the caret after it. The picker follows the host
+Light/Dark choice, including while already
 open, without recreating its search or dictionary. It does not independently
 follow the operating system.
 

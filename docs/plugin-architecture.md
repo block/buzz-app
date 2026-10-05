@@ -824,7 +824,10 @@ One host-owned, viewport-bounded portal renders the active listbox. Focus stays 
 the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
 plain Enter/forward Tab accept, and Escape dismisses pending results. A typed
 terminator accepts the provider-verified unique exact match: plain Space for a
-mention, the closing colon for an emoji shortcode. A rejected
+mention, the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
+only after both Unicode and community catalogs successfully settle. The editor refuses
+typed terminators in rich or raw Markdown literal ranges; colon conversion records the
+typed source first so undo restores the closing colon and collapsed caret. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
 keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.

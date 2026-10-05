@@ -143,12 +143,7 @@ export function EmojiCompletion({
         edit: { text: item.text },
       }));
     };
-    // The host accepts spaceId on the closing colon. Only a settled search can
-    // vouch that the typed name is one shortcode and not a namesake or prefix.
-    const settled = (matches: readonly EmojiMatch[]) => ({
-      items: items(matches),
-      spaceId: exactEmoji(query.query, matches),
-    });
+    // Suggestions may be partial; automatic replacement needs both catalogs.
     const retrySearch = () => {
       retry((value) => value + 1);
       if (catalog.status === "error") void session.emoji.refresh();
@@ -162,7 +157,10 @@ export function EmojiCompletion({
         if (!live) return;
         if (withdraw) withdraw();
         withdraw = publish({
-          ...settled(matches),
+          items: items(matches),
+          ...(catalog.status === "ready"
+            ? { spaceId: exactEmoji(query.query, matches) }
+            : {}),
           ...(catalog.status === "error"
             ? {
                 status: "Community emoji unavailable; Unicode results shown.",
@@ -175,7 +173,7 @@ export function EmojiCompletion({
         if (!live) return;
         if (withdraw) withdraw();
         withdraw = publish({
-          ...settled(searchCustomEmoji(query.query, custom)),
+          items: items(searchCustomEmoji(query.query, custom)),
           status: "Unicode emoji unavailable. Custom matches shown.",
           retry: retrySearch,
         });

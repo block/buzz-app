@@ -5,6 +5,7 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
+import { AgentUpdateReview } from "../bundled/agents/AgentUpdateReview";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
@@ -182,6 +183,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           onProfile={
             ownProfile && launcher.canOpen(ownProfile)
@@ -205,6 +207,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
           workspace={startup === "ready" && route.page?.layout === "workspace"}
         >
           <AgentWakeNotice control={services.agentControl} />
+          <AgentUpdateReview
+            relay={services.relay}
+            control={services.agentControl}
+          />
           <UpdateNotice updates={services.updates} />
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />

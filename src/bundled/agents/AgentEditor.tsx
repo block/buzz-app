@@ -3,8 +3,9 @@ import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { avatarPictureError } from "../../features/profiles/avatar-upload";
 import { XIcon } from "../../shared/design-system/icons";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -33,6 +34,10 @@ export function AgentEditor({
   avatar,
   onClose,
   onOpenHarnesses,
+  initialDraft,
+  notice: initialNotice,
+  disabled = false,
+  children,
 }: {
   agent: AgentView;
   onOpenHarnesses?: (() => void) | undefined;
@@ -41,7 +46,12 @@ export function AgentEditor({
   state: AgentControlState;
   avatar?: string | undefined;
   onClose(): void;
+  initialDraft?: AgentDraft;
+  notice?: string;
+  disabled?: boolean;
+  children?: ReactNode;
 }) {
+  const notify = useToastNotification();
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -50,13 +60,14 @@ export function AgentEditor({
       mounted.current = false;
     };
   }, []);
-  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [draft, setDraft] = useState<AgentDraft | null>(initialDraft ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice ?? null);
   const current = draft ?? agentDraft(agent);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
-  const blocked = state.busy || uploading || state.status !== "ready";
+  const blocked =
+    disabled || state.busy || uploading || state.status !== "ready";
   const picture = current.picture ?? agent.picture ?? avatar ?? "";
   const preview = useAvatarPreview(
     state.data?.avatarEditingAvailable ? "" : picture,
@@ -64,7 +75,7 @@ export function AgentEditor({
   );
   const canClose =
     !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
-  const launchBlocked = !!agentLaunchBlock(state, agent) || dirty;
+  const launchBlocked = disabled || !!agentLaunchBlock(state, agent) || dirty;
   const unapplied =
     agent.runningRevision !== null && agent.runningRevision !== agent.revision;
   const change = (patch: Partial<AgentDraft>) => {
@@ -73,6 +84,7 @@ export function AgentEditor({
     setError(null);
   };
   const act = (action: "start" | "stop" | "restart") => {
+    if (disabled) return;
     setNotice(null);
     void control.action(agent.id, action).catch(() => {});
   };
@@ -91,6 +103,7 @@ export function AgentEditor({
       <Dialog.Portal>
         <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
+          aria-modal="true"
           data-buzz-ui=""
           className="buzz-dialog agent-dialog agent-editor text-body"
         >
@@ -146,14 +159,22 @@ export function AgentEditor({
                       return;
                     }
                   }
-                  if (mounted.current)
-                    setNotice(
-                      savedMessage(saved.restarted, saved.restartFailures),
-                    );
+                  if (!mounted.current) return;
+                  const message = savedMessage(
+                    saved.restarted,
+                    saved.restartFailures,
+                  );
+                  if (saved.restartFailures) {
+                    setNotice(message);
+                    return;
+                  }
+                  notify(message, "success");
+                  onClose();
                 })
                 .catch((problem: Error) => setError(problem.message));
             }}
           >
+            {children}
             <div className="min-w-0 space-y-4">
               <div className="space-y-3 text-center">
                 {state.data?.avatarEditingAvailable ? (
@@ -162,7 +183,7 @@ export function AgentEditor({
                     name={current.name}
                     community={agent.relayUrl}
                     shape="squircle"
-                    disabled={state.busy}
+                    disabled={disabled || state.busy}
                     onBusyChange={setUploading}
                     onChange={(picture) => change({ picture })}
                   />
@@ -186,7 +207,7 @@ export function AgentEditor({
                 draft={current}
                 control={control}
                 state={state}
-                disabled={state.busy}
+                disabled={disabled || state.busy}
                 environmentKeys={agent.harness.environmentKeys}
                 onChange={change}
                 onOpenHarnesses={onOpenHarnesses}
@@ -233,7 +254,9 @@ export function AgentEditor({
                               </Button>
                             )}
                             <Button
-                              disabled={!canStopAgent(state, agent.id)}
+                              disabled={
+                                disabled || !canStopAgent(state, agent.id)
+                              }
                               onClick={() => act("stop")}
                             >
                               Stop
@@ -306,11 +329,13 @@ export function AgentEditor({
             {agent.profilePending && (
               <Button
                 disabled={
+                  disabled ||
                   state.busy ||
                   state.status !== "ready" ||
                   !control.publishProfile
                 }
                 onClick={() => {
+                  if (disabled) return;
                   setNotice(null);
                   void control
                     .publishProfile?.(agent.id)

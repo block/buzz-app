@@ -10,11 +10,10 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import {
   canManageMember,
+  canRemoveMember,
   editableMemberRoles,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
-import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -71,48 +70,13 @@ export function useMemberAdministration(
   return state;
 }
 
-export function MemberAdministrationStatus({
-  session,
-  channelId,
-}: {
-  session: RelaySession;
-  channelId: string;
-}) {
-  const capability = session.memberAdministration;
-  const state = useSyncExternalStore(
-    capability.subscribe,
-    () => capability.snapshot(channelId),
-    () => capability.snapshot(channelId),
-  );
-  const pending = state.operation?.status === "pending";
-  if (!pending && state.operation?.status !== "confirmed" && !state.error)
-    return null;
-  return (
-    <div className="space-y-2">
-      {pending && (
-        <p role="status" className="text-body-sm text-subtle">
-          Checking permissions and waiting for membership confirmation…
-        </p>
-      )}
-      {state.operation?.status === "confirmed" && (
-        <p role="status" className="text-body-sm text-subtle">
-          Member change confirmed.
-        </p>
-      )}
-      {state.error && (
-        <p role="alert" className="text-body-sm text-danger">
-          {state.error}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function MemberRow({
   session,
   channelId,
   pubkey,
   name,
+  verifiedOwner,
+  onChange,
   returnFocus,
   scrollport,
   onViewProfile,
@@ -126,6 +90,8 @@ export function MemberRow({
   channelId: string;
   pubkey: string;
   name: string;
+  verifiedOwner?: string | undefined;
+  onChange(change: MemberChange): void;
   returnFocus: React.RefObject<HTMLElement | null>;
   scrollport: React.RefObject<HTMLElement | null>;
   onViewProfile?: (() => boolean) | undefined;
@@ -142,8 +108,7 @@ export function MemberRow({
     () => capability.snapshot(channelId),
     () => capability.snapshot(channelId),
   );
-  const [selection, setSelection] = useState<MemberChange>();
-  const cancel = useRef<HTMLButtonElement>(null);
+  const openingConfirmation = useRef(false);
   const [menuOpen, setMenuOpen] = useState<"button" | "context">();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
   useEffect(() => {
@@ -157,21 +122,26 @@ export function MemberRow({
   const openingProfile = useRef(false);
   const role = state.authority.roles[pubkey] ?? "unknown";
   const permitted =
-    !invitationAction &&
-    capability.available &&
-    state.status === "ready" &&
-    canManageMember(state.authority, session.viewer ?? "", pubkey);
+    !invitationAction && capability.available && state.status === "ready";
+  const canEdit =
+    permitted && canManageMember(state.authority, session.viewer ?? "", pubkey);
+  const canRemove =
+    permitted &&
+    canRemoveMember(
+      state.authority,
+      session.viewer ?? "",
+      pubkey,
+      verifiedOwner,
+    );
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
-  const choose = (next: MemberChange["role"]) =>
-    setSelection({ pubkey, expectedRole: role, role: next });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: never carry confirmation intent across destinations.
-  useEffect(() => {
-    setSelection(undefined);
-  }, [session, channelId]);
+  const choose = (next: MemberChange["role"]) => {
+    openingConfirmation.current = true;
+    onChange({ pubkey, expectedRole: role, role: next });
+  };
   const finalFocus = () =>
-    selection || openingProfile.current
+    openingConfirmation.current || openingProfile.current
       ? false
       : (menuReturnFocus.current ?? returnFocus.current);
   const menuItems = (
@@ -200,10 +170,10 @@ export function MemberRow({
           Send message
         </MenuItem>
       )}
-      {permitted && !locked && (
+      {(canEdit || canRemove) && !locked && (
         <>
           <MenuSeparator />
-          {role !== "bot" &&
+          {canEdit &&
             editableMemberRoles
               // Guest assignment is hidden until its permission contract is settled.
               .filter((next) => next !== role && next !== "guest")
@@ -212,161 +182,113 @@ export function MemberRow({
                   Make {next}
                 </MenuItem>
               ))}
-          {role !== "bot" && <MenuSeparator />}
-          <MenuItem tone="danger" onClick={() => choose("remove")}>
-            Remove from channel
-          </MenuItem>
+          {canEdit && <MenuSeparator />}
+          {canRemove && (
+            <MenuItem tone="danger" onClick={() => choose("remove")}>
+              Remove from channel
+            </MenuItem>
+          )}
         </>
       )}
     </>
   );
   return (
-    <>
-      <ContextMenuRoot
-        open={menuOpen === "context"}
-        onOpenChange={(open) => {
-          if (open) openingProfile.current = false;
-          setMenuOpen((current) =>
-            open ? "context" : current === "context" ? undefined : current,
-          );
+    <ContextMenuRoot
+      open={menuOpen === "context"}
+      onOpenChange={(open) => {
+        if (open) {
+          openingProfile.current = false;
+          openingConfirmation.current = false;
+        }
+        setMenuOpen((current) =>
+          open ? "context" : current === "context" ? undefined : current,
+        );
+      }}
+    >
+      <ContextMenuTrigger
+        render={
+          invitationAction ? (
+            <motion.div {...reveal} />
+          ) : (
+            <motion.li {...reveal} />
+          )
+        }
+        className={styles.member}
+        data-menu-open={menuOpen || undefined}
+        onContextMenu={(event) => {
+          setMenuAnchor(undefined);
+          menuReturnFocus.current = event.currentTarget.querySelector("button");
+        }}
+        onTouchStart={(event) => {
+          setMenuAnchor(undefined);
+          menuReturnFocus.current = event.currentTarget.querySelector("button");
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            menuReturnFocus.current = event.target as HTMLElement;
+            setMenuAnchor(event.currentTarget);
+            openingProfile.current = false;
+            openingConfirmation.current = false;
+            setMenuOpen("context");
+          }
         }}
       >
-        <ContextMenuTrigger
-          render={
-            invitationAction ? (
-              <motion.div {...reveal} />
-            ) : (
-              <motion.li {...reveal} />
-            )
-          }
-          className={styles.member}
-          data-menu-open={menuOpen || undefined}
-          onContextMenu={(event) => {
-            setMenuAnchor(undefined);
-            menuReturnFocus.current =
-              event.currentTarget.querySelector("button");
-          }}
-          onTouchStart={(event) => {
-            setMenuAnchor(undefined);
-            menuReturnFocus.current =
-              event.currentTarget.querySelector("button");
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === "ContextMenu" ||
-              (event.shiftKey && event.key === "F10")
-            ) {
-              event.preventDefault();
-              menuReturnFocus.current = event.target as HTMLElement;
-              setMenuAnchor(event.currentTarget);
-              openingProfile.current = false;
-              setMenuOpen("context");
-            }
-          }}
-        >
-          <div className={styles.profile}>{children}</div>
-          {invitationAction}
-          {!invitationAction && (
-            <span className={styles.memberActions}>
-              {/* A regular trigger needs its own root: registering it on the
+        <div className={styles.profile}>{children}</div>
+        {invitationAction}
+        {!invitationAction && (
+          <span className={styles.memberActions}>
+            {/* A regular trigger needs its own root: registering it on the
                   context root replaces Base UI's context-menu interaction owner. */}
-              <MenuRoot
-                open={menuOpen === "button"}
-                onOpenChange={(open, details) => {
-                  if (open) {
-                    openingProfile.current = false;
-                    menuReturnFocus.current =
-                      details.trigger instanceof HTMLElement
-                        ? details.trigger
-                        : null;
-                  }
-                  setMenuOpen((current) =>
-                    open
-                      ? "button"
-                      : current === "button"
-                        ? undefined
-                        : current,
-                  );
-                }}
-              >
-                <MenuTrigger
-                  render={
-                    <IconButton
-                      variant="ghost"
-                      size="sm"
-                      shape="row-end"
-                      aria-label={`Actions for ${name}`}
-                      icon={<DotsThreeIcon size={18} aria-hidden="true" />}
-                    />
-                  }
-                />
-                <MenuPopup
-                  aria-label={`Actions for ${name}`}
-                  align="end"
-                  finalFocus={finalFocus}
-                >
-                  {menuItems}
-                </MenuPopup>
-              </MenuRoot>
-            </span>
-          )}
-        </ContextMenuTrigger>
-        <MenuPopup
-          aria-label={`Actions for ${name}`}
-          anchor={menuAnchor}
-          align={menuAnchor ? "end" : "start"}
-          finalFocus={finalFocus}
-        >
-          {menuItems}
-        </MenuPopup>
-      </ContextMenuRoot>
-      {selection && permitted && !locked && (
-        <Dialog
-          open
-          title={
-            selection.role === "remove"
-              ? "Remove member?"
-              : "Change member role?"
-          }
-          description={name}
-          onOpenChange={(open) => {
-            if (!open) setSelection(undefined);
-          }}
-          initialFocus={cancel}
-          finalFocus={returnFocus}
-          actions={
-            <>
-              <Button
-                variant="outline"
-                ref={cancel}
-                onClick={() => setSelection(undefined)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={
-                  selection.role === "remove" ? "destructive" : "prominent"
+            <MenuRoot
+              open={menuOpen === "button"}
+              onOpenChange={(open, details) => {
+                if (open) {
+                  openingProfile.current = false;
+                  openingConfirmation.current = false;
+                  menuReturnFocus.current =
+                    details.trigger instanceof HTMLElement
+                      ? details.trigger
+                      : null;
                 }
-                onClick={() => {
-                  const change = selection;
-                  setSelection(undefined);
-                  void capability.run(channelId, change).catch(() => {});
-                }}
+                setMenuOpen((current) =>
+                  open ? "button" : current === "button" ? undefined : current,
+                );
+              }}
+            >
+              <MenuTrigger
+                render={
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    shape="row-end"
+                    aria-label={`Actions for ${name}`}
+                    icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                  />
+                }
+              />
+              <MenuPopup
+                aria-label={`Actions for ${name}`}
+                align="end"
+                finalFocus={finalFocus}
               >
-                {selection.role === "remove"
-                  ? "Remove member"
-                  : `Make ${selection.role}`}
-              </Button>
-            </>
-          }
-        >
-          <p className="text-body-sm">
-            {selection.role === "remove"
-              ? "Remove this member from this channel. This does not delete their identity or stop their agents. They may need an invitation to rejoin."
-              : `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? "Admins can manage this channel and its members." : "This changes their authority in this channel."}`}
-          </p>
-        </Dialog>
-      )}
-    </>
+                {menuItems}
+              </MenuPopup>
+            </MenuRoot>
+          </span>
+        )}
+      </ContextMenuTrigger>
+      <MenuPopup
+        aria-label={`Actions for ${name}`}
+        anchor={menuAnchor}
+        align={menuAnchor ? "end" : "start"}
+        finalFocus={finalFocus}
+      >
+        {menuItems}
+      </MenuPopup>
+    </ContextMenuRoot>
   );
 }

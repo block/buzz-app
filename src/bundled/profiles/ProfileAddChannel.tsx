@@ -55,7 +55,7 @@ export function ProfileAddChannel({
       session.scope === scope &&
       session.workSessions.available &&
       (list.status === "ready" || list.status === "error") &&
-      choices.identities.some(
+      choices.selectable.some(
         (agent) => agent.pubkey === pubkey && agent.managed,
       ) &&
       (!id ||

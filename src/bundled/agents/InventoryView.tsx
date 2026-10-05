@@ -68,6 +68,7 @@ export function InventoryView({
   edit,
   duplicate,
   remove,
+  removeRelay,
   importedId,
   resolveProfile,
   profileKeys,
@@ -86,6 +87,9 @@ export function InventoryView({
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
   importedId: string | null;
   resolveProfile?: ProfileResolver | undefined;
   profileKeys?: ReadonlySet<string> | undefined;
@@ -166,6 +170,7 @@ export function InventoryView({
                       edit={edit}
                       duplicate={duplicate}
                       remove={remove}
+                      removeRelay={removeRelay}
                       importedId={importedId}
                       resolveProfile={resolveProfile}
                       profileKeys={profileKeys}

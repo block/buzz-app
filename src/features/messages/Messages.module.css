@@ -460,6 +460,18 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   background: var(--affordance-subtle-hover);
   color: var(--text-subtle);
 }
+/* Keep public typing and plugin accessories in one non-collapsing stack. */
+.composerContext {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+}
+/* Existing conversations keep a fixed row, even while nobody is typing. */
+.composerContext[data-reserve-typing] {
+  padding-top: var(--space-6);
+}
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
   --composer-gap: var(--space-4);
@@ -608,7 +620,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
-  border-radius: var(--radius-pill);
   margin-top: var(--space-1);
   padding: var(--space-1);
   padding-right: var(--space-1h);
@@ -1569,10 +1580,11 @@ button.mediaPreview {
 }
 .messageActions {
   @apply popover-surface;
+  --floating-radius: var(--radius-control);
+  --floating-inset: var(--space-half);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
-  border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1943,7 +1955,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   align-items: center;
   min-height: 1.25rem;
   padding: 0 var(--space-1h);
-  border-radius: calc(var(--radius-row) * 0.4);
+  border-radius: var(--radius-chip);
   background: var(--affordance-selected);
   font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
 }
@@ -1967,10 +1979,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-width: 95rem;
   max-height: 61.25rem;
   border: 1px solid var(--affordance-subtle-hover);
-  border-radius: var(
-    --media-preview-radius,
-    calc(var(--radius-control) + var(--space-1))
-  );
+  border-radius: var(--media-preview-radius, var(--radius-container));
   background: var(--surface-panel);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
@@ -2241,16 +2250,44 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .jumpToLatest {
+  align-items: flex-start;
   position: sticky;
   z-index: 2;
-  top: calc(100% - var(--size-control) - var(--space-2));
+  top: calc(100% - var(--size-control-sm));
   height: 0;
   display: flex;
   justify-content: center;
   pointer-events: none;
 }
-button[data-jump-to-latest] {
+.jumpToLatestSurface {
+  @apply glass-secondary;
+  border-radius: var(--radius-control);
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(2px) scale(0.97);
+  filter: blur(2px);
+  transition:
+    opacity var(--duration-fast) var(--easing-state),
+    transform var(--duration-fast) var(--easing-settle),
+    filter var(--duration-fast) var(--easing-state),
+    visibility 0s var(--duration-fast);
+}
+.jumpToLatest[data-visible="true"] .jumpToLatestSurface {
+  visibility: visible;
   pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+  transition-duration: var(--duration-state);
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jumpToLatestSurface,
+  .jumpToLatest[data-visible="true"] .jumpToLatestSurface {
+    transform: none;
+    filter: none;
+    transition-property: opacity, visibility;
+  }
 }
 
 .sentFromThread {

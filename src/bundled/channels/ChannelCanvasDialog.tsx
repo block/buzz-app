@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
+import type { ProfileQueries } from "../../features/relay/profile-directory";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { CanvasHistory } from "./CanvasHistory";
 import type { RelayEvent } from "../../features/relay/events";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -10,6 +13,7 @@ import styles from "./ChannelTemplates.module.css";
 type Draft = { content: string; base: string | null };
 export function ChannelCanvasDialog({
   canvas,
+  profiles,
   scope,
   channelId,
   open,
@@ -17,12 +21,15 @@ export function ChannelCanvasDialog({
   finalFocus,
 }: {
   canvas: ChannelCanvas;
+  profiles: ProfileQueries;
   scope: string;
   channelId: string;
   open: boolean;
   onOpenChange(open: boolean): void;
   finalFocus?: DialogProps["finalFocus"];
 }) {
+  const panelId = useId();
+  const [tab, setTab] = useState<"edit" | "history">("edit");
   const key = `canvas-draft-v1:${channelId}`;
   const [saved] = useState(() => {
     const value = readView<unknown>(scope, key, null);
@@ -80,6 +87,41 @@ export function ChannelCanvasDialog({
   useEffect(() => {
     if (open && !loaded) void load();
   }, [open, loaded, load]);
+  const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
+  const restore = async (revision: RelayEvent) => {
+    const generation = ++operation.current;
+    setBusy(true);
+    try {
+      const event = await canvas.save(channelId, revision.content, head?.id);
+      if (generation !== operation.current) return;
+      setHead(event);
+      if (dirty) {
+        setError(
+          "Canvas was restored. Your unsaved draft is kept. Copy any edits you want to keep before reloading the saved Canvas.",
+        );
+      } else {
+        setDraft(event.content);
+        setBase(event.id);
+        writeView(scope, key, { content: event.content, base: event.id });
+        setError("");
+      }
+    } catch (reason) {
+      // Save may replay the same signed event with its original precondition.
+      // Even an error may follow a delivered write. Never adopt content, rebase
+      // a draft, or start another restore on that uncertain outcome.
+      try {
+        const event = await canvas.read(channelId);
+        if (generation === operation.current) setHead(event);
+      } catch {
+        /* Preserve the mutation error; explicit reload can retry. */
+      }
+      if (generation === operation.current)
+        setError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
+    } finally {
+      if (generation === operation.current) setBusy(false);
+    }
+  };
   const save = async () => {
     const generation = ++operation.current;
     setBusy(true);
@@ -109,52 +151,99 @@ export function ChannelCanvasDialog({
       title="Channel Canvas"
       closeLabel="Close Canvas"
       actions={
-        <>
-          {error && (
+        tab === "edit" ? (
+          <>
+            {error && (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  if (!loaded) void load();
+                  else setConfirmReload(true);
+                }}
+              >
+                {loaded ? "Reload saved Canvas" : "Retry loading"}
+              </Button>
+            )}
             <Button
-              disabled={busy}
-              onClick={() => {
-                if (!loaded) void load();
-                else setConfirmReload(true);
-              }}
+              variant="prominent"
+              loading={busy}
+              disabled={
+                !loaded || !canvas.available || (head?.id ?? null) !== base
+              }
+              onClick={() => void save()}
             >
-              {loaded ? "Reload saved Canvas" : "Retry loading"}
+              Save Canvas
             </Button>
-          )}
-          <Button
-            variant="prominent"
-            loading={busy}
-            disabled={
-              !loaded || !canvas.available || (head?.id ?? null) !== base
-            }
-            onClick={() => void save()}
-          >
-            Save Canvas
-          </Button>
-        </>
+          </>
+        ) : undefined
       }
     >
       <div className={styles.stack}>
-        <p className="text-secondary">
-          Shared Markdown for this channel. Save checks for detected changes,
-          but concurrent saves are not locked.
-        </p>
-        <Textarea
-          aria-label="Canvas Markdown"
-          variant="code"
-          rows={16}
-          value={draft}
-          disabled={busy || !loaded}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            writeView(scope, key, { content: e.target.value, base });
+        <Tabs
+          variant="panel"
+          label="Canvas views"
+          value={tab}
+          onValueChange={(next) => {
+            if (!busy) setTab(next);
           }}
+          items={[
+            { value: "edit", label: "Edit", panelId: `${panelId}-edit` },
+            {
+              value: "history",
+              label: "History",
+              panelId: `${panelId}-history`,
+            },
+          ]}
         />
-        {error && (
-          <p role="alert" className={styles.error}>
-            {error}
-          </p>
-        )}
+        <div
+          hidden={tab !== "edit"}
+          role="tabpanel"
+          id={`${panelId}-edit`}
+          aria-labelledby={`${panelId}-edit-tab`}
+        >
+          <div className={styles.stack}>
+            <p className="text-secondary">
+              Shared Markdown for this channel. Saves and restores check the
+              loaded revision on supporting relays.
+            </p>
+            <Textarea
+              aria-label="Canvas Markdown"
+              variant="code"
+              rows={16}
+              value={draft}
+              disabled={busy || !loaded}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                writeView(scope, key, { content: e.target.value, base });
+              }}
+            />
+            {error && (
+              <p role="alert" className={styles.error}>
+                {error}
+              </p>
+            )}
+          </div>
+        </div>
+        <div
+          hidden={tab !== "history"}
+          role="tabpanel"
+          id={`${panelId}-history`}
+          aria-labelledby={`${panelId}-history-tab`}
+        >
+          {tab === "history" && (
+            <CanvasHistory
+              canvas={canvas}
+              channelId={channelId}
+              profiles={profiles}
+              head={head}
+              busy={busy}
+              loaded={loaded}
+              dirty={dirty}
+              refreshHead={() => load()}
+              restore={restore}
+            />
+          )}
+        </div>
       </div>
       <Dialog
         open={open && confirmReload}

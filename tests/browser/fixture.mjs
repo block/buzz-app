@@ -60,6 +60,10 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
+  inboxDm: [false, { option: true }],
+  inboxDmOldAnchor: [false, { option: true }],
+  inboxThreadWindow: [false, { option: true }],
+  inboxSessionAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
@@ -67,6 +71,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  agentManagement: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -106,12 +111,17 @@ export const test = base.extend({
       dmLabels,
       dmMembers,
       agentPeers,
+      inboxDm,
+      inboxDmOldAnchor,
+      inboxThreadWindow,
+      inboxSessionAgent,
       tallMessages,
       membershipActivity,
       launchAnimation,
       historyCounts,
       channelIds: channels,
       pluginFixtures,
+      agentManagement,
       developmentReact,
       compiledApp,
     },
@@ -152,6 +162,7 @@ export const test = base.extend({
       dmLabels || readState || exactMessages || actionProfile
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
+    const managementKey = agentManagement ? key(8) : undefined;
     const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
@@ -209,7 +220,10 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKeys.map(getPublicKey);
+      : [
+          ...peerKeys.map(getPublicKey),
+          ...(managementKey ? [getPublicKey(managementKey)] : []),
+        ];
     const dmIds = Object.keys(dmMembers).length
       ? Object.keys(dmMembers)
       : largeSidebar
@@ -219,7 +233,9 @@ export const test = base.extend({
           )
         : dmLabels
           ? ["dm-peer", "dm-group"]
-          : [];
+          : inboxDm || inboxDmOldAnchor
+            ? ["dm-peer"]
+            : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
@@ -468,6 +484,42 @@ export const test = base.extend({
         membershipEvent("member_joined", 1, 1700000741),
       );
     }
+    let inboxDmAnchor;
+    if (inboxDmOldAnchor) {
+      inboxDmAnchor = sign(
+        9,
+        [["h", "dm-peer"]],
+        "Inbox old DM anchor",
+        peerKey,
+        1700000800,
+      );
+      histories
+        .get("primary/dm-peer")
+        .push(
+          inboxDmAnchor,
+          ...Array.from({ length: 24 }, (_, index) =>
+            sign(
+              9,
+              [["h", "dm-peer"]],
+              `Recent DM ${index}`,
+              userKey,
+              1700000810 + index,
+            ),
+          ),
+        );
+    }
+    if (inboxDm)
+      histories
+        .get("primary/dm-peer")
+        .push(
+          sign(
+            9,
+            [["h", "dm-peer"]],
+            "Inbox DM fixture reply",
+            peerKey,
+            1700000900,
+          ),
+        );
     if (sidebarUnread) {
       for (const id of Object.keys(dmMembers).length
         ? Object.keys(dmMembers)
@@ -594,6 +646,35 @@ export const test = base.extend({
         ),
       );
     }
+    let inboxWindow;
+    if (inboxThreadWindow) {
+      const channelId = channels.find((id) => /^[0-9a-f-]{36}$/.test(id));
+      if (!channelId)
+        throw new Error("Inbox window needs a canonical fixture channel");
+      const root = sign(
+        9,
+        [["h", channelId]],
+        "Inbox strict root",
+        userKey,
+        1700000100,
+      );
+      const replies = Array.from({ length: 15 }, (_, index) =>
+        sign(
+          9,
+          [
+            ["h", channelId],
+            ["e", root.id, "", "reply"],
+            ["p", viewer],
+          ],
+          `Inbox strict reply ${index}`,
+          peerKey,
+          1700000200 + index,
+        ),
+      );
+      histories.set(`primary/${channelId}`, [root, ...replies]);
+      threadReplies.set(root.id, replies);
+      inboxWindow = { channelId, root, replies };
+    }
     // Signed upstream-only stress data; production traversal and mounting stay real.
     let presenceThread;
     if (presenceThreadAuthors) {
@@ -659,6 +740,7 @@ export const test = base.extend({
         browserName,
         developmentReact,
         pluginFixtures,
+        agentManagement,
         compiledBuild: {
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
@@ -678,7 +760,7 @@ export const test = base.extend({
         platform: platform(),
         arch: arch(),
         viewport: testInfo.project.use.viewport,
-        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native or real relay`,
+        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; ${agentManagement ? "mocked native agent control" : "no native"}; no real relay`,
       },
       queries: [],
       publications: [],
@@ -997,7 +1079,9 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
-                  ...(agentPeers && key !== peerKey ? { is_agent: true } : {}),
+                  ...((agentPeers && key !== peerKey) || inboxSessionAgent
+                    ? { is_agent: true }
+                    : {}),
                   display_name: [
                     "Alice Fixture",
                     "Bob Fixture",
@@ -1008,6 +1092,31 @@ export const test = base.extend({
               ),
             ),
         ];
+      if (filter["#p"] && !filter["#h"] && filter.kinds?.includes(9)) {
+        expect([...filter.kinds].sort((a, b) => a - b)).toEqual([9, 40002]);
+        expect(filter["#p"]).toEqual([viewer]);
+        expect(filter.limit).toBe(50);
+        const candidates = [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          );
+        return [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(([k, v]) => k === "p" && v === viewer),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (filter.search !== undefined)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -1023,7 +1132,11 @@ export const test = base.extend({
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
-          .concat(community === "primary" ? targetEvents : [])
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          )
           .filter(
             (event) =>
               filter.ids.includes(event.id) &&
@@ -1056,6 +1169,73 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
+      if (filter.thread_window) {
+        const channelId = filter["#h"][0],
+          rootId = filter["#e"][0];
+        const candidates = [
+          ...(histories.get(`${community}/${channelId}`) ?? []),
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+        ];
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
+              ) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  event.id > filter.before_id)),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          );
+        const page = rows.slice(0, filter.limit),
+          last = page.at(-1);
+        const hasMore = rows.length > page.length;
+        const binding = createHash("sha256")
+          .update(
+            JSON.stringify([
+              "tw",
+              1,
+              "older",
+              `${community}.example`,
+              viewer,
+              channelId,
+              rootId,
+              filter.limit,
+              filter.depth_limit ?? 100,
+              [...new Set(filter.kinds)].sort((a, b) => a - b),
+              filter.until === undefined
+                ? null
+                : [filter.until, filter.before_id],
+              filter.include_aux ?? false,
+            ]),
+          )
+          .digest("hex");
+        return [
+          ...page,
+          sign(
+            39007,
+            [
+              ["d", `tw:1:${binding}`],
+              ["h", channelId],
+              ["e", rootId],
+            ],
+            JSON.stringify({
+              version: 1,
+              direction: "older",
+              has_more: hasMore,
+              next_cursor: hasMore
+                ? { created_at: last.created_at, id: last.id }
+                : null,
+            }),
+          ),
+        ];
+      }
       if (filter.depth_limit) {
         const rootId = filter["#e"]?.[0];
         const candidates = [
@@ -1776,6 +1956,22 @@ export const test = base.extend({
           };
         },
         presenceThread,
+        inboxWindow,
+        inboxDmAnchor,
+        deleteInboxAnchor(event) {
+          const deletion = sign(
+            5,
+            [
+              ["h", inboxWindow.channelId],
+              ["e", event.id],
+            ],
+            "",
+            peerKey,
+            event.created_at + 100,
+          );
+          targetEvents.push(deletion);
+          relay.publish("primary", deletion);
+        },
         exact,
         searchTarget,
         membership(
@@ -1814,6 +2010,7 @@ export const test = base.extend({
           return event;
         },
         participants,
+        managementKey,
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {
@@ -1920,10 +2117,12 @@ export const test = base.extend({
         reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
+          const channel = replies[0]?.tags.find(([key]) => key === "h")?.[1];
+          if (!channel) throw new Error("Missing fixture thread channel");
           const event = sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", channel],
               ["e", rootId, "", "reply"],
             ],
             own ? "My reply" : "New peer reply",
@@ -2018,11 +2217,25 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
+      const githubFailures = [...(report.githubFailures ?? [])];
+      const injectedGitHubFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 403/.test(
+            message,
+          )
+        )
+          return false;
+        const match = githubFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        githubFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
+            !injectedGitHubFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

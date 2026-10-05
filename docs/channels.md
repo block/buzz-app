@@ -24,6 +24,14 @@ arbitrary file paths or application commands. Web keeps ordinary browser link
 behavior. Adding the native opener requires rebuilding/restarting desktop;
 frontend hot reload alone is not enough.
 
+HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
+on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
+**Open in browser** uses the same `_blank` fallback above without consulting pane
+handlers; both actions retain the original URL, including query and fragment.
+Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+message content retain their existing behavior. Copy failures show a dismissible
+notice and can be retried from the link menu.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Channels is required by the current host; optional page removal does not dispose
@@ -195,9 +203,35 @@ conversation content and unmount when leaving Messages.
 
 Each sidebar section can independently select **A–Z** (the default) or **Recent**.
 The development broker and packaged native host save these choices in the desktop-compatible encrypted
-kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
-that group's override. Saving preserves unrelated fields and choices present in
-the record read before publication.
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... }, meta: { v: 1, g: { ... } } }`.
+A–Z writes a null register and removes that group's legacy override. Sections use
+`meta: { v: 1, s: { ... }, a: { ... } }`: per-section name/icon/order/live registers
+and per-channel assignments. Upgraded readers project metadata as authoritative;
+writers regenerate the legacy fields and preserve unrelated registers, including
+section deletion (`live=false`) and assignment/sort reset (`null`) tombstones.
+Stars and mutes keep their existing `updatedAt` entries, not this register schema.
+
+A register is `[version, device, value]`, with a nonnegative safe-integer millisecond
+version and 16 lowercase hex device ID. Meta-less relay heads import at event
+seconds × 1,000 with the zero device ID. Edits exceed every observed register
+version and use a random in-memory device ID. Sections sort by canonical `(order,id)`
+and project dense display orders; new sections append after the canonical live
+maximum. Orphan assignments are omitted from the legacy projection, not deleted
+from metadata. Read projection accepts Desktop string values on retained section
+name/icon registers; only projected live text receives UI length limits. Already
+satisfied intents return without rewriting the head, including assignment removal
+when its register is absent, explicitly null, or points to a nonprojecting section.
+Actual rewrites still reject
+out-of-policy retained values rather than dropping or truncating them.
+Unsupported/malformed metadata fails closed, including unknown fields;
+this is not general forward-schema salvage. Live projection caps remain 100
+sections, 1,000 assignments and 104 sort overrides; retained tombstones are bounded
+by the existing 128 KiB plaintext budget, not live counts. Native signing/admission
+additionally requires legacy fields to equal the validated register projection.
+
+Saving preserves unrelated top-level fields and known register choices present in
+the strong head read before publication. This is wire-format compatibility, not
+the older Desktop's local-authoritative register cache or automatic reconciler.
 
 Persistence is **whole-record last-write-wins**, not conflict-safe per-section
 merging. Two devices can read the same record and save different sections; the
@@ -207,8 +241,8 @@ Read-back checks the requested section at that moment; it cannot detect an unsee
 choice overwritten in another section or guarantee preservation against later
 writes. “Independent” describes selecting a mode per section, not simultaneous
 cross-device save guarantees. Retaining the shared record preserves compatibility
-with existing desktop writers; per-section conflict resolution would require a
-coordinated persistence change.
+with existing desktop writers; convergence across unseen heads would require a
+separately designed reconciliation lifecycle or atomic relay support.
 
 `dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
 through the real mutation helper: another section saves and confirms between a
@@ -856,8 +890,10 @@ another non-owner member:
 | Target role | Change role | Remove from this channel |
 | --- | --- | --- |
 | Admin / Member / Guest | Admin / Member, excluding the current role | Yes |
-| Bot | No conversion | Yes |
+| Bot | Admin / Member, after explicit confirmation | Yes |
 | Owner, self, unknown or inconsistent | No | No |
+
+Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu deliberately omits **Make guest** while Guest's permission contract is
 unsettled: the inspected relay message path does not enforce the role's documented
@@ -866,13 +902,20 @@ Existing Guest roles remain available to the permission/confirmation flow and ca
 Admin, or removed; they are never automatically converted. This is a menu-only
 restriction, not a change to relay semantics or the broker's supported commands.
 
-DMs and session channels have no administration actions. No ownership transfer,
-community-admin override, delegated agent-owner authority or new invitation
-restriction is introduced. Personal Leave remains a separate lifecycle operation;
-removing a member neither deletes their identity nor stops their agents.
+Current members may also remove their own verified non-owner agents, but cannot
+edit their roles or remove someone else's agent. The service verifies signed
+ownership once per removal attempt, independently of display hints.
 
-Role change and removal use separate deliberate confirmations, initially focused
-on Cancel. The service checks fresh actor/target state before signing and again
+DMs, archived channels and session channels have no administration actions.
+No ownership transfer, community-admin override or new invitation restriction is
+introduced. Personal Leave remains a separate lifecycle operation; removing a
+member neither deletes their identity nor stops their agents.
+
+Role change and removal use deliberate confirmation steps in the same dialog,
+initially focused on Cancel. Removal shows only the avatar/name and actions;
+Cancel returns to the list. Errors appear below Search, outside the scrolling
+list; pending and success banners are omitted.
+The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
 Pending intent survives dialog close/reopen and suppresses duplicate actions.
@@ -884,12 +927,12 @@ unconfirmed intent for fresh readback only. They fence late completions, as does
 disposal, but cannot retract a request already sent. Unsent work is canceled;
 recovery is in-memory, not durable across session disposal or restart.
 
-The development broker advertises a separate `memberAdministration` capability
-and admits only exact `9000` Admin/Member/Guest changes or `9001` other-member
-removals through its purpose-bound routes. Generic invitation signing is unchanged;
-the relay still enforces the authoritative ACL. Hosts without this writer can
-read verified roles but expose no management controls. Native/direct-signer parity
-is deferred rather than silently falling back to an unrestricted writer.
+The development broker and native transport advertise a separate
+`memberAdministration` capability and admit only exact `9000` Admin/Member/Guest
+changes or `9001` other-member removals through purpose-bound routes. Generic
+invitation signing is unchanged; the relay still enforces the authoritative ACL.
+Hosts without this writer can read verified roles but expose no management controls.
+Native support requires a rebuilt binary; no unrestricted writer fallback is used.
 
 **Accepted protocol limitation:** role commands are existing relay upserts, not
 conditional updates. A departure after final preflight can be undone by the role
@@ -898,8 +941,8 @@ checks/readback reduce uncertainty but do not provide atomic conflict rejection.
 Preventing these races requires separately scoped relay support.
 
 Regression coverage lives in `administration.test.ts`,
-`MemberAdministration.test.tsx`, and `dev/relay-broker-api.test.mjs`; existing
-`ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
+`MemberAdministration.test.tsx`, `native.test.ts`, and `dev/relay-broker-api.test.mjs`;
+existing `ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
 writes/recovery and a real-app read/confirmation/cancel exercise do not establish
 native or deployed destructive-write acceptance. Those checks and human tryout
 remain separate delivery gates.

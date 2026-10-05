@@ -7,8 +7,21 @@ import {
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });
@@ -66,6 +79,10 @@ async function open(page, app) {
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
 async function link(page, app, target) {
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/block\/buzz\/(?:issues\/\d+\/comments|pulls\/\d+\/reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
       json: {
@@ -91,7 +108,9 @@ async function link(page, app, target) {
   ).toHaveCSS("pointer-events", "auto");
   await trigger.click();
   await expect(
-    panel(page).getByRole("heading", { name: "A useful change" }),
+    panel(page).getByRole("heading", {
+      name: `A useful change #${new URL(target).pathname.split("/").at(-1)}`,
+    }),
   ).toBeVisible();
   // Geometry assertions observe the settled overlay, not an entrance frame.
   await panel(page).evaluate(async (element) => {
@@ -281,7 +300,17 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
-  await panel(page).getByRole("heading", { name: "A useful change" }).hover();
+  // This scroll-ownership journey needs overflowing content; descriptions now
+  // start collapsed, so open the real disclosure before sending wheel input.
+  const description = panel(page).getByRole("button", {
+    name: "Expand Description",
+    exact: true,
+  });
+  await description.click();
+  await expect(description).toHaveAttribute("aria-expanded", "true");
+  await panel(page)
+    .getByRole("heading", { name: "A useful change #1" })
+    .hover();
   await page.mouse.wheel(0, 1000);
   await expect
     .poll(() =>

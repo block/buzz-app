@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MediaAttachment } from "./MediaAttachment";
 
 afterEach(() => {
@@ -21,10 +29,20 @@ function media(url: string) {
 
 function mockPlayback(element: HTMLVideoElement) {
   const play = vi.fn(() => {
-    fireEvent.play(element);
+    Object.defineProperty(element, "paused", {
+      configurable: true,
+      value: false,
+    });
+    element.dispatchEvent(new Event("play"));
     return Promise.resolve();
   });
-  const pause = vi.fn(() => fireEvent.pause(element));
+  const pause = vi.fn(() => {
+    Object.defineProperty(element, "paused", {
+      configurable: true,
+      value: true,
+    });
+    element.dispatchEvent(new Event("pause"));
+  });
   Object.defineProperty(element, "play", { configurable: true, value: play });
   Object.defineProperty(element, "pause", { configurable: true, value: pause });
   return { play, pause };
@@ -203,3 +221,158 @@ it("uses normal speed when a saved preference is invalid", () => {
   );
   expect(container.querySelector("video")?.playbackRate).toBe(1);
 });
+
+it.each(["image", "video"] as const)(
+  "retires %s fullscreen immediately without remounting its source or reopening",
+  async (kind) => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const tree = (active: boolean) => (
+      <>
+        <button type="button">Retry inbox</button>
+        <ConversationPresentation value={active}>
+          <div hidden={!active} inert={!active}>
+            <MediaAttachment
+              attachment={{ ...videoAttachment, kind }}
+              media={media}
+            />
+          </div>
+        </ConversationPresentation>
+      </>
+    );
+    const view = render(tree(true));
+    const source = view.container.querySelector(
+      kind === "video" ? "video" : "img",
+    );
+    const opener = screen.getByRole("button", {
+      name: `Open ${kind} fullscreen`,
+    });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(view.container).toHaveAttribute("aria-hidden", "true");
+    const focus = vi.spyOn(opener, "focus");
+    view.rerender(tree(false));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(view.container).not.toHaveAttribute("aria-hidden");
+    expect(view.container.inert).toBeFalsy();
+    const retry = screen.getByRole("button", { name: "Retry inbox" });
+    retry.focus();
+    view.rerender(tree(true));
+    await act(() => Promise.resolve());
+    expect(retry).toHaveFocus();
+    expect(focus).not.toHaveBeenCalled();
+    expect(
+      view.container.querySelector(kind === "video" ? "video" : "img"),
+    ).toBe(source);
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  },
+);
+
+it("retires inline video popups without replacing the video", () => {
+  const tree = (active: boolean) => (
+    <ConversationPresentation value={active}>
+      <MediaAttachment attachment={videoAttachment} media={media} />
+    </ConversationPresentation>
+  );
+  const view = render(tree(true));
+  const video = view.container.querySelector("video");
+  if (!video) throw new Error("Missing video");
+  mockPlayback(video);
+  fireEvent.click(screen.getByRole("button", { name: "Playback speed: 1x" }));
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  view.rerender(tree(false));
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+  view.rerender(tree(true));
+  expect(view.container.querySelector("video")).toBe(video);
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+});
+
+it("pauses a playing inline video while withheld without losing its source or replaying its seek on recovery", () => {
+  const tree = (active: boolean, seekRequest = 1) => (
+    <StrictMode>
+      <ConversationPresentation value={active}>
+        <MediaAttachment
+          attachment={videoAttachment}
+          media={media}
+          {...(seekRequest ? { seekTo: 12 } : {})}
+          seekRequest={seekRequest}
+        />
+      </ConversationPresentation>
+    </StrictMode>
+  );
+  const view = render(tree(true, 0));
+  const video = view.container.querySelector("video");
+  if (!video) throw new Error("Missing video");
+  const playback = mockPlayback(video);
+  const source = video.getAttribute("src");
+  Object.defineProperty(video, "readyState", {
+    configurable: true,
+    value: HTMLMediaElement.HAVE_METADATA,
+  });
+  view.rerender(tree(true));
+  expect(video.paused).toBe(false);
+  expect(playback.play).toHaveBeenCalledTimes(1);
+  video.currentTime = 24;
+  fireEvent.timeUpdate(video);
+
+  view.rerender(tree(false));
+  expect(playback.pause).toHaveBeenCalledTimes(1);
+  expect(video.paused).toBe(true);
+  expect(video.currentTime).toBe(24);
+  expect(view.container.querySelector("video")).toBe(video);
+  expect(video).toHaveAttribute("src", source);
+
+  view.rerender(tree(true));
+  expect(video.currentTime).toBe(24);
+  expect(video.paused).toBe(true);
+  expect(playback.play).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByRole("button", { name: "Play video" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+  expect(video.paused).toBe(false);
+  expect(video.currentTime).toBe(24);
+});
+
+it.each(["while withheld", "after recovery"])(
+  "cancels an inline video seek whose metadata arrives %s",
+  (arrival) => {
+    const tree = (active: boolean, seekRequest = 1) => (
+      <StrictMode>
+        <ConversationPresentation value={active}>
+          <MediaAttachment
+            attachment={videoAttachment}
+            media={media}
+            seekTo={12}
+            seekRequest={seekRequest}
+          />
+        </ConversationPresentation>
+      </StrictMode>
+    );
+    const view = render(tree(true));
+    const video = view.container.querySelector("video");
+    if (!video) throw new Error("Missing video");
+    const playback = mockPlayback(video);
+    video.currentTime = 3;
+    view.rerender(tree(false));
+    if (arrival === "after recovery") view.rerender(tree(true));
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      value: HTMLMediaElement.HAVE_METADATA,
+    });
+    fireEvent.loadedMetadata(video);
+    expect(playback.play).not.toHaveBeenCalled();
+    expect(video.currentTime).toBe(3);
+    if (arrival === "while withheld") {
+      view.rerender(tree(false, 2));
+      expect(playback.play).not.toHaveBeenCalled();
+      view.rerender(tree(true, 2));
+    }
+    expect(playback.play).not.toHaveBeenCalled();
+    expect(video.currentTime).toBe(3);
+    view.rerender(tree(true, 3));
+    expect(playback.play).toHaveBeenCalledTimes(1);
+    expect(video.currentTime).toBe(12);
+  },
+);

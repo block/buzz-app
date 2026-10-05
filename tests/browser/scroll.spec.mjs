@@ -189,13 +189,25 @@ readingTest(
     await expectAnchor(page, reloadedAnchor);
     const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
     await expect(jumpToLatest).toBeVisible();
+    await expect(jumpToLatest).toHaveCSS("border-radius", "12px");
+    await expect(jumpToLatest.locator("..")).toHaveCSS("border-radius", "12px");
     await jumpToLatest.focus();
     await page.keyboard.press("Enter");
     await expect(history(page)).toBeFocused();
     await expect(
       history(page).locator(`[data-message-id="${held.id}"]`),
     ).toBeInViewport();
-    await expect(jumpToLatest).toHaveCount(0);
+    await expect(jumpToLatest).toHaveCount(1);
+    await expect(
+      jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+    ).toHaveAttribute("inert", "");
+    await expect(
+      jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+    ).toHaveAttribute("aria-hidden", "true");
+    await expect(
+      history(page).getByRole("button").and(jumpToLatest),
+    ).toHaveCount(0);
+    await expect(jumpToLatest).toBeHidden();
     const followed = app.append("primary", "alpha");
     await expect(
       history(page).locator(`[data-message-id="${followed.id}"]`),

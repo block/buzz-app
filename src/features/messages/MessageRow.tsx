@@ -1,5 +1,6 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -238,6 +239,7 @@ export const MessageRow = memo(function MessageRow({
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
   const reportActive = reporting !== undefined;
   // The dialog, pending submit and notice live in this row; eviction loses them.
@@ -253,7 +255,10 @@ export const MessageRow = memo(function MessageRow({
       ? session?.messages.report
       : undefined;
   const reportItem = report && (
-    <MenuItem onClick={() => setReporting("open")}>
+    <MenuItem
+      disabled={reporting === "open"}
+      onClick={() => setReporting("open")}
+    >
       <MenuIcon>
         <FlagIcon />
       </MenuIcon>
@@ -310,18 +315,7 @@ export const MessageRow = memo(function MessageRow({
   );
   return (
     <div data-message-id={row.id}>
-      {day && (
-        <div className={styles.day}>
-          <span>
-            {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
-              year: "numeric",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-      )}
+      {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
@@ -403,7 +397,7 @@ export const MessageRow = memo(function MessageRow({
               finalFocus={menuTrigger}
             />
           )}
-          {reporting === "sent" && (
+          {active && reporting === "sent" && (
             <ToastNotice
               tone="success"
               timeout={5000}

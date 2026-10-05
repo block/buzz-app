@@ -42,6 +42,17 @@ async function openEditor(page, name = "Fixture agent") {
   }
   return dialog;
 }
+// The editor dialog is fixed, but Select popups are document-positioned. Clicking
+// during the entry transition can make Playwright scroll the locked page and
+// press after the popup re-anchors, so wait until the open popup is settled.
+async function chooseOption(page, name) {
+  const popup = page.locator(".buzz-select-popup[data-open]");
+  await expect(popup).not.toHaveAttribute("data-starting-style");
+  await expect
+    .poll(() => popup.evaluate((element) => element.getAnimations().length))
+    .toBe(0);
+  await page.getByRole("option", { name, exact: true }).click();
+}
 
 test("agent menu leaves focus in Profile after its close animation", async ({
   page,
@@ -147,7 +158,9 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       editor.getByLabel("Replacement for EXAMPLE_TOKEN"),
     ).toHaveAttribute("type", "password");
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+    await openEditor(page);
     await expect(
       editor.getByText(/Saved revision 2 · Running revision 1/),
     ).toBeVisible();
@@ -653,6 +666,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await expect(save).toBeDisabled();
     await prompt.fill("Unrelated edit");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: original,
       environment: {},
@@ -660,16 +675,16 @@ test("native-supplied harness choices preserve current values and save only expl
 
     // Selecting either suggestion changes only that field: no implicit args/model/env rewrite.
     await harness.click();
-    await page.getByRole("option", { name: "Buzz Agent", exact: true }).click();
+    await chooseOption(page, "Buzz Agent");
     await expect(
       editor.getByLabel("Custom provider", { exact: true }),
     ).toHaveValue("fixture-provider");
     await provider.click();
-    await page
-      .getByRole("option", { name: "Databricks v2", exact: true })
-      .click();
+    await chooseOption(page, "Databricks v2");
     await expect(model).toHaveValue(original.model);
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -695,12 +710,7 @@ test("native-supplied harness choices preserve current values and save only expl
 
     // Merely entering custom editing never writes a placeholder or erases the current value.
     await harness.click();
-    await page
-      .getByRole("option", {
-        name: "Custom executable / current value",
-        exact: true,
-      })
-      .click();
+    await chooseOption(page, "Custom executable / current value");
     await expect(executable).toHaveValue("buzz-agent");
     await expect(save).toBeDisabled();
     await executable.fill("/custom path/buzz-agent");
@@ -708,9 +718,11 @@ test("native-supplied harness choices preserve current values and save only expl
       editor.getByLabel("Custom provider", { exact: true }),
     ).toHaveValue("databricks_v2");
     await provider.click();
-    await page.getByRole("option", { name: "Not set", exact: true }).click();
+    await chooseOption(page, "Not set");
     await model.fill("");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -722,12 +734,7 @@ test("native-supplied harness choices preserve current values and save only expl
     });
     await expect(executable).toHaveValue("/custom path/buzz-agent");
     await provider.click();
-    await page
-      .getByRole("option", {
-        name: "Custom provider / current value",
-        exact: true,
-      })
-      .click();
+    await chooseOption(page, "Custom provider / current value");
     await editor
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
@@ -751,6 +758,8 @@ test("native-supplied harness choices preserve current values and save only expl
     // Re-read blank selectors plus unknown/absolute command; unrelated saves stay exact.
     await prompt.fill("Blank selectors stay blank");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -760,6 +769,13 @@ test("native-supplied harness choices preserve current values and save only expl
       },
       environment: {},
     });
+    await provider.click();
+    await page
+      .getByRole("option", {
+        name: "Custom provider / current value",
+        exact: true,
+      })
+      .click();
     await editor
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
@@ -770,8 +786,12 @@ test("native-supplied harness choices preserve current values and save only expl
       .getByRole("textbox", { name: "Arguments (JSON array)", exact: true })
       .fill(JSON.stringify(args));
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     await prompt.fill("Keep unknown values too");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         command: "/custom path/buzz-agent",
@@ -839,14 +859,14 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
       "Host harness",
       "Custom executable / current value",
     ]);
-    await page
-      .getByRole("option", { name: "Host harness", exact: true })
-      .click();
+    await chooseOption(page, "Host harness");
+    await expect(harness).toHaveText("Host harness");
     await provider.click();
-    await page
-      .getByRole("option", { name: "Host provider", exact: true })
-      .click();
+    await chooseOption(page, "Host provider");
+    await expect(provider).toHaveText("Host provider");
     await editor.getByRole("button", { name: "Save changes" }).click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect(
       await page.evaluate(() => window.agentControlFixture.agent.harness),
     ).toMatchObject({ command: "host-command", provider: "host-provider" });
@@ -1535,6 +1555,25 @@ test("inventory keeps current-community tiles and compact rows without repeated 
         path: testInfo.outputPath(`inventory-${width}.png`),
       });
     }
+    const removeButton = relay
+      .getByRole("article")
+      .first()
+      .getByRole("button", { name: "Remove", exact: true });
+    await removeButton.click();
+    const removal = page.getByRole("alertdialog", {
+      name: "Remove 121212121212?",
+    });
+    await expect(
+      removal.getByText(
+        "Tries to remove the agent from every channel it belongs to.",
+      ),
+    ).toBeVisible();
+    await removal.screenshot({
+      path: testInfo.outputPath("remove-dialog.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(removal).toHaveCount(0);
+    await expect(removeButton).toBeFocused();
     await other
       .getByLabel("Details for Other community agent", { exact: true })
       .click();

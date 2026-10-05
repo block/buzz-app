@@ -86,7 +86,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
       };
     });
     expect(layout.gap).toBe(8);
-    expect(layout.height).toBe(28);
+    expect(layout.height).toBe(32);
     expect(layout.iconTop).toBeGreaterThanOrEqual(layout.summaryTop);
     expect(layout.iconBottom).toBeLessThanOrEqual(layout.summaryBottom);
   }
@@ -218,7 +218,12 @@ test("section labels fade on overflow and recover when widened", async ({
     .click();
   const dialog = page.getByRole("dialog", { name: "Create new section" });
   const name = "Interface gang collaboration";
-  await dialog.getByRole("textbox", { name: "Section name" }).fill(name);
+  const field = dialog.getByRole("textbox", { name: "Section name" });
+  // The menu-to-dialog handoff owns initial focus; mounting alone does not
+  // mean WebKit's keyboard insertion has its final destination.
+  await expect(field).toBeFocused();
+  await field.fill(name);
+  await expect(field).toHaveValue(name);
   await dialog.getByRole("button", { name: "Create and move" }).click();
   const summary = sidebar.locator("summary").filter({ hasText: name });
   await expect(summary).toBeVisible();
@@ -284,7 +289,7 @@ test("section labels fade on overflow and recover when widened", async ({
           };
         }),
       )
-      .toEqual({ centered: true, spacing: 28, separateTargets: true });
+      .toEqual({ centered: true, spacing: 32, separateTargets: true });
     await summary.screenshot({
       path: info.outputPath(`section-label-${width}.png`),
     });

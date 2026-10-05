@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { finalizeEvent, nip44 } from "nostr-tools";
 import { connectNativeTransport } from "./native";
+import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { keypair } from "./testing";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -284,3 +285,282 @@ it("does not sign a redundant intent or continue after cancellation", async () =
     ),
   ).rejects.toMatchObject({ name: "AbortError" });
 });
+
+it("native writers update authoritative registers and preserve unrelated tombstones", async () => {
+  const stamp = (v: unknown) => [2_000_000_000_000, "1111111111111111", v];
+  const meta = {
+    v: 1,
+    s: {
+      work: { name: stamp("Work"), order: stamp(40), live: stamp(true) },
+      deleted: { name: stamp("Deleted"), live: stamp(false) },
+    },
+    a: { c1: stamp("work"), old: stamp(null) },
+  };
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "wrong", name: "Stale", order: 0 }],
+      assignments: {},
+      meta,
+    }),
+  );
+  records.set(
+    "channel-sort",
+    signedRecord("channel-sort", {
+      version: 1,
+      groups: {},
+      meta: { v: 1, g: { channels: stamp("recent"), forums: stamp(null) } },
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  expect(
+    await transport.writeSidebarAssignment?.(
+      { channelId: "c2", sectionId: "work" },
+      signal,
+    ),
+  ).toEqual({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { c1: "work", c2: "work" },
+  });
+  const saved = decode([...records.values()])["channel-sections"];
+  expect(saved).toMatchObject({
+    meta: {
+      s: meta.s,
+      a: {
+        old: meta.a.old,
+        c2: [
+          2_000_000_000_001,
+          expect.stringMatching(/^[0-9a-f]{16}$/),
+          "work",
+        ],
+      },
+    },
+    sections: [{ id: "work", name: "Work", order: 0 }],
+  });
+  expect(
+    await transport.writeSidebarSort?.("channels", "alpha", [], signal),
+  ).toEqual({});
+  const sort = decode([...records.values()])["channel-sort"];
+  expect(sort).toEqual({
+    version: 1,
+    groups: {},
+    meta: {
+      v: 1,
+      g: {
+        channels: [
+          2_000_000_000_001,
+          expect.stringMatching(/^[0-9a-f]{16}$/),
+          null,
+        ],
+        forums: stamp(null),
+      },
+    },
+  });
+});
+
+it("reads all coordinates with oversized deleted-section text but refuses to rewrite it", async () => {
+  const reg = (value: unknown) => [100, "1111111111111111", value];
+  const sections = {
+    version: 1,
+    sections: [{ id: "stale", name: "Stale", order: 0 }],
+    assignments: { c2: "stale" },
+    meta: {
+      v: 1,
+      s: {
+        work: { name: reg("Work"), order: reg(0), live: reg(true) },
+        dead: {
+          name: reg("x".repeat(257)),
+          icon: reg("i".repeat(129)),
+          live: reg(false),
+        },
+      },
+      a: { c1: reg("work"), c2: reg("dead") },
+    },
+  };
+  for (const [coordinate, value] of Object.entries({
+    "channel-sections": sections,
+    "channel-stars": {
+      version: 1,
+      channels: { c1: { starred: true, updatedAt: 1 } },
+    },
+    "channel-mutes": {
+      version: 1,
+      channels: { c2: { muted: true, updatedAt: 1 } },
+    },
+    "channel-sort": { version: 1, groups: { channels: "recent" } },
+  }))
+    records.set(coordinate, signedRecord(coordinate, value));
+  const before = [...records.values()];
+  const transport = await connectNativeTransport(community);
+  expect(await transport.decodeSidebarPreferences?.(before, signal)).toEqual({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { c1: "work" },
+    starred: ["c1"],
+    muted: ["c2"],
+    sort: { channels: "recent" },
+  });
+  await expect(
+    transport.writeSidebarAssignment?.(
+      { channelId: "c3", sectionId: "work" },
+      signal,
+    ),
+  ).rejects.toThrow("Invalid sidebar register");
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "relay_sign_sidebar"),
+  ).toBe(false);
+  expect([...records.values()]).toEqual(before);
+});
+
+it.each([false, true])(
+  "appends a native section after canonical imported orders (metadata=%s)",
+  async (metadata) => {
+    const reg = (value: unknown) => [100, "1111111111111111", value];
+    records.set(
+      "channel-sections",
+      signedRecord("channel-sections", {
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: 0.5 }],
+        assignments: {},
+        ...(metadata
+          ? {
+              meta: {
+                v: 1,
+                s: {
+                  work: { name: reg("Work"), order: reg(40), live: reg(true) },
+                },
+                a: {},
+              },
+            }
+          : {}),
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const id = "12345678-1234-1234-1234-123456789abc";
+    expect(
+      await transport.writeSidebarAssignment?.(
+        { channelId: "c1", createSection: { id, name: "New" } },
+        signal,
+      ),
+    ).toEqual({
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id, name: "New", order: 1 },
+      ],
+      assignments: { c1: id },
+    });
+    const saved = decode([...records.values()])["channel-sections"];
+    expect(saved).toMatchObject({
+      meta: {
+        s: {
+          work: {
+            order: [expect.any(Number), expect.any(String), metadata ? 40 : 1],
+          },
+          [id]: {
+            order: [expect.any(Number), expect.any(String), metadata ? 41 : 2],
+          },
+        },
+      },
+    });
+  },
+);
+
+it.each([
+  { assignment: undefined, oversized: false },
+  { assignment: null, oversized: false },
+  { assignment: "dead", oversized: false },
+  { assignment: undefined, oversized: true },
+  { assignment: null, oversized: true },
+  { assignment: "dead", oversized: true },
+])(
+  "Unstar clears only stars when assignment is already clear: %j",
+  async ({ assignment, oversized }) => {
+    const reg = (value: unknown) => [100, "1111111111111111", value];
+    const sections = signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "stale", name: "Stale", order: 0 }],
+      assignments: { c1: "stale" },
+      meta: {
+        v: 1,
+        s: {
+          work: { name: reg("Work"), live: reg(true), order: reg(0) },
+          dead: {
+            name: reg(oversized ? "x".repeat(257) : "Deleted"),
+            live: reg(false),
+          },
+        },
+        a: {
+          ...(assignment === undefined ? {} : { c1: reg(assignment) }),
+          c2: reg("work"),
+        },
+      },
+    });
+    records.set("channel-sections", sections);
+    records.set(
+      "channel-stars",
+      signedRecord("channel-stars", {
+        version: 1,
+        channels: {
+          c1: { starred: true, updatedAt: 1 },
+          c2: { starred: true, updatedAt: 1 },
+        },
+      }),
+    );
+    const transport = await connectNativeTransport(community);
+    const owner = createSidebarPreferencesStore(
+      async () => {
+        const data = await transport.decodeSidebarPreferences?.(
+          [...records.values()],
+          signal,
+        );
+        if (!data) throw new Error("Sidebar decode unavailable");
+        return data;
+      },
+      true,
+      transport.writeSidebarAssignment,
+      transport.writeSidebarStar,
+    );
+    try {
+      const preferences = owner.queries;
+      await preferences.ensure();
+      expect(preferences.snapshot().data?.starred).toEqual(["c1", "c2"]);
+      await expect(preferences.setStar("c1", false)).resolves.toEqual(["c2"]);
+      expect(preferences.snapshot().data).toMatchObject({
+        starred: ["c2"],
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: { c2: "work" },
+      });
+      expect(records.get("channel-sections")).toBe(sections);
+      expect(decode([...records.values()])["channel-stars"]).toMatchObject({
+        channels: { c1: { starred: false }, c2: { starred: true } },
+      });
+      const signing = vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "relay_sign_sidebar");
+      expect(signing).toEqual([
+        [
+          "relay_sign_sidebar",
+          expect.objectContaining({ coordinate: "channel-stars" }),
+        ],
+      ]);
+      const queries = vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]) =>
+            command === "relay_http" &&
+            (args as { path: string }).path === "/query",
+        )
+        .flatMap(([, args]) => JSON.parse((args as { body: string }).body));
+      expect(queries).toContainEqual(
+        expect.objectContaining({
+          "#d": ["channel-sections"],
+          consistency: "strong",
+        }),
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);

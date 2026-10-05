@@ -1,6 +1,8 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
   createContext,
   useContext,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -24,25 +26,17 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
-import { useFloatingActionBar } from "./useFloatingActionBar";
+import {
+  useFloatingActionBar,
+  useMessageActionBarReady,
+} from "./useFloatingActionBar";
 
 const AfterMenuClose = createContext<
   ((action: () => void) => void) | undefined
 >(undefined);
 export const useAfterMessageMenuClose = () => useContext(AfterMenuClose);
 
-export function MessageActionBar({
-  onSendToChannel,
-  onReply,
-  replyDisabled,
-  link,
-  copyText,
-  quickControls,
-  overflowItems,
-  messageId,
-  menuTriggerRef,
-  rowRef,
-}: {
+type Props = {
   rowRef?: RefObject<HTMLDivElement | null>;
   messageId?: string;
   menuTriggerRef?: Ref<HTMLButtonElement>;
@@ -53,7 +47,41 @@ export function MessageActionBar({
   copyText(): string;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
-}) {
+};
+
+export function MessageActionBar(props: Props) {
+  const active = useConversationPresentation();
+  return active ? <ActiveMessageActionBar {...props} /> : null;
+}
+
+function ActiveMessageActionBar(props: Props) {
+  const ready = useMessageActionBarReady(props.rowRef);
+  return ready ? (
+    <MessageActionBarControls {...props} />
+  ) : (
+    <div className={styles.messageActionsSlot}>
+      {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
+      <div
+        className={styles.messageActions}
+        role="group"
+        aria-label="Message actions"
+      />
+    </div>
+  );
+}
+
+function MessageActionBarControls({
+  onSendToChannel,
+  onReply,
+  replyDisabled,
+  link,
+  copyText,
+  quickControls,
+  overflowItems,
+  messageId,
+  menuTriggerRef,
+  rowRef,
+}: Props) {
   const [open, setOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
@@ -62,6 +90,14 @@ export function MessageActionBar({
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const busy = useRef(false);
   const afterClose = useRef<(() => void) | undefined>(undefined);
+  const live = useRef(true);
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      afterClose.current = undefined;
+    };
+  }, []);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
   const [openedByPointer, setOpenedByPointer] = useState(false);
   const copy = async (text: () => string, label: string) => {
@@ -163,11 +199,11 @@ export function MessageActionBar({
             <MenuPopup
               align="end"
               data-message-id={messageId}
-              // A boolean preserves Base UI's safeguard when focus already moved.
-              // A callback returning true would force focus back over a newer action.
-              // Pointer-only interactions hand nothing back; switching to the
-              // keyboard restores the trigger for continued navigation.
-              finalFocus={!handingOffFocus && !openedByPointer}
+              // The shared popup preserves moved focus; retirement also revokes
+              // return-focus ownership, including a retained hidden source row.
+              finalFocus={() =>
+                live.current && !handingOffFocus && !openedByPointer
+              }
             >
               <AfterMenuClose.Provider
                 value={(action) => {

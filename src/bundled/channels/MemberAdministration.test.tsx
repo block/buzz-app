@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -47,11 +50,42 @@ async function setup(
   messageSupport = false,
   messageNavigation = true,
   initialReads?: { names?: Promise<void>; roster?: Promise<void> },
+  ownership?: "own" | "other" | "invalid",
+  visibility: "private" | "public" = "private",
+  targetPicture?: string,
 ) {
   const viewer = keypair(),
     relay = keypair(),
     target = keypair(),
     owner = keypair();
+  const manager = ownership === "other" ? owner : viewer;
+  const digest = new Uint8Array(
+    createHash("sha256").update(`nostr:agent-auth:${target.pubkey}:`).digest(),
+  );
+  const profileBody = {
+    name: "Morgan",
+    is_agent: targetAgent,
+    picture: targetPicture,
+  };
+  const targetProfile = ownership
+    ? signed(target, {
+        kind: 0,
+        content: JSON.stringify(profileBody),
+        tags: [
+          [
+            "auth",
+            manager.pubkey,
+            "",
+            bytesToHex(
+              schnorr.sign(
+                digest,
+                ownership === "invalid" ? target.secret : manager.secret,
+              ),
+            ),
+          ],
+        ],
+      })
+    : profile(target, profileBody);
   let role: string | undefined = targetRole;
   let tick = 1700000000;
   let lag = false;
@@ -65,7 +99,7 @@ async function setup(
       kind: 39000,
       created_at: tick,
       content: "",
-      tags: [["d", id], ["t", "stream"], ["private"], ["name", "Design"]],
+      tags: [["d", id], ["t", "stream"], [visibility], ["name", "Design"]],
     }),
     signed(relay, {
       kind: 39001,
@@ -88,7 +122,7 @@ async function setup(
       ],
     }),
     profile(viewer, { name: "Carl" }),
-    profile(target, { name: "Morgan", is_agent: targetAgent }),
+    targetProfile,
     profile(owner, { name: "Owner" }),
   ];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -110,10 +144,14 @@ async function setup(
       filters.some((filter) => matchesEvent(event, filter)),
     );
   });
+  const media = vi.fn(
+    (url: string, size?: "small") =>
+      `https://media.example/${size ?? "original"}?url=${encodeURIComponent(url)}`,
+  );
   const sessionOwner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    media: () => undefined,
+    media,
     query,
     ...(supported
       ? {
@@ -197,7 +235,7 @@ async function setup(
       return screen.findByRole("dialog", {
         name:
           name === "Remove from channel"
-            ? "Remove member?"
+            ? `Remove ${targetAgent ? "agent" : "member"} from channel`
             : "Change member role?",
       });
     },
@@ -285,10 +323,11 @@ it("moves an agent between elevated roles and Agents after a verified refresh", 
     t.confirm(role);
     await t.user.click(refresh);
     await vi.waitFor(() =>
-      expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-        "aria-label",
-        group,
-      ),
+      expect(
+        screen
+          .getByRole("button", { name: /Open profile for Morgan/ })
+          .closest("section"),
+      ).toHaveAttribute("aria-label", group),
     );
   }
   expect(t.publish).not.toHaveBeenCalled();
@@ -517,7 +556,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   );
   expect(
     within(dialog).getByRole("button", { name: "Cancel" }),
-  ).toHaveAttribute("data-variant", "outline");
+  ).toHaveAttribute("data-variant", "subtle");
   expect(
     within(dialog).getByRole("button", { name: "Make admin" }),
   ).toHaveAttribute("data-variant", "prominent");
@@ -528,19 +567,86 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   await t.user.click(
     within(dialog).getByRole("button", { name: "Make admin" }),
   );
-  await screen.findByText("Member change confirmed.");
-  expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-    "aria-label",
-    "Admins",
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
   );
+  expect(
+    screen.queryByText("Member change confirmed."),
+  ).not.toBeInTheDocument();
+  expect(
+    screen
+      .getByRole("button", { name: /Open profile for Morgan/ })
+      .closest("section"),
+  ).toHaveAttribute("aria-label", "Admins");
   expect(t.publish).toHaveBeenCalledOnce();
 });
-it("confirms removal and removes only the confirmed roster entry", async () => {
+it.each(["cancel", "close", "escape", "outside"])(
+  "returns from confirmation with %s without losing the search or sending a write",
+  async (dismiss) => {
+    const t = await setup();
+    const original = screen.getByRole("dialog", { name: "Channel members" });
+    await t.user.type(screen.getByRole("searchbox"), "Morgan");
+    const dialog = await t.choose("Remove from channel");
+    expect(dialog).toBe(original);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    if (dismiss === "escape") await t.user.keyboard("{Escape}");
+    else if (dismiss === "outside")
+      await t.user.click(
+        required(document.querySelector<HTMLElement>(".buzz-dialog-backdrop")),
+      );
+    else
+      await t.user.click(
+        within(dialog).getByRole("button", {
+          name: dismiss === "cancel" ? "Cancel" : "Back to channel members",
+        }),
+      );
+    const search = await screen.findByRole("searchbox");
+    expect(search).toHaveValue("Morgan");
+    await vi.waitFor(() => expect(search).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "Channel members" })).toBe(
+      original,
+    );
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps confirmation read-only when the verified target role changes", async () => {
   const t = await setup();
   const dialog = await t.choose("Remove from channel");
-  expect(dialog).toHaveTextContent(
-    "does not delete their identity or stop their agents",
-  );
+  t.confirm("owner");
+  await act(async () => t.session.memberAdministration.refresh(id));
+  const remove = within(dialog).getByRole("button", { name: "Remove member" });
+  expect(remove).toBeDisabled();
+  await t.user.click(remove);
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await screen.findByRole("searchbox");
+});
+
+it("confirms removal and removes only the confirmed roster entry", async () => {
+  const t = await setup();
+  const membersDialog = screen.getByRole("dialog", { name: "Channel members" });
+  const dialog = await t.choose("Remove from channel");
+  expect(dialog).toBe(membersDialog);
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  expect(
+    required(
+      dialog.querySelector(
+        '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+      ),
+    ),
+  ).toBeEmptyDOMElement();
+  expect(
+    within(dialog).getByRole("button", { name: "Cancel" }),
+  ).toHaveAttribute("data-variant", "subtle");
   expect(
     within(dialog).getByRole("button", { name: "Remove member" }),
   ).toHaveAttribute("data-variant", "destructive");
@@ -548,8 +654,17 @@ it("confirms removal and removes only the confirmed roster entry", async () => {
   await t.user.click(
     within(dialog).getByRole("button", { name: "Remove member" }),
   );
-  await screen.findByText("Member change confirmed.");
-  expect(screen.queryByText("Morgan")).not.toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
+  );
+  expect(
+    screen.queryByText("Member change confirmed."),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Open profile for Morgan/ }),
+  ).not.toBeInTheDocument();
   expect(t.session.channels.get?.(id)?.members).not.toContain(t.target.pubkey);
 });
 it.each(["member", "guest"])(
@@ -597,15 +712,23 @@ it("changes an existing Guest to Member only after explicit confirmation", async
   await t.user.click(
     within(dialog).getByRole("button", { name: "Make member" }),
   );
-  await screen.findByText("Member change confirmed.");
-  expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-    "aria-label",
-    "Members",
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
   );
+  expect(
+    screen.queryByText("Member change confirmed."),
+  ).not.toBeInTheDocument();
+  expect(
+    screen
+      .getByRole("button", { name: /Open profile for Morgan/ })
+      .closest("section"),
+  ).toHaveAttribute("aria-label", "Members");
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each([false, true])(
-  "groups Bot by identity while retaining its accessible role and removal-only policy (Agent: %s)",
+  "groups Bot by identity while retaining its accessible role and explicit role controls (Agent: %s)",
   async (agent) => {
     const t = await setup("owner", "bot", true, undefined, agent);
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
@@ -637,9 +760,81 @@ it.each([false, true])(
     expect(
       await screen.findByRole("menuitem", { name: "Remove from channel" }),
     ).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Make admin" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Make member" })).toBeVisible();
+    expect(t.publish).not.toHaveBeenCalled();
+    await t.user.click(
+      screen.getByRole("menuitem", { name: "Remove from channel" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: `Remove ${agent ? "agent" : "member"} from channel`,
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", {
+          name: `Remove ${agent ? "agent" : "member"}`,
+        }),
+      ).toBeVisible(),
+    );
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    const avatar = required(
+      dialog.querySelector(".buzz-dialog-description .buzz-avatar"),
+    );
+    expect(avatar).toHaveAttribute(
+      "data-avatar-shape",
+      agent ? "squircle" : "circle",
+    );
+    expect(avatar).toHaveAttribute("data-size", "small");
+    expect(avatar).toHaveTextContent("M");
     expect(
-      screen.queryByRole("menuitem", { name: /Make / }),
-    ).not.toBeInTheDocument();
+      required(
+        dialog.querySelector(
+          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+        ),
+      ),
+    ).toBeEmptyDOMElement();
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveAttribute("data-variant", "subtle");
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+it.each([false, true])(
+  "uses the row's member picture beside the accessible confirmation name (Agent: %s)",
+  async (agent) => {
+    const picture = "https://profiles.example/morgan.png";
+    const t = await setup(
+      "owner",
+      "member",
+      true,
+      undefined,
+      agent,
+      undefined,
+      false,
+      true,
+      undefined,
+      undefined,
+      "private",
+      picture,
+    );
+    const row = required(screen.getByText("Morgan").closest("li"));
+    const rowPicture = required(
+      row.querySelector(".buzz-avatar img"),
+    ).getAttribute("src");
+    expect(rowPicture).toBe(
+      `https://media.example/small?url=${encodeURIComponent(picture)}`,
+    );
+    const dialog = await t.choose("Remove from channel");
+    const avatar = required(
+      dialog.querySelector(".buzz-dialog-description .buzz-avatar"),
+    );
+    const image = required(avatar.querySelector("img"));
+    expect(image).toHaveAttribute("src", rowPicture);
+    expect(avatar).toHaveAttribute(
+      "data-avatar-shape",
+      agent ? "squircle" : "circle",
+    );
+    expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -677,10 +872,11 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
     within(dialog).getByRole("button", { name: "Make admin" }),
   );
   await screen.findByText(/This request may have taken effect/);
-  expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-    "aria-label",
-    "Members",
-  );
+  expect(
+    screen
+      .getByRole("button", { name: /Open profile for Morgan/ })
+      .closest("section"),
+  ).toHaveAttribute("aria-label", "Members");
   await expectProfileOnly(t.user, "Morgan");
   await t.user.click(
     screen.getByRole("button", { name: "Close channel members" }),
@@ -699,7 +895,14 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
   await t.user.click(
     screen.getByRole("button", { name: "Refresh member data" }),
   );
-  await screen.findByText("Member change confirmed.");
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
+  );
+  expect(
+    screen.queryByText("Member change confirmed."),
+  ).not.toBeInTheDocument();
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it("pending operations survive closing while suppressing duplicate actions", async () => {
@@ -727,14 +930,23 @@ it("pending operations survive closing while suppressing duplicate actions", asy
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
     await t.user.click(screen.getByRole("button", { name: "Channel members" }));
-    expect(screen.getByText(/Checking permissions and waiting/)).toBeVisible();
+    expect(
+      screen.queryByText(/Checking permissions and waiting/),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Refresh member data" }),
     ).toHaveAttribute("aria-disabled", "true");
   } finally {
     await act(async () => release());
   }
-  await screen.findByText("Member change confirmed.");
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
+  );
+  expect(
+    screen.queryByText("Member change confirmed."),
+  ).not.toBeInTheDocument();
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it("retains roster and displays rejection with explicit refresh recovery", async () => {
@@ -744,14 +956,76 @@ it("retains roster and displays rejection with explicit refresh recovery", async
   await t.user.click(
     within(dialog).getByRole("button", { name: "Remove member" }),
   );
-  await screen.findByText("Permission changed");
-  expect(screen.getByText("Morgan")).toBeVisible();
+  const error = await screen.findByText("Permission changed");
+  expect(error).toHaveAttribute("role", "alert");
+  expect(error.closest(".buzz-toast")).toBeNull();
+  expect(
+    within(screen.getByRole("region", { name: "Member list" })).queryByText(
+      "Permission changed",
+    ),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /Open profile for Morgan/ }),
+  ).toBeVisible();
   await t.user.click(
     screen.getByRole("button", { name: "Refresh member data" }),
   );
   await screen.findByRole("button", { name: "Actions for Morgan" });
   expect(t.publish).toHaveBeenCalledOnce();
 });
+
+it.each(["failed", "uncertain"])(
+  "hides the previous %s error during refresh without replaying the write",
+  async (outcome) => {
+    const t = await setup();
+    if (outcome === "uncertain") t.lag();
+    else
+      t.publish.mockRejectedValueOnce(
+        new PublishRejected("Permission changed"),
+      );
+    const confirmation = await t.choose("Remove from channel");
+    await t.user.click(
+      within(confirmation).getByRole("button", { name: "Remove member" }),
+    );
+    const message =
+      outcome === "uncertain"
+        ? /This request may have taken effect/
+        : "Permission changed";
+    await screen.findByText(message);
+    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    await vi.waitFor(() =>
+      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const query = required(t.query.getMockImplementation());
+    t.query.mockImplementation(async (...args) => {
+      await gate;
+      return query(...args);
+    });
+    try {
+      await t.user.click(refresh);
+      await vi.waitFor(() =>
+        expect(t.session.memberAdministration.snapshot(id).status).toBe(
+          "loading",
+        ),
+      );
+      expect(screen.queryByText(message)).not.toBeInTheDocument();
+      expect(t.publish).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => release());
+    }
+    await vi.waitFor(() =>
+      expect(t.session.memberAdministration.snapshot(id).status).toBe("ready"),
+    );
+    if (outcome === "uncertain")
+      expect(screen.getByText(message)).toHaveAttribute("role", "alert");
+    else expect(screen.queryByText(message)).not.toBeInTheDocument();
+    expect(t.publish).toHaveBeenCalledOnce();
+  },
+);
 
 it.each([true, false])(
   "refreshes roster and roles from the header without writes (writer: %s)",
@@ -779,10 +1053,11 @@ it.each([true, false])(
     t.confirm("admin");
     await t.user.click(refresh);
     await vi.waitFor(() =>
-      expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-        "aria-label",
-        "Admins",
-      ),
+      expect(
+        screen
+          .getByRole("button", { name: /Open profile for Morgan/ })
+          .closest("section"),
+      ).toHaveAttribute("aria-label", "Admins"),
     );
     await vi.waitFor(() =>
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
@@ -931,7 +1206,9 @@ it("does not reload roles after this channel's access is revoked", async () => {
       filters.some((filter) => filter.kinds?.includes(39001)),
     ),
   ).toHaveLength(before);
-  expect(screen.queryByText("Morgan")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Open profile for Morgan/ }),
+  ).not.toBeInTheDocument();
   expect(t.publish).not.toHaveBeenCalled();
 });
 
@@ -966,7 +1243,9 @@ it("holds duplicate refreshes, retains the roster on read failure, and recovers 
       "motion-safe:animate-spin",
     );
     expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
-    expect(screen.getByText("Morgan")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Open profile for Morgan/ }),
+    ).toBeVisible();
     await t.user.click(refresh);
   } finally {
     await act(async () => release());
@@ -976,18 +1255,20 @@ it("holds duplicate refreshes, retains the roster on read failure, and recovers 
     expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
   );
   expect(started).toBe(2);
-  expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-    "aria-label",
-    "Members",
-  );
+  expect(
+    screen
+      .getByRole("button", { name: /Open profile for Morgan/ })
+      .closest("section"),
+  ).toHaveAttribute("aria-label", "Members");
   t.query.mockImplementation(query);
   t.confirm("admin");
   await t.user.click(refresh);
   await vi.waitFor(() =>
-    expect(screen.getByText("Morgan").closest("section")).toHaveAttribute(
-      "aria-label",
-      "Admins",
-    ),
+    expect(
+      screen
+        .getByRole("button", { name: /Open profile for Morgan/ })
+        .closest("section"),
+    ).toHaveAttribute("aria-label", "Admins"),
   );
   await vi.waitFor(() =>
     expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
@@ -1377,3 +1658,135 @@ it("returns to All when a refreshed role group disappears and resets on reopen",
   await screen.findByText("Morgan");
   expect(filter()).toHaveTextContent("All");
 });
+
+it.each(["bot", "member"])(
+  "lets a regular member confirm/cancel removal of their own %s agent, without role controls",
+  async (role) => {
+    const t = await setup(
+      "member",
+      role,
+      true,
+      undefined,
+      true,
+      undefined,
+      false,
+      true,
+      undefined,
+      "own",
+    );
+    await screen.findByRole("button", {
+      name: "Open owner profile: Carl (you)",
+    });
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    const remove = await screen.findByRole("menuitem", {
+      name: "Remove from channel",
+    });
+    expect(
+      screen.queryByRole("menuitem", { name: /^Make / }),
+    ).not.toBeInTheDocument();
+    await t.user.click(remove);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Remove agent from channel",
+    });
+    expect(
+      required(
+        dialog.querySelector(
+          '.buzz-dialog-step:not([aria-hidden="true"]) > .buzz-dialog-body',
+        ),
+      ),
+    ).toBeEmptyDOMElement();
+    expect(dialog).toHaveAccessibleDescription("Morgan");
+    expect(
+      within(dialog).getByRole("button", { name: "Remove agent" }),
+    ).toHaveAttribute("data-variant", "destructive");
+    await vi.waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(t.publish).not.toHaveBeenCalled();
+    const confirm = await t.choose("Remove from channel");
+    await t.user.click(
+      within(confirm).getByRole("button", { name: "Remove agent" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.session.memberAdministration.snapshot(id).operation?.status,
+      ).toBe("confirmed"),
+    );
+    expect(
+      screen.queryByText("Member change confirmed."),
+    ).not.toBeInTheDocument();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 9001,
+      tags: [
+        ["h", id],
+        ["p", t.target.pubkey],
+      ],
+    });
+  },
+);
+it.each(["other", "invalid"] as const)(
+  "does not expose removal for %s ownership to a regular member",
+  async (ownership) => {
+    const t = await setup(
+      "member",
+      "bot",
+      true,
+      undefined,
+      true,
+      undefined,
+      false,
+      true,
+      undefined,
+      ownership,
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    await t.user.click(
+      screen.getByRole("button", { name: "Actions for Morgan" }),
+    );
+    await screen.findByRole("menuitem", { name: "View profile" });
+    expect(
+      screen.queryByRole("menuitem", { name: "Remove from channel" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Make / }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it.each(["owner", "admin"])(
+  "lets %s explicitly promote a bot while preserving verified agent identity",
+  async (actor) => {
+    const t = await setup(actor, "bot", true, undefined, true);
+    const dialog = await t.choose("Make admin");
+    expect(dialog).toHaveTextContent("from bot to admin");
+    expect(t.publish).not.toHaveBeenCalled();
+    await t.user.click(
+      within(dialog).getByRole("button", { name: "Make admin" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.session.memberAdministration.snapshot(id).operation?.status,
+      ).toBe("confirmed"),
+    );
+    expect(
+      screen.queryByText("Member change confirmed."),
+    ).not.toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
+    expect(row.closest("section")).toHaveAttribute("aria-label", "Admins");
+    expect(
+      row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
+    ).toBeInTheDocument();
+    expect(row).toHaveAccessibleName(/, admin$/);
+    expect(t.publish).toHaveBeenCalledOnce();
+  },
+);

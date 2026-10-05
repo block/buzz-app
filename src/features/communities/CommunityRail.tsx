@@ -4,13 +4,14 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GlobeIcon, PlusIcon } from "../../shared/design-system/icons/index";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import type { SettingsCards } from "../settings/service";
 import type { OpenTarget } from "../navigation/targets";
 import { communityFromScope } from "../relay/gifs";
 import { useRelayConnection } from "../relay/react";
 import { requestLeave, type LeaveOutcome } from "./api";
 import type { Communities, Membership } from "./service";
 import { CommunityDialog } from "./CommunityDialog";
-import { CommunityRailItem } from "./CommunityRailItem";
+import { CommunityRailItem, MEMBERSHIP_SECTION } from "./CommunityRailItem";
 import { communityDestination } from "./destination";
 import type { PurgeFailure } from "./device-state";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -18,13 +19,17 @@ import styles from "./Communities.module.css";
 import { fetchCommunityIcon } from "./community-icon";
 import { useCommunityRole } from "./useCommunityRole";
 
+const noSubscription = () => () => {};
+
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityRail({
   communities,
   onSelect,
   onOpenTarget,
+  settingsCards,
 }: {
   communities: Communities;
+  settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
   onSelect?: ((id: string | null) => void) | undefined;
   /** Menu destinations (Invites, Community settings) open through the host's navigation. */
   onOpenTarget?: ((target: OpenTarget) => void) | undefined;
@@ -78,7 +83,13 @@ export function CommunityRail({
   // them, verified against the authority the selected session already holds
   // rather than a second session contract request. Skip the read where no
   // item could use it.
-  const invites = !!onOpenTarget;
+  const membershipAvailable = useSyncExternalStore(
+    settingsCards?.subscribe ?? noSubscription,
+    // Registration is not authorization: the rail refreshes the role on menu
+    // open even if Settings last cached a non-admin role.
+    () => settingsCards?.has(MEMBERSHIP_SECTION) ?? false,
+  );
+  const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
   const [icons, setIcons] = useState<Record<string, string>>({});
   const membershipIds = client.memberships

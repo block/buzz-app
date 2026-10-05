@@ -1495,7 +1495,12 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
     fireEvent.click(
       screen.getByRole("button", { name: "More message actions" }),
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Report" }));
+    const reportItem = await screen.findByRole("menuitem", { name: "Report" });
+    expect(reportItem.previousElementSibling).toHaveAttribute(
+      "role",
+      "separator",
+    );
+    fireEvent.click(reportItem);
     expect(
       await screen.findByRole("dialog", { name: "Report message" }),
     ).toBeInTheDocument();
@@ -1552,6 +1557,8 @@ it.each([
       await screen.findByRole("menu");
       if (mode === "available" || mode === "retired") {
         const item = screen.getByRole("menuitem", { name: "View activity" });
+        expect(item.querySelector(".buzz-menu-icon svg")).toBeInTheDocument();
+        expect(screen.queryByRole("separator")).not.toBeInTheDocument();
         retired = mode === "retired";
         fireEvent.click(item);
         if (retired) expect(open).not.toHaveBeenCalled();

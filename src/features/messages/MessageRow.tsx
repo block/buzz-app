@@ -43,8 +43,12 @@ import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageManagementItems } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
-import { FlagIcon } from "../../shared/design-system/icons";
-import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuSeparator,
+} from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
@@ -235,6 +239,9 @@ export const MessageRow = memo(function MessageRow({
           onOpenLink(activityView);
       }}
     >
+      <MenuIcon>
+        <ListBulletsIcon />
+      </MenuIcon>
       View activity
     </MenuItem>
   );
@@ -279,15 +286,18 @@ export const MessageRow = memo(function MessageRow({
       ? session?.messages.report
       : undefined;
   const reportItem = report && (
-    <MenuItem
-      disabled={reporting === "open"}
-      onClick={() => setReporting("open")}
-    >
-      <MenuIcon>
-        <FlagIcon />
-      </MenuIcon>
-      Report
-    </MenuItem>
+    <>
+      <MenuSeparator />
+      <MenuItem
+        disabled={reporting === "open"}
+        onClick={() => setReporting("open")}
+      >
+        <MenuIcon>
+          <FlagIcon />
+        </MenuIcon>
+        Report
+      </MenuItem>
+    </>
   );
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];

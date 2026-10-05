@@ -4191,3 +4191,49 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
 });
+
+it("batch insertion deduplicates exact keys and sends individual recipients", async () => {
+  const h = mount();
+  act(() =>
+    expect(h.commands().insertMentions([first, second, first])).toBe(true),
+  );
+  expect(h.input()).toHaveValue("@Honey @Honey ");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("batch insertion rejects an unavailable member atomically and does not send on rejected completion", async () => {
+  const h = mount({ inviteAgents: true });
+  const unavailable = { pubkey: "c".repeat(64), name: "Missing" };
+  h.fill("!Court");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [
+        {
+          id: "team",
+          label: "Court",
+          edit: { mentions: [first, unavailable] },
+        },
+      ],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("!Court");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
+});
+it.each(["disabled", "retarget", "unmount"])(
+  "revokes batch commands after %s",
+  (transition) => {
+    const h = mount();
+    const insert = h.commands().insertMentions;
+    if (transition === "disabled") h.retarget({ disabled: true });
+    else if (transition === "retarget") h.retarget({ channelId: "other" });
+    else h.unmount();
+    act(() => expect(insert([first, second])).toBe(false));
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);

@@ -66,7 +66,11 @@ function OwnedTool({
     useState<
       Pick<
         ComposerToolProps,
-        "insertText" | "insertMention" | "insertResource" | "focus"
+        | "insertText"
+        | "insertMention"
+        | "insertMentions"
+        | "insertResource"
+        | "focus"
       >
     >();
   useLayoutEffect(() => {
@@ -78,6 +82,8 @@ function OwnedTool({
         active() ? current.current.insertText(text) : false,
       insertMention: (recipient) =>
         active() ? current.current.insertMention(recipient) : false,
+      insertMentions: (recipients) =>
+        active() ? current.current.insertMentions(recipients) : false,
       insertResource: (resource) =>
         active()
           ? current.current.insertResource(resource)

@@ -112,3 +112,32 @@ it("a trigger that starts inside a resolved chip is not an open query; later tri
       ?.provider.id,
   ).toBe("mentions");
 });
+
+it("copies and freezes batch recipients without allowing malformed or oversized edits", () => {
+  const carl = { pubkey: "a".repeat(64), name: "Carl" };
+  const recipients = [carl, { pubkey: "b".repeat(64), name: "Donut" }];
+  const result = completionResult({
+    items: [{ id: "team", label: "Team", edit: { mentions: recipients } }],
+  });
+  carl.name = "Changed";
+  recipients.push({ pubkey: "c".repeat(64), name: "Mongo" });
+  const saved = result.items[0]?.edit.mentions;
+  expect(saved).toEqual([
+    { pubkey: "a".repeat(64), name: "Carl" },
+    { pubkey: "b".repeat(64), name: "Donut" },
+  ]);
+  expect(Object.isFrozen(saved)).toBe(true);
+  expect(Object.isFrozen(saved?.[0])).toBe(true);
+  for (const mentions of [
+    [],
+    [{ pubkey: "bad", name: "Carl" }],
+    [{ pubkey: "a".repeat(64), name: " " }],
+    Array.from({ length: 33 }, () => carl),
+  ]) {
+    expect(
+      completionResult({
+        items: [{ id: "bad", label: "Bad", edit: { mentions } }],
+      }).items,
+    ).toEqual([]);
+  }
+});

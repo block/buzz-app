@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { TeamMentionAvatars } from "./TeamMentionAvatars";
+import { useEffect, useRef, useState } from "react";
+import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -35,11 +37,23 @@ export function MentionCompletion({
     choices,
     roster: draftRoster,
   } = model;
+  const teams = useTeamMentions(
+    session,
+    channelId,
+    inviteAgents,
+    query.query,
+    model,
+  );
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
+  // The shared budget is append-only for this query, including late teams and
+  // directory people. Neither source may displace an already displayed choice.
+  const shown = useRef<{ session: RelaySession; key: string; ids: string[] }>(
+    undefined,
+  );
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -63,11 +77,17 @@ export function MentionCompletion({
   }, [session, memberKey, attempt, draftRoster]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const admitted = matchesMentionQuery(
-      query.query,
-      [...model.candidates, ...choices].flatMap((c) => [...c.aliases, c.label]),
-    );
+    const admitted =
+      matchesMentionQuery(
+        query.query,
+        [...model.candidates, ...choices].flatMap((c) => [
+          ...c.aliases,
+          c.label,
+        ]),
+      ) ||
+      (teams.names.length > 0 && matchesMentionQuery(query.query, teams.names));
     const matching = admitted ? choices : [];
+    const matchingTeams = admitted ? teams.choices : [];
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
@@ -84,11 +104,12 @@ export function MentionCompletion({
         if (withdraw) withdraw();
       };
     }
-    const withdraw = publish({
-      spaceId: model.spaceId,
-      items: matching.map(({ recipient, label, disabled }) => ({
+    const available = [
+      ...matching.map(({ recipient, label, disabled }) => ({
         disabled,
-        canSelect: (key) => model.canSelect(recipient.pubkey, key === " "),
+        canSelect: (key: string) =>
+          (key !== " " || !teams.blocksSpace) &&
+          model.canSelect(recipient.pubkey, key === " "),
         id: recipient.pubkey,
         label,
         detail:
@@ -122,6 +143,48 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
+      ...matchingTeams.map((team) => ({
+        id: team.id,
+        label: team.name,
+        detail: team.detail,
+        disabled: team.disabled,
+        canSelect: team.canSelect,
+        preview: (
+          <TeamMentionAvatars session={session} recipients={team.recipients} />
+        ),
+        edit: team.disabled
+          ? { text: `@${team.name}` }
+          : { mentions: team.recipients },
+      })),
+    ];
+    const key = JSON.stringify([
+      channelId,
+      inviteAgents,
+      query.start,
+      query.query,
+    ]);
+    const ids =
+      shown.current?.session === session && shown.current.key === key
+        ? shown.current.ids
+        : [];
+    const known = new Set(ids);
+    // Reserve space for teams already ready at first publication. Once shown,
+    // the budget is append-only, regardless of which source arrives next.
+    const additions = ids.length
+      ? available.filter((item) => !known.has(item.id))
+      : [
+          ...available.slice(
+            0,
+            Math.min(matching.length, 50 - matchingTeams.length),
+          ),
+          ...available.slice(matching.length),
+        ];
+    const next = [...ids, ...additions.map((item) => item.id)].slice(0, 50);
+    shown.current = { session, key, ids: next };
+    const byId = new Map(available.map((item) => [item.id, item]));
+    const withdraw = publish({
+      spaceId: teams.blocksSpace ? undefined : model.spaceId,
+      items: next.flatMap((id) => byId.get(id) ?? []),
       ...(model.pending
         ? { status: "Loading recipients…" }
         : model.directory.error
@@ -143,12 +206,17 @@ export function MentionCompletion({
                         }
                       : model.directory.loading
                         ? { status: "Searching community…" }
-                        : model.directory.more || model.truncated
+                        : model.directory.more ||
+                            model.truncated ||
+                            matching.length + matchingTeams.length > 50
                           ? {
                               status: "Narrow your search to see more members.",
                             }
-                          : {}),
-      ...(model.directory.error ||
+                          : teams.status
+                            ? { status: teams.status }
+                            : {}),
+      ...((admitted && teams.canRetry) ||
+      model.directory.error ||
       (admitted &&
         (model.archives.status === "error" ||
           agents.status === "error" ||
@@ -159,8 +227,11 @@ export function MentionCompletion({
           missing))
         ? {
             retry: () => {
+              teams.retry();
               model.directory.retry();
-              void session.agentChoices.refresh(!!inviteAgents);
+              void session.agentChoices.refresh(
+                !!inviteAgents || teams.includeLegacy,
+              );
               void session.archives?.refresh();
               setError(false);
               retry((value) => value + 1);
@@ -177,8 +248,11 @@ export function MentionCompletion({
     session,
     publish,
     query.query,
+    query.start,
+    channelId,
     memberKey,
     model,
+    teams,
     profiles,
     list,
     agents,

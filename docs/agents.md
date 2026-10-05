@@ -230,6 +230,19 @@ turning it back on does not restore old recipients. Session auto-recipient rules
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
+Saved teams from Templates & teams are available in both mention choosers. A team
+is a shortcut, not a group identity: explicit selection inserts its saved agent
+keys as individual mentions in one undoable edit. Names never resolve membership.
+Typing a team name or Space alone does not select it. Team names also prevent
+Space from accidentally selecting a person with the same name or a prefix.
+Each query shows at most 20 matching teams, with up to four cached avatar thumbnails
+and a remainder count. Empty, oversized (more than 32 agents), changed or partially
+unavailable teams stay disabled; there is no partial expansion. Reopen or change
+the query to refresh changed team choices. The resulting draft must fit the existing
+32-mention and message-length limits. Selection never adds members: ordinary
+channels retain invite-on-send consent, DMs retain reference-only outsiders, and
+session admission remains unchanged.
+
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 
 `session.messages.send/reply` accepts up to 32 exact notification pubkeys and emits

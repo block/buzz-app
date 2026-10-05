@@ -73,6 +73,7 @@ struct HarnessOption {
     update_supported: Option<bool>,
     default_args: &'static [&'static str],
     providers: &'static [ProviderOption],
+    configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy,
 }
 #[derive(Serialize)]
 struct ProviderOption {
@@ -204,6 +205,9 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     vec![
         HarnessOption {
             command: "buzz-agent".into(),
+            configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+                "buzz-agent",
+            ),
             label: "Buzz Agent",
             available: true,
             status: "ready",
@@ -224,6 +228,9 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
         },
         HarnessOption {
             command: "goose".into(),
+            configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+                "goose",
+            ),
             label: "Goose",
             available: true,
             status: "ready",
@@ -233,6 +240,9 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             providers: GOOSE_PROVIDERS,
         },
         HarnessOption {
+            configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+                "buzz-pi-acp",
+            ),
             command: pi.map_or_else(
                 || "buzz-pi-acp".into(),
                 |p| p.to_string_lossy().into_owned(),

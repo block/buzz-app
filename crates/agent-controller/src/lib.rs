@@ -4,7 +4,12 @@ mod agent_defaults;
 mod bundle;
 mod community;
 mod config;
+mod harness_policy;
 pub use community::CommunityResolution;
+pub use harness_policy::{
+    AuthenticationPolicy, ConfigurationMode, EffortDiscovery, HarnessConfigurationPolicy,
+    ModelRequirement, ProviderPolicy, SelectorEnvironment,
+};
 pub mod connection;
 mod create;
 mod credentials;

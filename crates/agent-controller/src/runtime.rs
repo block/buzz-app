@@ -185,8 +185,9 @@ impl RuntimeBundle {
             if let Some(value) = selected.provider {
                 command.env(provider_key, value);
             }
-        } else if pi.is_none() && !harness.provider.is_empty() {
-            return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into());
+        } else if pi.is_none() {
+            crate::HarnessConfigurationPolicy::for_command(&harness.command)
+                .validate_selection(&harness.provider, &harness.model)?;
         }
         if let Some(value) = model {
             let value = if pi.is_some() && !agent.harness.provider.is_empty() {

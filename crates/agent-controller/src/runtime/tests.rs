@@ -1051,6 +1051,28 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
 
 #[test]
 #[cfg(unix)]
+fn custom_provider_is_editable_but_requires_external_configuration_at_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let custom = tools.path().join("custom-acp");
+    fs::copy(tools.path().join("buzz-agent"), &custom).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = custom.display().to_string();
+    a.validate().unwrap();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    assert!(runtime
+        .command_with_defaults(&a, &key, &crate::BuildDefaults::default())
+        .unwrap_err()
+        .contains("a provider selector mapping is not available"));
+    a.harness.provider.clear();
+    assert!(runtime
+        .command_with_defaults(&a, &key, &crate::BuildDefaults::default())
+        .is_ok());
+}
+
+#[test]
+#[cfg(unix)]
 fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();

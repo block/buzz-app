@@ -104,6 +104,8 @@ export interface ControlSnapshot {
     updateSupported?: boolean;
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
+    /** Native integration policy; absent only on older hosts. */
+    configurationPolicy?: HarnessConfigurationPolicy;
   }[];
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
@@ -119,6 +121,16 @@ export interface ControlSnapshot {
   restarted?: number;
   /** Agents whose automatic restart after that save failed. */
   restartFailures?: number;
+}
+/** Static integration rules. Catalogs, credentials and applied settings are separate evidence. */
+export interface HarnessConfigurationPolicy {
+  authentication: "provider" | "harnessWithOverrides" | "external";
+  provider: "selector" | "discovered" | "external";
+  /** Legacy inheritance is not managed Default. Current integrations admit neither mode yet. */
+  supportedModes: ("default" | "advanced")[];
+  model: "optional" | "withProvider";
+  effortDiscovery: "unknown";
+  selectorEnvironment: { model: string; provider: string } | null;
 }
 export interface AgentDefaultSettings {
   harness: "buzz-agent" | "goose" | "pi";

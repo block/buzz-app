@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
+  HarnessConfigurationPolicy,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
 import {
@@ -29,7 +30,9 @@ export function AgentModelPicker({
   onPiProviders,
   onChange,
   disabled = false,
+  policy,
 }: {
+  policy?: HarnessConfigurationPolicy | undefined;
   disabled?: boolean;
   /** Pi's signed-in providers, or null while its catalog is loading. */
   onPiProviders?(providers: string[] | null): void;
@@ -45,8 +48,12 @@ export function AgentModelPicker({
 }) {
   const statusId = useId();
   const goose = isGoose(draft.command);
-  const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
-  const external = goose || pi;
+  const pi = policy
+    ? policy.provider === "discovered"
+    : draft.command.split("/").at(-1) === "buzz-pi-acp";
+  const external = policy
+    ? policy.authentication === "harnessWithOverrides"
+    : goose || pi;
   // An inherited Agent defaults value wins over the compiled floor at launch;
   // leave it blank here so native resolves the same hidden value.
   const host =
@@ -505,12 +512,14 @@ export function AgentModelPicker({
             </Button>
           )
         )}
-        {pi && draft.provider && !draft.model && (
-          <p className="text-body-sm text-warning">
-            Choose a model for this provider before starting, or clear Provider
-            to use Pi defaults.
-          </p>
-        )}
+        {(policy ? policy.model === "withProvider" : pi) &&
+          draft.provider &&
+          !draft.model && (
+            <p className="text-body-sm text-warning">
+              Choose a model for this provider before starting, or clear
+              Provider to use Pi defaults.
+            </p>
+          )}
         {pi && fresh && entries.length === 0 && draft.provider && (
           <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
         )}

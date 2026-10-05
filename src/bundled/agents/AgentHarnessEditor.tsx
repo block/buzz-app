@@ -4,7 +4,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
-import { harnessKind, PI_API_KEYS, type AgentDraft } from "./agent-edit";
+import { PI_API_KEYS, type AgentDraft } from "./agent-edit";
+import { harnessOption, harnessPolicy } from "./harness-policy";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
@@ -26,14 +27,16 @@ export function AgentHarnessEditor({
   defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const kind = harnessKind(draft.command);
-  const harness =
-    options.find((option) => option.command === draft.command) ??
-    (kind === "goose" || kind === "pi"
-      ? options.find((option) => harnessKind(option.command) === kind)
-      : undefined);
-  const external = harness?.label === "Goose" || harness?.label === "Pi";
-  const piLoading = harness?.label === "Pi" && piProviders === null;
+  const harness = harnessOption(options, draft.command);
+  const policy = harnessPolicy(options, draft.command);
+  // Missing policy preserves older hosts; native policy wins whenever supplied.
+  const external = policy
+    ? policy.authentication === "harnessWithOverrides"
+    : harness?.label === "Goose" || harness?.label === "Pi";
+  const discoveredProviders = policy
+    ? policy.provider === "discovered"
+    : harness?.label === "Pi";
+  const piLoading = discoveredProviders && piProviders === null;
   const missingPi = options.some(
     (option) => option.label === "Pi" && option.available === false,
   );
@@ -52,8 +55,10 @@ export function AgentHarnessEditor({
         }))}
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
-          const enteringExternal =
-            option?.label === "Goose" || option?.label === "Pi";
+          const enteringExternal = option?.configurationPolicy
+            ? option.configurationPolicy.authentication ===
+              "harnessWithOverrides"
+            : option?.label === "Goose" || option?.label === "Pi";
           onChange({
             command,
             ...(pickedOption && (enteringExternal || external)
@@ -104,7 +109,7 @@ export function AgentHarnessEditor({
               ? `Use agent defaults (${defaultProvider})`
               : "Not set",
           },
-          ...(harness?.label === "Pi"
+          ...(discoveredProviders
             ? piOptions(piProviders, draft.provider)
             : (harness?.providers ?? [])),
         ]}

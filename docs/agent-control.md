@@ -229,6 +229,48 @@ flag exclusions and the supported deployment boundary.
 Individual-agent configuration stays on the Agents page; Settings → Agents owns
 installation guidance and device-wide defaults.
 
+### Shared configuration policy
+
+The native `agent-controller::HarnessConfigurationPolicy` is projected through
+each `harnessOptions[].configurationPolicy`. Create/Edit and Agent defaults
+consume that policy for provider discovery, authentication ownership, model
+requirements, and selector environment keys. Provider-specific credential fields
+remain with their provider owners; authentication ownership is not a claim that
+every provider requires an API key.
+
+| Harness | Authentication owner | Provider configuration | Model selection |
+| --- | --- | --- | --- |
+| Buzz Agent | Selected provider | Scalar selector | Existing defaults and overrides |
+| Goose | Harness, with provider-specific overrides | Scalar selector | Existing defaults and overrides |
+| Pi | Harness, with provider-specific overrides | Discovered provider selector | A selected provider requires a model |
+| Custom executable | External executable | External configuration | Existing saved value |
+
+Policy does not migrate saved records or change validation timing. Pi selection
+checks stay at discovery/launch and default-save admission. Custom provider
+values remain readable and editable, but an unmapped provider is still refused
+at launch. Worker selector keys are shared with native launch resolution;
+environment values never appear in the policy. Older hosts without the policy
+retain the existing editor behavior.
+
+`supportedModes` is currently empty for every integration. Legacy blank-field
+inheritance is not managed Default intent. Admission and persistence of explicit
+Default/Advanced modes belong to the later Codex persistence layer. Likewise,
+`effortDiscovery: "unknown"` means no model-specific capability evidence is
+available; it does not mean effort is unsupported. The existing Agent defaults
+effort suggestions remain editable suggestions, not allowed-value validation.
+
+This is PR 1 of the [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
+Codex registration, binding, discovery, connection validation, and mode controls
+are separate layers.
+
+For native acceptance, use the Buzz community in the ordinary development app.
+Open Create, Edit, and Agent defaults for Buzz Agent, Goose, and Pi. Check
+provider/setup fields and harness switching, preserve saved/custom values, and
+save/reopen a disposable configuration. Existing agent settings must not change
+merely from opening the forms. Mounted form tests cover these controls;
+controller tests cover stored-record preservation, selector precedence, and
+launch rejection; a Tauri IPC test checks the actual serialized snapshot.
+
 ### Harnesses
 
 The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:

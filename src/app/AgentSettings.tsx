@@ -8,10 +8,17 @@ import {
 import {
   ArrowsClockwiseIcon,
   CopyIcon,
+  GooseLogoIcon,
+  PiLogoIcon,
+  PlusIcon,
   QuestionIcon,
+  RobotIcon,
+  TerminalWindowIcon,
 } from "../shared/design-system/icons";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { Button } from "../shared/design-system/ui/Button";
+import { Dialog } from "../shared/design-system/ui/Dialog";
+import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
@@ -22,7 +29,7 @@ import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import styles from "./AgentSettings.module.css";
 
 const acpHint =
-  "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz and supports ACP natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.";
+  "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz. Pi needs the buzz-pi-acp adapter. Hermes Agent uses its own ACP launcher and sign-in.";
 const piCommand = "npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'";
 const adapterCommand =
   "npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#72015de'";
@@ -31,6 +38,13 @@ const labels = {
   "cli-needed": "CLI needed",
   "adapter-needed": "Adapter needed",
 } as const;
+// Artwork only; native harnessOptions still own availability and configuration.
+const harnessIcons: Record<string, ReactNode> = {
+  "Buzz Agent": <RobotIcon size={32} className="shrink-0" />,
+  Goose: <GooseLogoIcon size={32} className="shrink-0" />,
+  Pi: <PiLogoIcon size={32} className="shrink-0" />,
+  "Hermes Agent": <TerminalWindowIcon size={32} className="shrink-0" />,
+};
 const commands = [
   ["Pi", "Install Pi", piCommand],
   ["Adapter", "Install the ACP adapter", adapterCommand],
@@ -48,6 +62,8 @@ export function AgentSettings({
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const addHarnessRef = useRef<HTMLButtonElement>(null);
   const [copyMessage, setCopyMessage] = useState("");
   const copyAttempt = useRef(0);
   const state = useSyncExternalStore(control.subscribe, control.snapshot);
@@ -60,11 +76,21 @@ export function AgentSettings({
     if (active) void control.refresh();
   }, [active, control]);
   const options = state.data?.harnessOptions;
-  const harnesses = (["Buzz Agent", "Goose", "Pi"] as const).map((name) =>
+  const coreHarnesses = (["Buzz Agent", "Goose", "Pi"] as const).map((name) =>
     options?.find((option) => option.label === name),
   );
-  const available = harnesses.every((option) => !!option?.status);
-  const pi = harnesses[2];
+  const available = coreHarnesses.every((option) => !!option?.status);
+  const pi = coreHarnesses[2];
+  const hermes = options?.find((option) => option.label === "Hermes Agent");
+  const harnesses = hermes?.available
+    ? [...coreHarnesses, hermes]
+    : coreHarnesses;
+  const checkDisabled =
+    state.status === "unavailable" || state.busy || installingPi;
+  const checkAgain = () => {
+    setChecking(true);
+    void control.refresh().finally(() => setChecking(false));
+  };
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
   const copy = async (name: string, command: string) => {
@@ -102,14 +128,9 @@ export function AgentSettings({
                   variant="ghost"
                   aria-label="Check again"
                   icon={<ArrowsClockwiseIcon aria-hidden="true" />}
-                  disabled={
-                    state.status === "unavailable" || state.busy || installingPi
-                  }
+                  disabled={checkDisabled}
                   loading={checking}
-                  onClick={() => {
-                    setChecking(true);
-                    void control.refresh().finally(() => setChecking(false));
-                  }}
+                  onClick={checkAgain}
                 />
               </Tooltip>
             </>
@@ -145,7 +166,10 @@ export function AgentSettings({
                 {harnesses.map((option) => (
                   <li key={option?.label} className="py-3 text-body-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>{option?.label}</span>
+                      <span className="flex items-center gap-3">
+                        {option && harnessIcons[option.label]}
+                        <span>{option?.label}</span>
+                      </span>
                       <span className="flex items-center gap-2">
                         <span className="text-secondary">
                           {option?.status ? labels[option.status] : "Unknown"}
@@ -176,6 +200,23 @@ export function AgentSettings({
                           )}
                       </span>
                     </div>
+                    {option?.label === "Hermes Agent" && (
+                      <div
+                        className={`${styles.piSetup} space-y-3 text-body-sm`}
+                      >
+                        <p className="m-0 text-secondary">
+                          Uses the default model and credentials configured in
+                          Hermes. Install and update Hermes yourself, then use
+                          Check again.
+                        </p>
+                        <details>
+                          <summary>Manual Hermes setup</summary>
+                          <div className="mt-3">
+                            <HermesSetup />
+                          </div>
+                        </details>
+                      </div>
+                    )}
                     {option?.label === "Pi" &&
                       (installingPi ||
                         piResult?.ready ||
@@ -294,10 +335,97 @@ export function AgentSettings({
                   </li>
                 ))}
               </ul>
+              <Button
+                ref={addHarnessRef}
+                variant="outline"
+                size="sm"
+                onClick={() => setCatalogOpen(true)}
+              >
+                <PlusIcon size={16} aria-hidden="true" />
+                Add harness
+              </Button>
             </>
           )}
         </SettingsGroup>
       </section>
+      <Dialog
+        open={catalogOpen && active}
+        onOpenChange={setCatalogOpen}
+        title="Add harness"
+        finalFocus={addHarnessRef}
+        dismissOnOutsideClick
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            loading={checking}
+            disabled={checkDisabled}
+            onClick={checkAgain}
+          >
+            <ArrowsClockwiseIcon size={16} aria-hidden="true" />
+            Check again
+          </Button>
+        }
+      >
+        <div className={styles.catalog}>
+          <nav
+            aria-label="Additional harnesses"
+            className={styles.catalogSidebar}
+          >
+            <p className="text-label text-secondary">
+              {hermes?.available ? "Installed" : "Setup"}
+            </p>
+            <NavigationItem
+              label="Hermes Agent"
+              selected
+              icon={<TerminalWindowIcon size={24} aria-hidden="true" />}
+            />
+          </nav>
+          <section
+            aria-labelledby="hermes-catalog-title"
+            className={`${styles.catalogDetails} space-y-4`}
+          >
+            <div className="flex items-center gap-3">
+              {harnessIcons["Hermes Agent"]}
+              <div>
+                <h3 id="hermes-catalog-title" className="text-label">
+                  Hermes Agent
+                </h3>
+                <p className="m-0 text-body-sm text-secondary">
+                  {hermes?.status ? labels[hermes.status] : "Unknown"}
+                </p>
+              </div>
+            </div>
+            <p className="text-body-sm text-secondary">
+              A general-purpose AI agent from Nous Research.
+            </p>
+            {state.status === "error" && (
+              <p role="alert" className="text-body-sm">
+                Couldn’t confirm harnesses. Showing the last check; try Check
+                again.
+              </p>
+            )}
+            {!hermes && (
+              <p role="status" className="text-body-sm">
+                Update the desktop app to check Hermes Agent.
+              </p>
+            )}
+            <p className="text-body-sm">
+              Uses the default model and credentials configured in Hermes.
+              Install and update Hermes yourself.
+            </p>
+            <HermesSetup />
+            {hermes?.available && (
+              <PreferenceRow
+                title="Executable"
+                subtitle={
+                  <code className={styles.command}>{hermes.command}</code>
+                }
+              />
+            )}
+          </section>
+        </div>
+      </Dialog>
       <AgentDefaultsCard control={control} state={state} />
       {archive}
       <div className="mt-section-gap">
@@ -319,5 +447,27 @@ export function AgentSettings({
         </ToastNotice>
       )}
     </section>
+  );
+}
+
+function HermesSetup() {
+  return (
+    <div className="space-y-3 text-body-sm">
+      <p>
+        Follow the{" "}
+        <a
+          className="underline"
+          href="https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Hermes ACP setup guide
+        </a>{" "}
+        to install Hermes with ACP support. Configure its model and sign-in with{" "}
+        <code>hermes model</code>, then run <code>hermes acp --check</code> in
+        your terminal. Buzz looks for the <code>hermes-acp</code> launcher.
+      </p>
+      <p>Use Check again to refresh the installation status.</p>
+    </div>
   );
 }

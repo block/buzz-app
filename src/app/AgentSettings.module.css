@@ -19,3 +19,33 @@
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+.catalog {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.catalogSidebar {
+  border-right: 1px solid var(--border-standard);
+  padding-right: var(--space-4);
+}
+
+.catalogDetails {
+  min-width: 0;
+  max-width: 42rem;
+}
+
+@media (max-width: 640px) {
+  .catalog {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .catalogSidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-standard);
+    padding-right: 0;
+    padding-bottom: var(--space-3);
+  }
+}

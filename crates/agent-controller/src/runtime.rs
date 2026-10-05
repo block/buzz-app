@@ -29,6 +29,13 @@ impl RuntimeBundle {
     ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
+        if crate::agent_defaults::harness_kind(&harness.command) == Some("hermes")
+            && (!harness.model.is_empty() || !harness.provider.is_empty())
+        {
+            return Err(
+                "Use Hermes defaults in the agent editor before starting this agent".into(),
+            );
+        }
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }

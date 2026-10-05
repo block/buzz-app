@@ -140,7 +140,7 @@ it.each([
   },
 );
 
-it("switching Pi, Goose and Buzz resets incompatible selections and uses each harness arguments", async () => {
+it("switching external harnesses and Buzz resets incompatible selections and uses each harness arguments", async () => {
   let current = {
     ...agentDraft(controlFixture().agent),
     command: "buzz-agent",
@@ -171,6 +171,12 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
             command: "/local/buzz-pi-acp",
             label: "Pi",
             providers: [{ value: "anthropic", label: "Anthropic" }],
+            defaultArgs: [],
+          },
+          {
+            command: "/local/hermes-acp",
+            label: "Hermes Agent",
+            providers: [],
             defaultArgs: [],
           },
         ]}
@@ -208,6 +214,15 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
   ).not.toBeInTheDocument();
   await user.click(extension);
   expect(current.provider).toBe("extension");
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Hermes Agent" }));
+  expect(current).toMatchObject({
+    command: "/local/hermes-acp",
+    args: "[]",
+    provider: "",
+    model: "",
+  });
+  expect(screen.queryByRole("combobox", { name: /Provider/ })).toBeNull();
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Goose" }));
   expect(current).toMatchObject({

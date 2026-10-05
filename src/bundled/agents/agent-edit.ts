@@ -22,14 +22,15 @@ export function isGoose(command: string): boolean {
     ?.replace(/\.exe$/, "");
   return name === "goose" || name === "goose-acp";
 }
-/** Agent defaults harness a saved command belongs to, matching native. */
+/** Harness a saved command belongs to, matching native. */
 export function harnessKind(
   command: string,
-): "buzz-agent" | "goose" | "pi" | undefined {
+): "buzz-agent" | "goose" | "pi" | "hermes" | undefined {
   const name = command.replaceAll("\\", "/").split("/").at(-1);
   if (name === "buzz-agent") return "buzz-agent";
   if (isGoose(command)) return "goose";
   if (name === "buzz-pi-acp") return "pi";
+  if (/^hermes-acp(?:\.(?:exe|cmd|bat))?$/.test(name ?? "")) return "hermes";
   return undefined;
 }
 // Goose provider config keys, checked against built-in ConfigKey declarations
@@ -93,6 +94,11 @@ export function agentEdit(
   if (!draft.command.trim()) throw new Error("Enter a harness executable.");
   if (!modelDiscovery && !draft.workspace.trim())
     throw new Error("Enter a workspace path.");
+  if (
+    harnessKind(draft.command) === "hermes" &&
+    (draft.model || draft.provider)
+  )
+    throw new Error("Use Hermes defaults before saving this agent.");
   let args: unknown;
   try {
     args = JSON.parse(draft.args);

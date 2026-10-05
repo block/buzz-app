@@ -249,7 +249,25 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             // Pi reports signed-in providers through its model catalog.
             providers: &[],
         },
+        hermes_option(buzz_agent_controller::installed("hermes-acp")),
     ]
+}
+
+fn hermes_option(command: Option<PathBuf>) -> HarnessOption {
+    HarnessOption {
+        available: command.is_some(),
+        status: if command.is_some() {
+            "ready"
+        } else {
+            "cli-needed"
+        },
+        command: command.map_or_else(|| "hermes-acp".into(), |p| p.to_string_lossy().into_owned()),
+        label: "Hermes Agent",
+        install_supported: Some(false),
+        update_supported: Some(false),
+        default_args: &[],
+        providers: &[],
+    }
 }
 
 struct LogChallenge {

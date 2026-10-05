@@ -20,6 +20,7 @@ import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { ProviderApiKeyField } from "./ProviderApiKeyField";
+import { Button } from "../../shared/design-system/ui/Button";
 
 // Draft → Agent defaults → build floor, as native resolves it; null when a
 // saved or global BUZZ_AGENT_PROVIDER override hides the effective value.
@@ -93,6 +94,7 @@ export function AgentSettingsFields({
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
+  const hermes = harnessKind(draft.command) === "hermes";
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -256,18 +258,52 @@ export function AgentSettingsFields({
               </p>
             </div>
           )}
-          <AgentModelPicker
-            onPiProviders={setPiProviders}
-            disabled={disabled}
-            id={id}
-            savedRevision={savedRevision}
-            control={control}
-            defaults={state.data?.databricksDefaults}
-            defaultModel={defaultModel}
-            inheritedWorkspace={inheritedWorkspace}
-            draft={draft}
-            onChange={change}
-          />
+          {hermes ? (
+            <div className="space-y-3 text-body-sm">
+              <p className="m-0 text-secondary">
+                Hermes uses its own default model and sign-in. To change them,
+                run <code>hermes model</code> in your terminal.
+              </p>
+              {(draft.model || draft.provider) && (
+                <div className="space-y-3">
+                  <p role="alert">
+                    This agent has model or provider settings that Buzz cannot
+                    apply to Hermes yet. Use Hermes defaults before saving or
+                    starting.
+                  </p>
+                  {draft.model && (
+                    <p>
+                      Current model: <code>{draft.model}</code>
+                    </p>
+                  )}
+                  {draft.provider && (
+                    <p>
+                      Current provider: <code>{draft.provider}</code>
+                    </p>
+                  )}
+                  <Button
+                    disabled={disabled}
+                    onClick={() => change({ model: "", provider: "" })}
+                  >
+                    Use Hermes defaults
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <AgentModelPicker
+              onPiProviders={setPiProviders}
+              disabled={disabled}
+              id={id}
+              savedRevision={savedRevision}
+              control={control}
+              defaults={state.data?.databricksDefaults}
+              defaultModel={defaultModel}
+              inheritedWorkspace={inheritedWorkspace}
+              draft={draft}
+              onChange={change}
+            />
+          )}
           <Select
             label="Conversation context"
             variant="field"
@@ -351,7 +387,9 @@ export function AgentSettingsFields({
                   <p className="text-body-sm text-secondary">
                     {pi
                       ? 'Pi needs both Provider and Model to override its defaults. Advanced Pi options follow --; for example: ["--", "--extension", "/absolute/path/to/extension.ts"]. PI_CODING_AGENT_DIR can select a local Pi configuration directory.'
-                      : "Environment overrides take precedence over provider and model selections."}{" "}
+                      : hermes
+                        ? "Configure Hermes's model and sign-in in Hermes itself. Buzz model and provider overrides are unavailable."
+                        : "Environment overrides take precedence over provider and model selections."}{" "}
                     Arguments are passed literally, not through a shell.
                   </p>
                 </div>

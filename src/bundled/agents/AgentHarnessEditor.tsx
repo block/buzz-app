@@ -27,15 +27,20 @@ export function AgentHarnessEditor({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const kind = harnessKind(draft.command);
+  const hermes = kind === "hermes";
   const harness =
     options.find((option) => option.command === draft.command) ??
-    (kind === "goose" || kind === "pi"
+    (kind === "goose" || kind === "pi" || hermes
       ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
-  const external = harness?.label === "Goose" || harness?.label === "Pi";
+  const external =
+    hermes || harness?.label === "Goose" || harness?.label === "Pi";
   const piLoading = harness?.label === "Pi" && piProviders === null;
   const missingPi = options.some(
     (option) => option.label === "Pi" && option.available === false,
+  );
+  const missingHermes = options.some(
+    (option) => option.label === "Hermes Agent" && option.available === false,
   );
   return (
     <div className="space-y-4">
@@ -45,18 +50,31 @@ export function AgentHarnessEditor({
         customLabel="Custom executable / current value"
         inputLabel="Executable"
         value={draft.command}
-        options={options.map(({ command, label, available }) => ({
-          value: command,
-          label: available === false ? `${label} (install first)` : label,
-          disabled: available === false,
-        }))}
+        options={[
+          ...options.map(({ command, label, available }) => ({
+            value: command,
+            label: available === false ? `${label} (install first)` : label,
+            disabled: available === false,
+          })),
+          ...(hermes &&
+          !options.some((option) => option.command === draft.command)
+            ? [
+                {
+                  value: draft.command,
+                  label: "Hermes Agent (current executable)",
+                },
+              ]
+            : []),
+        ]}
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
           const enteringExternal =
-            option?.label === "Goose" || option?.label === "Pi";
+            option?.label === "Goose" ||
+            option?.label === "Pi" ||
+            option?.label === "Hermes Agent";
           onChange({
             command,
-            ...(pickedOption && (enteringExternal || external)
+            ...(pickedOption && option && (enteringExternal || external)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
                   provider: enteringExternal
@@ -73,7 +91,13 @@ export function AgentHarnessEditor({
           Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
-      {missingPi && onOpenHarnesses && (
+      {missingHermes && (
+        <p className="text-body-sm text-secondary">
+          Hermes needs its ACP launcher. Install it using the manual setup guide
+          in Settings.
+        </p>
+      )}
+      {(missingPi || missingHermes) && onOpenHarnesses && (
         <div className="space-y-1">
           <Button
             type="button"
@@ -90,31 +114,33 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      <ConfigChoice
-        disabled={disabled || piLoading}
-        key={harness?.label ?? draft.command}
-        label={external ? "LLM Provider" : "Provider"}
-        customLabel="Custom provider / current value"
-        inputLabel="Custom provider"
-        value={draft.provider}
-        options={[
-          {
-            value: "",
-            label: defaultProvider
-              ? `Use agent defaults (${defaultProvider})`
-              : "Not set",
-          },
-          ...(harness?.label === "Pi"
-            ? piOptions(piProviders, draft.provider)
-            : (harness?.providers ?? [])),
-        ]}
-        onChange={(provider) =>
-          onChange({
-            provider,
-            ...(external ? { model: "" } : {}),
-          })
-        }
-      />
+      {!hermes && (
+        <ConfigChoice
+          disabled={disabled || piLoading}
+          key={harness?.label ?? draft.command}
+          label={external ? "LLM Provider" : "Provider"}
+          customLabel="Custom provider / current value"
+          inputLabel="Custom provider"
+          value={draft.provider}
+          options={[
+            {
+              value: "",
+              label: defaultProvider
+                ? `Use agent defaults (${defaultProvider})`
+                : "Not set",
+            },
+            ...(harness?.label === "Pi"
+              ? piOptions(piProviders, draft.provider)
+              : (harness?.providers ?? [])),
+          ]}
+          onChange={(provider) =>
+            onChange({
+              provider,
+              ...(external ? { model: "" } : {}),
+            })
+          }
+        />
+      )}
       {piLoading && (
         <p role="status" className="text-body-sm text-secondary">
           Loading signed-in providers…

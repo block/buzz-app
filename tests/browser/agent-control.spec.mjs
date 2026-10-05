@@ -1487,6 +1487,25 @@ test("inventory keeps current-community tiles and compact rows without repeated 
         path: testInfo.outputPath(`inventory-${width}.png`),
       });
     }
+    const removeButton = relay
+      .getByRole("article")
+      .first()
+      .getByRole("button", { name: "Remove", exact: true });
+    await removeButton.click();
+    const removal = page.getByRole("alertdialog", {
+      name: "Remove 121212121212?",
+    });
+    await expect(
+      removal.getByText(
+        "Tries to remove the agent from every channel it belongs to.",
+      ),
+    ).toBeVisible();
+    await removal.screenshot({
+      path: testInfo.outputPath("remove-dialog.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(removal).toHaveCount(0);
+    await expect(removeButton).toBeFocused();
     await other
       .getByLabel("Details for Other community agent", { exact: true })
       .click();

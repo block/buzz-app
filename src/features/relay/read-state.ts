@@ -1,5 +1,9 @@
 import { newer, type RelayEvent } from "./events";
-import { retainReadState, retainReadOrder } from "./read-state-retention";
+import {
+  retainRead,
+  retainReadState,
+  type CoveredFrontier,
+} from "./read-state-retention";
 import type { ReadStateHost } from "./read-state-host";
 import {
   effectiveFrontier,
@@ -99,6 +103,8 @@ export function createReadState({
   const listeners = new Set<() => void>();
   let journal: ReadJournal | undefined;
   let state: ReadState = EMPTY_READ_STATE;
+  // Message evidence (and so ancestry) belongs to unread, which registers this.
+  let covered: CoveredFrontier | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let refreshing: Promise<void> | undefined;
   let publishing: Promise<void> | undefined;
@@ -257,16 +263,14 @@ export function createReadState({
           "Read-state observation cancelled",
           "AbortError",
         );
-      const state = retainReadState(
+      const { state, recent } = retainRead(
         [current.state, ...decoded.map(({ parsed }) => parsed.state)],
         current.recent ?? {},
         current.clientId,
+        undefined,
+        covered,
       );
-      return {
-        ...current,
-        state,
-        recent: retainReadOrder(state, current.recent ?? {}),
-      };
+      return { ...current, state, recent };
     });
     if (closed || generation !== epoch) return;
     for (const item of decoded) {
@@ -361,16 +365,18 @@ export function createReadState({
             timestamp === undefined
               ? (current.recent ?? {})
               : { ...current.recent, [key]: revision };
-          const nextState =
+          const kept =
             timestamp === undefined
-              ? current.state
-              : retainReadState(
+              ? { state: current.state, recent }
+              : retainRead(
                   [
                     current.state,
                     { frontiers: { [key]: timestamp }, overrides: {} },
                   ],
                   recent,
                   current.clientId,
+                  undefined,
+                  covered,
                 );
           const localUnread = { ...current.localUnread };
           // Automatic observations do not clear explicit local manual-unread intent.
@@ -380,8 +386,8 @@ export function createReadState({
           return {
             ...current,
             revision,
-            state: nextState,
-            recent: retainReadOrder(nextState, recent),
+            state: kept.state,
+            recent: kept.recent,
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -457,6 +463,7 @@ export function createReadState({
             journal.recent ?? {},
             journal.clientId,
             READ_STATE_PLAINTEXT_BYTES,
+            covered,
           );
           const payload = readBlob(journal.clientId, publishingState, (key) =>
             effectiveFrontier(publishingState, key),
@@ -563,6 +570,10 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
+    /** Lets the next save drop marks that broader marks already cover. */
+    setCoverage(next: CoveredFrontier | undefined) {
+      covered = next;
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -637,18 +648,20 @@ export function createReadState({
               delete localUnread[key];
             }
             if (clearForce) delete localUnread[clearForce];
-            const nextState = Object.keys(frontiers).length
-              ? retainReadState(
+            const kept = Object.keys(frontiers).length
+              ? retainRead(
                   [current.state, { frontiers, overrides: {} }],
                   recent,
                   current.clientId,
+                  undefined,
+                  covered,
                 )
-              : current.state;
+              : { state: current.state, recent };
             return {
               ...current,
               revision,
-              state: nextState,
-              recent: retainReadOrder(nextState, recent),
+              state: kept.state,
+              recent: kept.recent,
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

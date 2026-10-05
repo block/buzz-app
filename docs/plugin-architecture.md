@@ -641,6 +641,15 @@ methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` component
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
+`conversation.format` returns the host's date labels, so plugin text reads like
+the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
+"Yesterday at 9:05 AM"), `dayGroupLabel(seconds)` for day dividers ("Today",
+"Monday"), `fullTimestamp(seconds)` for the full hover date, and
+`relativeTimestamp(seconds)` for link previews ("5 minutes ago"). They use the
+current locale and time zone; all but `fullTimestamp` take an optional `now`
+for tests. They compute the label when called. `conversation.ui.Message` and
+the host's day dividers re-render at local midnight; a plugin that shows these
+labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 

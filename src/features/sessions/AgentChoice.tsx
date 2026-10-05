@@ -20,7 +20,7 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Avatar as ChoiceAvatar } from "../../shared/design-system/ui/Avatar";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarMedia } from "../../shared/avatar-source";
 import { usePresenceStatus } from "../presence/react";
 import type { PresenceStatus } from "../presence/presence";
 import styles from "./Sessions.module.css";
@@ -142,9 +142,10 @@ export function AgentChoice({
 }) {
   const resolveName = useIdentityNames(session.names);
   const library = session.agentChoices;
-  const agents = useAgentChoices(session);
-  const candidates = agents.identities.map((agent) => agent.pubkey);
-  const identities = agents.identities.map((agent) => ({
+  // Adding grants access, so known-archived agents are not offered.
+  const agents = useAgentChoices(session, true, true);
+  const candidates = agents.selectable.map((agent) => agent.pubkey);
+  const identities = agents.selectable.map((agent) => ({
     ...agent,
     name: resolveName(agent.pubkey, agent.name, candidates),
   }));
@@ -153,14 +154,7 @@ export function AgentChoice({
     session.presence,
     selected?.pubkey,
   );
-  function picture(avatar?: string) {
-    const source = avatarSource(avatar);
-    return source?.startsWith("data:")
-      ? source
-      : source
-        ? session.media(source, "small")
-        : undefined;
-  }
+  const picture = (avatar?: string) => avatarMedia(avatar, session.media);
   const label = selected
     ? `Change agent: ${selected.name}`
     : value
@@ -235,7 +229,7 @@ export function AgentChoice({
         </MenuRadioGroup>
         {allowed !== undefined &&
           sessionMembers === undefined &&
-          agents.identities.some(
+          agents.selectable.some(
             (agent) => !allowed.includes(agent.pubkey),
           ) && (
             <MenuNote>
@@ -244,7 +238,7 @@ export function AgentChoice({
             </MenuNote>
           )}
         {sessionMembers !== undefined &&
-          agents.identities.some(
+          agents.selectable.some(
             (agent) =>
               agentAdmission(
                 agent.pubkey,
@@ -256,7 +250,7 @@ export function AgentChoice({
             <MenuNote>
               Adding an agent gives it access to this session’s history
               {parentMembers !== undefined &&
-              agents.identities.some(
+              agents.selectable.some(
                 (agent) =>
                   agentAdmission(
                     agent.pubkey,
@@ -273,7 +267,7 @@ export function AgentChoice({
         {agents.status === "loading" && (
           <MenuNote role="status">Loading agents…</MenuNote>
         )}
-        {agents.status === "ready" && !agents.identities.length && (
+        {agents.status === "ready" && !agents.selectable.length && (
           <MenuNote role="status">
             No agents available in this community.
           </MenuNote>
@@ -283,7 +277,15 @@ export function AgentChoice({
             Your agent library isn’t available on this connection.
           </MenuNote>
         )}
-        {(agents.status === "error" || !!agents.error) && (
+        {agents.archives.status === "error" && (
+          <MenuNote role="status">
+            Couldn’t check which agents are archived, so archived agents may
+            appear.
+          </MenuNote>
+        )}
+        {(agents.status === "error" ||
+          !!agents.error ||
+          agents.archives.status === "error") && (
           <MenuItem closeOnClick={false} onClick={() => void library.refresh()}>
             <MenuIcon>
               <ArrowClockwiseIcon size={14} />

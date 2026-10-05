@@ -24,6 +24,7 @@ const pull = {
   head: { label: "sample:feature", sha: "head-sha" },
 };
 const response = (data: unknown) => new Response(JSON.stringify(data));
+const isConversation = (url: string) => /\/(comments|reviews)\?/.test(url);
 
 it("renders PR details while checks load, then exposes counts by pointer and keyboard", async () => {
   let finish!: (response: Response) => void;
@@ -31,6 +32,7 @@ it("renders PR details while checks load, then exposes counts by pointer and key
     finish = resolve;
   });
   const fetch = vi.fn((url: string) => {
+    if (isConversation(url)) return Promise.resolve(response([]));
     if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
     if (url.includes("/check-runs?")) return pending;
     return Promise.resolve(
@@ -39,7 +41,7 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   });
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
-  await screen.findByRole("heading", { name: "A small change" });
+  await screen.findByRole("heading", { name: "A small change #1" });
   await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   expect(screen.getByText("Loading…")).toBeVisible();
   await act(async () =>
@@ -63,7 +65,9 @@ it("renders PR details while checks load, then exposes counts by pointer and key
   expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
     "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
     "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+    "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
     "https://api.github.com/repos/sample/project/pulls/1",
+    "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
   ]);
   const user = userEvent.setup();
   await user.hover(summary);
@@ -83,6 +87,7 @@ it("renders PR details while checks load, then exposes counts by pointer and key
 it("keeps PR details after a checks failure and allows a read-only retry", async () => {
   let fail = true;
   const fetch = vi.fn(async (url: string) => {
+    if (isConversation(url)) return Promise.resolve(response([]));
     if (/\/pulls\/\d+$/.test(url)) return response(pull);
     if (url.includes("/check-runs?"))
       return fail
@@ -98,7 +103,9 @@ it("keeps PR details after a checks failure and allows a read-only retry", async
   await screen.findByRole("tab", { name: "Checks" });
   await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
   const retry = await screen.findByRole("button", { name: "Retry checks" });
-  expect(screen.getByRole("heading", { name: "A small change" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "A small change #1" }),
+  ).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fail = false;
   await userEvent.setup().click(retry);
@@ -118,6 +125,7 @@ it.each([
   async (state, label, category, unknownConclusion) => {
     let recovered = false;
     const fetch = vi.fn(async (url: string) => {
+      if (isConversation(url)) return Promise.resolve(response([]));
       if (/\/pulls\/\d+$/.test(url)) return response(pull);
       if (url.includes("/check-runs?"))
         return response({
@@ -161,7 +169,7 @@ it.each([
     expect(within(checks).getByRole("button", { name: "Retry checks" })).toBe(
       retry,
     );
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(5);
     recovered = true;
     await user.click(retry);
     await within(checks).findByText("Passed");
@@ -180,7 +188,9 @@ it.each([
       "https://api.github.com/repos/sample/project/commits/head-sha/check-runs?per_page=100&page=1&filter=latest",
       "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
       "https://api.github.com/repos/sample/project/commits/head-sha/status?per_page=100&page=1",
+      "https://api.github.com/repos/sample/project/issues/1/comments?per_page=30&page=1",
       "https://api.github.com/repos/sample/project/pulls/1",
+      "https://api.github.com/repos/sample/project/pulls/1/reviews?per_page=30&page=1",
     ]);
   },
 );
@@ -192,11 +202,13 @@ it.each([
 ])("does not offer Retry for known-only %s results", async (state, label) => {
   const fetch = vi.fn(async (url: string) =>
     response(
-      /\/pulls\/\d+$/.test(url)
-        ? pull
-        : url.includes("/check-runs?")
-          ? { total_count: 0, check_runs: [] }
-          : { total_count: 1, statuses: [{ context: "Build", state }] },
+      isConversation(url)
+        ? []
+        : /\/pulls\/\d+$/.test(url)
+          ? pull
+          : url.includes("/check-runs?")
+            ? { total_count: 0, check_runs: [] }
+            : { total_count: 1, statuses: [{ context: "Build", state }] },
     ),
   );
   vi.stubGlobal("fetch", fetch);
@@ -211,7 +223,7 @@ it.each([
   expect(
     within(checks).queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(5);
 });
 
 it.each([
@@ -225,6 +237,7 @@ it.each([
     const pending: ((response: Response) => void)[] = [];
     let retrying = false;
     const fetch = vi.fn((url: string) => {
+      if (isConversation(url)) return Promise.resolve(response([]));
       if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
       if (retrying)
         return new Promise<Response>((resolve) => pending.push(resolve));
@@ -252,7 +265,7 @@ it.each([
       expect(retry).toHaveAttribute("aria-busy", "true");
       expect(retry).toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Enter}");
-      expect(fetch).toHaveBeenCalledTimes(5);
+      expect(fetch).toHaveBeenCalledTimes(7);
       if (moved)
         await user.click(screen.getByRole("tab", { name: "Discussion" }));
     } finally {
@@ -284,7 +297,7 @@ it.each([
       expect(retry).not.toBeInTheDocument();
       expect(summary).toHaveFocus();
     }
-    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(fetch).toHaveBeenCalledTimes(7);
   },
 );
 
@@ -297,6 +310,7 @@ it("aborts checks when the panel target changes and ignores the late old result"
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string, options: RequestInit) => {
+      if (isConversation(url)) return Promise.resolve(response([]));
       if (/\/pulls\/\d+$/.test(url)) return Promise.resolve(response(pull));
       if (url.includes("/issues/"))
         return Promise.resolve(response({ title: "An issue" }));
@@ -334,21 +348,28 @@ it("aborts checks when the panel target changes and ignores the late old result"
   expect(screen.queryByText("Checks")).not.toBeInTheDocument();
 });
 it("shows honest missing-head state without inventing a head check request", async () => {
-  const fetch = vi.fn(async () => response({ title: "Old PR" }));
+  const fetch = vi.fn(async (url: string) =>
+    response(isConversation(url) ? [] : { title: "Old PR" }),
+  );
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
-  await screen.findByRole("heading", { name: "Old PR" });
+  await screen.findByRole("heading", { name: "Old PR #1" });
   await screen.findByRole("tab", { name: "Discussion" });
   await userEvent.setup().click(screen.getByRole("tab", { name: "Checks" }));
-  expect(screen.getAllByText("Unavailable")).toHaveLength(1);
+  expect(
+    within(screen.getByRole("tabpanel", { name: "Checks" })).getAllByText(
+      "Unavailable",
+    ),
+  ).toHaveLength(1);
   expect(
     screen.queryByRole("button", { name: "Retry checks" }),
   ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 it("shows named rows with honest outcomes, descriptions and links without extra requests", async () => {
   const fetch = vi.fn(async (url: string) => {
+    if (isConversation(url)) return Promise.resolve(response([]));
     if (/\/pulls\/\d+$/.test(url)) return response(pull);
     if (url.includes("/check-runs?"))
       return response({
@@ -388,7 +409,7 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
     wrapper: ToastProvider,
   });
   await screen.findByRole("tab", { name: "Discussion" });
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(3);
   const user = userEvent.setup();
   await user.click(screen.getByRole("tab", { name: "Checks" }));
   const checks = screen.getByRole("tabpanel", { name: "Checks" });
@@ -488,13 +509,14 @@ it("shows named rows with honest outcomes, descriptions and links without extra 
     }),
   ).toBe(list);
   expect(list).toBeVisible();
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(5);
 });
 
 it("keeps unknown checks distinct from success instead of drawing a reassuring ring", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
+      if (isConversation(url)) return Promise.resolve(response([]));
       if (/\/pulls\/\d+$/.test(url)) return response(pull);
       return response(
         url.includes("/check-runs?")
@@ -540,30 +562,65 @@ it("keeps unknown checks distinct from success instead of drawing a reassuring r
 it("retains main's description DOM and pending checks across tab switches without eager requests", async () => {
   const pending: ((response: Response) => void)[] = [];
   const fetch = vi.fn((url: string) =>
-    url.includes("/commits/")
-      ? new Promise<Response>((resolve) => pending.push(resolve))
-      : Promise.resolve(
-          response({
-            ...pull,
-            body: "Main description\n\n## Details",
-            body_html: "<p>Main description</p><h2>Details</h2>",
-          }),
-        ),
+    isConversation(url)
+      ? Promise.resolve(
+          response(
+            url.includes("/comments?")
+              ? [
+                  {
+                    id: 17,
+                    created_at: "2026-10-01T12:00:00Z",
+                    user: { login: "reader" },
+                    body: "Retained discussion comment",
+                  },
+                ]
+              : [
+                  {
+                    id: 18,
+                    submitted_at: "2026-10-01T13:00:00Z",
+                    user: { login: "reviewer" },
+                    state: "APPROVED",
+                    body: "",
+                  },
+                ],
+          ),
+        )
+      : url.includes("/commits/")
+        ? new Promise<Response>((resolve) => pending.push(resolve))
+        : Promise.resolve(
+            response({
+              ...pull,
+              body: "Main description\n\n## Details",
+              body_html: "<p>Main description</p><h2>Details</h2>",
+            }),
+          ),
   );
   vi.stubGlobal("fetch", fetch);
   render(<GitHubPanel target={target} close={() => {}} />);
-  const description = await screen.findByRole("heading", { name: "Details" });
   const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Expand Description" }),
+  );
+  const description = screen.getByRole("heading", { name: "Details" });
+  const comment = await screen.findByRole("group", { name: "Comment" });
+  const review = await screen.findByRole("group", { name: "Approved" });
+  expect(comment).toHaveTextContent("Retained discussion comment");
   expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(3);
   await user.click(screen.getByRole("tab", { name: "Checks" }));
   await waitFor(() => expect(pending).toHaveLength(2));
+  expect(comment).not.toBeVisible();
+  expect(review).not.toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Discussion" }));
   expect(screen.getByRole("heading", { name: "Details" })).toBe(description);
   expect(description).toBeVisible();
+  expect(screen.getByRole("group", { name: "Comment" })).toBe(comment);
+  expect(screen.getByRole("group", { name: "Approved" })).toBe(review);
+  expect(comment).toBeVisible();
+  expect(review).toBeVisible();
   await act(async () => {
     pending[0]?.(response({ total_count: 0, check_runs: [] }));
     pending[1]?.(response({ total_count: 0, statuses: [] }));
@@ -572,13 +629,14 @@ it("retains main's description DOM and pending checks across tab switches withou
   expect(screen.getByRole("tabpanel", { name: "Checks" })).toHaveTextContent(
     "No checks",
   );
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(5);
 });
 
 it("resets lazy tabs on a new PR and aborts both old reads before ignoring late completion", async () => {
   const pending: ((response: Response) => void)[] = [];
   const signals: AbortSignal[] = [];
   const fetch = vi.fn((url: string, options: RequestInit) => {
+    if (isConversation(url)) return Promise.resolve(response([]));
     if (url.includes("/commits/")) {
       signals.push(options.signal as AbortSignal);
       return new Promise<Response>((resolve) => pending.push(resolve));
@@ -601,7 +659,7 @@ it("resets lazy tabs on a new PR and aborts both old reads before ignoring late 
       close={() => {}}
     />,
   );
-  await screen.findByRole("heading", { name: "Second PR" });
+  await screen.findByRole("heading", { name: "Second PR #2" });
   expect(signals.every((signal) => signal.aborted)).toBe(true);
   expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
     "aria-selected",
@@ -619,7 +677,7 @@ it("resets lazy tabs on a new PR and aborts both old reads before ignoring late 
   expect(
     screen.queryByText("Some checks were not successful"),
   ).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch).toHaveBeenCalledTimes(8);
   await user.click(screen.getByRole("tab", { name: "Checks" }));
   await waitFor(() => expect(pending).toHaveLength(4));
   await act(async () => {
@@ -666,6 +724,7 @@ it("allows clipboard retry, prevents duplicate pending writes and retires feedba
         }),
     );
   const fetch = vi.fn(async (url: string) => {
+    if (isConversation(url)) return Promise.resolve(response([]));
     if (/\/pulls\/\d+$/.test(url)) return response(pull);
     return response(
       url.includes("/check-runs?")
@@ -722,5 +781,5 @@ it("allows clipboard retry, prevents duplicate pending writes and retires feedba
   await screen.findByRole("tab", { name: "Discussion" });
   await act(async () => finish());
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
-  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch).toHaveBeenCalledTimes(8);
 });

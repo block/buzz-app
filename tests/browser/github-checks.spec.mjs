@@ -28,6 +28,8 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
     (route) => {
       const path = new URL(route.request().url()).pathname;
       requests.push(path);
+      if (path.endsWith("/comments") || path.endsWith("/reviews"))
+        return route.fulfill({ json: [] });
       return route.fulfill({
         json: path.endsWith("/check-runs")
           ? {
@@ -79,7 +81,7 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
     .waitFor();
   await settle(page);
   app.append("primary", "alpha", targets.join(" "));
-  const link = (url) => page.locator(`a[href="${url}"]`);
+  const link = (url) => page.locator(`[data-message-id] a[href="${url}"]`);
   await expect(link(targets[0])).toBeAttached();
   await end(page);
   await link(targets[0]).click();
@@ -96,12 +98,25 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
     name: "Discussion",
     exact: true,
   });
+  await description
+    .getByRole("button", { name: "Expand Description", exact: true })
+    .click();
   await expect(
     description.getByRole("heading", { name: "Details" }),
   ).toBeVisible();
+  await expect(
+    description.getByRole("region", { name: "Pull request conversation" }),
+  ).toBeVisible();
+  await expect(
+    description.getByText(/some sources are incomplete/),
+  ).toHaveCount(0);
   await expect(discussion).toHaveAttribute("aria-selected", "true");
   await settle(page); // description/details mount is the completed loading boundary
-  expect(requests).toEqual(["/repos/sample/project/pulls/1"]);
+  expect([...requests].sort()).toEqual([
+    "/repos/sample/project/issues/1/comments",
+    "/repos/sample/project/pulls/1",
+    "/repos/sample/project/pulls/1/reviews",
+  ]);
   const details = await description
     .getByRole("heading", { name: "Details" })
     .elementHandle();
@@ -180,18 +195,18 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   await page.keyboard.press("Enter");
   await expect(successful).toHaveAttribute("aria-expanded", "false");
   await settle(page);
-  expect(requests).toHaveLength(3);
+  expect(requests).toHaveLength(5);
   await successful.click();
   await expect(
     checks.getByRole("link", { name: "Unit tests" }),
   ).toHaveAttribute("href", "https://github.com/sample/project/actions/runs/1");
   await link(targets[1]).click();
   await expect(
-    panel.getByRole("heading", { name: "Second PR", exact: true }),
+    panel.getByRole("heading", { name: "Second PR #2", exact: true }),
   ).toBeVisible();
   await expect(discussion).toHaveAttribute("aria-selected", "true");
   await settle(page);
-  expect(requests).toHaveLength(4);
+  expect(requests).toHaveLength(8);
   await checksTab.click();
   await expect(checks.getByRole("listitem")).toHaveCount(2);
   await expect(successful).toHaveAttribute("aria-expanded", "true");
@@ -246,7 +261,7 @@ test("standalone PR checks load on activation, retain disclosures, and reset wit
   ).toBeVisible();
   await expect(panel.getByRole("heading", { name: "Details" })).toBeVisible();
   await settle(page);
-  expect(requests).toHaveLength(7);
+  expect(requests).toHaveLength(11);
   await expect(panel.getByRole("tablist")).toHaveCount(0);
   await expect(panel.getByText("Comments", { exact: true })).toBeVisible();
 });
@@ -267,6 +282,11 @@ test("keyboard Retry recovers mixed checks without losing or stealing focus", as
     async (route) => {
       const url = new URL(route.request().url());
       requests.push(url.pathname);
+      if (
+        url.pathname.endsWith("/comments") ||
+        url.pathname.endsWith("/reviews")
+      )
+        return route.fulfill({ json: [] });
       if (url.pathname.includes("/pulls/"))
         return route.fulfill({
           json: { title: "Recovery PR", head: { sha: "same-sha" } },
@@ -311,7 +331,9 @@ test("keyboard Retry recovers mixed checks without losing or stealing focus", as
     "https://github.com/sample/project/pull/1 https://github.com/sample/project/pull/2",
   );
   const link = (id) =>
-    page.locator(`a[href="https://github.com/sample/project/pull/${id}"]`);
+    page.locator(
+      `[data-message-id] a[href="https://github.com/sample/project/pull/${id}"]`,
+    );
   await expect(link(1)).toBeAttached();
   await end(page);
   await link(1).click();
@@ -333,7 +355,7 @@ test("keyboard Retry recovers mixed checks without losing or stealing focus", as
   });
   await expect(summary).toHaveAttribute("data-check-state", "pending");
   await expect(checks.getByRole("listitem")).toHaveCount(2);
-  expect(requests).toHaveLength(3);
+  expect(requests).toHaveLength(5);
 
   // Failed retry keeps the action and its focus; successful retries remove it.
   // Moving away during a request must win over any completion handoff.
@@ -399,7 +421,7 @@ test("keyboard Retry recovers mixed checks without losing or stealing focus", as
       else await expect(summary).toBeFocused();
     }
   }
-  expect(requests.filter((path) => path.includes("/pulls/"))).toHaveLength(2);
+  expect(requests.filter((path) => /\/pulls\/\d+$/.test(path))).toHaveLength(2);
   expect(
     requests
       .filter((path) => path.includes("/commits/"))

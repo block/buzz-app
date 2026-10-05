@@ -3,6 +3,9 @@ import { useEffect, useId, useMemo, useState } from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
+  CircleDashedIcon,
+  XCircleIcon,
+  GitMergeIcon,
   GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
@@ -14,7 +17,10 @@ import { loadGitHubDetails, type GitHubDetails } from "./data";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { GitHubChecks } from "./GitHubChecks";
 import styles from "./GitHub.module.css";
+import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
+import { GitHubConversation } from "./GitHubConversation";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 
 export const inject = ["panels"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -36,6 +42,13 @@ const icons = {
   pull: GitPullRequestIcon,
   issue: GitHubIssueIcon,
   commit: GitCommitIcon,
+};
+
+const stateIcons = {
+  open: GitPullRequestIcon,
+  draft: CircleDashedIcon,
+  closed: XCircleIcon,
+  merged: GitMergeIcon,
 };
 
 export function GitHubPanel({ target }: PanelProps) {
@@ -77,6 +90,29 @@ function ObjectPanel({
     return () => controller.abort();
   }, [reference]);
   const Icon = icons[reference.kind];
+  const state = typeof result === "object" ? result.state.toLowerCase() : "";
+  const StateIcon =
+    reference.kind === "pull" && Object.hasOwn(stateIcons, state)
+      ? stateIcons[state as keyof typeof stateIcons]
+      : undefined;
+  const [owner, repositoryName] = reference.repository.split("/");
+  const title = (
+    <h2 className={reference.kind === "pull" ? styles.pullTitle : undefined}>
+      {reference.kind === "pull" ? (
+        <a
+          className={`${inlineStyles.link} ${styles.titleLink}`}
+          href={reference.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {typeof result === "object" ? result.title : labels.pull}{" "}
+          <span className={styles.titleNumber}>{reference.label}</span>
+        </a>
+      ) : (
+        typeof result === "object" && result.title
+      )}
+    </h2>
+  );
   return (
     <div className={styles.root}>
       <div className={styles.identity}>
@@ -84,46 +120,183 @@ function ObjectPanel({
           <Icon size={22} aria-hidden="true" />
         </span>
         <div>
-          <small>{reference.repository}</small>
-          <strong>
-            {labels[reference.kind]} {reference.label}
-          </strong>
+          {reference.kind === "pull" ? (
+            <>
+              <div className={styles.repository}>
+                <a
+                  className={inlineStyles.link}
+                  href={`https://github.com/${owner}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {owner}
+                </a>
+                <span className={styles.repositorySeparator}> / </span>
+                <a
+                  className={inlineStyles.link}
+                  href={`https://github.com/${reference.repository}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {repositoryName}
+                </a>
+              </div>
+              <small>{labels[reference.kind]}</small>
+            </>
+          ) : (
+            <>
+              <small>{reference.repository}</small>
+              <strong>
+                {labels[reference.kind]} {reference.label}
+              </strong>
+            </>
+          )}
         </div>
       </div>
-      <a
-        className={styles.external}
-        href={reference.url}
-        target="_blank"
-        rel="noreferrer"
-      >
-        Open on GitHub <ArrowSquareOutIcon size={14} />
-      </a>
+      {reference.kind !== "pull" && (
+        <a
+          className={styles.external}
+          href={reference.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open on GitHub <ArrowSquareOutIcon size={14} />
+        </a>
+      )}
+      {reference.kind === "pull" && typeof result !== "object" && title}
       {result === undefined ? (
         <p role="status">Loading from GitHub…</p>
       ) : typeof result === "string" ? (
         <div role="alert">
           <p>{result}</p>
-          <Button type="button" onClick={retry}>
-            Try again
-          </Button>
+          <div className={styles.errorActions}>
+            <Button
+              variant="prominent"
+              nativeButton={false}
+              role="link"
+              render={
+                <a
+                  className={styles.errorExternal}
+                  href={reference.url}
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              }
+            >
+              <span className={styles.errorActionLabel}>Open on Github</span>
+            </Button>
+            <Button type="button" onClick={retry}>
+              Retry
+            </Button>
+          </div>
         </div>
       ) : (
         <>
+          {reference.kind === "pull" && title}
           <div className={styles.byline}>
             {result.state && (
-              <span className={styles.state}>{result.state}</span>
+              <span
+                className={styles.state}
+                data-pr-state={
+                  reference.kind === "pull"
+                    ? result.state.toLowerCase()
+                    : undefined
+                }
+              >
+                {StateIcon && <StateIcon size={12} aria-hidden="true" />}
+                {result.state}
+              </span>
             )}
-            {result.author && <span>by {result.author}</span>}
+            {result.author && (
+              <span>
+                by{" "}
+                {result.authorUrl ? (
+                  <a
+                    className={inlineStyles.link}
+                    href={result.authorUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {result.author}
+                  </a>
+                ) : (
+                  result.author
+                )}
+              </span>
+            )}
           </div>
-          <h2>{result.title}</h2>
-          {!!result.facts.length && (
+          {reference.kind !== "pull" && title}
+          {(!!result.facts.length || reference.kind === "pull") && (
             <dl className={styles.facts}>
               {result.facts.map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
-                  <dd>{value}</dd>
+                  <dd>
+                    {typeof value !== "object" ? (
+                      value
+                    ) : "head" in value ? (
+                      <>
+                        {value.head.url ? (
+                          <a
+                            className={styles.branch}
+                            href={value.head.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {value.head.label}
+                          </a>
+                        ) : (
+                          <span className={styles.branchLabel}>
+                            {value.head.label}
+                          </span>
+                        )}
+                        {" → "}
+                        {value.base.url ? (
+                          <a
+                            className={styles.branch}
+                            href={value.base.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {value.base.label}
+                          </a>
+                        ) : (
+                          <span className={styles.branchLabel}>
+                            {value.base.label}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span className={styles.additions}>
+                          +{value.additions}
+                        </span>
+                        {" / "}
+                        <span className={styles.deletions}>
+                          −{value.deletions}
+                        </span>
+                      </>
+                    )}
+                  </dd>
                 </div>
               ))}
+              {reference.kind === "pull" && (
+                <div>
+                  <dt>Last updated</dt>
+                  <dd>
+                    {result.updatedAt ? (
+                      <time
+                        dateTime={result.updatedAt}
+                        title={new Date(result.updatedAt).toLocaleString()}
+                      >
+                        {relativeTimestamp(Date.parse(result.updatedAt) / 1000)}
+                      </time>
+                    ) : (
+                      "Unavailable"
+                    )}
+                  </dd>
+                </div>
+              )}
             </dl>
           )}
           {reference.kind === "pull" ? (
@@ -187,13 +360,7 @@ function PullContent({
         // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
         tabIndex={0}
       >
-        {details.body && (
-          <GitHubBody
-            body={details.body}
-            bodyHtml={details.bodyHtml}
-            url={reference.url}
-          />
-        )}
+        <GitHubConversation details={details} url={reference.url} />
       </div>
       <div
         role="tabpanel"

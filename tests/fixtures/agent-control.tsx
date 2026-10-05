@@ -196,7 +196,8 @@ const session = createRelaySession({
   relayAuthor: "ef".repeat(32),
   scope: "https://relay.example.test",
   writer: {
-    kinds: [9],
+    // Kind 5 exposes relay-only Remove; signing still fails in this preview.
+    kinds: [9, 5],
     async sign() {
       throw new Error("This preview cannot sign or send messages.");
     },

@@ -512,13 +512,15 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
     );
     await first.promise;
   });
-  expect(screen.queryByText("Retired PR")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Retired PR #327" }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await act(async () => {
     second.resolve(new Response(null, { status: 500 }));
   });
   expect(screen.getByRole("alert")).toHaveTextContent("500");
-  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(screen.getByRole("status")).toHaveTextContent("Loading");
   await act(async () => {
     retry.resolve(
@@ -531,7 +533,10 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
       ),
     );
   });
-  expect(screen.getByRole("heading", { name: "Current PR" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Current PR #3270" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Expand Description" }));
   expect(container.querySelector("video")).toHaveAttribute("src", before);
   const next = deferred<Response>();
   fetch.mockReturnValueOnce(next.promise);
@@ -542,6 +547,8 @@ it("retires pending PR loads, retries errors, and clears media when navigating",
       new Response(JSON.stringify({ title: "No metadata", body: before })),
     );
   });
-  expect(screen.getByRole("heading", { name: "No metadata" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "No metadata #3271" }),
+  ).toBeVisible();
   expect(container.querySelector("video")).toBeNull();
 });

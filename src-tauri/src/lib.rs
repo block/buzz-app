@@ -7,6 +7,7 @@ use browser::{
 };
 mod agent_models;
 mod agents;
+mod builderlab;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -38,6 +39,9 @@ use relay::{
 };
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
+use builderlab::{
+    builderlab_auth, builderlab_cancel, builderlab_login, builderlab_sign_out, BuilderlabHost,
+};
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -393,6 +397,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_export,
         identity_prepare_remote_agent_authorization,
         enterprise_login_gate,
+        builderlab_auth,
+        builderlab_login,
+        builderlab_cancel,
+        builderlab_sign_out,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,
@@ -511,6 +519,16 @@ pub fn run() {
                     .as_ref()
                     .map(|(root, _, _)| root.clone())
                     .map_err(Clone::clone),
+            ));
+            // Resolves the bl-shared key only; the store is first read when the
+            // Communities card mounts, never at launch.
+            app.manage(BuilderlabHost::new(
+                app.path()
+                    .home_dir()
+                    .map_err(|_| "Could not resolve the Builderlab session store".to_owned())
+                    .and_then(|home| {
+                        builderlab::Config::resolve(&builderlab::Env::from_process(), &home)
+                    }),
             ));
             let resources = app
                 .path()

@@ -202,7 +202,7 @@ impl ModelHost {
         oauth_root(&state.root.clone()?)
     }
 }
-struct Opener<R: tauri::Runtime>(tauri::AppHandle<R>);
+pub(crate) struct Opener<R: tauri::Runtime>(pub(crate) tauri::AppHandle<R>);
 impl<R: tauri::Runtime> BrowserOpener for Opener<R> {
     fn open(&self, url: &str) -> Result<(), String> {
         self.0

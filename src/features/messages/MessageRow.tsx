@@ -1,6 +1,7 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import { activityTarget } from "../agents/activity-target";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -24,7 +25,7 @@ import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
-import { profileTarget } from "../profiles/target";
+import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -215,6 +216,29 @@ export const MessageRow = memo(function MessageRow({
     agent: !!(row.agentEnvelope || agentPubkeys?.has(row.authorId)),
   });
   const clickable = target && canOpenLink?.(target);
+  const activityView = profileActivityViewTarget(row.authorId);
+  const canViewActivity =
+    !!(
+      row.agentEnvelope ||
+      agentPubkeys?.has(row.authorId) ||
+      profile?.isAgent
+    ) &&
+    activityView &&
+    canOpenLink?.(activityView) &&
+    canOpenLink(activityTarget(row.authorId, row.channelId));
+  const activityItem = canViewActivity && (
+    <MenuItem
+      onClick={() => {
+        if (
+          canOpenLink?.(activityView) &&
+          canOpenLink(activityTarget(row.authorId, row.channelId))
+        )
+          onOpenLink(activityView);
+      }}
+    >
+      View activity
+    </MenuItem>
+  );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -477,6 +501,7 @@ export const MessageRow = memo(function MessageRow({
                       (session ? (
                         <MessageManagementItems row={row} session={session} />
                       ) : undefined)}
+                    {activityItem}
                     {reportItem}
                   </>
                 }

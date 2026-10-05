@@ -13,6 +13,7 @@ import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
+import { bindSearchUsage } from "./shell/search-usage";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -87,6 +88,8 @@ export function createServices() {
   ctx.effect(() =>
     bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
   );
+  // Search ranks places by how often and how recently they were opened.
+  ctx.effect(() => bindSearchUsage(navigation));
   if (notifications.indicator.available)
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread),

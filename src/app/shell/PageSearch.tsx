@@ -32,6 +32,7 @@ import {
   type SearchDestination,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { usageScope } from "./search-usage";
 
 export type SearchServices = Pick<
   AppServices,
@@ -338,6 +339,7 @@ function CommunitySearch({
       scopedChannelId={scopedChannelId}
       currentChannelId={currentChannelId}
       onScopeChange={onScopeChange}
+      usageScope={usageScope(scope)}
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();
         if (

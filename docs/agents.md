@@ -124,7 +124,7 @@ Action policy stays explicit: ordinary member mentions use the channel roster an
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
-access. Session invitations retain their existing rules, including legacy choices.
+access. A pasted mention of a known profile is offered the same way. Session invitations retain their existing rules, including legacy choices.
 Templates additionally require verified non-archived state (`templateAgentChoices`
 returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.

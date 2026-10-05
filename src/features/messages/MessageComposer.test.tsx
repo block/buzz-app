@@ -3322,7 +3322,7 @@ const pasteText = (input: ComposerInputElement, text: string) =>
     });
   });
 
-it("notifies a pasted identity link only for a person the picker offers, under their current name", () => {
+it("notifies a pasted identity link for a member under their current name, not an unknown key", () => {
   const h = mount();
   h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
   const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
@@ -3344,6 +3344,46 @@ it("notifies a pasted identity link only for a person the picker offers, under t
     [],
   );
 });
+
+for (const channelType of ["stream", "forum"] as const)
+  it(`offers a pasted nonmember with a known profile like the picker in ${channelType}`, async () => {
+    const h = mount();
+    const list = {
+      status: "ready",
+      channels: [{ id: "channel", channelType, members: ["d".repeat(64)] }],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add: vi.fn() },
+    });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+    // The pasted label never names the recipient; an uncached key stays display-only.
+    const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+    pasteText(
+      h.input(),
+      `Ask [@Jane](${profileTarget(first.pubkey)}) and ${eve} `,
+    );
+    expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(1);
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey Bee is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+      "channel",
+      `Ask @Honey Bee and ${eve} `,
+      [],
+    ]);
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  });
 
 it("keeps pasted identity links display-only during edits", () => {
   const h = mount({}, undefined, first.pubkey);

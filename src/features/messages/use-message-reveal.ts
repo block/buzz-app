@@ -22,6 +22,9 @@ export function useMessageReveal({
   focus?: boolean;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
+  const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
+    undefined,
+  );
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -46,7 +49,7 @@ export function useMessageReveal({
     const observer = new MutationObserver(schedule);
     const inertObserver = new MutationObserver(schedule);
     function reveal() {
-      if (signal?.aborted || !container?.isConnected) return;
+      if (!signal || signal.aborted || !container?.isConnected) return;
       const row = [
         ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
       ].find((element) => element.dataset.messageId === messageId);
@@ -58,7 +61,15 @@ export function useMessageReveal({
         behavior: "instant",
       });
       settled.current = true;
-      if (focus) row.focus({ preventScroll: true });
+      // Take focus once per mounted row: a rescheduled reveal must not pull it
+      // back from wherever the user or another owner has since moved it.
+      if (
+        focus &&
+        (focused.current?.signal !== signal || focused.current.row !== row)
+      ) {
+        row.focus({ preventScroll: true });
+        if (document.activeElement === row) focused.current = { signal, row };
+      }
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
           return;
@@ -71,7 +82,14 @@ export function useMessageReveal({
           box.top < Math.min(viewport.bottom, window.innerHeight) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if ((focus && document.activeElement !== row) || !visible) return;
+        if (
+          (focus &&
+            (focused.current?.signal !== signal ||
+              focused.current.row !== row ||
+              row.closest("[inert]"))) ||
+          !visible
+        )
+          return;
         revealed.current = signal;
         cancel();
         complete();

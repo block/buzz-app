@@ -106,13 +106,19 @@ export function AgentsPage({
         <div className="flex h-full min-h-0 flex-col">
           <PanelHeader
             title="Agents"
-            actions={<div ref={setHeaderActions} />}
+            actions={
+              <div
+                ref={setHeaderActions}
+                className="flex flex-wrap items-center justify-end gap-2"
+              />
+            }
           />
           <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
             <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
               {control ? (
                 <AgentControlPanel
                   control={control}
+                  headerActions={headerActions}
                   editTarget={editTarget}
                   onOpenHarnesses={
                     open

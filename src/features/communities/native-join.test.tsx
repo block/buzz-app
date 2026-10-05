@@ -20,6 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const viewer = keypair(),
   relay = keypair();
 const community = "https://native-join.test";
+let requestedCommunity = community;
 const roots: Context[] = [];
 const calls: Array<{ path: string; body: unknown }> = [];
 let admitted: boolean;
@@ -34,6 +35,7 @@ beforeEach(() => {
   admitted = false;
   profile = undefined;
   calls.length = 0;
+  requestedCommunity = community;
   claim = async () => {};
   publish = async () => {};
   readProfile = async () => {};
@@ -64,7 +66,7 @@ beforeEach(() => {
       path: string;
       body: string | null;
     };
-    expect(request.community).toBe(community);
+    expect(request.community).toBe(requestedCommunity);
     const body = request.body ? JSON.parse(request.body) : undefined;
     calls.push({ path: request.path, body });
     const response = (value: unknown, status = 200) => ({
@@ -135,7 +137,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
-async function open() {
+async function open(invite?: { community: string; code: string }) {
   const ctx = new Context();
   roots.push(ctx);
   const communities = createCommunities(
@@ -150,7 +152,12 @@ async function open() {
   await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
   const close = vi.fn();
   const view = render(
-    <CommunityDialog communities={communities} mode="join" close={close} />,
+    <CommunityDialog
+      communities={communities}
+      mode="join"
+      close={close}
+      invite={invite}
+    />,
   );
   return {
     communities,
@@ -547,4 +554,70 @@ it("fences a late claim completion after the dialog is replaced", async () => {
   } finally {
     release();
   }
+});
+
+it("keeps a new invite bound to its relay despite another unfinished join", async () => {
+  const other = "https://other-join.test";
+  journal().begin(community);
+  requestedCommunity = other;
+  const user = userEvent.setup();
+  await open({ community: other, code: "v2.other" });
+  expect(screen.getByLabelText("Relay URL")).toHaveValue(other);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
+    "v2.other",
+  );
+  await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
+  await user.click(screen.getByRole("checkbox", { name: /at least 18/ }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() =>
+    expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(true),
+  );
+  expect(
+    calls.find((call) => call.path === "/api/invites/claim")?.body,
+  ).toEqual({
+    code: "v2.other",
+    policy_receipt: "fixture-receipt",
+  });
+  expect(journal().get(community)).toBeDefined();
+});
+
+it("recovers the invite's own unfinished join without claiming again", async () => {
+  journal().begin(community, { name: "Saved", picture: "" });
+  admitted = true;
+  const user = userEvent.setup();
+  await open({ community, code: "v2.new" });
+  expect(screen.getByLabelText("Relay URL")).toHaveValue(community);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Display name")).toHaveValue("Saved");
+  expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(false);
+});
+
+it("does not recover another viewer's unfinished join", async () => {
+  createJoinJournal("f".repeat(64)).begin(community, {
+    name: "Other viewer",
+    picture: "",
+  });
+  const user = userEvent.setup();
+  await open({ community, code: "v2.new" });
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
+    "v2.new",
+  );
+  expect(screen.queryByLabelText("Display name")).toBeNull();
+});
+
+it("clears invite material when the prefilled relay is edited", async () => {
+  const user = userEvent.setup();
+  const other = "https://other-join.test";
+  await open({ community, code: "v2.original" });
+  await user.clear(screen.getByLabelText("Relay URL"));
+  await user.type(screen.getByLabelText("Relay URL"), other);
+  expect(screen.getByLabelText("Relay URL")).toHaveValue(other);
+  requestedCommunity = other;
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
+    "",
+  );
+  expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(false);
 });

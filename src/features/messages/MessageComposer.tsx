@@ -305,12 +305,13 @@ function Composer({
         return;
       const editor = input.current;
       if (!editor || editor.closest("[inert]")) return;
-      // A conversation can finish loading behind an already-focused dialog.
-      // Its default focus must not interrupt that modal's explicit owner.
-      const modal = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"]',
+      // A conversation can finish loading behind an already-focused dialog,
+      // menu, or open popup trigger. Its default focus must not interrupt that
+      // explicit owner: moving focus away also dismisses non-modal menus.
+      const owner = document.activeElement?.closest(
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
       );
-      if (modal && !modal.contains(editor)) return;
+      if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
       editor.focus();
       if (document.activeElement !== editor) return;

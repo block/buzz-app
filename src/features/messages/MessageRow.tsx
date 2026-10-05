@@ -61,8 +61,12 @@ import {
   MessageReadStateItem,
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
-import { FlagIcon } from "../../shared/design-system/icons";
-import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuSeparator,
+} from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
@@ -271,6 +275,9 @@ const FullMessageRow = memo(function MessageRow({
           onOpenLink(activityView);
       }}
     >
+      <MenuIcon>
+        <ListBulletsIcon />
+      </MenuIcon>
       View activity
     </MenuItem>
   );
@@ -345,15 +352,18 @@ const FullMessageRow = memo(function MessageRow({
       ? session?.messages.report
       : undefined;
   const reportItem = report && (
-    <MenuItem
-      disabled={reporting === "open"}
-      onClick={() => setReporting("open")}
-    >
-      <MenuIcon>
-        <FlagIcon />
-      </MenuIcon>
-      Report
-    </MenuItem>
+    <>
+      <MenuSeparator />
+      <MenuItem
+        disabled={reporting === "open"}
+        onClick={() => setReporting("open")}
+      >
+        <MenuIcon>
+          <FlagIcon />
+        </MenuIcon>
+        Report
+      </MenuItem>
+    </>
   );
   const actionItems = actions.map((action) => (
     <MenuItem key={action.key} onClick={() => setOpenAction(action)}>

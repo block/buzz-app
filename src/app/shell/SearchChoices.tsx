@@ -24,8 +24,14 @@ export type SearchDestination = {
   run: () => void;
 };
 
+const isWordChar = (char: string | undefined) =>
+  /[\p{L}\p{N}]/u.test(char ?? "");
+
 /** How well a label matches typed text: exact, then prefix, then word start,
- * then any substring. Lower is better; undefined means no match. */
+ * then any substring, then a fuzzy match whose letters each continue a run
+ * that began at a word start ("bgp" in "buzz-github-prs"), then any fuzzy
+ * match (the letters appear in order). Lower is better; undefined means no
+ * match. Ranks are whole numbers, so callers can add fractional tie-breaks. */
 export function matchRank(label: string, needle: string) {
   const text = label.toLowerCase();
   if (text === needle) return 0;
@@ -36,10 +42,34 @@ export function matchRank(label: string, needle: string) {
     at = text.indexOf(needle, at + 1)
   ) {
     if (at === 0) return 1;
-    if (!/[\p{L}\p{N}]/u.test(text[at - 1] ?? "")) return 2;
+    if (!isWordChar(text[at - 1])) return 2;
     rank = 3;
   }
-  return rank;
+  if (rank !== undefined) return rank;
+  // Spaces in typed text only separate words; they need not match.
+  const letters = [...needle.replace(/\s+/g, "")];
+  const chars = [...text];
+  if (!letters.length) return undefined;
+  // Can letters[i..] match chars[j..] with every run starting at a word start?
+  // `inRun` means the previous letter matched chars[j - 1].
+  const memo = new Map<number, boolean>();
+  const wordRuns = (i: number, j: number, inRun: boolean): boolean => {
+    if (i === letters.length) return true;
+    if (j === chars.length) return false;
+    const key = (i * (chars.length + 1) + j) * 2 + (inRun ? 1 : 0);
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const startsRun = inRun || !isWordChar(chars[j - 1]);
+    const result =
+      (chars[j] === letters[i] && startsRun && wordRuns(i + 1, j + 1, true)) ||
+      wordRuns(i, j + 1, false);
+    memo.set(key, result);
+    return result;
+  };
+  if (wordRuns(0, 0, false)) return 4;
+  let i = 0;
+  for (const char of chars) if (char === letters[i]) i += 1;
+  return i === letters.length ? 5 : undefined;
 }
 
 export type SearchInputProps = {

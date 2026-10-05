@@ -165,6 +165,67 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
   }
 });
 
+it("fuzzy-matches channel names after substring matches, word starts first", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const names = [
+    "big-grape",
+    "buzz-github-prs",
+    "debug-pr",
+    "general",
+    "ops-bgp",
+  ];
+  const discovery = names.flatMap((name, index) => [
+    metadata(relay, name, name, 1700000000 + index),
+    roster(relay, name, [viewer.pubkey]),
+  ]);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="bgp"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={open}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    // The substring match leads. Initials ("b"uzz-"g"ithub-"p"rs) come next,
+    // then names that merely hold the letters in order. "general" has no "b".
+    await waitFor(() =>
+      expect(
+        within(channels)
+          .getAllByRole("option")
+          .map((option) => option.textContent?.split(/[A-Z]/)[0]),
+      ).toEqual([
+        "ops-bgp",
+        "buzz-github-prs",
+        expect.stringMatching(/^(big-grape|debug-pr)$/),
+        expect.stringMatching(/^(big-grape|debug-pr)$/),
+      ]),
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledExactlyOnceWith("ops-bgp");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("leads with the group holding the best match and ranks archived channels after live ties", async () => {
   const relay = keypair();
   const viewer = keypair();

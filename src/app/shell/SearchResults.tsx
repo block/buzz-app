@@ -101,7 +101,7 @@ export function SearchResults({
   // The relay matches public channels itself; keep its matches, ranked last.
   // Archived channels follow live ones of the same rank.
   const rankOf = (label: string, archived?: boolean) =>
-    (matchRank(label, needle) ?? 4) + (archived ? 0.5 : 0);
+    (matchRank(label, needle) ?? 6) + (archived ? 0.5 : 0);
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows
       .map((row) => ({ row, rank: rank(row) }))
@@ -110,8 +110,8 @@ export function SearchResults({
   const channelRank = (channel: ChannelSummary) =>
     rankOf(names.get(channel.id) ?? channel.name, channel.archived);
   const matchingChannels = byMatch(
-    channels.filter((channel) =>
-      names.get(channel.id)?.toLowerCase().includes(needle),
+    channels.filter(
+      (channel) => matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
   ).slice(0, 8);

@@ -26,6 +26,7 @@ import {
   shellPresentation,
 } from "./presentation";
 import {
+  matchRank,
   SearchChoices,
   type SearchInputProps,
   type SearchDestination,
@@ -126,8 +127,8 @@ export function PageSearch({
     })),
     { key: "settings", ...shellPresentation.settings },
   ]
-    .filter((page) =>
-      page.label.toLowerCase().includes(query.trim().toLowerCase()),
+    .filter(
+      (page) => matchRank(page.label, query.trim().toLowerCase()) !== undefined,
     )
     .map((page) => ({
       ...page,

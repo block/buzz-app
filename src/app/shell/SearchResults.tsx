@@ -99,16 +99,21 @@ export function SearchResults({
   const needle = query.trim().toLowerCase().replace(/^#/, "");
   // Rank before the limit, so an exact name beyond the first eight still shows.
   // The relay matches public channels itself; keep its matches, ranked last.
-  const byMatch = <T,>(rows: readonly T[], label: (row: T) => string) =>
+  // Archived channels follow live ones of the same rank.
+  const rankOf = (label: string, archived?: boolean) =>
+    (matchRank(label, needle) ?? 4) + (archived ? 0.5 : 0);
+  const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows
-      .map((row) => ({ row, rank: matchRank(label(row), needle) ?? 4 }))
+      .map((row) => ({ row, rank: rank(row) }))
       .sort((a, b) => a.rank - b.rank)
       .map(({ row }) => row);
+  const channelRank = (channel: ChannelSummary) =>
+    rankOf(names.get(channel.id) ?? channel.name, channel.archived);
   const matchingChannels = byMatch(
     channels.filter((channel) =>
       names.get(channel.id)?.toLowerCase().includes(needle),
     ),
-    (channel) => names.get(channel.id) ?? "",
+    channelRank,
   ).slice(0, 8);
   const joinedChannels = matchingChannels.filter(
     (channel) => channel.channelType !== "dm",
@@ -118,7 +123,7 @@ export function SearchResults({
     publicChannels.channels.filter(
       (channel) => !joinedChannels.some(({ id }) => id === channel.id),
     ),
-    (channel) => channel.name,
+    channelRank,
   ).slice(0, Math.max(0, 8 - joinedChannels.length));
   const conversationDestination = (
     channel: ChannelSummary,
@@ -233,20 +238,40 @@ export function SearchResults({
                 { label: "Actions", destinations: pages },
               ]
             : [
-                {
-                  label: "Channels",
-                  destinations: [...joinedChannels, ...unjoinedChannels].map(
-                    conversationDestination,
-                  ),
-                },
-                {
-                  label: "Direct messages",
-                  destinations: matchingChannels
-                    .filter((channel) => channel.channelType === "dm")
-                    .map(conversationDestination),
-                },
-                { label: "Pages", destinations: pages },
                 // Named destinations lead, so typed text selects one first.
+                // The group with the best match leads them, so Enter opens
+                // the "Work" page before a channel that merely contains it.
+                ...[
+                  {
+                    label: "Channels",
+                    destinations: [...joinedChannels, ...unjoinedChannels].map(
+                      conversationDestination,
+                    ),
+                    best: Math.min(
+                      ...[...joinedChannels, ...unjoinedChannels].map(
+                        channelRank,
+                      ),
+                    ),
+                  },
+                  {
+                    label: "Direct messages",
+                    destinations: matchingChannels
+                      .filter((channel) => channel.channelType === "dm")
+                      .map(conversationDestination),
+                    best: Math.min(
+                      ...matchingChannels
+                        .filter((channel) => channel.channelType === "dm")
+                        .map(channelRank),
+                    ),
+                  },
+                  {
+                    label: "Pages",
+                    destinations: byMatch(pages, (page) => rankOf(page.label)),
+                    best: Math.min(...pages.map((page) => rankOf(page.label))),
+                  },
+                ]
+                  .sort((a, b) => a.best - b.best)
+                  .map(({ best: _, ...group }) => group),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),

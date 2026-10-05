@@ -165,6 +165,87 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
   }
 });
 
+it("leads with the group holding the best match and ranks archived channels after live ties", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "space", "team-workspace", 1700000000),
+    roster(relay, "space", [viewer.pubkey]),
+    signed(relay, {
+      kind: 39000,
+      created_at: 1700000001,
+      content: "",
+      tags: [
+        ["d", "old"],
+        ["t", "stream"],
+        ["name", "work-old"],
+        ["archived", "true"],
+      ],
+    }),
+    roster(relay, "old", [viewer.pubkey]),
+    metadata(relay, "log", "work-log", 1700000002),
+    roster(relay, "log", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+  });
+  const work = vi.fn();
+  const page = (label: string, run = () => {}) => ({
+    key: label,
+    label,
+    icon: ChatCircleIcon,
+    run,
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="work"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[page("Workflows"), page("Work", work)]}
+        openConversation={() => {}}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    await waitFor(() =>
+      expect(within(channels).getAllByRole("option")).toHaveLength(3),
+    );
+    expect(
+      within(channels)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([
+      expect.stringMatching(/^work-log/),
+      expect.stringMatching(/^work-old/),
+      expect.stringMatching(/^team-workspace/),
+    ]);
+    const groups = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(groups.slice(0, 2)).toEqual(["Pages", "Channels"]);
+    const pages = screen.getByRole("group", { name: "Pages" });
+    expect(
+      within(pages)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Work", "Workflows"]);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(work).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("shows the real read failure, retains conversation choices, and retries to an exact message", async () => {
   vi.useFakeTimers();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

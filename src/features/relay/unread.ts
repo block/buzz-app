@@ -13,6 +13,7 @@ import type {
   ReadMutationResult,
   ReadSyncSnapshot,
 } from "./read-state";
+import type { ReadJournal } from "./read-state-storage";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
@@ -1577,30 +1578,55 @@ export function createUnread({
         handles.delete(dispose);
         views.delete(dispose);
       };
-      const valid = () =>
+      // A newer manual unread cancels this lease. Inside a save, check the
+      // journal being replaced: another window may have marked it since.
+      const manual = (key: string, journal?: ReadJournal) =>
+        (journal ? journal.localUnread[key] : reads.localUnread(key)) ?? 0;
+      const valid = (journal?: ReadJournal) =>
         active &&
         !closed &&
         generation === epoch &&
         allowed(channelId) &&
-        (reads.localUnread(channelId) ?? 0) <= manualRevision;
+        manual(channelId, journal) <= manualRevision;
       handles.add(dispose);
       // Reading a DM reads all of it, through the newest retained message,
       // and ends a manual unread on it. A DM is all for the reader, so there
-      // is no backlog to keep. Returns false outside DMs.
-      const readDm = async () => {
-        if (!isDm(channelId)) return false;
-        indexEvidence();
-        const cut = (byChannel.get(channelId) ?? []).reduce(
-          (newest, { event }) => Math.max(newest, event.created_at),
-          -1,
-        );
-        if (
-          cut >= 0 &&
-          ((reads.state().frontiers[channelId] ?? -1) < cut ||
-            reads.localUnread(channelId))
-        )
-          await reads.read(channelId, cut, valid, true, [channelId]);
-        return true;
+      // is no backlog to keep. One lease is one earned dwell, so its catchUp
+      // and observe share the first cutoff: a message arriving between them
+      // waits for the next dwell. Returns undefined outside DMs.
+      let dmRead: Promise<unknown> | undefined;
+      const readDm = (
+        witnesses: readonly Readonly<{ target: ReadTarget; id: string }>[],
+      ) => {
+        if (!isDm(channelId)) return undefined;
+        if (dmRead) return dmRead;
+        for (const { target, id } of witnesses) {
+          let event: RelayEvent;
+          try {
+            event = requireMessage(target, id);
+          } catch {
+            continue;
+          }
+          indexEvidence();
+          const cut = (byChannel.get(channelId) ?? []).reduce(
+            (newest, row) => Math.max(newest, row.event.created_at),
+            -1,
+          );
+          dmRead =
+            (reads.state().frontiers[channelId] ?? -1) < cut ||
+            manual(channelId)
+              ? reads.read(
+                  channelId,
+                  cut,
+                  (journal) =>
+                    valid(journal) && requireMessage(target, id) === event,
+                  true,
+                  [channelId],
+                )
+              : Promise.resolve();
+          return dmRead;
+        }
+        return Promise.resolve();
       };
       return Object.freeze({
         dispose,
@@ -1620,10 +1646,15 @@ export function createUnread({
           });
         },
         async catchUp(id: string, rootId?: string) {
-          if (!valid() || (await readDm())) return;
+          if (!valid()) return;
           const target = rootId
             ? { kind: "thread" as const, channelId, rootId }
             : { kind: "channel" as const, channelId };
+          const dm = readDm([{ target, id }]);
+          if (dm) {
+            await dm;
+            return;
+          }
           const event = requireMessage(target, id);
           const key = rootId
             ? `thread-activity:${rootId}`
@@ -1652,11 +1683,10 @@ export function createUnread({
                 event.created_at,
               );
           const frontiers = reads.state().frontiers;
-          const current = () =>
-            valid() &&
+          const current = (journal: ReadJournal) =>
+            valid(journal) &&
             requireMessage(target, id) === event &&
-            (!rootId ||
-              (reads.localUnread(`thread:${rootId}`) ?? 0) <= manualRevision);
+            (!rootId || manual(`thread:${rootId}`, journal) <= manualRevision);
           // Reaching the live bottom of a channel ends a manual unread on the
           // channel. Unseen mentions, replies and marked messages stay unread.
           const endManual = !rootId && !!reads.localUnread(channelId);
@@ -1681,7 +1711,17 @@ export function createUnread({
           );
         },
         async observe(ids: readonly string[]) {
-          if (!valid() || ids.length > 128 || (await readDm())) return;
+          if (!valid() || ids.length > 128) return;
+          const dm = readDm(
+            ids.map((id) => ({
+              target: { kind: "message" as const, channelId, messageId: id },
+              id,
+            })),
+          );
+          if (dm) {
+            await dm;
+            return;
+          }
           for (const id of ids) {
             if (!valid() || observed.has(id)) continue;
             const target = {
@@ -1704,7 +1744,8 @@ export function createUnread({
             await reads.read(
               targetKey(target),
               event.created_at,
-              () => valid() && requireMessage(target, id) === event,
+              (journal) =>
+                valid(journal) && requireMessage(target, id) === event,
             );
             observed.add(id);
           }

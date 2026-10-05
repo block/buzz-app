@@ -172,10 +172,12 @@ async fn serve(
             .tempdir()
             .map_err(|_| "Repository read failed")?;
         let git = Git::new(directory.path(), &header, deadline, stop);
-        Ok(match fetch_snapshot(&git, url, read).await {
+        let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
-        })
+        };
+        remove(directory).await;
+        Ok(response)
     };
     tokio::pin!(work);
     tokio::select! {
@@ -192,6 +194,21 @@ async fn stopped(deadline: Instant, mut stop: watch::Receiver<bool>) -> u16 {
         _ = tokio::time::sleep_until(deadline) => 503,
         _ = stop.wait_for(|stopped| *stopped) => CANCELLED,
     }
+}
+
+/// `TempDir`'s drop discards removal errors. Windows can refuse removal briefly while a
+/// killed helper's handles close, so removal is retried and a final failure is reported.
+async fn remove(directory: tempfile::TempDir) {
+    let path = directory.keep();
+    for _ in 0..20 {
+        match std::fs::remove_dir_all(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            _ => return,
+        }
+    }
+    eprintln!("Could not remove repository read {}", path.display());
 }
 
 /// Bytes stored under `path`, the read's temporary repository.
@@ -311,7 +328,7 @@ impl Git {
             #[cfg(unix)]
             group.kill();
             #[cfg(windows)]
-            drop(job);
+            job.terminate(Duration::from_secs(2)).await;
             let _ = child.start_kill();
             let _ = child.wait().await;
         }

@@ -327,3 +327,65 @@ async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
     assert_eq!(task.await.unwrap().unwrap().status, CANCELLED);
     assert!(closes(stream));
 }
+
+/// Windows job termination is asynchronous: a killed descendant can still hold a handle in
+/// the read's repository when the direct child has been reaped.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_reads_remove_repositories_held_by_descendants() {
+    let scripts = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let held = directory.path().join("held");
+    let ready = directory.path().join("ready");
+    let literal = |path: &Path| path.to_string_lossy().replace('\'', "''");
+    let inner = scripts.path().join("hold.ps1");
+    std::fs::write(
+        &inner,
+        format!(
+            "$file = [System.IO.File]::Open('{}', 'OpenOrCreate', 'ReadWrite', 'None')\n[System.IO.File]::WriteAllText('{}', '1')\nStart-Sleep -Seconds 30\n",
+            literal(&held),
+            literal(&ready)
+        ),
+    )
+    .unwrap();
+    let outer = scripts.path().join("launch.ps1");
+    std::fs::write(
+        &outer,
+        format!(
+            "Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','\"{}\"' -WindowStyle Hidden\nStart-Sleep -Seconds 30\n",
+            literal(&inner)
+        ),
+    )
+    .unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let mut git = production_git(directory.path());
+    git.program = "powershell.exe".into();
+    git.stop = stopped;
+    let outer = outer.to_string_lossy().into_owned();
+    let run = tokio::spawn(async move {
+        git.run(&[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &outer,
+        ])
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("descendant did not open the repository file");
+    stop.send(true).unwrap();
+    assert_eq!(run.await.unwrap(), Err(CANCELLED));
+    let path = directory.path().to_path_buf();
+    remove(directory).await;
+    assert!(
+        !path.exists(),
+        "a cancelled read left its repository behind"
+    );
+}

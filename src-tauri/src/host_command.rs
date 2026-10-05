@@ -18,9 +18,10 @@ pub(crate) mod windows_job {
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
         OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
@@ -49,6 +50,29 @@ pub(crate) mod windows_job {
                 return None;
             }
             Some(job)
+        }
+
+        /// Termination is asynchronous; waits, bounded by `wait`, until no job process remains.
+        pub(crate) async fn terminate(&self, wait: std::time::Duration) {
+            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
+            let until = tokio::time::Instant::now() + wait;
+            while self.active_processes() != Some(0) && tokio::time::Instant::now() < until {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+
+        fn active_processes(&self) -> Option<u32> {
+            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            (queried != 0).then_some(info.ActiveProcesses)
         }
 
         pub(super) fn assign(&self, child: &Child) -> bool {

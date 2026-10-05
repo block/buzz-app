@@ -26,7 +26,7 @@ import {
   shellPresentation,
 } from "./presentation";
 import {
-  matchRank,
+  matchName,
   SearchChoices,
   type SearchInputProps,
   type SearchDestination,
@@ -120,6 +120,9 @@ export function PageSearch({
     services?.shortcutBindings.subscribe ?? noSubscribe,
     services?.shortcutBindings.snapshot ?? noOverrides,
   );
+  // Every search surface reads pages from here, so rank and underline them
+  // here too: the disconnected and personal-space views show this list as is.
+  const needle = query.trim().toLowerCase();
   const destinations: SearchDestination[] = [
     ...orderPages(pages).map((page) => ({
       key: page.key,
@@ -127,10 +130,15 @@ export function PageSearch({
     })),
     { key: "settings", ...shellPresentation.settings },
   ]
-    .filter(
-      (page) => matchRank(page.label, query.trim().toLowerCase()) !== undefined,
-    )
-    .map((page) => ({
+    .flatMap((page) => {
+      if (!needle) return [{ page, rank: 0 }];
+      const match = matchName(page.label, needle);
+      return match
+        ? [{ page: { ...page, matches: match.positions }, rank: match.rank }]
+        : [];
+    })
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ page }) => ({
       ...page,
       run: () => {
         returnFocus.current = document.getElementById("main-content");

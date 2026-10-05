@@ -271,12 +271,8 @@ export function SearchResults({
                   },
                   {
                     label: "Pages",
-                    destinations: byMatch(pages, (page) =>
-                      rankOf(page.label),
-                    ).map((page) => {
-                      const matches = matchName(page.label, needle)?.positions;
-                      return matches ? { ...page, matches } : page;
-                    }),
+                    // PageSearch already ranked and underlined these.
+                    destinations: pages,
                     best: Math.min(...pages.map((page) => rankOf(page.label))),
                   },
                 ]

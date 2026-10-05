@@ -280,7 +280,8 @@ it("leads with the group holding the best match and ranks archived channels afte
         query="work"
         onQueryChange={() => {}}
         input={createRef()}
-        pages={[page("Workflows"), page("Work", work)]}
+        // PageSearch ranks pages before they arrive here.
+        pages={[page("Work", work), page("Workflows")]}
         openConversation={() => {}}
       />,
     );

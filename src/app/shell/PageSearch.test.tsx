@@ -353,6 +353,67 @@ it("opens conversation-scoped search with Command F and returns to overall searc
   }
 });
 
+it("ranks pages by match when no community is connected", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const connection = { status: "disconnected", generation: 0 };
+  const community = { selected: null, viewer: null };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  const page = (key: string, title: string): RegisteredPage => ({
+    key,
+    pluginId: "test",
+    id: key,
+    title,
+    revision: "bundled",
+    component: () => null,
+  });
+  const select = vi.fn();
+  const user = userEvent.setup();
+  try {
+    render(
+      <PageSearch
+        pages={[
+          page("buzz.channels/channels", "Messages"),
+          page("test/sessions", "Sessions"),
+        ]}
+        onSelect={select}
+        services={services}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+    // "ses" starts Sessions, appears inside Messages, and only fuzzily
+    // matches Settings.
+    await user.type(input, "ses");
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Sessions", "Messages", "Settings"]);
+    await user.keyboard("{Enter}");
+    expect(select).toHaveBeenCalledExactlyOnceWith("test/sessions");
+  } finally {
+    cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
 it("renders a restored prototype-named search key and remains resettable", async () => {
   localStorage.setItem(
     SHORTCUT_BINDINGS_KEY,

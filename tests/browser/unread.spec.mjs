@@ -154,9 +154,10 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   await page.clock.runFor(299);
   expect((await journal(page)).state.frontiers).toEqual({});
   await page.clock.runFor(1);
+  // Catch-up reads every visible ordinary message, so none needs its own mark.
   await expect
-    .poll(async () => Object.keys((await journal(page)).state.frontiers).sort())
-    .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
+    .poll(async () => Object.keys((await journal(page)).state.frontiers))
+    .toEqual([`activity:${alphaId}`]);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
   await page.clock.resume();
   const stored = await journal(page);
@@ -360,13 +361,12 @@ test("a surviving window publishes a closed window's durable read intent", async
     await releaseReadingFocus(page);
     await history(page).focus();
     await page.clock.runFor(300);
-    // One dwell writes catch-up, then each visible message. A positive revision
-    // alone can be an intermediate durable state, not the publication baseline.
+    // One dwell writes catch-up. It reads each visible ordinary message, so
+    // none needs its own mark. A positive revision alone can be an
+    // intermediate durable state, not the publication baseline.
     await expect
-      .poll(async () =>
-        Object.keys((await journal(page)).state.frontiers).sort(),
-      )
-      .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
+      .poll(async () => Object.keys((await journal(page)).state.frontiers))
+      .toEqual([`activity:${alphaId}`]);
     await park(page);
     const stored = await journal(page);
     await expect(

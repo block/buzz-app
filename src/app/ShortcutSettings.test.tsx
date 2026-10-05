@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   act,
   cleanup,
@@ -26,9 +27,12 @@ import { createMemoryHistory } from "../features/navigation/history";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
 import { PageSearch, type SearchServices } from "./shell/PageSearch";
 
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.mocked(isTauri).mockReturnValue(false);
   localStorage.clear();
 });
 
@@ -930,3 +934,55 @@ it.each([false, true])(
     }
   },
 );
+
+it("shows desktop Close as reserved and read-only while other actions remain editable", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const appearance = createAppearance(window);
+  const remove = registerAppShortcuts(shortcuts, appearance, vi.fn(), true);
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={shortcuts}
+        bindings={bindings}
+        plugins={catalog([])}
+      />,
+    );
+    const closeRow = within(row("Close tab or window"));
+    expect(closeRow.getByText("Reserved by Buzz")).toBeVisible();
+    expect(closeRow.getByText("Control W")).toBeInTheDocument();
+    expect(closeRow.queryByRole("button")).not.toBeInTheDocument();
+    expect(change("Open Settings")).toBeEnabled();
+    fireEvent.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), { key: "w", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent("reserved");
+    expect(bindings.snapshot().overrides).toEqual({});
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel changing Open Settings" }),
+    );
+    fireEvent.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), { key: "p", ctrlKey: true });
+    expect(bindings.snapshot().overrides.settings).toEqual({
+      key: "p",
+      mod: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset all shortcuts" }),
+    );
+    expect(closeRow.queryByRole("button")).not.toBeInTheDocument();
+    expect(bindings.snapshot().overrides).toEqual({});
+  } finally {
+    cleanup();
+    remove();
+    appearance.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});

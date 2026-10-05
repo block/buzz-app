@@ -73,30 +73,35 @@ export function SearchResults({
     [list.channels, scopedChannelId],
   );
   const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
+  const names = new Map(
+    channels.map((channel) => [
+      channel.id,
+      conversationName(channel, profiles, resolveName),
+    ]),
+  );
   const operatorChannel = parsed.in ? normalizeInChannel(parsed.in) : "";
+  const localChannel = operatorChannel
+    ? list.channels.find(
+        (channel) =>
+          channel.name.toLowerCase() === operatorChannel.toLowerCase() ||
+          names.get(channel.id)?.toLowerCase() ===
+            operatorChannel.toLowerCase(),
+      )
+    : undefined;
+  const needsPublicLookup =
+    !scopedChannelId &&
+    !!operatorChannel &&
+    !isChannelUuid(operatorChannel) &&
+    !localChannel;
   const operatorPublicChannels = usePublicChannelSearch(
     session,
-    !scopedChannelId && operatorChannel && !isChannelUuid(operatorChannel)
-      ? operatorChannel
-      : "",
+    needsPublicLookup ? operatorChannel : "",
     list.status === "ready",
+    true,
   );
-  const channelMatch = operatorChannel
-    ? isChannelUuid(operatorChannel)
-      ? session.channels.get?.(operatorChannel)
-      : list.channels.find(
-          (channel) =>
-            channel.name.toLowerCase() === operatorChannel.toLowerCase(),
-        )
-    : undefined;
-  const resolvedOperatorChannel =
-    channelMatch ??
-    operatorPublicChannels.channels.find(
-      (channel) => channel.name.toLowerCase() === operatorChannel.toLowerCase(),
-    );
   const operatorChannelId = isChannelUuid(operatorChannel)
     ? operatorChannel
-    : (resolvedOperatorChannel?.id ?? undefined);
+    : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
   const search = useSearchMessages(
     session,
     query.trim(),
@@ -109,12 +114,6 @@ export function SearchResults({
     list.status === "ready",
   );
 
-  const names = new Map(
-    channels.map((channel) => [
-      channel.id,
-      conversationName(channel, profiles, resolveName),
-    ]),
-  );
   const profileKey = [
     ...new Set([
       ...channels.flatMap((channel) =>
@@ -257,15 +256,22 @@ export function SearchResults({
     icon: ChatCircleIcon,
     run: () => openConversation(message.channelId, message.id),
   }));
-  const messageEmpty = search.loading
-    ? "Searching messages…"
-    : search.error
-      ? "Message search is unavailable."
-      : query.trim()
-        ? "No matching messages in accessible conversations."
-        : scopedChannelId
-          ? "Type to search messages in this conversation."
-          : "Type to search messages in this community.";
+  const operatorLookupPending =
+    needsPublicLookup &&
+    (list.status !== "ready" || operatorPublicChannels.loading);
+  const operatorLookupError = needsPublicLookup
+    ? operatorPublicChannels.error
+    : undefined;
+  const messageEmpty =
+    operatorLookupPending || search.loading
+      ? "Searching messages…"
+      : operatorLookupError || search.error
+        ? "Message search is unavailable."
+        : query.trim()
+          ? "No matching messages in accessible conversations."
+          : scopedChannelId
+            ? "Type to search messages in this conversation."
+            : "Type to search messages in this community.";
   // A retry removes its own focused button. Return focus to the combobox,
   // which owns keyboard navigation, before the retry starts.
   const retryFromInput = (retry: () => unknown) => () => {
@@ -404,9 +410,13 @@ export function SearchResults({
         {list.coverage === "partial" && (
           <p>Conversation names include only loaded joined conversations.</p>
         )}
-        {query.trim() && !scopedChannelId && publicChannels.partial && (
-          <p>Public channel results include only the first page of channels.</p>
-        )}
+        {query.trim() &&
+          !scopedChannelId &&
+          (publicChannels.partial || operatorPublicChannels.partial) && (
+            <p>
+              Public channel results include only the first page of channels.
+            </p>
+          )}
         {!scopedChannelId && publicChannels.error && (
           <div>
             <p>{publicChannels.error}</p>
@@ -414,6 +424,18 @@ export function SearchResults({
               size="sm"
               variant="ghost"
               onClick={retryFromInput(publicChannels.retry)}
+            >
+              Retry channels
+            </Button>
+          </div>
+        )}
+        {operatorLookupError && (
+          <div>
+            <p>{operatorLookupError}</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(operatorPublicChannels.retry)}
             >
               Retry channels
             </Button>

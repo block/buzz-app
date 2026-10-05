@@ -155,14 +155,3 @@ export function normalizeInChannel(value: string): string {
 export function isChannelUuid(value: string): boolean {
   return UUID_RE.test(value);
 }
-
-/**
- * Result of resolving a `from:` / `in:` operator against local candidates.
- *
- * Distinguishes "no operator" from "operator present but unmatched" so callers
- * never silently widen the search when resolution fails.
- */
-export type OperatorResolveResult<T> =
-  | { status: "none" }
-  | { status: "resolved"; value: T }
-  | { status: "unresolved" };

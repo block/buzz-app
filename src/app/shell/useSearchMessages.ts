@@ -6,6 +6,7 @@ import { foldProfiles } from "../../features/relay/profiles";
 import {
   isHexPubkey,
   normalizeFromHandle,
+  normalizeInChannel,
   parseSearchOperators,
 } from "./parseSearchOperators";
 
@@ -31,7 +32,10 @@ export function useSearchMessages(
 ) {
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
   const channelId = scopedChannelId ?? operatorChannelId;
-  const unresolvedChannel = !!parsed.in && !channelId;
+  const unresolvedChannel =
+    !scopedChannelId &&
+    !!(parsed.in && normalizeInChannel(parsed.in)) &&
+    !channelId;
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
   const owner = useMemo(
@@ -96,7 +100,9 @@ export function useSearchMessages(
             if (!author) return [];
           }
         }
-        if (channelId && !session.channels.get?.(channelId))
+        // Revalidate public previews on every scoped read. Joined members are
+        // skipped by resolve; a retained public preview is not live authority.
+        if (channelId)
           await session.channels.resolve?.([channelId], {
             signal: controller.signal,
             priority: "foreground",

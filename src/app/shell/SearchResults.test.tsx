@@ -1275,3 +1275,310 @@ it("never widens a search when a name or channel operator is unresolved", async 
     owner.dispose();
   }
 });
+
+it.each(["private", "missing"])(
+  "revalidates a retained public preview before an in: search when metadata becomes %s",
+  async (change) => {
+    const relay = keypair(),
+      viewer = keypair();
+    const id = "12345678-1234-1234-1234-123456789abc";
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const publicMeta = metadata(relay, id, "Public", 1700000000, [
+      ["public", ""],
+    ]);
+    const privateMeta = metadata(relay, id, "Private", 1700000001, [
+      ["private", ""],
+    ]);
+    let current = publicMeta;
+    let revoked = false;
+    const scopedReads: Filter[][] = [];
+    let exactReads = 0;
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) {
+          scopedReads.push(filters as Filter[]);
+          return [message(viewer, id, "stale secret hit", 1700000002)];
+        }
+        if (filters.some((filter) => filter["#d"]?.includes(id))) {
+          exactReads++;
+          return revoked
+            ? change === "missing"
+              ? []
+              : [current]
+            : [publicMeta];
+        }
+        return [publicMeta].filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    try {
+      const props = {
+        session: owner.session,
+        onQueryChange: () => {},
+        input: createRef<HTMLInputElement>(),
+        pages: [],
+        openConversation: () => {},
+      };
+      const mounted = render(<SearchResults {...props} query="Public" />);
+      await screen.findByRole("option", {
+        name: /Public channel · not joined/,
+      });
+      expect(owner.session.channels.get?.(id)?.readOnly).toBe(true);
+      const beforeRevalidation = exactReads;
+      scopedReads.length = 0;
+      vi.useFakeTimers();
+      current = privateMeta;
+      revoked = true;
+      mounted.rerender(<SearchResults {...props} query={`secret in:${id}`} />);
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      expect(exactReads).toBeGreaterThan(beforeRevalidation);
+      expect(scopedReads).toHaveLength(0);
+      expect(owner.session.channels.get?.(id)).toBeUndefined();
+      expect(
+        screen.queryByRole("option", { name: /stale secret hit/ }),
+      ).toBeNull();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("resolves an exact public name beyond eight preceding substring matches and reports page coverage", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const names = [
+    "a-dev",
+    "b-dev",
+    "c-dev",
+    "d-dev",
+    "android-dev",
+    "backend-dev",
+    "core-dev",
+    "data-dev",
+    "dev",
+  ];
+  const discovery = names.map((name) =>
+    metadata(relay, name, name, 1700000000, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+  );
+  // A full first page means an exact-name miss outside it cannot be declared exhaustive.
+  for (let i = 0; i < 491; i++)
+    discovery.push(
+      metadata(relay, `extra-${i}`, `extra-${i}`, 1700000000, [
+        ["public", ""],
+        ["t", "stream"],
+      ]),
+    );
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) {
+        reads.push(filters as Filter[]);
+        return [message(viewer, "dev", "deploy found", 1700000001)];
+      }
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:#dev"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByRole("option", { name: /deploy found/ }),
+    ).toBeVisible();
+    expect(reads).toContainEqual([
+      expect.objectContaining({ "#h": ["dev"], search: "deploy" }),
+    ]);
+    expect(
+      screen.getByText(
+        "Public channel results include only the first page of channels.",
+      ),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("keeps a pending in: lookup pending, then retries its failure and resumes scoped search", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "dev", "dev", 1700000000, [["public", ""]]),
+  ];
+  let failLookup!: (error: Error) => void;
+  let lookupStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    lookupStarted = resolve;
+  });
+  const pending = new Promise<typeof discovery>((_resolve, reject) => {
+    failLookup = reject;
+  });
+  let failures = 1;
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve([
+          message(viewer, "dev", "deploy found", 1700000001),
+        ]);
+      }
+      if (
+        filters.some(
+          (filter) => filter.kinds?.includes(39000) && !filter["#d"],
+        ) &&
+        failures-- > 0
+      ) {
+        lookupStarted();
+        return pending;
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:#dev"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await started;
+    expect(screen.getByText("Searching messages…")).toBeVisible();
+    expect(
+      screen.queryByText("No matching messages in accessible conversations."),
+    ).toBeNull();
+    await act(async () => failLookup(new Error("network down")));
+    expect(
+      await screen.findByText(
+        /Public channel search couldn’t finish: network down/,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Message search is unavailable.")).toBeVisible();
+    expect(reads).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Retry channels" }));
+    expect(
+      await screen.findByRole("option", { name: /deploy found/ }),
+    ).toBeVisible();
+    expect(reads).toContainEqual([expect.objectContaining({ "#h": ["dev"] })]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("matches an in: operator against the rendered DM participant label", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { name: "Alice" }),
+  ];
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) {
+        reads.push(filters as Filter[]);
+        return [message(alice, "dm", "deploy to Alice", 1700000001)];
+      }
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:alice"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByRole("option", { name: /deploy to Alice/ }),
+    ).toBeVisible();
+    expect(reads).toContainEqual([expect.objectContaining({ "#h": ["dm"] })]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("treats bare in:# as no channel operator", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) {
+        reads.push(filters as Filter[]);
+        return [message(viewer, "crew", "hello world", 1700000001)];
+      }
+      return [
+        metadata(relay, "crew", "crew"),
+        roster(relay, "crew", [viewer.pubkey]),
+      ].filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="hello in:#"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByRole("option", { name: /hello world/ }),
+    ).toBeVisible();
+    expect(reads).toContainEqual([
+      expect.not.objectContaining({ "#h": expect.anything() }),
+    ]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

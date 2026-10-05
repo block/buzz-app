@@ -71,6 +71,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_publish_read_state",
         "relay_http",
         "relay_workflow_runs",
+        "relay_project_git",
         "relay_channel_sign",
         "relay_channel_publish",
         "relay_kit_sign",

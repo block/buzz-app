@@ -61,7 +61,7 @@ Desktop builds register `buzz://` with the OS, the scheme in-app links already u
 opening a `buzz://message?channel=…&id=…`, `buzz://channel/<id>`, or
 `buzz://channel/<id>/<event>`, or a repository/project/PR/issue link outside the
 app focuses it and opens that destination, on a cold start too. Entity Git browsing
-uses the authenticated development broker; packaged Git transport remains unavailable. Development,
+uses the development broker or, in desktop builds, native reads through the system `git`. Development,
 bundled, and released builds all use `buzz://` and compete for its OS handler.
 macOS only routes a scheme to a bundled app, so test there with
 `just desktop-bundle`; Windows and Linux

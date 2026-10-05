@@ -29,6 +29,7 @@ import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
+import { projectGitHost } from "../projects/git";
 
 import { PublishRejected } from "./outbox";
 
@@ -371,6 +372,24 @@ export async function connectNativeTransport(
           });
           return nativeResponse(result);
         },
+        signal,
+      );
+      signal.throwIfAborted();
+      return response;
+    }),
+    projectGit: projectGitHost(async (read, signal) => {
+      const response = await admitSignedRequest(
+        origin,
+        transport.viewer,
+        async () =>
+          // IPC cannot abort Git; admission stays held until the bounded read settles.
+          nativeResponse(
+            await invoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_project_git", { community: origin, read }),
+          ),
         signal,
       );
       signal.throwIfAborted();

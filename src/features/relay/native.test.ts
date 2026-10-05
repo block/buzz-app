@@ -738,6 +738,64 @@ it("workflow history surfaces bounded host refusals and fences late native resul
   ).rejects.toMatchObject({ kind: "denied" });
 });
 
+it("reads project Git through the signed native command and fences late results", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.projectGit);
+  const owner = "a".repeat(64);
+  const empty = {
+    head: null,
+    commits: [],
+    files: [],
+    readme: null,
+    file: null,
+    diff: null,
+  };
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_project_git");
+    expect(args).toEqual({ community, read: { owner, dtag: "repo" } });
+    return { status: 200, headers: {}, body: JSON.stringify(empty) };
+  });
+  expect(
+    await transport.projectGit.read(
+      { owner: owner.toUpperCase(), dtag: "repo" },
+      new AbortController().signal,
+    ),
+  ).toEqual(empty);
+  const calls = vi.mocked(invoke).mock.calls.length;
+  await expect(
+    transport.projectGit.read(
+      { owner, dtag: "../repo" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Invalid Git read");
+  expect(vi.mocked(invoke).mock.calls.length).toBe(calls);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: '{"error":"denied"}',
+  });
+  await expect(
+    transport.projectGit.read(
+      { owner, dtag: "repo" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ kind: "denied" });
+  const pending = deferred<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+  }>();
+  vi.mocked(invoke).mockImplementationOnce(() => pending.promise);
+  const controller = new AbortController();
+  const read = transport.projectGit.read(
+    { owner, dtag: "repo" },
+    controller.signal,
+  );
+  controller.abort();
+  pending.resolve({ status: 200, headers: {}, body: JSON.stringify(empty) });
+  await expect(read).rejects.toThrow();
+});
+
 it("shares workflow history admission and cooldown with signed queries", async () => {
   const transport = await connectNativeTransport("https://workflow-quota.test");
   assert.exists(transport.workflows);

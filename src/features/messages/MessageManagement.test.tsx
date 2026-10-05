@@ -568,6 +568,57 @@ it("keeps showing Follow thread when the choice cannot be saved", async () => {
   ).toBeVisible();
 });
 
+it("offers the follow choice only once a restored roster is confirmed", async () => {
+  localStorage.clear();
+  const h = await fixture(false);
+  h.owner.session.unread.follow("room", h.original.id, true);
+  cleanup();
+  const live = h.owner.session.channels.list();
+  // Discovery marks a restored roster both cached and read-only.
+  let snapshot: typeof live = {
+    ...live,
+    channels: live.channels.map((channel) => ({
+      ...channel,
+      cached: true,
+      readOnly: true,
+    })),
+  };
+  const listeners = new Set<() => void>();
+  const session = {
+    ...h.owner.session,
+    channels: {
+      ...h.owner.session.channels,
+      list: () => snapshot,
+      subscribeList(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  };
+  const row = session.channels.window("room").rows[0];
+  assert.exists(row);
+  render(
+    <MessageManagement session={session} channelId="room">
+      <MenuRoot>
+        <MenuTrigger>Thread actions</MenuTrigger>
+        <MenuPopup>
+          <MessageManagementItems row={row} session={session} />
+        </MenuPopup>
+      </MenuRoot>
+    </MessageManagement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+  await act(async () => {});
+  expect(screen.queryByRole("menuitem", { name: /follow thread/i })).toBeNull();
+  await act(async () => {
+    snapshot = live;
+    for (const listener of listeners) listener();
+  });
+  expect(
+    await screen.findByRole("menuitem", { name: "Unfollow thread" }),
+  ).toBeVisible();
+});
+
 it("keeps deletion recovery outside the optimistically removed row", async () => {
   const h = await fixture();
   fireEvent.click(

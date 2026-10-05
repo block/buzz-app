@@ -54,7 +54,13 @@ afterEach(() => {
 async function setup(follows: ThreadFollowStorage = memoryThreadFollows()) {
   let journal: ReadJournal | undefined;
   // Nothing beyond the retained window: every parent lookup answers "not yours".
-  const reader = { read: vi.fn(async () => []) };
+  const reader = {
+    read: vi.fn(
+      async (
+        _filters: readonly { ids?: readonly string[] }[],
+      ): Promise<RelayEvent[]> => [],
+    ),
+  };
   const reads = createReadState({
     viewer,
     reader,
@@ -191,17 +197,77 @@ it("unfollows a participated thread until the viewer explicitly follows it again
   });
 });
 
-it("follows a thread automatically where the viewer was mentioned", async () => {
-  const { owner, unread } = await setup();
+it("alerts on every reply under a root the label shows as followed", async () => {
+  const { owner, unread, settled } = await setup();
+  // Replied only under a peer's nested reply.
   const root = event(peer, 10, []);
+  const branch = reply(peer, 11, root);
+  const mine = reply(viewer, 12, root, branch);
+  // Wrote the root; peers then talk to each other under it.
+  const authored = event(viewer, 13, []);
+  const peerParent = reply(peer, 14, authored);
+  // Mentioned once; the mention alone is not a follow.
+  const mentionedRoot = event(peer, 15, []);
+  const mention = reply(peer, 16, mentionedRoot, mentionedRoot, [
+    ["p", viewer],
+  ]);
+  owner.accept([
+    root,
+    branch,
+    mine,
+    authored,
+    peerParent,
+    mentionedRoot,
+    mention,
+  ]);
   const direct = reply(peer, 20, root);
-  const nested = reply(peer, 30, root, direct, [["p", viewer]]);
-  owner.accept([root, direct, nested]);
-  expect(unread.following("c0", root.id)).toBe(true);
+  const sibling = reply(peer, 21, root, direct);
+  const peerToPeer = reply(peer, 22, authored, peerParent);
+  const afterMention = reply(peer, 23, mentionedRoot);
+  owner.accept([direct, sibling, peerToPeer, afterMention]);
+  await settled(afterMention);
+  const label = (rootId: string) => unread.following("c0", rootId);
+  const category = (item: RelayEvent) =>
+    unread.attention("c0", item.id).category;
+
+  expect(label(root.id)).toBe(true);
+  expect(category(direct)).toBe("thread");
+  expect(category(sibling)).toBe("thread");
+  expect(label(authored.id)).toBe(true);
+  expect(category(peerToPeer)).toBe("thread");
+  expect(label(mentionedRoot.id)).toBe(false);
+  expect(unread.attention("c0", afterMention.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+  });
+  expect(category(mention)).toBe("mention");
+
   unread.follow("c0", root.id, false);
-  expect(unread.following("c0", root.id)).toBe(false);
-  // The mention itself still reaches the viewer.
-  expect(unread.attention("c0", nested.id).category).toBe("mention");
+  const again = reply(viewer, 30, root, direct);
+  const later = reply(peer, 31, root, branch);
+  owner.accept([again, later]);
+  expect(label(root.id)).toBe(false);
+  expect(category(sibling)).toBeUndefined();
+  expect(category(later)).toBeUndefined();
+});
+
+it("follows a thread where a lookup found the viewer's older reply", async () => {
+  const root = event(peer, 10, []);
+  const branch = reply(peer, 11, root);
+  const question = reply(peer, 12, root, branch);
+  // The viewer's reply to the branch is outside the retained window.
+  const older = reply(viewer, 5, root, branch);
+  const { owner, unread, reader, settled } = await setup();
+  reader.read.mockImplementation(async (filters) =>
+    filters[0]?.ids ? [] : [older],
+  );
+  owner.accept([root, branch, question]);
+  await settled(question);
+  expect(unread.attention("c0", question.id).category).toBe("thread");
+  expect(unread.following("c0", root.id)).toBe(true);
+  const elsewhere = reply(peer, 20, root);
+  owner.accept([elsewhere]);
+  expect(unread.attention("c0", elsewhere.id).category).toBe("thread");
 });
 
 it("keys choices by channel and canonical root and keeps them across reload", async () => {

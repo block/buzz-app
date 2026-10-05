@@ -373,12 +373,17 @@ it("looks up conversation membership that falls outside the sampled window", asy
       unread: true,
     }),
   );
-  expect(attention(nested.id)).toMatchObject({ unread: false });
-  expect(attention(underAnswer.id)).toMatchObject({ unread: false });
-  expect(attention(nested.id).pending).toBeUndefined();
-  // Fetched parents are structure only: the badge gains the two replies in the
-  // viewer's conversations, not the fetched old posts.
-  expect(h.snapshot()).toMatchObject({ observedCount: 498, attentionCount: 2 });
+  // The viewer's thread membership covers every reply under its root.
+  for (const item of [nested, underAnswer])
+    await vi.waitFor(() =>
+      expect(attention(item.id)).toMatchObject({
+        category: "thread",
+        unread: true,
+      }),
+    );
+  // Fetched parents are structure only: the badge gains the four replies in
+  // the viewer's threads, not the fetched old posts.
+  expect(h.snapshot()).toMatchObject({ observedCount: 500, attentionCount: 4 });
   // Each undecided parent is asked once, scoped to its channel: by ID when
   // missing, and for the viewer's replies to it.
   expect(relay.asked().sort()).toEqual(
@@ -467,9 +472,10 @@ it("a full page of replies under one parent cannot hide the viewer's reply to an
       unread: true,
     }),
   );
-  // Neither the deep replies nor their root tags make busyRoot a joined parent.
+  // The viewer's deep replies make busyRoot's whole thread the viewer's.
   expect(h.session.unread.attention("other", peerUnderBusy.id)).toMatchObject({
-    unread: false,
+    category: "thread",
+    unread: true,
   });
   expect(h.session.unread.attention("other", peerUnderBusy.id).pending).toBe(
     undefined,

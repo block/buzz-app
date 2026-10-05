@@ -195,8 +195,9 @@ Every top-level message counts. A reply counts only when it is in one of the
 viewer's conversations, or it is a DM, mentions the viewer, or is broadcast to the
 channel. A conversation is the set of direct replies to one parent message. The
 viewer is part of it when the viewer wrote the parent or also replied to that
-parent. A nested thread under someone else's reply therefore stays quiet until the
-viewer posts in it or is mentioned there. Explicit per-message unread intent still
+parent, or wrote or replied anywhere under the same canonical thread root, as in
+the reference client. A thread the viewer has not posted in therefore stays
+quiet, apart from mentions and broadcasts. Explicit per-message unread intent still
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
@@ -206,8 +207,9 @@ reply under that root, at any depth, uses it. Follow makes the thread one of the
 viewer's conversations without posting; Unfollow removes it even after the
 viewer wrote the root or replied, and replying again does not undo it. Mentions
 and broadcasts still count, as they do outside conversations. Without a choice
-the label shows Unfollow when the viewer wrote the root, or replied or was
-mentioned anywhere in the thread. DMs have no menu item: every DM message is
+the label shows Unfollow exactly when that root-wide participation applies, so
+the label and the alerts agree; a mention alone is not a follow. A restored
+roster shows no menu until membership is confirmed. DMs have no menu item: every DM message is
 direct attention. `session.unread.following(channelId, rootId)` reads the
 effective state and `follow(channelId, rootId, following)` saves a choice,
 throwing without change when it cannot. Choices are device-local, like the

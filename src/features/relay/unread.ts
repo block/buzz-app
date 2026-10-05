@@ -95,7 +95,7 @@ export interface UnreadCapability {
   generation(): number;
   reading(channelId: string): ReadingHandle;
   /** Whether the viewer follows this canonical root: an explicit choice,
-   * otherwise authoring the root, or replying or being mentioned in it. */
+   * otherwise writing or replying anywhere in its thread. */
   following(channelId: string, rootId: string): boolean;
   /** Saves an explicit choice on this device; throws, unchanged, if not saved.
    * Wakes `subscribeSync` listeners. */
@@ -297,7 +297,8 @@ export function createUnread({
   // replies to one parent.
   const own = new Map<string, string>();
   const joined = new Set<string>();
-  // `channel:root` of every thread the viewer replied or was mentioned in.
+  // `channel:root` of every thread the viewer wrote or replied in, from
+  // retained messages and lookup witnesses: the automatic follow.
   const ownThreads = new Set<string>();
   // Relay lookups for parents the sampled window cannot decide. They are kept
   // apart from counted evidence: fetched events never count, never fill the
@@ -396,8 +397,7 @@ export function createUnread({
       const parentId = reference?.parentId;
       if (event.pubkey === viewer) {
         own.set(event.id, channel);
-        if (reference)
-          ownThreads.add(conversationKey(channel, reference.rootId));
+        ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
         if (parentId) {
           joined.add(`${channel}:${parentId}`);
           // A later reply of the viewer outlives the window that showed it.
@@ -417,11 +417,20 @@ export function createUnread({
           ([name, value]) => name === "broadcast" && value === "1",
         ),
       };
-      if (entry.mentioned && reference)
-        ownThreads.add(conversationKey(channel, reference.rootId));
       rows.push(entry);
       byChannel.set(channel, rows);
       byId.set(event.id, entry);
+    }
+    for (const { channelId, evidence } of lookups.values()) {
+      const event =
+        evidence === undefined ? undefined : witnesses.get(evidence);
+      if (event)
+        ownThreads.add(
+          conversationKey(
+            channelId,
+            threadReference(event)?.rootId ?? event.id,
+          ),
+        );
     }
   }
   function deleted(event: RelayEvent): boolean {
@@ -449,16 +458,18 @@ export function createUnread({
       ? undefined
       : choices().get(conversationKey(channelId, threadRootId));
   /** The reply is in a conversation the viewer is part of in its own channel:
-   * the viewer follows its thread, or (without an explicit choice) it answers
-   * the viewer's message, or the viewer also replied to the same parent.
-   * Undecided parents are not members until their lookup finishes. */
+   * the viewer follows its thread, or (without an explicit choice) wrote or
+   * replied anywhere in that thread, wrote the parent, or also replied to the
+   * same parent. Undecided parents are not members until their lookup finishes. */
   const conversation = (entry: Evidence) => {
-    const { parentId, channelId } = entry;
+    const { parentId, channelId, threadRootId } = entry;
     if (!parentId) return false;
     const explicit = chosen(entry);
     if (explicit !== undefined) return explicit;
     const key = conversationKey(channelId, parentId);
     return (
+      (threadRootId !== undefined &&
+        ownThreads.has(conversationKey(channelId, threadRootId))) ||
       own.get(parentId) === channelId ||
       joined.has(key) ||
       lookups.get(key)?.evidence !== undefined
@@ -1619,13 +1630,9 @@ export function createUnread({
       const explicit = choices().get(key);
       if (explicit !== undefined) return explicit;
       indexEvidence();
-      // The reference's automatic follow: the viewer wrote the root, or replied
-      // or was mentioned anywhere in its thread.
-      return (
-        own.get(id) === channelId ||
-        ownThreads.has(key) ||
-        lookups.get(key)?.evidence !== undefined
-      );
+      // The reference's automatic follow, which `conversation` applies to
+      // every reply under the root: the viewer wrote or replied in the thread.
+      return ownThreads.has(key);
     },
     follow(channelId, rootId, following) {
       if (closed || !allowed(channelId) || !/^[0-9a-f]{64}$/i.test(rootId))

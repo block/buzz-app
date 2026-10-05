@@ -153,6 +153,11 @@ export type ChannelWindow = Readonly<{
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
+export type PublicChannelSearch = Readonly<{
+  channels: readonly ChannelSummary[];
+  /** The relay returned a full metadata page, so some channels were not checked. */
+  partial: boolean;
+}>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
@@ -163,6 +168,12 @@ export interface ChannelQueries {
     channelIds: readonly string[],
     options?: ChannelReadOptions,
   ): Promise<void>;
+  /** Name lookup for active public channels the viewer has not joined. Matches
+   * become readable through `get`; they never enter list(). */
+  searchPublic?(
+    query: string,
+    options?: ReadOptions & { limit?: number },
+  ): Promise<PublicChannelSearch>;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery.

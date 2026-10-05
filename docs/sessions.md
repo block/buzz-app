@@ -1782,3 +1782,26 @@ Independent source review found no eligibility blocker. This remains work in
 progress: `/session` accepted-command cleanup and reported unread-entry behavior
 are unresolved; broader browser/native/hosted validation is not established.
 No live messages were sent for these automated checks.
+
+### October 5 push-blocker repair
+
+The previously recorded `/session` cleanup failures are repaired. Accepted
+commands compare normalized full draft payloads, including recipients and rich
+structure, against both current and saved input. Durable cleanup is verified
+before retiring the existing command generation. Failed cleanup preserves accepted
+correlation for explicit recovery; newer drafts and stale/ABA editors remain fenced.
+New commands freeze rich Markdown content, while legacy saved intents keep their
+original text payload and same-event retry. Removed command handlers refuse the
+command visibly rather than sending it as ordinary channel prose.
+
+All 13 prior command regressions were reproduced before repair. The five full
+composer/command/creation files then passed 285 tests, and both engines passed
+eight command/Share/cross-window browser checks. Independent bounded source review
+passed and independently reran 39 tests. Two other mandatory-gate failures were
+fixture API drift (navigation snapshot/subscription and stable profile selection);
+all original assertions were retained. Those complete files plus activity/unread
+components passed 143 tests. Activity controls now use shared Accordion typography;
+unread dots use the existing neutral navigation-unread role, with visibility and
+read-policy semantics unchanged. Design guards and four responsive activity/unread
+browser checks passed. Required push hooks, hosted checks and live/native acceptance
+remain distinct evidence; reported unread-entry behavior is still unresolved.

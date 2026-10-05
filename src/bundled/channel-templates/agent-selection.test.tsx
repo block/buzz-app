@@ -1201,6 +1201,12 @@ it.each([
       },
     );
     const emptyProviders: [] = [];
+    const navigationState = { attempt: 0 };
+    const navigator = {
+      snapshot: () => navigationState,
+      subscribe: () => () => {},
+      open: vi.fn(),
+    } as unknown as Navigation;
     const snapshot = {
       status: "ready" as const,
       scope: "https://relay.example.test:viewer",
@@ -1231,7 +1237,7 @@ it.each([
           <ChannelNavigationProvider relay={relay}>
             <ChannelSidebar
               relay={relay}
-              navigator={{ open: vi.fn() } as unknown as Navigation}
+              navigator={navigator}
               providers={{
                 snapshot: () => emptyProviders,
                 subscribe: () => () => {},

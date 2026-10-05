@@ -100,8 +100,9 @@ vi.mock("react", async (original) => ({
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
 }));
+const emptyProfiles = vi.hoisted(() => new Map());
 vi.mock("../relay/react", () => ({
-  useRowProfiles: () => new Map(),
+  useRowProfiles: () => emptyProfiles,
 }));
 afterEach(() => vi.unstubAllGlobals());
 

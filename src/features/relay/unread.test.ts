@@ -2725,3 +2725,42 @@ it("a read reply stays read after a reload that does not load its root", async (
     }),
   );
 });
+
+it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
+  const h = setup();
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const read = message(h.alice, "dm", "read", 12);
+  const unseen = message(h.alice, "dm", "unseen", 13);
+  h.emit([read, unseen]);
+  const unread = h.session.unread;
+  await unread.reading("dm").observe([read.id]);
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  h.grant("elsewhere");
+  const later = Array.from({ length: 1600 }, (_, n) =>
+    message(h.alice, "elsewhere", `later ${n}`, 100 + n),
+  );
+  h.emit(later);
+  const reading = unread.reading("elsewhere");
+  for (const event of later) await reading.observe([event.id]);
+  reading.dispose();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBe(12),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  const target = {
+    kind: "message" as const,
+    channelId: "dm",
+    messageId: read.id,
+  };
+  await unread.markUnreadLocal(target);
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  await unread.reading("dm").observe([read.id]);
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  await unread.markMessageRead("dm", read.id);
+  expect(unread.snapshot(target).manual).toBe("none");
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+}, 15000);

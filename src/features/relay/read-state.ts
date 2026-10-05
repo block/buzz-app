@@ -1,6 +1,6 @@
 import { newer, type RelayEvent } from "./events";
 import {
-  retainRead,
+  retainLocalRead,
   retainReadState,
   type CoveredFrontier,
 } from "./read-state-retention";
@@ -76,6 +76,15 @@ const same = (a: unknown, b: unknown): boolean => {
     )
   );
 };
+/** Reserve and journal are disjoint; only the journal is eligible for sync. */
+const localState = (journal: ReadJournal): ReadState =>
+  Object.freeze({
+    frontiers: Object.freeze({
+      ...journal.reserve,
+      ...journal.state.frontiers,
+    }),
+    overrides: journal.state.overrides,
+  });
 /** One durable domain owner. Read intent is not cache; one tab never saves over another's intent. */
 export function createReadState({
   viewer,
@@ -159,7 +168,7 @@ export function createReadState({
     });
     if (closed) return saved;
     journal = saved;
-    state = saved.state;
+    state = localState(saved);
     if (announce) broadcast?.postMessage("changed");
     emit();
     return saved;
@@ -263,14 +272,14 @@ export function createReadState({
           "Read-state observation cancelled",
           "AbortError",
         );
-      const { state, recent } = retainRead(
+      const { state, recent, reserve } = retainLocalRead(
         [current.state, ...decoded.map(({ parsed }) => parsed.state)],
         current.recent ?? {},
         current.clientId,
-        undefined,
+        current.reserve,
         covered,
       );
-      return { ...current, state, recent };
+      return { ...current, state, recent, reserve };
     });
     if (closed || generation !== epoch) return;
     for (const item of decoded) {
@@ -367,15 +376,15 @@ export function createReadState({
               : { ...current.recent, [key]: revision };
           const kept =
             timestamp === undefined
-              ? { state: current.state, recent }
-              : retainRead(
+              ? { state: current.state, recent, reserve: current.reserve ?? {} }
+              : retainLocalRead(
                   [
                     current.state,
                     { frontiers: { [key]: timestamp }, overrides: {} },
                   ],
                   recent,
                   current.clientId,
-                  undefined,
+                  current.reserve,
                   covered,
                 );
           const localUnread = { ...current.localUnread };
@@ -388,6 +397,7 @@ export function createReadState({
             revision,
             state: kept.state,
             recent: kept.recent,
+            reserve: kept.reserve,
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -627,11 +637,12 @@ export function createReadState({
               )
             )
               throw new Error("Invalid read frontier");
+            const currentState = localState(current);
             if (
               capability !== "frontier-sync" &&
               messages.some(
                 ({ key, timestamp, channelId, rootId }) =>
-                  (effectiveFrontier(current.state, key, channelId, rootId) ??
+                  (effectiveFrontier(currentState, key, channelId, rootId) ??
                     -1) < timestamp,
               )
             )
@@ -649,19 +660,24 @@ export function createReadState({
             }
             if (clearForce) delete localUnread[clearForce];
             const kept = Object.keys(frontiers).length
-              ? retainRead(
+              ? retainLocalRead(
                   [current.state, { frontiers, overrides: {} }],
                   recent,
                   current.clientId,
-                  undefined,
+                  current.reserve,
                   covered,
                 )
-              : { state: current.state, recent };
+              : {
+                  state: current.state,
+                  recent,
+                  reserve: current.reserve ?? {},
+                };
             return {
               ...current,
               revision,
               state: kept.state,
               recent: kept.recent,
+              reserve: kept.reserve,
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

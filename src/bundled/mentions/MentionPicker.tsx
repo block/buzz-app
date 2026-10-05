@@ -229,7 +229,9 @@ export function MentionPicker({
               <Button
                 type="button"
                 onClick={() =>
-                  void session.agentChoices.refresh(!!inviteAgents)
+                  void session.agentChoices.refresh(
+                    !!inviteAgents || teams.includeLegacy,
+                  )
                 }
               >
                 Retry agent list

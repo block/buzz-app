@@ -46,14 +46,17 @@ export function useTeamMentions(
   const [installed, install] = useState<{
     session: RelaySession;
     key: string;
-    teams: typeof teams;
+    teams: ((typeof teams)[number] & { members: readonly string[] })[];
   }>();
   let rows =
     installed?.session === session && installed.key === key
       ? installed.teams
       : undefined;
   if (installed && !rows) install(undefined);
-  if (open && !rows && catalog.status === "ready") {
+  if (open && !rows && !model.pending && catalog.status === "ready") {
+    const members = new Set(
+      roster?.map((person) => person.pubkey) ?? model.channel?.members ?? [],
+    );
     rows = teams
       .filter(({ value }) =>
         Number.isFinite(
@@ -76,7 +79,11 @@ export function useTeamMentions(
           a.value.name.localeCompare(b.value.name) ||
           a.value.id.localeCompare(b.value.id),
       )
-      .slice(0, 20);
+      .slice(0, 20)
+      .map((team) => ({
+        ...team,
+        members: team.value.agents.filter((key) => members.has(key)),
+      }));
     install({ session, key, teams: rows });
   }
   return useMemo(() => {
@@ -93,74 +100,81 @@ export function useTeamMentions(
       );
     const current = candidates();
     const eligible = new Map(current.map((c) => [c.recipient.pubkey, c]));
-    const choices = (open ? (rows ?? []) : []).map(({ value, eventId }) => {
-      const latest = teams.find((team) => team.value.id === value.id);
-      const recipients = value.agents.flatMap((key) => {
-        const person = eligible.get(key)?.recipient;
-        return person ? [{ pubkey: person.pubkey, name: person.name }] : [];
-      });
-      const disabled =
-        catalog.status !== "ready" || latest?.eventId !== eventId
-          ? "Team changed or unavailable. Reopen to refresh."
-          : !value.agents.length
-            ? "This team has no agents."
-            : value.agents.length > 32
-              ? "Teams can mention at most 32 agents."
-              : recipients.length !== value.agents.length
-                ? "A team member is unavailable. Edit the team or refresh choices."
-                : undefined;
-      const outside = recipients.filter(
-        (person) => !eligible.get(person.pubkey)?.member,
-      ).length;
-      const channel = session.channels
-        .list()
-        .channels.find((channel) => channel.id === channelId);
-      const consequence = !outside
-        ? ""
-        : channel?.channelType === "dm"
-          ? `${outside} not in DM · Will not be notified`
-          : inviteAgents
-            ? `Adds ${outside} to session${channel && (channel.channelType !== "session" || channel.parentChannelId) ? " and parent channel" : ""} when you send`
-            : `${outside} not in channel · Choose whether to add when you send`;
-      return {
-        id: `team:${value.id}`,
-        name: value.name,
-        recipients,
-        disabled,
-        detail:
-          disabled ??
-          [`Saved team · ${recipients.length} agents`, consequence]
-            .filter(Boolean)
-            .join(" · "),
-        canSelect: () => {
-          const fresh = kit?.snapshot();
-          const entry = fresh?.entries.find(
-            (entry) =>
-              !entry.record.deleted &&
-              entry.record.value.type === "team" &&
-              entry.record.value.id === value.id,
-          );
-          if (
-            disabled ||
-            fresh?.status !== "ready" ||
-            entry?.eventId !== eventId
-          )
-            return false;
-          const now = new Map(candidates().map((c) => [c.recipient.pubkey, c]));
-          return recipients.every((person) => {
-            const choice = now.get(person.pubkey);
-            return (
-              choice?.recipient.name === person.name &&
-              (!eligible.get(person.pubkey)?.member || choice.member)
+    const choices = (open ? (rows ?? []) : []).map(
+      ({ value, eventId, members }) => {
+        const latest = teams.find((team) => team.value.id === value.id);
+        const recipients = value.agents.flatMap((key) => {
+          const person = eligible.get(key)?.recipient;
+          return person ? [{ pubkey: person.pubkey, name: person.name }] : [];
+        });
+        const disabled =
+          catalog.status !== "ready" || latest?.eventId !== eventId
+            ? "Team changed or unavailable. Reopen to refresh."
+            : members.some((key) => !eligible.get(key)?.member)
+              ? "Channel membership changed. Reopen to review adding this team."
+              : !value.agents.length
+                ? "This team has no agents."
+                : value.agents.length > 32
+                  ? "Teams can mention at most 32 agents."
+                  : recipients.length !== value.agents.length
+                    ? "A team member is unavailable. Edit the team or refresh choices."
+                    : undefined;
+        const outside = recipients.filter(
+          (person) => !eligible.get(person.pubkey)?.member,
+        ).length;
+        const channel = session.channels
+          .list()
+          .channels.find((channel) => channel.id === channelId);
+        const consequence = !outside
+          ? ""
+          : channel?.channelType === "dm"
+            ? `${outside} not in DM · Will not be notified`
+            : inviteAgents
+              ? `Adds ${outside} to session${channel && (channel.channelType !== "session" || channel.parentChannelId) ? " and parent channel" : ""} when you send`
+              : `${outside} not in channel · Choose whether to add when you send`;
+        return {
+          id: `team:${value.id}`,
+          name: value.name,
+          recipients,
+          disabled,
+          detail:
+            disabled ??
+            [`Saved team · ${recipients.length} agents`, consequence]
+              .filter(Boolean)
+              .join(" · "),
+          canSelect: () => {
+            const fresh = kit?.snapshot();
+            const entry = fresh?.entries.find(
+              (entry) =>
+                !entry.record.deleted &&
+                entry.record.value.type === "team" &&
+                entry.record.value.id === value.id,
             );
-          });
-        },
-      };
-    });
+            if (
+              disabled ||
+              fresh?.status !== "ready" ||
+              entry?.eventId !== eventId
+            )
+              return false;
+            const now = new Map(
+              candidates().map((c) => [c.recipient.pubkey, c]),
+            );
+            return recipients.every((person) => {
+              const choice = now.get(person.pubkey);
+              return (
+                choice?.recipient.name === person.name &&
+                (!members.includes(person.pubkey) || choice.member)
+              );
+            });
+          },
+        };
+      },
+    );
     const names = teams.map(({ value }) => value.name);
     const needle = query.trim().toLowerCase();
     return {
       choices,
+      includeLegacy: hasTeams,
       names,
       // A saved team with the same/longer name must not auto-select a person on Space.
       blocksSpace: names.some(
@@ -189,5 +203,6 @@ export function useTeamMentions(
     open,
     query,
     kit,
+    hasTeams,
   ]);
 }

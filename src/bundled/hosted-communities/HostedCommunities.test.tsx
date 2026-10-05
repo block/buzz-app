@@ -155,6 +155,23 @@ it("offers browser sign-in when no Builderlab session exists", async () => {
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/list");
 });
 
+it("explains that a shared session also signs the bl CLI out", async () => {
+  routes["/api/builderlab/auth"] = () => ({
+    auth: { email: "a@example.com", expiresAt: "2030", shared: true },
+  });
+  renderCard();
+  expect(await screen.findByText(/shared with the bl CLI/)).toHaveTextContent(
+    "This session is shared with the bl CLI on this computer. Signing out ends it for both.",
+  );
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+});
+
+it("says nothing about sharing for a broker-held session", async () => {
+  renderCard();
+  await screen.findByText(npubEncode(local));
+  expect(screen.queryByText(/shared with the bl CLI/)).toBeNull();
+});
+
 it("connects the Buzz identity when the account has none", async () => {
   routes["/api/builderlab/identity"] = () => ({
     error: { code: "missing_mapping", setup_needed: true },

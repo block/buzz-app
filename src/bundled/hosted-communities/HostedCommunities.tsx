@@ -34,6 +34,7 @@ import {
   call,
   check,
   clearPendingDeletion,
+  deviceKey,
   getAuth,
   HOST_SUFFIX,
   isDefinitiveDeletionRejection,
@@ -214,14 +215,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const loadLocal = useCallback(() => {
     const at = ++localRead.current;
     setLocal(undefined);
-    void fetch("/api/relay/identity")
-      .then((response): Promise<{ viewer?: string }> => {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json();
-      })
-      .then(({ viewer }) => boundKey(viewer ? { pubkey_hex: viewer } : null))
-      .catch(() => null)
-      .then((key) => at === localRead.current && setLocal(key));
+    void deviceKey().then((key) => at === localRead.current && setLocal(key));
   }, []);
 
   useEffect(() => {
@@ -473,6 +467,12 @@ export function HostedCommunities({ active }: { active(): boolean }) {
               </p>
               {auth.name && auth.email && (
                 <p className="m-0 text-body-sm text-muted">{auth.email}</p>
+              )}
+              {auth.shared && (
+                <p className="m-0 text-body-sm text-muted">
+                  This session is shared with the bl CLI on this computer.
+                  Signing out ends it for both.
+                </p>
               )}
             </div>
             <Button

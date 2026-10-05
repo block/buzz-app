@@ -2100,3 +2100,59 @@ fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries(
     too_large.content = "é".repeat(13 * 1024);
     assert!(validate_event("https://relay.test", &too_large).is_err());
 }
+
+#[test]
+fn member_commands_sign_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: &serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let target = "a".repeat(64);
+    let command = |kind: u16, tags: serde_json::Value| serde_json::json!({ "kind": kind, "created_at": 1, "content": "", "tags": tags });
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "member"]])),
+        command(9030, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9031, serde_json::json!([["p", target]])),
+        command(9032, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "member"]])),
+    ] {
+        let signed = sign(&event).unwrap();
+        assert_eq!(
+            signed["pubkey"],
+            "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+        );
+        for field in ["kind", "created_at", "content", "tags"] {
+            assert_eq!(signed[field], event[field]);
+        }
+        verify(&signed);
+    }
+    // An owner grant is refused by the host before any key use.
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "owner"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "owner"]])),
+    ] {
+        assert!(sign(&event).is_err(), "signed {event}");
+    }
+}

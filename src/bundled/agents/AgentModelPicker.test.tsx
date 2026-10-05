@@ -75,7 +75,12 @@ it("loads Goose models on provider selection, retires stale results, and retries
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     expect(run).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("option", { name: /stale-model/ })).toBeNull();
+    const input = screen.getByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(input).toHaveAttribute("aria-expanded", "true"));
     await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(input).toHaveAttribute("aria-expanded", "false"),
+    );
     await user.click(screen.getByRole("button", { name: "Retry models" }));
     await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
     await user.click(screen.getByRole("button", { name: "Browse models" }));

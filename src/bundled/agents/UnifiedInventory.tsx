@@ -13,7 +13,10 @@ import {
   communityDestination,
   relayOrigin,
 } from "../../features/communities/destination";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import {
+  useToastDismiss,
+  useToastNotification,
+} from "../../shared/design-system/ui/Toast";
 import { useInventoryArchive } from "./inventory-archive";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySnapshot } from "../../features/relay/service";
@@ -105,8 +108,10 @@ export function UnifiedInventory({
   // removal is per community, so the key includes the destination.
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   // Archive is the first removal step and hides the row. Keep a started
-  // removal's card until it finishes, so its later steps and errors stay visible.
-  const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
+  // removal's card in its starting section (true: Archived) until it
+  // finishes, so its later steps and errors stay visible. Moving the card
+  // would unmount Remove and cancel its own request.
+  const [held, setHeld] = useState<ReadonlyMap<string, boolean>>(new Map());
   const communityName =
     client?.memberships.find((membership) => {
       try {
@@ -116,21 +121,40 @@ export function UnifiedInventory({
       }
     })?.name || (destination ? new URL(destination).host : "this community");
   const notify = useToastNotification();
+  const dismiss = useToastDismiss();
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
+  // Undo belongs to this view and its archive session. Close open Undo
+  // notices when either ends, so a stale Undo cannot start a request that
+  // nobody can report.
+  const undoNotices = useRef(new Set<string>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new community or session retires earlier Undo notices.
+  useEffect(() => {
+    const open = undoNotices.current;
+    return () => {
+      for (const id of open) dismissRef.current(id);
+      open.clear();
+    };
+  }, [archives, destination]);
   const archiving = useInventoryArchive(
     archives,
     destination,
     (pubkey, action) => {
       const name = rows.get(pubkey)?.displayName ?? "Agent";
-      notify(
+      const id = notify(
         `${name} ${action === "archive" ? "archived" : "unarchived"} in ${communityName}`,
         "success",
         action === "archive"
           ? {
               label: "Undo",
-              onClick: () => void archiving.run(pubkey, "unarchive"),
+              onClick: () => {
+                undoNotices.current.delete(id);
+                void archiving.run(pubkey, "unarchive");
+              },
             }
           : undefined,
       );
+      if (action === "archive") undoNotices.current.add(id);
     },
   );
   const {
@@ -185,7 +209,7 @@ export function UnifiedInventory({
     const run = archiving.runs.get(row.pubkey);
     if (removed.has(key) && !row.localIdentity) rows.delete(row.pubkey);
     else if (
-      run ? run.action === "unarchive" : archived(row.pubkey) && !held.has(key)
+      run ? run.action === "unarchive" : (held.get(key) ?? archived(row.pubkey))
     )
       archivedHere.add(row.pubkey);
   }
@@ -197,13 +221,18 @@ export function UnifiedInventory({
     connection.session.outbox?.supports(5)
       ? async (pubkey: string, signal: AbortSignal) => {
           const key = `${destination} ${pubkey}`;
-          setHeld((saved) => new Set([...saved, key]));
+          const startedArchived = archivedHere.has(pubkey);
+          setHeld((saved) =>
+            saved.has(key) ? saved : new Map(saved).set(key, startedArchived),
+          );
           // A failed removal stays held: the card shows the error and Retry.
           await removeRelayAgent(connection.session, viewer, pubkey, signal);
           setRemoved((saved) => new Set([...saved, key]));
-          setHeld(
-            (saved) => new Set([...saved].filter((item) => item !== key)),
-          );
+          setHeld((saved) => {
+            const next = new Map(saved);
+            next.delete(key);
+            return next;
+          });
           // The removed set already hides the card. A community recheck here
           // would show its status lines above the list and shift the page.
           void library.refresh();
@@ -253,6 +282,7 @@ export function UnifiedInventory({
               runs: archiving.runs,
               request: (pubkey, action) => void archiving.run(pubkey, action),
               focus: archiving.focus,
+              attempt: refresh,
             }
           : undefined
       }

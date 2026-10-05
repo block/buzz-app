@@ -161,6 +161,13 @@ export function ToastNotice({
   return null;
 }
 
+/** Closes a notice by the id `useToastNotification` returned. An owner whose
+ * notice action stops being valid (it unmounted, or its session ended) closes
+ * that notice, instead of leaving a button that can no longer work. */
+export function useToastDismiss() {
+  return BaseToast.useToastManager<NoticeData>().close;
+}
+
 /** Completed actions belong to the host stack, not the originating row's lifetime. */
 export function useToastNotification() {
   const { add, close } = BaseToast.useToastManager<NoticeData>();

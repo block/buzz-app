@@ -125,6 +125,7 @@ export function InventoryView({
         runs: ReadonlyMap<string, ArchiveRun>;
         request(pubkey: string, action: ArchiveAction): void;
         focus?: (ArchiveFocus & { seq: number }) | undefined;
+        attempt: number;
       }
     | undefined;
   importedId: string | null;
@@ -221,6 +222,7 @@ export function InventoryView({
                         archived: archive.archived.has(row.pubkey),
                         community: archive.community,
                         run: archive.runs.get(row.pubkey),
+                        attempt: archive.attempt,
                         request: (action) =>
                           archive.request(row.pubkey, action),
                       }

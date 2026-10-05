@@ -133,6 +133,10 @@ function setup(
       connection = { ...connection, scope, generation };
       mounted.rerender(view());
     },
+    /** Leaves the view while the app's notice host stays. */
+    leave() {
+      mounted.rerender(null);
+    },
   };
 }
 it("does not let late inventory from the previous community expose Use here", async () => {
@@ -998,7 +1002,11 @@ it("keeps already archived agents out of the active list while Remove re-reads a
   expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
 });
 
-function archiveSetup(fail?: Error, archived = false) {
+function archiveSetup(
+  fail?: Error,
+  archived = false,
+  wrap: (transport: ReadTransport) => Partial<ReadTransport> = (t) => t,
+) {
   const viewer = keypair();
   const agent = "cd".repeat(32);
   // Admin consent lets the viewer archive both the local and relay-only agent.
@@ -1007,7 +1015,7 @@ function archiveSetup(fail?: Error, archived = false) {
   });
   if (fail) relay.script.fail = fail;
   if (archived) relay.archived.add(agent);
-  setup(
+  const mounted = setup(
     "connected",
     (fixture) => {
       fixture.data.parked = [];
@@ -1022,11 +1030,11 @@ function archiveSetup(fail?: Error, archived = false) {
       selected: "wss://relay.example.test",
       memberships: [{ id: "wss://relay.example.test", name: "Example" }],
     },
-    relay.transport,
+    wrap(relay.transport),
     false,
     viewer.pubkey,
   );
-  return { relay, agent, local: "ab".repeat(32) };
+  return { ...mounted, relay, agent, viewer, local: "ab".repeat(32) };
 }
 async function openMenuItem(card: HTMLElement, name: string, item: string) {
   fireEvent.click(
@@ -1224,3 +1232,142 @@ it("keeps a card in Archived with a retryable error when Unarchive fails", async
     ).toBeNull(),
   );
 });
+
+it("keeps an archived card in Archived while Remove runs and after it fails", async () => {
+  const { relay, agent } = archiveSetup(undefined, true);
+  let release!: () => void;
+  relay.removal.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const card = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  // Moving the card to the active list would unmount Remove and cancel it.
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Remove" }),
+    ).toHaveAttribute("aria-busy", "true"),
+  );
+  expect(section).toContainElement(card);
+  expect(
+    screen.getAllByRole("article", { name: "Agent Not imported" }),
+  ).toEqual([card]);
+  release();
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(card).toBeInTheDocument();
+  expect(section).toContainElement(card);
+  expect(
+    screen.getAllByRole("article", { name: "Agent Not imported" }),
+  ).toEqual([card]);
+  delete relay.removal.hold;
+  delete relay.removal.fail;
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  expect(relay.archived.has(agent)).toBe(true);
+});
+
+it("asks for archive permission again on Refresh agents after a failed read", async () => {
+  let refuse = true;
+  archiveSetup(undefined, false, (transport) => ({
+    ...transport,
+    async query(filters, signal) {
+      if (refuse && filters.some((filter) => filter.kinds?.includes(13534)))
+        throw Error("relay unavailable");
+      return transport.query(filters, signal);
+    },
+  }));
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  fireEvent.click(
+    await within(card).findByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  await screen.findByRole("menu");
+  expect(screen.queryByRole("menuitem", { name: "Archive agent" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  refuse = false;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  // The same mounted card offers Archive once the new read succeeds.
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  expect(
+    await screen.findByRole("alertdialog", { name: "Archive Fixture agent?" }),
+  ).toBeInTheDocument();
+});
+
+it("keeps keyboard focus on the card when Retry fails again", async () => {
+  const { relay } = archiveSetup(Error("restricted: not authorized"));
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Archive agent",
+    }),
+  );
+  await within(card).findByRole("alert");
+  let release!: () => void;
+  relay.script.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const retry = within(card).getByRole("button", { name: "Retry" });
+  retry.focus();
+  fireEvent.click(retry);
+  const menu = within(card).getByRole("button", {
+    name: "Actions for Fixture agent",
+  });
+  expect(await within(card).findByText("Archiving…")).toBeInTheDocument();
+  expect(menu).toHaveFocus();
+  release();
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "Archive failed: restricted: not authorized",
+  );
+  expect(menu).toHaveFocus();
+});
+
+for (const end of ["community change", "leaving the page"] as const)
+  it(`closes the Undo notice on ${end}`, async () => {
+    const { relay, local, viewer, changeScope, leave } = archiveSetup();
+    const card = await screen.findByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    await openMenuItem(card, "Fixture agent", "Archive agent");
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Archive agent",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Undo" }),
+    ).toBeInTheDocument();
+    if (end === "leaving the page") leave();
+    else changeScope(`wss://other.example.test:${viewer.pubkey}`, 2);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(),
+    );
+    expect(relay.archived.has(local)).toBe(true);
+  });

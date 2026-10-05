@@ -76,6 +76,8 @@ export function InventoryIdentityCard({
         community: string;
         run: ArchiveRun | undefined;
         request(action: ArchiveAction): void;
+        /** Changes on Refresh agents, to ask for archive permission again. */
+        attempt: number;
       }
     | undefined;
   /** True inside the Archived section, one heading level deeper. */
@@ -100,6 +102,7 @@ export function InventoryIdentityCard({
     !!archive &&
       (row.knownCommunities.has(destination) ||
         row.localSetups.has(destination)),
+    archive?.attempt,
   );
   const data = state.data;
   if (!data) return null;
@@ -195,7 +198,18 @@ export function InventoryIdentityCard({
                 </p>
                 <Button
                   size="compact"
-                  onClick={() => archive.request(archiveRun.action)}
+                  onClick={(event) => {
+                    // Retry unmounts while the request runs. Keep focus on
+                    // the card's menu button, which stays through success
+                    // and failure; success then moves focus with the card.
+                    event.currentTarget
+                      .closest("article")
+                      ?.querySelector<HTMLElement>(
+                        'button[aria-label^="Actions for"]',
+                      )
+                      ?.focus();
+                    archive.request(archiveRun.action);
+                  }}
                 >
                   Retry
                 </Button>

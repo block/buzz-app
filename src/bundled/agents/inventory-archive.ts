@@ -61,15 +61,22 @@ export function useInventoryArchive(
   return { runs, focus, run };
 }
 
-/** Render guard only: the archive request re-checks consent before signing. */
+/** Render guard only: the archive request re-checks consent before signing.
+ * A new `attempt` (Refresh agents) asks again, so a failed read can recover;
+ * it keeps the last answer until the new one arrives. */
 export function useArchiveConsent(
   archives: Pick<IdentityArchives, "consent" | "writable">,
   pubkey: string,
   enabled: boolean,
+  attempt = 0,
 ) {
   const [allowed, setAllowed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new identity or session forgets the last answer.
   useEffect(() => {
     setAllowed(false);
+  }, [archives, pubkey, enabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt only asks again.
+  useEffect(() => {
     if (!enabled || !archives.writable) return;
     const controller = new AbortController();
     archives.consent(pubkey, controller.signal).then(
@@ -79,6 +86,6 @@ export function useArchiveConsent(
       () => {},
     );
     return () => controller.abort();
-  }, [archives, pubkey, enabled]);
+  }, [archives, pubkey, enabled, attempt]);
   return allowed;
 }

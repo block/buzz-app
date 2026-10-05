@@ -251,7 +251,7 @@ function OwnedCompletion({
     // Publication is synchronous; React may still be displaying the previous
     // result. Keep the user's chosen ID, but use only its current evidence/edit.
     const item = published.items.find((item) => item.id === items[index]?.id);
-    if (key === " " && item?.id !== published.spaceId) return false;
+    if (key === terminator && item?.id !== published.spaceId) return false;
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
       item.edit,

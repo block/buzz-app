@@ -376,9 +376,9 @@ function mount(
       });
       return published;
     },
-    replaceCompletionProvider() {
+    replaceCompletionProvider(pluginId = "test") {
       act(() => {
-        completions = [completion("2")];
+        completions = [{ ...completion("2"), pluginId }];
         for (const listener of completionListeners) listener();
       });
     },
@@ -762,10 +762,16 @@ it.each(["click", "Enter", "Tab"])(
   },
 );
 
-it.each([undefined, "other"])(
-  "leaves space alone if the latest publication's exact match is %s",
-  (spaceId) => {
+it.each([
+  [" ", "test", undefined],
+  [" ", "test", "other"],
+  [":", "buzz.emoji", undefined],
+  [":", "buzz.emoji", "other"],
+])(
+  "leaves %s alone for %s if the latest publication's exact match is %s",
+  (key, pluginId, spaceId) => {
     const h = mount();
+    h.replaceCompletionProvider(pluginId);
     const input = h.input();
     input.focus();
     h.fill("!search");
@@ -780,7 +786,7 @@ it.each([undefined, "other"])(
     });
     act(() => {
       publish({ items, spaceId });
-      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+      expect(fireEvent.keyDown(input, { key })).toBe(true);
     });
     expect(input).toHaveValue("!search");
     expect(h.messages.send).not.toHaveBeenCalled();

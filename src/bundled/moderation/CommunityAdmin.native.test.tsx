@@ -317,29 +317,34 @@ it("offers a native admin only member removal and surfaces the relay's refusal",
   expect(fetch).not.toHaveBeenCalled();
 });
 
+// `applied` is whether the fake relay persisted the command despite the error.
 it.each([
   [
     "a host transport failure",
     new Error("Relay unreachable"),
     "Relay unreachable",
+    false,
   ],
   [
     "an unlisted relay refusal",
     { status: 500, body: { error: "database: connection reset" } },
     "Community request failed (500)",
+    false,
   ],
   [
+    // The relay applied it, but the receipt names another event.
     "an unconfirmed receipt",
     { body: { event_id: "0".repeat(64), accepted: true } },
     "Member change could not be confirmed",
+    true,
   ],
 ])(
-  "recovers from %s without changing the roster",
-  async (_, failure, shown) => {
+  "recovers from %s and refreshes to the relay's roster",
+  async (_, failure, shown, applied) => {
     const user = userEvent.setup();
     let fail = true;
     const published = host(ownerKey, () => (fail ? failure : undefined));
-    const { relay: data } = relay(owner);
+    const { relay: data, read } = relay(owner);
     render(<CommunityAdmin relay={data} active={() => true} />);
     await screen.findByRole("list", { name: "Members" });
     const promote = async () => {
@@ -357,14 +362,25 @@ it.each([
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(shown),
     );
+    // An unconfirmed write claims nothing: the list is not re-read or changed.
+    expect(read).toHaveBeenCalledOnce();
     expect(shownRole(member)).toBe("Member");
-    // The failed write leaves the controls usable; a retry goes through.
+    expect(roster.get(member)).toBe(applied ? "admin" : "member");
     fail = false;
     await user.keyboard("{Escape}");
-    await promote();
-    await waitFor(() => expect(shownRole(member)).toBe("Admin"));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(published).toHaveLength(2);
+    // Refresh shows whatever the relay actually holds.
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(shownRole(member)).toBe(applied ? "Admin" : "Member"),
+    );
+    if (!applied) {
+      // The controls stay usable; a retry goes through.
+      await promote();
+      await waitFor(() => expect(shownRole(member)).toBe("Admin"));
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    expect(published).toHaveLength(applied ? 1 : 2);
     expect(fetch).not.toHaveBeenCalled();
   },
 );

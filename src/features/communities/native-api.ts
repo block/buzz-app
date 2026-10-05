@@ -309,12 +309,14 @@ async function readResponse(
   response: Response,
   refusal: (result: unknown) => string | undefined = admissionRefusal,
 ): Promise<Record<string, unknown>> {
-  const result = await response.json();
+  // A body that is not JSON (proxy HTML, plain text) is never shown: it maps to
+  // the status-based failure or, on success, an invalid response.
+  const result: unknown = await response.json().catch(() => undefined);
   if (!response.ok)
     throw new Error(
       refusal(result) ?? `Community request failed (${response.status})`,
     );
   if (!result || typeof result !== "object" || Array.isArray(result))
     throw new Error("Invalid community response");
-  return result;
+  return result as Record<string, unknown>;
 }

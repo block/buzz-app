@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import { InfoIcon } from "../../shared/design-system/icons/index";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
+import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ProfileAgentDelete } from "./ProfileAgentDelete";
@@ -17,12 +17,18 @@ export function ProfileAgentArchive({
   pubkey,
   control,
   scope,
+  name = "this agent",
+  community = "this community",
+  running = false,
   onDeleted,
 }: {
   session: RelaySession;
   pubkey: string;
   control?: AgentControl | undefined;
   scope?: string | undefined;
+  name?: string | undefined;
+  community?: string | undefined;
+  running?: boolean | undefined;
   onDeleted(): void;
 }) {
   const archives = session.archives;
@@ -237,40 +243,16 @@ export function ProfileAgentArchive({
         </p>
       )}
       {confirming && (
-        <AlertDialog
-          title="Archive this agent?"
-          description="Archiving hides this agent from the space."
-          onClose={() => setConfirming(false)}
-          actions={
-            <>
-              <Button onClick={() => setConfirming(false)}>Cancel</Button>
-              <Button
-                variant="prominent"
-                onClick={() => {
-                  setConfirming(false);
-                  void submit("archive");
-                }}
-              >
-                Archive
-              </Button>
-            </>
-          }
-        >
-          <ul className="text-body-sm text-secondary">
-            <li>
-              They won't appear in search, autocomplete, or when adding members
-            </li>
-            <li>
-              This only affects <strong>this space</strong> — not their account
-              anywhere else
-            </li>
-            <li>You can unarchive them at any time to restore them</li>
-          </ul>
-          <p className="text-body-sm text-secondary">
-            You can also delete this agent from the profile settings menu if you
-            want to remove the agent instead of hiding it.
-          </p>
-        </AlertDialog>
+        <AgentArchiveDialog
+          name={name}
+          community={community}
+          running={running}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            void submit("archive");
+          }}
+        />
       )}
     </>
   );

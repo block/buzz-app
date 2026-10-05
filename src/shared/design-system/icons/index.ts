@@ -311,6 +311,9 @@ export const ListChecksIcon = defineIcon("tabler", TablerListChecksIcon);
 import TablerArchiveIcon from "@tabler/icons-react/dist/esm/icons/IconArchive.mjs";
 export const ArchiveIcon = defineIcon("tabler", TablerArchiveIcon);
 
+import TablerArchiveOffIcon from "@tabler/icons-react/dist/esm/icons/IconArchiveOff.mjs";
+export const ArchiveOffIcon = defineIcon("tabler", TablerArchiveOffIcon);
+
 import TablerArrowsLeftRightIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsLeftRight.mjs";
 export const ArrowsLeftRightIcon = defineIcon(
   "tabler",

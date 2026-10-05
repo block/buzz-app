@@ -20,6 +20,7 @@ const owner = generateSecretKey(),
   agent = generateSecretKey();
 const viewer = getPublicKey(owner),
   sender = getPublicKey(agent),
+  conversationKey = nip44.v2.utils.getConversationKey(agent, viewer),
   community = "https://a.test";
 const dirs = [];
 afterEach(() => {
@@ -50,7 +51,9 @@ function event(serial = 0, kind = 24200, patch = {}, key = agent) {
       ],
       content: nip44.v2.encrypt(
         plaintext,
-        nip44.v2.utils.getConversationKey(key, viewer),
+        key === agent
+          ? conversationKey
+          : nip44.v2.utils.getConversationKey(key, viewer),
       ),
       ...patch,
     },
@@ -106,33 +109,57 @@ test("keyset paging walks hidden/bad rows, scopes agent reads, and one bad row c
   const file = path(),
     h = harness(file),
     other = generateSecretKey();
-  for (let i = 0; i < 205; i++) h.ingest(event(i));
-  const quiet = event(999, 24200, {}, other);
-  h.ingest(quiet);
   const db = new DatabaseSync(file);
-  db.prepare("UPDATE archive_events SET envelope='broken' WHERE id=?").run(
-    quiet.id,
-  );
-  db.close();
-  const first = h.read();
-  expect(first.records).toHaveLength(99);
-  expect(first.skipped).toBe(1);
-  const second = h.read({ before: first.before });
-  expect(second.records).toHaveLength(100);
-  const third = h.read({ before: second.before });
-  expect(third.records).toHaveLength(6);
-  expect(third.before).toBeNull();
-  const ids = [...first.records, ...second.records, ...third.records].map(
-    (row) => row.id,
-  );
-  expect(new Set(ids).size).toBe(205);
-  expect(h.read({ agent: getPublicKey(other) })).toMatchObject({
-    records: [],
-    skipped: 1,
-  });
-  expect(() => h.read({ before: 0 })).toThrow();
-  expect(() => h.read({ agent: "bad" })).toThrow();
-  h.store.close();
+  try {
+    // Paging exercises stored envelopes, not repeated fresh-ingest validation.
+    // Seed real signed/encrypted rows in one transaction; keep decoding on reads.
+    const insert = db.prepare(
+      "INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?,?,'observer',?,?,24200,?,?,?,?)",
+    );
+    db.exec("BEGIN");
+    for (let i = 0; i < 205; i++) {
+      const row = event(i),
+        raw = JSON.stringify(row);
+      insert.run(
+        viewer,
+        community,
+        row.id,
+        row.pubkey,
+        row.created_at,
+        row.created_at,
+        Buffer.byteLength(raw),
+        raw,
+      );
+    }
+    db.exec("COMMIT");
+    const quiet = event(999, 24200, {}, other);
+    h.ingest(quiet);
+    db.prepare("UPDATE archive_events SET envelope='broken' WHERE id=?").run(
+      quiet.id,
+    );
+    const first = h.read();
+    expect(first.records).toHaveLength(99);
+    expect(first.skipped).toBe(1);
+    const second = h.read({ before: first.before });
+    expect(second.records).toHaveLength(100);
+    const third = h.read({ before: second.before });
+    expect(third.records).toHaveLength(6);
+    expect(third.before).toBeNull();
+    const ids = [...first.records, ...second.records, ...third.records].map(
+      (row) => row.id,
+    );
+    expect(new Set(ids).size).toBe(205);
+    expect(h.read({ agent: getPublicKey(other) })).toMatchObject({
+      records: [],
+      skipped: 1,
+    });
+    expect(() => h.read({ before: 0 })).toThrow();
+    expect(() => h.read({ agent: "bad" })).toThrow();
+  } finally {
+    // Closing also rolls back a seed that failed before COMMIT.
+    db.close();
+    h.store.close();
+  }
 });
 test("fresh ingest gate rejects signature, recipient, duplicate tags, stale, unsupported kind and oversized content", () => {
   const h = harness();

@@ -183,11 +183,14 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   await user.keyboard("{ArrowDown}");
   expect(messages).toHaveAttribute("aria-selected", "true");
   // A replayed event at a resting position is not a hover.
-  const at = (screenX: number) =>
+  const at = (clientX: number) =>
     fireEvent.pointerMove(settings, {
       pointerType: "mouse",
-      screenX,
-      screenY: 10,
+      clientX,
+      clientY: 10,
+      // Linux WebKit's screen coordinates do not follow the pointer.
+      screenX: 0,
+      screenY: 0,
     });
   at(10);
   at(10);

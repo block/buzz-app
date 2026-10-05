@@ -184,11 +184,13 @@ export function SearchChoices({
   const optionId = (key: string) => `${id}-${key}`;
   // WebKit replays a pointer event when rows move under a resting cursor.
   // Only a real move may select a row, or new results would steal Enter.
+  // Compare viewport coordinates: Linux WebKit reports screen coordinates
+  // that do not change as the pointer moves.
   const pointer = useRef<{ x: number; y: number }>(undefined);
   const pointerMoved = (event: PointerEvent) => {
     const last = pointer.current;
-    pointer.current = { x: event.screenX, y: event.screenY };
-    return !!last && (last.x !== event.screenX || last.y !== event.screenY);
+    pointer.current = { x: event.clientX, y: event.clientY };
+    return !!last && (last.x !== event.clientX || last.y !== event.clientY);
   };
   useEffect(() => {
     input.current?.focus();
@@ -204,7 +206,7 @@ export function SearchChoices({
       className="search-palette"
       data-search-palette=""
       onPointerMove={(event) => {
-        pointer.current = { x: event.screenX, y: event.screenY };
+        pointer.current = { x: event.clientX, y: event.clientY };
       }}
     >
       {scope && (

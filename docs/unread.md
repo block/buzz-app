@@ -222,18 +222,20 @@ channel and parent, so a reply in another channel that tags the same parent
 gets its own answer. It starts from retained
 evidence. When a reply is otherwise unread but its conversation is undecided
 (the parent is not loaded, or the viewer's own reply to it is not), a projection
-that evaluates the reply queues one relay lookup for that parent and, for a
-nested reply, one for its canonical root, which decides the whole thread: the
-viewer wrote the root or replied anywhere under it. The fetch runs
-in a microtask, at background priority, in batches of up to 50 parents from one
-channel:
+that evaluates the reply queues one relay lookup for that parent. The same
+lookup decides the whole thread: the viewer wrote the parent or the canonical
+root, or replied anywhere under the root. One lookup per parent keeps demand
+within one per retained reply, so the retained window (under 4,096 events)
+cannot need more than the 4,096 remembered lookups. The fetch
+runs in a microtask, at background priority, in batches of up to 50 parents
+from one channel:
 
 - the missing parents, and the replies' roots, by ID;
-- the viewer's replies in that channel that tag those parents (`#e`, `#h`,
-  `include_aux`, limit 500). `#e` also matches root tags, so a full page is
-  split and asked again; a full page for one parent pages back in time until
-  a deciding reply appears (at most ten pages). Only replies whose reply tag
-  names the parent, or whose root tag names a looked-up root, count, and
+- the viewer's replies in that channel that tag those parents or their roots
+  (`#e`, `#h`, `include_aux`, limit 500). `#e` also matches root tags, so a
+  full page is split and asked again; a full page for one parent pages back in
+  time until a deciding reply appears (at most ten pages). Only replies whose
+  reply tag names the parent, or whose root tag names its root, count, and
   deleted ones do not. The viewer's own fetched parent or root is the witness
   when there is one.
 

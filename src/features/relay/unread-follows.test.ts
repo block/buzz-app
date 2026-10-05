@@ -323,6 +323,41 @@ it("follows a revived thread where the viewer replied on another branch", async 
   });
 });
 
+it("drains the lookups of many distinct revived threads once and stays idle", async () => {
+  const history: RelayEvent[] = [];
+  const nested = Array.from({ length: 2100 }, (_, i) => {
+    const root = event(peer, 1, []);
+    const parent = reply(peer, 2, root);
+    history.push(root, parent);
+    return reply(peer, 3 + i, root, parent);
+  });
+  const { owner, unread, reader, settled } = await setup();
+  const asked = new Map<string, number>();
+  const relay = relayOf(...history);
+  reader.read.mockImplementation(async (filters) => {
+    const filter = filters[0] as { ids?: string[]; "#e"?: string[] };
+    for (const id of filter.ids ?? [])
+      asked.set(`ids:${id}`, (asked.get(`ids:${id}`) ?? 0) + 1);
+    for (const id of filter["#e"] ?? [])
+      asked.set(`#e:${id}`, (asked.get(`#e:${id}`) ?? 0) + 1);
+    return relay(filters);
+  });
+  owner.accept(nested);
+  // An active projection republishes after every batch.
+  const stop = unread.subscribe({ kind: "channel", channelId: "c0" }, () => {});
+  await settled(...nested);
+  const reads = reader.read.mock.calls.length;
+  for (let tick = 0; tick < 5; tick++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  unread.snapshot({ kind: "channel", channelId: "c0" });
+  await settled(...nested);
+  stop();
+  expect(reader.read.mock.calls.length).toBe(reads);
+  expect([...asked.values()].filter((count) => count > 1)).toEqual([]);
+  // Each parent and root fetched once, and asked about once.
+  expect(asked.size).toBe(2 * history.length);
+}, 30000);
+
 it("keys choices by channel and canonical root and keeps them across reload", async () => {
   const follows = memoryThreadFollows();
   const first = await setup(follows);

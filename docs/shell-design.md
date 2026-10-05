@@ -236,6 +236,20 @@ and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; Delete on a tab and Escape in its content close that tab. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the visible selected
+tab, including a selected detail tab, even while typing in the main conversation.
+The macOS native Close menu uses the same action, including when an embedded
+browser owns focus (embedded browsing is currently macOS-only). A terminal tab
+closes its presentation, not its shell; Ctrl+W while typing in a terminal remains
+shell word deletion on Windows/Linux. With no visible tab pane, Close retains
+the normal window-close behavior: hide until reopened on macOS, close the
+application on Windows/Linux. Hidden tabs remain intact until that window close.
+Closing the last tab leaves the window open until the next press. While a modal
+is open, the shortcut does nothing rather than closing content behind it.
+Windows/Linux consume held-key repeats without closing further tabs or the window.
+Window buttons and Alt+F4 always retain their window-only behavior. The bottom
+terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
+shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
 The main-header split control toggles the tab pane without closing its tabs or

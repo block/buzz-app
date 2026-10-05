@@ -12,6 +12,8 @@ import { messageNotificationText } from "./content";
 const sdk = vi.hoisted(() => ({
   show: vi.fn(async (..._args: unknown[]) => {}),
   permission: vi.fn(async (_args: unknown) => "enabled"),
+  bannerPermission: vi.fn(async () => "granted"),
+  bannerRequest: vi.fn(async () => "granted"),
   indicator: vi.fn(async (_args: unknown) => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
@@ -20,6 +22,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     if (command === "notification_show") return sdk.show(command, args);
     if (command === "dock_permission") return sdk.permission(args);
+    if (command === "notification_permission_state")
+      return sdk.bannerPermission();
+    if (command === "request_notification_access") return sdk.bannerRequest();
     if (command === "unread_indicator_set") return sdk.indicator(args);
     throw new Error(`Unexpected native command: ${command}`);
   },
@@ -67,7 +72,7 @@ it("the default service sends desktop banners via the native bridge and shared p
   const { service, submit } = setup();
   await flush();
   expect(service.snapshot()).toMatchObject({
-    permission: "unknown",
+    permission: "granted",
     systemManaged: true,
     preferences: { enabled: true },
   });
@@ -88,12 +93,14 @@ it("the default service sends desktop banners via the native bridge and shared p
   expect(sdk.show).toHaveBeenCalledTimes(1);
 });
 
-it("banner permission stays system-managed while Dock permission is queried separately", async () => {
+it("macOS banner permission reads the native authorization independently of Dock badge setting", async () => {
   const { service, submit } = setup();
   await flush();
   await service.refreshPermission();
   await service.requestPermission();
-  expect(service.snapshot().permission).toBe("unknown");
+  expect(service.snapshot().permission).toBe("granted");
+  expect(sdk.bannerPermission).toHaveBeenCalled();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
   expect(sdk.show).not.toHaveBeenCalled();
   expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
   expect(service.indicator.snapshot().permission).toBe("enabled");

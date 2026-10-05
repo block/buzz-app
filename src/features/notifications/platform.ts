@@ -37,12 +37,20 @@ export function createNotifications(): NotificationPlatform {
     channel.onmessage = () => {};
     active.delete(id);
   };
+  const macOS = /Mac/i.test(globalThis.navigator?.platform ?? "");
   return {
     label: "Desktop notifications",
     systemManaged: true,
-    // The native backends do not expose an OS permission check or prompt.
-    permission: async () => "unknown",
-    requestPermission: async () => "unknown",
+    // macOS uses Dock's UNUserNotificationCenter authorization source. Other
+    // desktop backends have no permission query in this bridge.
+    permission: () =>
+      macOS
+        ? invoke<NotificationPermission>("notification_permission_state")
+        : Promise.resolve("unknown"),
+    requestPermission: () =>
+      macOS
+        ? invoke<NotificationPermission>("request_notification_access")
+        : Promise.resolve("unknown"),
     async show(item, activate, failed) {
       if (disposed) throw new Error("Desktop notifications have stopped");
       // Reject before sending instead of stranding an older alert's target.

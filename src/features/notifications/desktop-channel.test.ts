@@ -50,7 +50,8 @@ function callback(index = 0) {
   return { call, id, send };
 }
 
-it("reports system-managed permission without a window.Notification shim or native calls", async () => {
+it("Windows/Linux keep system-managed permission without a window.Notification shim or native calls", async () => {
+  vi.stubGlobal("navigator", { platform: "Win32" });
   const platform = createNotifications();
   expect(platform.systemManaged).toBe(true);
   expect(await platform.permission()).toBe("unknown");

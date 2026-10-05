@@ -37,7 +37,10 @@ import {
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { ComposerAttachments } from "./ComposerAttachments";
-import { useAttachmentDraft } from "./attachment-draft";
+import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
+import { sendInBackground } from "./background-upload";
+import { BackgroundUploadStatus } from "./BackgroundUploadStatus";
+import type { UploadedAttachment } from "../relay/attachments";
 import {
   useContext,
   useEffect,
@@ -96,7 +99,6 @@ const noChannelSnapshot = () => noChannels;
 const noChannelSubscription = () => () => {};
 
 type AcceptedDraft = {
-  id: string;
   next: MentionDraft;
   revision: string | null | undefined;
 };
@@ -125,7 +127,7 @@ export type MessageComposerProps = {
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
-  onDraftSaved?: ((id: string) => void) | undefined;
+  onDraftSaved?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?: ((target: string) => boolean) | undefined;
@@ -227,7 +229,6 @@ function Composer({
     ?.cached;
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
@@ -405,7 +406,6 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
-    uploadingAttachments ||
     !!accepted ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
@@ -532,7 +532,7 @@ function Composer({
     }
     dirty.current = result === "failed" && !!pending.next.text.trim();
     // An unsaved prefill stays editable here with the ordinary save warning.
-    if (!dirty.current) onDraftSaved?.(pending.id);
+    if (!dirty.current) onDraftSaved?.();
   }
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
@@ -919,22 +919,6 @@ function Composer({
         )
       )
         return;
-      const uploaded = capturedAttachments.length
-        ? await (async () => {
-            setUploadingAttachments(true);
-            setError(undefined);
-            return attachments.store.prepareForSend(attempt.signal);
-          })()
-        : [];
-      attempt.signal.throwIfAborted();
-      if (
-        valueRef.current !== captured ||
-        !sameAttachmentSelection(
-          attachments.store.snapshot(),
-          capturedAttachments,
-        )
-      )
-        return;
       if (viewRevision(scope, draftKey) !== savedRevision) {
         setConflict(true);
         return;
@@ -961,27 +945,50 @@ function Composer({
             )
           : [],
       );
-      const id = threadRootId
-        ? session.messages.reply(
-            channelId,
-            threadRootId,
-            content,
-            recipients,
-            uploaded,
-            ...(replyParentId || references.length ? [replyParentId] : []),
-            ...(references.length ? [references] : []),
-          )
-        : references.length
-          ? session.messages.send(
+      // Destination and content are fixed here; a background send never retargets.
+      const publish = (uploaded: readonly UploadedAttachment[]) =>
+        threadRootId
+          ? session.messages.reply(
               channelId,
+              threadRootId,
               content,
               recipients,
               uploaded,
-              undefined,
-              references,
+              ...(replyParentId || references.length ? [replyParentId] : []),
+              ...(references.length ? [references] : []),
             )
-          : session.messages.send(channelId, content, recipients, uploaded);
-      const pending = { id, next, revision: savedRevision };
+          : references.length
+            ? session.messages.send(
+                channelId,
+                content,
+                recipients,
+                uploaded,
+                undefined,
+                references,
+              )
+            : session.messages.send(channelId, content, recipients, uploaded);
+      let id: string | undefined;
+      if (capturedAttachments.length) {
+        const followup = JSON.stringify(next);
+        sendInBackground(
+          session,
+          channelId,
+          capturedAttachments,
+          (uploaded) => {
+            const sent = publish(uploaded);
+            if (live.current) onSend?.(sent);
+          },
+          (files) => {
+            // Like Desktop, recover only into the untouched post-send draft.
+            if (
+              viewRevision(scope, draftKey) === followup &&
+              attachmentDraft(session, recoveryKey, channelId).adopt(files)
+            )
+              replaceView(scope, draftKey, followup, captured);
+          },
+        );
+      } else id = publish([]);
+      const pending = { next, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();
@@ -998,7 +1005,7 @@ function Composer({
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
-      onSend?.(id);
+      if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
@@ -1009,7 +1016,6 @@ function Composer({
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
-          setUploadingAttachments(false);
           setAdmitting(false);
         }
       }
@@ -1165,7 +1171,7 @@ function Composer({
             resolved={value}
           />
         )}
-        {uploadingAttachments && <p role="status">Uploading attachments…</p>}
+        <BackgroundUploadStatus session={session} />
         {dragging && <p role="status">Drop files to attach</p>}
         {attachmentError && (
           <ToastNotice
@@ -1362,7 +1368,6 @@ function Composer({
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
-              uploadingAttachments ||
               submission?.disabled ||
               (!editing.target && attachments.blocked) ||
               (!draft.trim() &&

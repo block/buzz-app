@@ -32,6 +32,7 @@ import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
@@ -973,7 +974,7 @@ async function mountUploadComposer(
         ? { replyParentId: options.replyParentId }
         : {})}
     />,
-    { reactStrictMode: true },
+    { reactStrictMode: true, wrapper: ToastProvider },
   );
   const input = () => within(view.container).getByRole("textbox");
   const form = () => within(view.container).getByRole("form");
@@ -1008,15 +1009,15 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("picker.txt");
   expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
-  expect(screen.getByText("Uploading attachments…")).toHaveAttribute(
-    "role",
-    "status",
-  );
-  expect(h.send()).toBeDisabled();
+  // Send hands the files to the background upload and frees the composer.
+  expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0);
+  expect(screen.getByText("Uploading 0%")).toHaveAttribute("role", "status");
+  expect(h.input()).toBeEnabled();
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("picker.txt"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(screen.getByText("Uploading 33%")).toBeVisible();
   await act(async () => {
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
   });
@@ -1031,9 +1032,10 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   );
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[pasted.txt](<");
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
 
-it("clears the send upload error banner after removing failed attachments", async () => {
+it("restores a failed background upload into the composer with Desktop's toast", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("metadata.txt"));
   await waitFor(() =>
@@ -1049,8 +1051,13 @@ it("clears the send upload error banner after removing failed attachments", asyn
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([UPLOAD_FAILURES.metadata, UPLOAD_FAILURES.metadata]),
+    ).toEqual([UPLOAD_FAILURES.metadata]),
   );
+  expect(
+    screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
+  ).toBeVisible();
+  expect(h.input()).toHaveValue("caption");
+  expect(h.publish).not.toHaveBeenCalled();
 
   await userEvent.click(
     screen.getByRole("button", { name: "Remove metadata.txt" }),
@@ -1076,7 +1083,7 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed", "first failed"]),
+    ).toEqual(["first failed"]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
   fireEvent.click(h.send());
@@ -1087,7 +1094,7 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed again", "first failed again"]),
+    ).toEqual(["first failed again"]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
   fireEvent.click(h.send());
@@ -1102,13 +1109,12 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["second failed", "second failed"]),
+    ).toEqual(["second failed"]),
   );
 
   await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
 
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
-    "second failed",
     "second failed",
   ]);
   expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument();
@@ -1135,8 +1141,8 @@ it("retains successful attachment uploads after a later file fails and retries o
   await screen.findAllByRole("alert");
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
     "relay down",
-    "relay down",
   ]);
+  expect(screen.getByText("Upload failed: relay down")).toBeVisible();
   expect(h.input()).toHaveValue("caption");
   expect(h.publish).not.toHaveBeenCalled();
 
@@ -1155,11 +1161,10 @@ it("retains successful attachment uploads after a later file fails and retries o
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[retry.txt](<");
 });
 
-it("recovers disabled mid-upload attachments and retries without re-uploading ready files", async () => {
+it("finishes a background send in its original channel after the composer unmounts", async () => {
   const h = await mountUploadComposer();
-  const scope = `https://relay.example.test:${h.owner.session.viewer}`;
   attachByPaste(h.input(), attachmentFile("ready.txt"));
-  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  attachByPaste(h.input(), attachmentFile("late.txt"));
   await waitFor(() =>
     expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
   );
@@ -1170,61 +1175,24 @@ it("recovers disabled mid-upload attachments and retries without re-uploading re
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
-  expect(h.uploadCalls[1]?.file.name).toBe("paused.txt");
 
-  try {
-    h.rerender(
-      <MessageComposer
-        session={h.owner.session}
-        scope={scope}
-        channelId="channel"
-        channelName="General"
-        disabled
-      />,
-    );
-    expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
-    await waitFor(() =>
-      expect(
-        screen.getByText("Upload paused. Retry to continue."),
-      ).toBeVisible(),
-    );
-    expect(screen.getByText(/Upload failed/)).toBeVisible();
-    expect(screen.getByRole("button", { name: /Retry/ })).toBeDisabled();
-    expect(h.publish).not.toHaveBeenCalled();
-    expect(h.sign).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => {
-      h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt"));
-    });
-  }
-
-  h.rerender(
-    <MessageComposer
-      session={h.owner.session}
-      scope={scope}
-      channelId="channel"
-      channelName="General"
-    />,
-  );
-  const retry = await screen.findByRole("button", { name: /Retry/ });
-  expect(retry).toBeEnabled();
-  await userEvent.click(retry);
-  await waitFor(() => expect(h.send()).toBeEnabled());
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
-  expect(h.uploadCalls[2]?.file.name).toBe("paused.txt");
+  h.unmount();
+  expect(h.uploadCalls[1]?.signal.aborted).toBe(false);
   await act(async () => {
-    h.uploadCalls[2]?.result.resolve(uploadDescriptor("paused.txt"));
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("late.txt"));
   });
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const event = h.publish.mock.calls[0]?.[0];
+  expect(event?.tags).toContainEqual(["h", "channel"]);
+  expect(event?.content).toContain("caption");
+  expect(event?.content).toContain("[ready.txt](<");
+  expect(event?.content).toContain("[late.txt](<");
   expect(h.sign).toHaveBeenCalledTimes(1);
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("[paused.txt](<");
 });
 
-it("cancels an in-flight attachment send when the composer destination changes", async () => {
-  const h = await mountUploadComposer({ threadRootId: "b".repeat(64) });
+it("keeps a background send on its original thread when the composer moves", async () => {
+  const root = "b".repeat(64);
+  const h = await mountUploadComposer({ threadRootId: root });
   attachByPaste(h.input(), attachmentFile());
   await waitFor(() => expect(h.send()).toBeEnabled());
   fireEvent.click(h.send());
@@ -1238,14 +1206,17 @@ it("cancels an in-flight attachment send when the composer destination changes",
       threadRootId={"c".repeat(64)}
     />,
   );
-  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor());
   });
-  expect(h.publish).not.toHaveBeenCalled();
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
+  expect(tags).toContainEqual(["e", root, "", "reply"]);
+  expect(tags.flat()).not.toContain("c".repeat(64));
 });
 
-it("recovers a reply-target abort during attachment upload and sends the retained draft to the new target", async () => {
+it("keeps a background reply on the parent captured at Send", async () => {
   const root = "a".repeat(64);
   const child = "b".repeat(64);
   const h = await mountUploadComposer({
@@ -1256,35 +1227,81 @@ it("recovers a reply-target abort during attachment upload and sends the retaine
   await waitFor(() => expect(h.send()).toBeEnabled());
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-
-  try {
-    h.rerender(
-      <MessageComposer
-        session={h.owner.session}
-        scope={`https://relay.example.test:${h.owner.session.viewer}`}
-        channelId="channel"
-        channelName="General"
-        threadRootId={root}
-      />,
-    );
-    expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
-    expect(h.publish).not.toHaveBeenCalled();
-    await waitFor(() => expect(h.send()).toBeEnabled());
-  } finally {
-    await act(async () => {
-      h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
-    });
-  }
-
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={root}
+    />,
+  );
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
   await act(async () => {
-    h.uploadCalls[1]?.result.resolve(uploadDescriptor("reply.txt"));
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
   });
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
-  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
-  expect(tags).not.toContainEqual(["e", child, "", "reply"]);
-  expect(tags).toContainEqual(["e", root, "", "reply"]);
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual([
+    "e",
+    child,
+    "",
+    "reply",
+  ]);
+});
+
+it("cancels the newest background send, restores its draft and leaves older sends running", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  await userEvent.type(h.input(), "first");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+
+  attachByPaste(h.input(), attachmentFile("two.txt"));
+  await userEvent.type(h.input(), "second");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await userEvent.type(h.input(), "plain");
+  fireEvent.click(h.send());
+  // Text-only sends never wait behind uploads.
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0].content).toBe("plain");
+
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
+  await waitFor(() => expect(h.input()).toHaveValue("second"));
+  expect(within(h.form()).getByText("two.txt")).toBeVisible();
+  expect(screen.queryByText(/Upload failed/)).toBeNull();
+
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("two.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  expect(h.publish.mock.calls[1]?.[0].content).toContain("first");
+  expect(h.publish.mock.calls[1]?.[0].content).toContain("[one.txt](<");
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
+  expect(h.publish).toHaveBeenCalledTimes(2);
+});
+
+it("drops background sends silently when their session closes", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(screen.getByText("Uploading 0%")).toBeVisible();
+
+  act(() => h.owner.dispose());
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(screen.queryByText(/^Uploading/)).toBeNull());
+  expect(screen.queryByText(/Upload failed/)).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.sign).not.toHaveBeenCalled();
 });
 
 it("retries publish-unknown attachment sends with the same signed event and no re-upload", async () => {
@@ -4322,9 +4339,7 @@ it.each([undefined, "root"])(
     await h.user.click(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
-    expect(retired).toHaveBeenCalledExactlyOnceWith(
-      threadRootId ? "reply-id" : "channel-id",
-    );
+    expect(retired).toHaveBeenCalledExactlyOnceWith();
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },
@@ -4417,7 +4432,7 @@ it.each([false, true])(
       expect(readView("scope", "draft:channel", "missing")).toMatchObject({
         text: remembered ? "@Honey " : "",
       });
-      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
+      expect(retired).toHaveBeenCalledExactlyOnceWith();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       fail.mockRestore();

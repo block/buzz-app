@@ -161,6 +161,110 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
   }
 });
 
+// Browser-only boundary: a held upload outlives its composer across real navigation.
+test("a sent attachment keeps uploading after navigation and publishes to its original channel", async ({
+  page,
+}) => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    plugins: [
+      react(),
+      {
+        name: "held-upload-fixture",
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url !== "/api/relay/upload" || req.method !== "POST")
+              return next();
+            req.resume();
+            void held.then(() => {
+              res.writeHead(204, { "X-Content-Type-Options": "nosniff" });
+              res.end();
+            });
+          });
+        },
+      },
+    ],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    const uploadRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/relay/upload")
+        uploadRequests.push(request);
+    });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests&random`,
+    );
+    const general = page.getByRole("form", {
+      name: "Send a message to General",
+      exact: true,
+    });
+    await expect(
+      general.getByRole("button", { name: "Attach files", exact: true }),
+    ).toBeEnabled();
+    await general.getByLabel("Choose attachments").setInputFiles({
+      name: "held.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("held"),
+    });
+    await general.getByRole("textbox").fill("background caption");
+    await general.getByRole("textbox").press("Enter");
+    await expect.poll(() => uploadRequests.length).toBe(1);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Uploading 0%" }),
+    ).toBeVisible();
+    await expect(general.getByRole("textbox")).toHaveText("");
+    await expect(general.getByText("held.txt")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Random", exact: true }).click();
+    const random = page.getByRole("form", {
+      name: "Send a message to Random",
+      exact: true,
+    });
+    await expect(general).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Uploading 0%" }),
+    ).toBeVisible();
+    await random.getByRole("textbox").fill("still composing");
+    expect(
+      await page.evaluate(() => window.composerFixture.published()),
+    ).toEqual([]);
+    await page.screenshot({
+      path: test.info().outputPath("background-upload-navigated.png"),
+    });
+
+    release();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Uploading" }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.composerFixture.published()))
+      .toEqual([
+        {
+          content: expect.stringContaining("background caption"),
+          channel: "general",
+        },
+      ]);
+    await expect(random.getByRole("textbox")).toHaveText("still composing");
+    await expect(page.getByText("background caption")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "General", exact: true }).click();
+    await expect(page.getByText("background caption")).toBeVisible();
+    await expect(page.getByRole("link", { name: /held.txt/ })).toBeVisible();
+    expect(uploadRequests).toHaveLength(1);
+  } finally {
+    release();
+    await server.close();
+  }
+});
+
 // Browser-only boundary: toolbar geometry and keyboard order with real contributed tools.
 test("paperclip follows mentions and recipients, before the remaining tools", async ({
   page,

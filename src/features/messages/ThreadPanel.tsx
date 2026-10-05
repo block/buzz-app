@@ -52,7 +52,7 @@ export type ThreadPanelProps = {
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
-  onDraftSaved?: ((id: string) => void) | undefined;
+  onDraftSaved?: (() => void) | undefined;
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */

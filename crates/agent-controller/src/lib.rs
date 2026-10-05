@@ -2,13 +2,14 @@
 //! No legacy desktop dependency, implicit identity creation, or credential projection.
 mod agent_defaults;
 mod bundle;
+pub mod codex;
 mod community;
 mod config;
 mod harness_policy;
 pub use community::CommunityResolution;
 pub use harness_policy::{
     AuthenticationPolicy, ConfigurationMode, EffortDiscovery, HarnessConfigurationPolicy,
-    ModelRequirement, ProviderPolicy, SelectorEnvironment,
+    HarnessIntegration, ModelRequirement, ProviderPolicy, SelectorEnvironment,
 };
 pub mod connection;
 mod create;
@@ -42,6 +43,7 @@ pub use harness_presets::{harness_preset, harness_presets, HarnessPreset};
 pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
+pub use process::ContainedProcess;
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::{
     installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,

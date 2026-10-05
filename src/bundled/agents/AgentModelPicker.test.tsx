@@ -12,6 +12,86 @@ import type { ModelCatalog } from "../../features/agents/models";
 
 afterEach(cleanup);
 
+it("loads Goose models on provider selection, retires stale results, and retries failures explicitly", async () => {
+  const f = controlFixture();
+  let finish!: (catalog: ModelCatalog) => void;
+  const catalog = (id: string): ModelCatalog => ({
+    host: "",
+    models: [{ id, name: id }],
+    modelOverridden: false,
+    disconnected: false,
+  });
+  const run = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<ModelCatalog>((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockRejectedValueOnce("Provider sign-in failed")
+    .mockResolvedValue(catalog("available-model"));
+  const cancel = vi.fn(async () => {});
+  f.host.models = { begin: async () => 1, run, cancel };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "/local/goose",
+    provider: "",
+    model: "",
+  };
+  const picker = (provider: string, providerSelection = 0) => (
+    <AgentModelPicker
+      providerSelection={providerSelection}
+      draft={{ ...draft, provider }}
+      control={control}
+      defaults={undefined}
+      onChange={() => {}}
+    />
+  );
+  const view = render(picker(""));
+  try {
+    expect(run).not.toHaveBeenCalled();
+    view.rerender(picker("anthropic", 1));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    view.rerender(picker("databricks_v2", 2));
+    await waitFor(() => expect(cancel).toHaveBeenCalled());
+    await act(async () => finish(catalog("stale-model")));
+    await screen.findByText("Provider sign-in failed");
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({ provider: "databricks_v2" }),
+        }),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("option", { name: /stale-model/ })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Retry models" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    expect(
+      await screen.findByRole("option", { name: "available-model" }),
+    ).toBeVisible();
+    expect(run).toHaveBeenCalledTimes(3);
+    view.rerender(picker("custom-provider", 2));
+    expect(run).toHaveBeenCalledTimes(3);
+  } finally {
+    finish?.(catalog("stale-model"));
+    view.unmount();
+    control.dispose();
+  }
+});
+
 it("Goose Databricks v2 browses live IDs and flags an unlisted short name", async () => {
   const f = controlFixture();
   const run = vi.fn(async () => ({

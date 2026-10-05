@@ -179,7 +179,7 @@ settings changed (see [saving](#global-agent-defaults-and-saving)). Dirty
 drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
 navigation/reload still discards page-local drafts.
 
-**Browse models** requests the current Databricks catalog on explicit button
+For Buzz Agent, **Browse models** requests the current Databricks catalog on explicit button
 activation, including when typing has already opened the local popup. Typing,
 focus and ArrowDown navigation never start a model-host request. Existing
 app-isolated credentials are used/refreshed first; only an authentication failure
@@ -673,8 +673,14 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   bundled `goose-acp` executable, and offers common Goose providers plus a custom
   ID. Switching into Goose supplies no subcommand arguments and clears the
   previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
-  provider's supported-model list and searches it in the existing picker. The
+  previous model. For Goose, selecting a provider from the dropdown asks Goose
+  ACP for its supported-model list. Opening an existing editor does not start
+  discovery or sign-in; Browse remains available. The picker
+  shows loading and authentication failures; failures require explicit Retry.
+  Provider changes cancel the previous lookup and discard stale results.
+  Credential/context edits retire discovery and wait for Browse or Retry, so
+  typing credentials never repeatedly launches sign-in. Custom provider IDs
+  still require Browse, so typing an ID does not start a lookup per keystroke. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
   after discovery. The picker shows at most ten matches while filtering the full
   list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses

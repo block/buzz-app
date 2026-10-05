@@ -31,7 +31,10 @@ export function AgentModelPicker({
   onChange,
   disabled = false,
   policy,
+  providerSelection = 0,
 }: {
+  /** Incremented by a committed dropdown choice; custom typing never loads. */
+  providerSelection?: number;
   policy?: HarnessConfigurationPolicy | undefined;
   disabled?: boolean;
   /** Pi's signed-in providers, or null while its catalog is loading. */
@@ -247,6 +250,12 @@ export function AgentModelPicker({
   useEffect(() => {
     if (pi) void run("connect");
   }, [pi, draft.command]);
+  // Provider selection loads Goose's catalog. Credential/context edits retire
+  // that request but wait for Browse or Retry, never signing in per keystroke.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only selecting a Goose provider triggers automatic discovery.
+  useEffect(() => {
+    if (providerSelection && goose && draft.provider) void run("connect");
+  }, [providerSelection]);
   const fresh = catalog?.key === key ? catalog.data : null;
   const reportedProviders = JSON.stringify(
     !pi
@@ -551,8 +560,9 @@ export function AgentModelPicker({
           )}
         {goose && (
           <p className="text-body-sm text-secondary">
-            Browse to check this Goose provider’s models using the credentials
-            entered above or already configured in Goose.
+            Models load for the selected provider using credentials entered
+            above or already configured in Goose. You can also enter a custom
+            model ID.
           </p>
         )}
       </div>

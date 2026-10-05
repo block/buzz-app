@@ -588,7 +588,7 @@ pub(crate) async fn relay_http(
                 return Err("Agent enrollment or channel operation unavailable or invalid".into());
             }
         }
-        if matches!(kind, Some(9002 | 9008 | 9022 | 41012 | 9035 | 9036)) {
+        if matches!(kind, Some(9002 | 9008 | 9021 | 9022 | 41012 | 9035 | 9036)) {
             return Err("Invalid outgoing signature".into());
         }
     }

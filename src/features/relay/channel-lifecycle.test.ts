@@ -1332,3 +1332,94 @@ describe("Unarchive", () => {
     ).toThrow();
   });
 });
+
+describe("join from a public preview", () => {
+  function preview(tags: string[][] = [["public"]]) {
+    const h = harness("member");
+    const metadata = h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["name", "fixture"],
+      ...tags,
+    ]);
+    const roster = (...members: string[]) =>
+      h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
+    h.setEvents([metadata, roster(other)]);
+    // Nonmember previews never satisfy member-action access.
+    h.deny();
+    h.publish.mockImplementation(async (event: RelayEvent) => {
+      if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
+    });
+    return { ...h, metadata, roster };
+  }
+
+  it("publishes kind 9021 and applies the confirmed roster", async () => {
+    const h = preview();
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 9021, content: "", tags: [["h", id]] }),
+        expect.anything(),
+      );
+      expect(h.publish).toHaveBeenCalledOnce();
+      const [accepted] = h.acceptDiscovery.mock.lastCall ?? [];
+      expect(accepted).toHaveLength(1);
+      expect(accepted?.[0]).toMatchObject({ kind: 39002 });
+      expect(accepted?.[0]?.tags).toContainEqual(["p", viewer]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("applies an existing membership without signing", async () => {
+    const h = preview();
+    h.setEvents([h.metadata, h.roster(viewer)]);
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it.each([
+    [[]],
+    [[["public"], ["private"]]],
+    [[["public"], ["hidden"]]],
+    [[["public"], ["archived", "true"]]],
+  ])("refuses metadata %j before signing", async (tags) => {
+    const h = preview(tags);
+    try {
+      await expect(h.owner.capability.run("join", id)).rejects.toThrow(
+        "Only active public channels can be joined.",
+      );
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("reports an accepted but unconfirmed join, then a retry confirms it", async () => {
+    const h = preview();
+    h.publish.mockImplementationOnce(async () => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = expect(
+        h.owner.capability.run("join", id),
+      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      await vi.advanceTimersByTimeAsync(2500);
+      await pending;
+      vi.useRealTimers();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+      await h.owner.capability.run("join", id);
+      expect(h.publish).toHaveBeenCalledTimes(2);
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      h.owner.dispose();
+    }
+  });
+});

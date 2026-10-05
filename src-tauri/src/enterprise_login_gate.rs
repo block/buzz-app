@@ -5,9 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 
-use crate::enterprise_relay_url::{
-    canonical_enterprise_relay_url, parse_enterprise_relay_allowlist,
-};
+use crate::enterprise_relay_url::canonical_enterprise_relay_url;
 
 const MAX_DISCOVERY_BODY: usize = 128 * 1024;
 
@@ -36,22 +34,14 @@ pub(crate) enum EnterpriseLoginGateStatus {
 pub(crate) async fn enterprise_login_gate(
     relay_url: String,
 ) -> Result<EnterpriseLoginGateStatus, String> {
-    let trusted = configured_trusted_relays()?;
-    discover_enterprise_login_gate(&relay_url, &trusted, None).await
+    discover_enterprise_login_gate(&relay_url, None).await
 }
 
-async fn discover_enterprise_login_gate(
+pub(crate) async fn discover_enterprise_login_gate(
     relay_url: &str,
-    trusted: &[String],
-    // Production passes None; tests replace only the already-authorized destination with loopback.
+    // Production derives /info from the relay URL; tests substitute a local fixture.
     discovery_url_override: Option<Url>,
 ) -> Result<EnterpriseLoginGateStatus, String> {
-    if trusted.is_empty() {
-        return Ok(EnterpriseLoginGateStatus::NotRequired);
-    }
-    if !trusted_relay_matches(relay_url, trusted)? {
-        return Ok(EnterpriseLoginGateStatus::NotRequired);
-    }
     let relay = canonical_enterprise_relay_url(relay_url)?;
     let discovery_url = discovery_url_override.unwrap_or(enterprise_relay_http_url(&relay)?);
 
@@ -67,27 +57,20 @@ async fn discover_enterprise_login_gate(
     let body = read_bounded(response).await?;
     let document: Value = serde_json::from_slice(&body)
         .map_err(|_| "Enterprise community discovery was invalid".to_owned())?;
-    evaluate_trusted_enterprise_login_gate(&document)
+    // NIP-11 determines whether a relay requires identity. Its issuer metadata
+    // never supplies a destination for session credentials.
+    evaluate_enterprise_login_requirement(&document)
 }
 
-fn trusted_relay_matches(relay_url: &str, trusted: &[String]) -> Result<bool, String> {
-    if trusted.is_empty() {
-        return Ok(false);
-    }
-    let relay = canonical_enterprise_relay_url(relay_url)?;
-    Ok(trusted.iter().any(|trusted| trusted == &relay))
-}
-
-fn configured_trusted_relays() -> Result<Vec<String>, String> {
-    option_env!("BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS")
-        .map(parse_enterprise_relay_allowlist)
-        .transpose()
-        .map(|relays| relays.unwrap_or_default())
-}
-
-fn evaluate_trusted_enterprise_login_gate(
+fn evaluate_enterprise_login_requirement(
     document: &Value,
 ) -> Result<EnterpriseLoginGateStatus, String> {
+    let Some(limitation) = document.get("limitation") else {
+        return Ok(EnterpriseLoginGateStatus::NotRequired);
+    };
+    if !limitation.is_object() {
+        return Err("Enterprise identity discovery was invalid".into());
+    }
     let limitation_requires = match document
         .get("limitation")
         .and_then(|limitation| limitation.get("federated_identity"))
@@ -96,16 +79,12 @@ fn evaluate_trusted_enterprise_login_gate(
         Some(_) => return Err("Enterprise identity discovery was invalid".into()),
         None => false,
     };
-    let Some(discovery) = document.get("federated_identity") else {
-        return Err(if limitation_requires {
-            "Enterprise identity discovery was incomplete".into()
-        } else {
-            "This trusted community did not advertise supported enterprise login".into()
-        });
-    };
     if !limitation_requires {
-        return Err("Enterprise identity discovery was inconsistent".into());
+        return Ok(EnterpriseLoginGateStatus::NotRequired);
     }
+    let Some(discovery) = document.get("federated_identity") else {
+        return Err("Enterprise identity discovery was incomplete".into());
+    };
     let Some(discovery) = discovery.as_object() else {
         return Err("Enterprise identity discovery was invalid".into());
     };
@@ -271,17 +250,11 @@ mod tests {
         .into_bytes()
     }
 
-    fn trusted_relays() -> Vec<String> {
-        parse_enterprise_relay_allowlist(TRUSTED_RELAY).unwrap()
-    }
-
     async fn discover_with_fixture(
         response: Vec<u8>,
-        trusted: &[String],
     ) -> (Result<EnterpriseLoginGateStatus, String>, Option<Vec<u8>>) {
         let fixture = Fixture::spawn(response);
-        let result =
-            discover_enterprise_login_gate(TRUSTED_RELAY, trusted, Some(fixture.url.clone())).await;
+        let result = discover_enterprise_login_gate(TRUSTED_RELAY, Some(fixture.url.clone())).await;
         (result, fixture.finish())
     }
 
@@ -308,6 +281,7 @@ mod tests {
             "limitation": { "federated_identity": true },
             "federated_identity": {
                 "core": "client-attached",
+                "issuer": "https://issuer-from-nip11.example/v1/identity/assertions",
                 "assertion_freshness": {
                     "class": "offline-jwt",
                     "maximum_residual_upstream_revocation_seconds": null
@@ -317,23 +291,52 @@ mod tests {
     }
 
     #[test]
-    fn matching_advertisement_requires_login() {
+    fn a_nip11_limitation_requires_login() {
         assert_eq!(
-            evaluate_trusted_enterprise_login_gate(&discovery_document()).unwrap(),
+            evaluate_enterprise_login_requirement(&discovery_document()).unwrap(),
             EnterpriseLoginGateStatus::Required
         );
     }
 
     #[test]
-    fn missing_or_inconsistent_advertisement_fails_closed() {
+    fn advertised_issuer_does_not_change_the_requirement_decision() {
+        let mut document = discovery_document();
+        document["federated_identity"]["issuer"] =
+            Value::String("file:///unexpected/credential-destination".into());
+        assert_eq!(
+            evaluate_enterprise_login_requirement(&document).unwrap(),
+            EnterpriseLoginGateStatus::Required
+        );
+    }
+
+    #[test]
+    fn ordinary_relays_have_no_identity_requirement() {
         for document in [
             serde_json::json!({}),
+            serde_json::json!({"limitation": {"federated_identity": false}}),
             serde_json::json!({
                 "limitation": { "federated_identity": false },
                 "federated_identity": {}
             }),
         ] {
-            assert!(evaluate_trusted_enterprise_login_gate(&document).is_err());
+            assert_eq!(
+                evaluate_enterprise_login_requirement(&document).unwrap(),
+                EnterpriseLoginGateStatus::NotRequired
+            );
+        }
+    }
+
+    #[test]
+    fn a_required_limitation_needs_supported_metadata() {
+        for document in [
+            serde_json::json!({"limitation": {"federated_identity": true}}),
+            serde_json::json!({
+                "limitation": { "federated_identity": true },
+                "federated_identity": {}
+            }),
+            serde_json::json!({"limitation": {"federated_identity": "yes"}}),
+        ] {
+            assert!(evaluate_enterprise_login_requirement(&document).is_err());
         }
     }
 
@@ -342,21 +345,19 @@ mod tests {
         let mut document = discovery_document();
         document["federated_identity"]["assertion_freshness"]["class"] =
             Value::String("current-status".into());
-        assert!(evaluate_trusted_enterprise_login_gate(&document).is_err());
+        assert!(evaluate_enterprise_login_requirement(&document).is_err());
     }
 
     #[test]
-    fn ordinary_relays_bypass_the_trusted_gate() {
-        let trusted = vec!["wss://enterprise.example/".to_owned()];
-        assert!(!trusted_relay_matches("https://ordinary.example/", &trusted).unwrap());
-        assert!(!trusted_relay_matches("https://ordinary.example/", &[]).unwrap());
-    }
-
-    #[test]
-    fn trusted_matching_uses_secure_origin_canonicalization() {
-        let trusted = parse_enterprise_relay_allowlist("https://EXAMPLE.com.").unwrap();
-        assert!(trusted_relay_matches("https://example.com", &trusted).unwrap());
-        assert!(trusted_relay_matches("wss://EXAMPLE.com:443/", &trusted).unwrap());
+    fn relay_urls_use_secure_origin_canonicalization() {
+        assert_eq!(
+            canonical_enterprise_relay_url("https://EXAMPLE.com.").unwrap(),
+            "wss://example.com/"
+        );
+        assert_eq!(
+            canonical_enterprise_relay_url("wss://EXAMPLE.com:443/").unwrap(),
+            "wss://example.com/"
+        );
     }
 
     #[test]
@@ -370,50 +371,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ordinary_and_unconfigured_relays_never_fetch_discovery() {
-        let body = serde_json::to_vec(&discovery_document()).unwrap();
-        for (relay, trusted) in [
-            ("wss://ordinary.example", trusted_relays()),
-            (TRUSTED_RELAY, Vec::new()),
-        ] {
-            let fixture = Fixture::spawn(response("200 OK", &body, body.len()));
-            let status = discover_enterprise_login_gate(relay, &trusted, Some(fixture.url.clone()))
-                .await
-                .unwrap();
-            assert_eq!(status, EnterpriseLoginGateStatus::NotRequired);
-            assert!(fixture.finish().is_none());
-        }
+    async fn ordinary_relays_fetch_nip11_then_bypass_badge_issuance() {
+        let body = br#"{"name":"ordinary relay"}"#;
+        let (status, request) =
+            discover_with_fixture(response("200 OK", body, body.len()).to_vec()).await;
+        assert_eq!(status.unwrap(), EnterpriseLoginGateStatus::NotRequired);
+        assert_info_request(request.as_ref());
     }
 
     #[tokio::test]
-    async fn trusted_discovery_requires_valid_metadata_and_sends_expected_request() {
+    async fn required_discovery_reads_only_the_relay_nip11_document() {
         let body = serde_json::to_vec(&discovery_document()).unwrap();
-        let (status, request) =
-            discover_with_fixture(response("200 OK", &body, body.len()), &trusted_relays()).await;
+        let (status, request) = discover_with_fixture(response("200 OK", &body, body.len())).await;
         assert_eq!(status.unwrap(), EnterpriseLoginGateStatus::Required);
         assert_info_request(request.as_ref());
     }
 
     #[tokio::test]
-    async fn trusted_discovery_failures_fail_closed() {
+    async fn required_discovery_failures_fail_closed() {
         let cases = [
             ("503 Service Unavailable", b"unavailable".to_vec(), "failed"),
             ("200 OK", b"not json".to_vec(), "invalid"),
-            ("200 OK", b"{}".to_vec(), "did not advertise"),
             (
                 "200 OK",
                 br#"{"limitation":{"federated_identity":true}}"#.to_vec(),
                 "incomplete",
             ),
-            (
-                "200 OK",
-                br#"{"limitation":{"federated_identity":false},"federated_identity":{}}"#.to_vec(),
-                "inconsistent",
-            ),
         ];
         for (status, body, expected_error) in cases {
             let (result, request) =
-                discover_with_fixture(response(status, &body, body.len()), &trusted_relays()).await;
+                discover_with_fixture(response(status, &body, body.len())).await;
             let error = result.unwrap_err();
             assert!(error.contains(expected_error), "{error}");
             assert_info_request(request.as_ref());
@@ -421,17 +408,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_discovery_refuses_redirects() {
+    async fn discovery_refuses_redirects() {
         let body = serde_json::to_vec(&discovery_document()).unwrap();
         let target = Fixture::spawn(response("200 OK", &body, body.len()));
         let redirect = Fixture::spawn(redirect_response(&target.url));
-        let error = discover_enterprise_login_gate(
-            TRUSTED_RELAY,
-            &trusted_relays(),
-            Some(redirect.url.clone()),
-        )
-        .await
-        .unwrap_err();
+        let error = discover_enterprise_login_gate(TRUSTED_RELAY, Some(redirect.url.clone()))
+            .await
+            .unwrap_err();
         let redirect_request = redirect.finish();
         let target_request = target.finish();
 
@@ -441,7 +424,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trusted_discovery_body_limit_covers_declared_and_chunked_responses() {
+    async fn discovery_body_limit_covers_declared_and_chunked_responses() {
         let exact = padded_discovery_body(MAX_DISCOVERY_BODY);
         let oversized = padded_discovery_body(MAX_DISCOVERY_BODY + 1);
         let cases = [
@@ -459,7 +442,7 @@ mod tests {
             ("chunked oversized", chunked_response(&oversized), false),
         ];
         for (name, response, succeeds) in cases {
-            let (result, request) = discover_with_fixture(response, &trusted_relays()).await;
+            let (result, request) = discover_with_fixture(response).await;
 
             if succeeds {
                 assert_eq!(

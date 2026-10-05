@@ -683,6 +683,7 @@ dependencies = [
  "block2",
  "buzz-agent",
  "buzz-agent-controller",
+ "buzz-builderlab-session",
  "buzz-credential-store",
  "buzzodz-plugins",
  "futures-lite",

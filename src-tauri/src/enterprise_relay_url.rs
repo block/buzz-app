@@ -1,25 +1,5 @@
 use url::Url;
 
-pub(crate) fn parse_enterprise_relay_allowlist(raw: &str) -> Result<Vec<String>, String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err("BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS must not be empty when set".into());
-    }
-    raw.split(',')
-        .enumerate()
-        .map(|(index, value)| {
-            let value = value.trim();
-            if value.is_empty() {
-                return Err(format!(
-                    "BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS entry {} must not be empty",
-                    index + 1
-                ));
-            }
-            canonical_enterprise_relay_url(value)
-        })
-        .collect()
-}
-
 pub(crate) fn canonical_enterprise_relay_url(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
     let Some((raw_scheme, authority_and_path)) = raw.split_once("://") else {
@@ -117,10 +97,5 @@ mod tests {
         ] {
             assert!(canonical_enterprise_relay_url(value).is_err(), "{value}");
         }
-    }
-
-    #[test]
-    fn rejects_empty_allowlist_entries() {
-        assert!(parse_enterprise_relay_allowlist("wss://relay.example,").is_err());
     }
 }

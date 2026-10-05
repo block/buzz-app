@@ -15,11 +15,7 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
-mod enterprise_adapter_url;
 mod enterprise_auth;
-#[cfg(test)]
-#[path = "enterprise_auth_build.rs"]
-mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
@@ -56,6 +52,7 @@ use agents::{
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
     agent_control_snapshot, agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
 };
+use buzz_builderlab_session::SessionOwner;
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
@@ -63,8 +60,8 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_auth::{
-    cancel_enterprise_auth_login, clear_enterprise_auth, get_enterprise_auth,
-    start_enterprise_auth_login, EnterpriseAuthHost,
+    cancel_enterprise_auth_login, clear_enterprise_auth, get_enterprise_auth, refusal_service_name,
+    start_enterprise_auth_login,
 };
 use enterprise_login_gate::enterprise_login_gate;
 use harness_setup::{pi_install, HarnessSetup};
@@ -504,6 +501,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             deep_links::setup(app.handle());
+            let home = app.path().home_dir().map_err(|_| {
+                std::io::Error::other("Could not resolve the BuilderLab home directory")
+            })?;
+            app.manage(SessionOwner::from_home(
+                home,
+                app.path().app_data_dir().ok(),
+                refusal_service_name(),
+            ));
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -549,7 +554,6 @@ pub fn run() {
     builder
         .manage(IdentityHost::default())
         .manage(archive::ArchiveHost::default())
-        .manage(EnterpriseAuthHost::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

@@ -238,12 +238,17 @@ function OwnedCompletion({
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
   function accept(index: number, key = "click") {
-    if (!active() || latest.current !== result) return false;
+    const published = latest.current;
+    if (!active() || !published) return false;
     if (index === items.length && result?.retry) {
-      result.retry();
+      if (!published.retry) return false;
+      published.retry();
       return true;
     }
-    const item = items[index];
+    // Publication is synchronous; React may still be displaying the previous
+    // result. Keep the user's chosen ID, but use only its current evidence/edit.
+    const item = published.items.find((item) => item.id === items[index]?.id);
+    if (key === " " && item?.id !== published.spaceId) return false;
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
       item.edit,

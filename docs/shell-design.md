@@ -151,8 +151,8 @@ Membership settings card scoped to that community. The rail reads
 that roster through the selected community's existing session and verifies it
 against the relay authority that session already holds, so the read adds no
 session request to the connection and opens no other session. That card applies
-the same role gate: in native builds it stays registered with its member list
-and Invite members button, but hides direct additions and per-member actions.
+the same role gate in native builds, with its member list, Invite members
+button, direct additions and per-member actions.
 A Settings section, history entry or `buzz://open` locator naming it still opens
 instead of reporting unavailable. Community settings is
 on every community and opens Settings scoped to that community's origin, which

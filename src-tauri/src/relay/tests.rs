@@ -79,17 +79,52 @@ fn leave_requests_sign_only_the_protected_empty_shape() {
     ] {
         assert!(validate_event("https://relay.test", &rejected).is_err());
     }
-    // Member commands stay owner/admin-only on the broker; native signs none.
-    assert!(validate_event(
-        "https://relay.test",
-        &EventTemplate {
-            kind: 9031,
-            created_at: 1,
-            content: "".into(),
-            tags: vec![vec!["p".into(), "a".repeat(64)]],
-        }
-    )
-    .is_err());
+}
+
+#[test]
+fn member_commands_sign_only_the_broker_shape() {
+    let command = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
+        kind,
+        created_at: 1,
+        content: content.into(),
+        tags: tags
+            .iter()
+            .map(|tag| tag.iter().map(|value| value.to_string()).collect())
+            .collect(),
+    };
+    let key = "a".repeat(64);
+    let p: &[&str] = &["p", &key];
+    for accepted in [
+        command(9030, "", &[p, &["role", "member"]]),
+        command(9030, "", &[p, &["role", "admin"]]),
+        command(9031, "", &[p]),
+        command(9032, "", &[p, &["role", "admin"]]),
+        command(9032, "", &[p, &["role", "member"]]),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    let upper = "A".repeat(64);
+    for rejected in [
+        // Owner is never granted, and add/role must name a role.
+        command(9030, "", &[p, &["role", "owner"]]),
+        command(9032, "", &[p, &["role", "owner"]]),
+        command(9030, "", &[p]),
+        command(9032, "", &[p]),
+        // Remove carries the target only.
+        command(9031, "", &[p, &["role", "member"]]),
+        command(9030, "note", &[p, &["role", "member"]]),
+        command(9031, "", &[&["p", &upper]]),
+        command(9031, "", &[&["p", &key[1..]]]),
+        command(9031, "", &[&["p", &key, "wss://relay.test"]]),
+        command(9031, "", &[p, p]),
+        command(9031, "", &[&["role", "member"], p]),
+        command(9030, "", &[p, &["role", "member"], &["h", "channel"]]),
+        command(9031, "", &[]),
+        // Workspace profile edits stay outside this surface.
+        command(9033, "", &[]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
 }
 
 fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, String)>) {
@@ -2075,4 +2110,60 @@ fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries(
     let mut too_large = event(vec![channel]);
     too_large.content = "é".repeat(13 * 1024);
     assert!(validate_event("https://relay.test", &too_large).is_err());
+}
+
+#[test]
+fn member_commands_sign_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: &serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let target = "a".repeat(64);
+    let command = |kind: u16, tags: serde_json::Value| serde_json::json!({ "kind": kind, "created_at": 1, "content": "", "tags": tags });
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "member"]])),
+        command(9030, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9031, serde_json::json!([["p", target]])),
+        command(9032, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "member"]])),
+    ] {
+        let signed = sign(&event).unwrap();
+        assert_eq!(
+            signed["pubkey"],
+            "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+        );
+        for field in ["kind", "created_at", "content", "tags"] {
+            assert_eq!(signed[field], event[field]);
+        }
+        verify(&signed);
+    }
+    // An owner grant is refused by the host before any key use.
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "owner"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "owner"]])),
+    ] {
+        assert!(sign(&event).is_err(), "signed {event}");
+    }
 }

@@ -31,7 +31,7 @@ import {
   claimReason,
   inviteRequest,
   memberCommand,
-} from "./community-admin.mjs";
+} from "../src/features/communities/admin-protocol.ts";
 import {
   leaveRefusal,
   leaveRequestTemplate,

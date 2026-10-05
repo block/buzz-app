@@ -112,11 +112,14 @@ test.describe("public search destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await expect(button(page, "Search Buzz")).toBeVisible();
+    // Open search once the conversation has rendered. While startup is still
+    // painting, WebKit can drop the text `fill` inserts into the fresh palette.
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
     for (const mode of ["cold", "warm"]) {
       await button(page, "Search Buzz").click();
       const input = page.getByRole("combobox", { name: "Search Buzz" });
       await input.fill("crew-search");
+      await expect(input).toHaveValue("crew-search");
       const result = page.getByRole("option", {
         name: /crew-search exact public reply/,
       });

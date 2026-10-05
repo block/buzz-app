@@ -166,8 +166,15 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
   await expectReviewContained();
   await longReview.hover();
   await expectReviewContained();
-  await expect(panel.getByRole("tablist")).toHaveCount(0);
-  await expect(panel.getByRole("tabpanel", { hidden: true })).toHaveCount(0);
+  await expect(
+    panel.getByRole("tab", { name: "Discussion", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    panel.getByRole("tab", { name: "Checks", exact: true }),
+  ).toHaveAttribute("aria-selected", "false");
+  await expect(
+    panel.getByRole("tabpanel", { name: "Discussion", exact: true }),
+  ).toBeVisible();
   await expect(panel.locator("[data-check-state]")).toHaveCount(0);
   expect([...requests].sort()).toEqual([
     "/repos/sample/project/issues/1/comments",

@@ -8,6 +8,7 @@ export type GitHubDetails = {
   bodyHtml?: string | undefined;
   state: string;
   author: string;
+  headSha?: string | undefined;
   authorUrl?: string | undefined;
   authorAvatar?: string | undefined;
   createdAt?: string | undefined;
@@ -48,7 +49,7 @@ type ResponseData = {
   author?: { login: string };
   commit?: { message: string; author: { name: string } };
   base?: BranchData;
-  head?: BranchData;
+  head?: BranchData & { sha?: string };
   additions?: number;
   deletions?: number;
   changed_files?: number;
@@ -137,6 +138,7 @@ export async function loadGitHubDetails(
     title: data.title ?? commitTitle ?? reference.repository,
     body: data.body ?? data.description ?? commitBody.join("\n").trim(),
     bodyHtml: data.body_html ?? undefined,
+    headSha: reference.kind === "pull" ? data.head?.sha : undefined,
     state: data.merged
       ? "Merged"
       : data.state === "closed"

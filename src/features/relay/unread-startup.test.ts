@@ -482,7 +482,7 @@ it("a full page of replies under one parent cannot hide the viewer's reply to an
   );
 });
 
-it("pages one busy parent back until the viewer's direct reply appears", async () => {
+it("a busy root's deep replies of the viewer decide its thread in one page", async () => {
   const h = setup();
   const relay = conversationRelay(h);
   const root = message(h.peer, "other", "busy root", 10);
@@ -510,7 +510,9 @@ it("pages one busy parent back until the viewer's direct reply appears", async (
   const pages = relay.lookups
     .flat()
     .filter((filter) => filter.authors && filter["#e"]?.includes(root.id));
-  expect(pages.map((filter) => filter.until)).toEqual([undefined, 20]);
+  // Any reply of the viewer under the root makes the whole thread the
+  // viewer's, so the first full page already decides it.
+  expect(pages.map((filter) => filter.until)).toEqual([undefined]);
 });
 
 it("a reply to the viewer's message in another channel is not the viewer's conversation", async () => {

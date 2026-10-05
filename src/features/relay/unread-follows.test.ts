@@ -270,6 +270,59 @@ it("follows a thread where a lookup found the viewer's older reply", async () =>
   expect(unread.attention("c0", elsewhere.id).category).toBe("thread");
 });
 
+/** A relay holding older history: answers ID reads and the viewer's `#e`
+ * reply lookups, as the transport filters would. */
+function relayOf(...history: RelayEvent[]) {
+  return async (filters: readonly { ids?: readonly string[] }[]) => {
+    const filter = filters[0] as {
+      ids?: readonly string[];
+      authors?: readonly string[];
+      "#e"?: readonly string[];
+    };
+    return history.filter((item) =>
+      filter.ids
+        ? filter.ids.includes(item.id)
+        : filter.authors?.includes(item.pubkey) &&
+          item.tags.some(
+            ([name, id]) => name === "e" && !!id && filter["#e"]?.includes(id),
+          ),
+    );
+  };
+}
+
+it("follows a revived thread whose root the viewer wrote outside the window", async () => {
+  const root = event(viewer, 5, []);
+  const answer = reply(peer, 6, root);
+  const nested = reply(peer, 21, root, answer);
+  const { owner, unread, reader, settled } = await setup();
+  reader.read.mockImplementation(relayOf(root, answer));
+  // Only the nested reply is retained; its parent is a peer's.
+  owner.accept([nested]);
+  await settled(nested);
+  expect(unread.following("c0", root.id)).toBe(true);
+  expect(unread.attention("c0", nested.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+});
+
+it("follows a revived thread where the viewer replied on another branch", async () => {
+  const root = event(peer, 5, []);
+  const branch = reply(peer, 6, root);
+  const mine = reply(viewer, 7, root, branch);
+  const sibling = reply(peer, 20, root);
+  const nested = reply(peer, 21, root, sibling);
+  const { owner, unread, reader, settled } = await setup();
+  reader.read.mockImplementation(relayOf(root, branch, mine));
+  owner.accept([sibling, nested]);
+  await settled(sibling, nested);
+  expect(unread.following("c0", root.id)).toBe(true);
+  expect(unread.attention("c0", nested.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+});
+
 it("keys choices by channel and canonical root and keeps them across reload", async () => {
   const follows = memoryThreadFollows();
   const first = await setup(follows);

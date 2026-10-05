@@ -483,12 +483,18 @@ export function createUnread({
     entry.mentioned ||
     entry.broadcast ||
     conversation(entry);
+  /** The lookups that decide a reply: its parent's conversation and, for a
+   * nested reply, its root's whole thread. */
+  const lookupKeys = ({ channelId, parentId, threadRootId }: Evidence) =>
+    [...new Set([parentId, threadRootId].filter((id) => id !== undefined))].map(
+      (id) => conversationKey(channelId, id),
+    );
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
     !!entry.parentId &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
-    !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
+    lookupKeys(entry).some((key) => !lookups.get(key)?.done);
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
     if (event.pubkey === viewer) return false;
@@ -609,9 +615,7 @@ export function createUnread({
     const open = undecided(entry, dm);
     if (open) want(entry, dm);
     const pending =
-      open &&
-      lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
-        false;
+      open && lookupKeys(entry).some((key) => lookups.get(key)?.done === false);
     const viewing = [...views.values()].some(
       (view) => view.ids.has(messageId) && view.visible(),
     );
@@ -1126,26 +1130,27 @@ export function createUnread({
   // only: they never count and never start another lookup, so a lookup cannot
   // walk up an old thread.
   function want(entry: Evidence, dm: boolean) {
-    const { event, channelId, parentId } = entry;
+    const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
-    const key = conversationKey(channelId, parentId);
-    if (
-      lookups.has(key) ||
-      !undecided(entry, dm) ||
-      !afterFrontier(entry, reads.state(), dm)
-    )
+    if (!undecided(entry, dm) || !afterFrontier(entry, reads.state(), dm))
       return;
-    lookups.set(key, {
-      channelId,
-      done: false,
-      evidence: undefined,
-      more: false,
-    });
-    const ids = new Set([parentId]);
-    // Also fetch the root so a reply to a fetched parent still groups and opens.
-    const rootId = threadReference(event)?.rootId;
-    if (rootId && !structural(rootId)) ids.add(rootId);
-    queued.set(key, { channelId, parentId, ids });
+    // The parent's conversation, and the root's whole thread: the viewer may
+    // have written the root or replied on another branch.
+    for (const id of new Set([parentId, threadRootId])) {
+      if (id === undefined) continue;
+      const key = conversationKey(channelId, id);
+      if (lookups.has(key)) continue;
+      lookups.set(key, {
+        channelId,
+        done: false,
+        evidence: undefined,
+        more: false,
+      });
+      const ids = new Set([id]);
+      // Also fetch the root so a reply to a fetched parent still groups and opens.
+      if (threadRootId && !structural(threadRootId)) ids.add(threadRootId);
+      queued.set(key, { channelId, parentId: id, ids });
+    }
     if (scheduled || retry) return;
     scheduled = true;
     queueMicrotask(() => {
@@ -1180,8 +1185,9 @@ export function createUnread({
   }
   const contentKinds = [9, 40002, 40008];
   /** The viewer's replies under these parents, with their deletions. `#e`
-   * also matches root tags, so a busy thread can fill one page: split a full
-   * page, and page one parent back in time until its direct reply appears. */
+   * also matches root tags, which a root's lookup relies on, so a busy thread
+   * can fill one page: split a full page, and page one parent back in time
+   * until a reply that decides it (a direct reply, or any under a root) appears. */
   async function viewerReplies(
     channelId: string,
     parents: readonly string[],
@@ -1216,9 +1222,12 @@ export function createUnread({
     // pages (5,000 replies under one root) as a cost bound.
     const oldest = Math.min(...content.map((event) => event.created_at));
     if (
-      content.some(
-        (event) => threadReference(event)?.parentId === parents[0],
-      ) ||
+      content.some((event) => {
+        const reference = threadReference(event);
+        return (
+          reference?.parentId === parents[0] || reference?.rootId === parents[0]
+        );
+      }) ||
       oldest === until ||
       pages >= 9
     )
@@ -1309,9 +1318,11 @@ export function createUnread({
         for (const event of fetched) if (live(event)) keep(event);
         const mine = new Map(parents.map((id) => [id, [] as RelayEvent[]]));
         for (const event of replies) {
-          const parentId = threadReference(event)?.parentId;
-          if (event.pubkey === viewer && live(event))
-            mine.get(parentId ?? "")?.push(event);
+          const reference = threadReference(event);
+          if (!reference || event.pubkey !== viewer || !live(event)) continue;
+          // A reply decides its parent's conversation and its root's thread.
+          for (const id of new Set([reference.parentId, reference.rootId]))
+            mine.get(id)?.push(event);
         }
         for (const [id, found] of mine) {
           const parent = structural(id);

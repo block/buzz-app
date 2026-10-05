@@ -5,6 +5,29 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 
+test("the opt-in catalog adds Builderlab without replacing existing plugins", async () => {
+  const vite = await createServer({
+    configFile: false,
+    define: { "import.meta.env.VITE_BUZZ_BUILDERLAB": JSON.stringify("1") },
+    optimizeDeps: { noDiscovery: true, include: [] },
+    server: { middlewareMode: true, ws: false },
+  });
+  try {
+    const { bundledPlugins } = await vite.ssrLoadModule(
+      "/src/bundled/index.ts",
+    );
+    assert.equal(bundledPlugins.length, 22);
+    const builderlab = bundledPlugins.find(
+      ({ manifest }) => manifest.id === "block.builderlab",
+    );
+    assert.equal(builderlab.enabledByDefault, true);
+    assert.equal(typeof builderlab.module.apply, "function");
+    assert.equal(builderlab.manifest.host, undefined);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("the app runtime exposes ready bundled pages and removes them on disable", async () => {
   const vite = await createServer({
     configFile: false,

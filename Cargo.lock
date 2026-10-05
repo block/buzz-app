@@ -661,11 +661,9 @@ dependencies = [
 name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
- "axum",
  "base64 0.22.1",
  "bech32 0.11.1",
  "block2",
- "builderlab-auth",
  "buzz-agent",
  "buzz-agent-controller",
  "buzz-credential-store",
@@ -689,10 +687,10 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.10.9",
  "tauri",
  "tauri-build",
+ "tauri-plugin-builderlab",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
@@ -5380,6 +5378,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-builderlab"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "builderlab-auth",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tauri",
+ "tauri-plugin",
+ "tauri-plugin-opener",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "tauri-plugin-deep-link"
 version = "2.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7494,6 +7513,7 @@ version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
+ "serde",
  "zeroize_derive",
 ]
 

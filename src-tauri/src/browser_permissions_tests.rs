@@ -41,6 +41,25 @@ fn native_command_permissions_allow_only_main_webview() {
         })
         .build(super::app_context())
         .unwrap();
+    #[cfg(feature = "builderlab")]
+    {
+        use tauri::Manager;
+        app.add_capability(include_str!(
+            "../../crates/tauri-plugin-builderlab/capability.json"
+        ))
+        .unwrap();
+        // Use the real companion's ACL without resolving the user's store.
+        app.handle()
+            .plugin(
+                tauri::plugin::Builder::<MockRuntime>::new("builderlab")
+                    .invoke_handler(|request| {
+                        request.resolver.resolve("authorized");
+                        true
+                    })
+                    .build(),
+            )
+            .unwrap();
+    }
     let main_window = WindowBuilder::new(&app, "main").build().unwrap();
     let main = main_window
         .add_child(
@@ -64,10 +83,6 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_import",
         "identity_create",
         "identity_export",
-        "builderlab_auth",
-        "builderlab_login",
-        "builderlab_cancel",
-        "builderlab_sign_out",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",
         "relay_decode_read_state",
@@ -152,6 +167,18 @@ fn native_command_permissions_allow_only_main_webview() {
     };
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
+    for command in ["auth", "login", "cancel", "sign_out"] {
+        assert!(invoke(&main, &format!("builderlab_{command}"), local_origin).is_err());
+        let command = format!("plugin:builderlab|{command}");
+        assert_eq!(
+            invoke(&main, &command, local_origin).is_ok(),
+            cfg!(feature = "builderlab")
+        );
+        for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
+            assert!(invoke(&guest, &command, origin).is_err());
+        }
+        assert!(invoke(&main, &command, "https://example.org").is_err());
+    }
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

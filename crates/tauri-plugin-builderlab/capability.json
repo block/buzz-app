@@ -1,0 +1,6 @@
+{
+  "identifier": "builderlab-main",
+  "description": "Builderlab account access for the local main webview only",
+  "webviews": ["main"],
+  "permissions": ["builderlab:default"]
+}

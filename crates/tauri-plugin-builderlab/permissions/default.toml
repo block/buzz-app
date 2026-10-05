@@ -1,0 +1,3 @@
+[default]
+description = "Read, create and end the Builderlab session shared with the bl CLI. Credentials remain native."
+permissions = ["allow-auth", "allow-login", "allow-cancel", "allow-sign-out"]

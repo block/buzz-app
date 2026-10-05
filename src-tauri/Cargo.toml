@@ -9,26 +9,28 @@ rust-version = "1.89"
 name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+builderlab = ["dep:tauri-plugin-builderlab", "buzzodz-plugins/builderlab"]
+
 [build-dependencies]
 url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tauri-plugin-builderlab = { path = "../crates/tauri-plugin-builderlab", optional = true }
 tauri = { version = "2", features = ["unstable"] }
 wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-serde_yaml = "0.9"
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "4f51b9e1010e086a16c099cd8d8218ca974a5e18" }
-builderlab-auth = { git = "https://github.com/block/builderlab-cli.git", rev = "78f9ea0044f7265b5e72aacd822215f6621fad7b", default-features = false }
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
-axum = "0.8"
 url = "2"
 percent-encoding = "2"
 tauri-plugin-dialog = "2"

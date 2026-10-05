@@ -1,13 +1,4 @@
-// Block-hosted community accounts: sign-in through the native builderlab_*
-// commands on desktop, otherwise through the development broker's
-// /api/builderlab routes, which also still own every community action.
-import { nativeIdentityEnabled } from "../../features/identity/service";
-import {
-  nativeDeviceKey,
-  nativeGetAuth,
-  nativeLogin,
-  nativeSignOut,
-} from "./native-api";
+// Block-hosted community accounts through the development broker's /api/builderlab routes.
 export const HOST_SUFFIX = "communities.buzz.xyz";
 export const VALID_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const ACKNOWLEDGEMENT_VERSION = 1;
@@ -18,12 +9,10 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type Account = {
-  email?: string | null;
-  name?: string | null;
-  expiresAt: string | null;
+  email?: string;
+  name?: string;
+  expiresAt: string;
   capabilities?: { can_delete_buzz_communities?: boolean };
-  /** Native only: the session is the bl CLI's too, so signing out ends both. */
-  shared?: boolean;
 };
 export type ApiError = {
   code?: string;
@@ -124,10 +113,6 @@ async function send<T extends object>(
   body?: Body,
   signal?: AbortSignal,
 ): Promise<{ status: number; value: T }> {
-  // Community actions have no native owner yet; the broker's own session
-  // would otherwise answer a native sign-in with "Sign in to Builderlab first".
-  if (nativeIdentityEnabled())
-    throw new Error("Hosted community actions are not available natively yet");
   const response = await fetch(`/api/builderlab/${action}`, {
     method: action === "auth" ? "GET" : "POST",
     ...(action === "auth"
@@ -159,10 +144,9 @@ async function send<T extends object>(
   return { status: response.status, value: value as T };
 }
 
-/** The host has neither a development broker nor native sign-in, so Builderlab cannot work here. */
+/** The host has no development broker, so Builderlab sign-in cannot work here. */
 export class Unsupported extends Error {}
 export async function getAuth(): Promise<Account | null> {
-  if (nativeIdentityEnabled()) return nativeGetAuth();
   const response = await fetch("/api/builderlab/auth");
   const value = await response.json().catch(() => undefined);
   const auth = value?.auth;
@@ -182,15 +166,8 @@ export async function getAuth(): Promise<Account | null> {
   );
 }
 export const login = (signal: AbortSignal) =>
-  nativeIdentityEnabled()
-    ? nativeLogin(signal)
-    : send<{ auth: Account }>("login", {}, signal).then(
-        ({ value }) => value.auth,
-      );
-export async function signOut() {
-  if (nativeIdentityEnabled()) await nativeSignOut();
-  else await send("sign-out");
-}
+  send<{ auth: Account }>("login", {}, signal).then(({ value }) => value.auth);
+export const signOut = () => send("sign-out");
 export const call = (action: string, body?: Body) =>
   send<Reply>(action, body).then(({ value }) => value);
 
@@ -211,21 +188,6 @@ export function check(reply: Reply, fallback: string, quotaLimit?: number) {
 export function boundKey(identity: Identity | null | undefined) {
   const hex = identity?.pubkey_hex?.trim().toLowerCase();
   return hex && /^[0-9a-f]{64}$/.test(hex) ? hex : null;
-}
-/** The hex key this device signs with, or null when it could not be read. */
-export async function deviceKey(): Promise<string | null> {
-  try {
-    let viewer: string | null | undefined;
-    if (nativeIdentityEnabled()) viewer = await nativeDeviceKey();
-    else {
-      const response = await fetch("/api/relay/identity");
-      if (!response.ok) throw new Error(String(response.status));
-      viewer = ((await response.json()) as { viewer?: string }).viewer;
-    }
-    return boundKey(viewer ? { pubkey_hex: viewer } : null);
-  } catch {
-    return null;
-  }
 }
 export function relayUrl(community: Community) {
   const host = community.normalized_host?.trim();

@@ -3,11 +3,18 @@
 //! Items "written by bl" go through the crate's own API, so the real key
 //! derivation and file layout are exercised.
 use super::*;
-use axum::extract::Request;
+use axum::{
+    extract::{Request, State as RouteState},
+    response::{IntoResponse, Response},
+    Router,
+};
+use reqwest::StatusCode;
 use serde_json::json;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
+    future::IntoFuture,
     io::Write,
+    net::Ipv4Addr,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use tokio::{
@@ -23,7 +30,6 @@ struct Captured {
     method: String,
     path: String,
     credential: Option<String>,
-    origin: Option<String>,
     content_type: Option<String>,
     body: Vec<u8>,
 }
@@ -113,7 +119,6 @@ async fn serve(RouteState(fake): RouteState<Arc<Kgoose>>, request: Request) -> R
         method: parts.method.to_string(),
         path: path.clone(),
         credential: header(SESSION_CREDENTIAL_HEADER),
-        origin: header("origin"),
         content_type: header("content-type"),
         body: body.to_vec(),
     });
@@ -140,6 +145,7 @@ async fn serve(RouteState(fake): RouteState<Arc<Kgoose>>, request: Request) -> R
         "/v1/auth/me" => Scripted {
             status: 200,
             body: json!({
+                "subject": "user-1",
                 "email": "dev@example.com",
                 "name": "Dev",
                 "expires_at": EXPIRES,
@@ -220,8 +226,9 @@ impl BrowserOpener for Browser {
             std::net::TcpStream::connect(("127.0.0.1", return_to.port().unwrap())).unwrap();
         write!(
             stream,
-            "GET {}?code={code} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-            return_to.path()
+            "GET {}?code={code} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+            return_to.path(),
+            return_to.port().unwrap()
         )
         .unwrap();
         std::thread::spawn(move || {
@@ -241,7 +248,7 @@ async fn raw(port: u16, target: &str) -> String {
         .unwrap();
     stream
         .write_all(
-            format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
                 .as_bytes(),
         )
         .await
@@ -366,31 +373,19 @@ async fn login_round_trip_never_exposes_credential() {
             "email": "dev@example.com",
             "name": "Dev",
             "capabilities": { "can_delete_buzz_communities": true },
-            "shared": true,
+            "profile": "default",
+                "serviceUrl": f.config.service_url.as_str(),
         })
     );
     let stored = f.stored().unwrap();
     assert_eq!(stored.session_credential, "minted-1");
     assert_eq!(stored.expires_at.as_deref(), Some(EXPIRES));
-    assert_eq!(f.host.generation().unwrap(), 1);
 
     f.host.sign_out().await.unwrap();
     assert_eq!(f.kgoose.credentials("/v1/auth/logout"), ["minted-1"]);
     assert!(f.kgoose.requests("/followed").is_empty());
     assert!(f.stored().is_none());
-    assert_eq!(f.host.generation().unwrap(), 2);
     assert!(f.host.auth().await.unwrap().is_none());
-    assert_eq!(
-        f.host
-            .authenticated(
-                "/v1/buzz/communities/list",
-                json!({}),
-                Duration::from_secs(5)
-            )
-            .await
-            .unwrap_err(),
-        SIGN_IN_FIRST
-    );
 }
 
 /// Proves the resolved key equals what `bl` derives for the same inputs by
@@ -427,7 +422,6 @@ fn resolution_defaults_to_the_block_tenant_on_builderlab_xyz() {
         config.service_url.as_str(),
         "https://block.builderlab.xyz/api/goose"
     );
-    assert_eq!(config.origin, "https://block.builderlab.xyz");
     assert_eq!(
         config.endpoint("/v1/auth/me").as_str(),
         "https://block.builderlab.xyz/api/goose/v1/auth/me"
@@ -608,41 +602,29 @@ fn resolution_rejects_memory_storage_and_invalid_settings() {
             Some(INVALID_SETTINGS)
         );
     }
+    for base in [
+        "http://example.com",
+        "https://user:secret@example.com",
+        "https://example.com?secret=x",
+        "https://example.com/#fragment",
+    ] {
+        let env = Env {
+            base_url: Some(base.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            Config::resolve(&env, home.path()).err().as_deref(),
+            Some(INVALID_SETTINGS),
+            "{base}"
+        );
+    }
     let host = BuilderlabHost::new(Err(MEMORY_STORAGE.into()));
-    assert_eq!(host.origin().unwrap_err(), MEMORY_STORAGE);
+    assert_eq!(host.config().err().unwrap(), MEMORY_STORAGE);
 }
 
 const EXCHANGE: &str = "/v1/auth/login/exchange";
 const ME: &str = "/v1/auth/me";
 const LOGOUT: &str = "/v1/auth/logout";
-
-#[tokio::test]
-async fn callback_rejects_a_foreign_nonce_and_a_second_delivery() {
-    let (sender, mut receiver) = oneshot::channel();
-    let state = Arc::new(CallbackState {
-        nonce: "n".repeat(32),
-        sender: Mutex::new(Some(sender)),
-    });
-    let deliver = |nonce: &str, code: &str| {
-        let query = HashMap::from([("code".to_owned(), code.to_owned())]);
-        callback(
-            RoutePath(nonce.to_owned()),
-            Query(query),
-            RouteState(state.clone()),
-        )
-    };
-    assert_eq!(
-        deliver(&"x".repeat(32), "c").await.status(),
-        StatusCode::NOT_FOUND
-    );
-    assert!(receiver.try_recv().is_err());
-    assert_eq!(deliver(&"n".repeat(32), "c").await.status(), StatusCode::OK);
-    assert_eq!(receiver.try_recv().unwrap(), Ok("c".to_owned()));
-    assert_eq!(
-        deliver(&"n".repeat(32), "again").await.status(),
-        StatusCode::NOT_FOUND
-    );
-}
 
 #[tokio::test]
 async fn listener_answers_the_browser_then_closes() {
@@ -655,7 +637,7 @@ async fn listener_answers_the_browser_then_closes() {
     assert!(raw(port, "/elsewhere").await.starts_with("HTTP/1.1 404"));
     let complete = raw(port, &format!("{}?code=typed", url.path())).await;
     assert!(complete.starts_with("HTTP/1.1 200"), "{complete}");
-    assert!(complete.contains(COMPLETE_HTML));
+    assert!(complete.contains("Sign-in received. Return to the app to finish verification."));
     task.await.unwrap().unwrap();
     assert_eq!(
         serde_json::from_slice::<Value>(&f.kgoose.requests(EXCHANGE)[0].body).unwrap(),
@@ -665,7 +647,7 @@ async fn listener_answers_the_browser_then_closes() {
 }
 
 #[tokio::test]
-async fn error_callback_fails_the_login_with_a_bounded_detail() {
+async fn error_callback_never_exposes_provider_detail() {
     let f = fixture().await;
     let (_browser, return_to, task) = f.login(Mode::Silent);
     let url = return_to.await.unwrap();
@@ -680,10 +662,10 @@ async fn error_callback_fails_the_login_with_a_bounded_detail() {
     )
     .await;
     assert!(failed.starts_with("HTTP/1.1 400"), "{failed}");
-    assert!(failed.contains(FAILED_HTML));
+    assert!(failed.contains("Sign-in could not complete. Return to the app to retry."));
     assert_eq!(
         task.await.unwrap().unwrap_err(),
-        format!("{} {}", "x".repeat(150), "y".repeat(49))
+        "Browser sign-in could not complete. Try again."
     );
     assert!(f.kgoose.requests.lock().unwrap().is_empty());
     closed(port).await;
@@ -703,7 +685,6 @@ async fn cancel_before_the_callback_closes_the_listener() {
     assert!(f.stored().is_none());
     assert!(!f.pending());
     f.host.cancel().unwrap();
-    assert_eq!(f.host.generation().unwrap(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -747,12 +728,12 @@ async fn exchange_failures_map_to_fixed_strings() {
         (
             401,
             r#"{"error":{"code":"invalid_code","message":"private detail"}}"#,
-            "Builderlab code exchange failed with HTTP 401 (invalid_code)",
+            "Builderlab code exchange failed with HTTP 401",
         ),
         (
             200,
             r#"{"session_credential":"","expires_at":"x"}"#,
-            "Builderlab code exchange returned an empty credential",
+            "Builderlab returned an invalid credential",
         ),
         (200, "not json", "invalid Builderlab code exchange response"),
     ];
@@ -765,7 +746,6 @@ async fn exchange_failures_map_to_fixed_strings() {
     assert!(f.kgoose.requests(ME).is_empty());
     assert!(f.stored().is_none());
     assert!(!f.pending());
-    assert_eq!(f.host.generation().unwrap(), 4);
 }
 
 #[tokio::test]
@@ -799,8 +779,8 @@ async fn capabilities_require_a_strict_boolean() {
     let f = fixture().await;
     f.seed("bl-session");
     for body in [
-        json!({ "email": "dev@example.com", "capabilities": { "can_delete_buzz_communities": "true" } }),
-        json!({ "email": "dev@example.com" }),
+        json!({ "subject": "user-1", "email": "dev@example.com", "capabilities": { "can_delete_buzz_communities": "true" } }),
+        json!({ "subject": "user-1", "email": "dev@example.com" }),
     ] {
         f.kgoose.script(ME, 200, &body.to_string());
         let account = f.host.auth().await.unwrap().unwrap();
@@ -811,7 +791,8 @@ async fn capabilities_require_a_strict_boolean() {
                 "email": "dev@example.com",
                 "name": null,
                 "capabilities": { "can_delete_buzz_communities": false },
-                "shared": true,
+                "profile": "default",
+                "serviceUrl": f.config.service_url.as_str(),
             })
         );
     }
@@ -828,7 +809,6 @@ async fn a_second_login_cancels_the_first() {
     closed(url.port().unwrap()).await;
     assert_eq!(f.stored_credential().as_deref(), Some("minted-1"));
     assert_eq!(f.kgoose.requests(EXCHANGE).len(), 1);
-    assert_eq!(f.host.generation().unwrap(), 2);
     assert!(!f.pending());
 }
 
@@ -859,7 +839,6 @@ async fn sign_out_during_exchange_revokes_the_minted_session() {
     release.send(()).unwrap();
     eventually(|| ready(f.kgoose.credentials(LOGOUT) == ["minted-1"])).await;
     assert!(f.stored().is_none());
-    assert_eq!(f.host.generation().unwrap(), 2);
 }
 
 #[tokio::test]
@@ -899,62 +878,6 @@ async fn stale_auth_reports_changed_and_leaves_the_new_session() {
     assert_eq!(f.kgoose.credentials(LOGOUT), ["old"]);
 }
 
-#[tokio::test]
-async fn authenticated_requests_carry_the_session_and_origin() {
-    const LIST: &str = "/v1/buzz/communities/list";
-    let f = fixture().await;
-    f.seed("bl-session");
-    let call =
-        |path: &'static str, body: Value| f.host.authenticated(path, body, Duration::from_secs(5));
-    f.kgoose.script(LIST, 200, r#"{"communities":[]}"#);
-    let (status, value) = call(LIST, json!({ "page": 1 })).await.unwrap();
-    assert_eq!(
-        (status, value),
-        (StatusCode::OK, json!({ "communities": [] }))
-    );
-    let request = &f.kgoose.requests(LIST)[0];
-    assert_eq!(request.method, "POST");
-    assert_eq!(request.credential.as_deref(), Some("bl-session"));
-    assert_eq!(request.origin.as_deref(), Some(f.config.origin.as_str()));
-    assert_eq!(request.content_type.as_deref(), Some("application/json"));
-    assert_eq!(
-        serde_json::from_slice::<Value>(&request.body).unwrap(),
-        json!({ "page": 1 })
-    );
-    // Non-2xx objects with an `error` member pass through with their status;
-    // a 401 is the UI's reconnect signal and leaves the item alone.
-    f.kgoose.script(LIST, 202, r#"{"status":"pending"}"#);
-    assert_eq!(
-        call(LIST, json!({})).await.unwrap(),
-        (StatusCode::ACCEPTED, json!({ "status": "pending" }))
-    );
-    f.kgoose.script(LIST, 401, r#"{"error":"unauthorized"}"#);
-    assert_eq!(
-        call(LIST, json!({})).await.unwrap(),
-        (StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }))
-    );
-    assert_eq!(f.stored_credential().as_deref(), Some("bl-session"));
-    for (status, body, expected) in [
-        (500, "oops", "Builderlab request failed (HTTP 500)."),
-        (
-            500,
-            r#"{"detail":"x"}"#,
-            "Builderlab request failed (HTTP 500).",
-        ),
-        (200, "[1]", INVALID_RESPONSE),
-        (200, "not json", INVALID_RESPONSE),
-    ] {
-        f.kgoose.script(LIST, status, body);
-        assert_eq!(call(LIST, json!({})).await.unwrap_err(), expected);
-    }
-    f.kgoose.script(
-        LIST,
-        200,
-        &format!(r#"{{"pad":"{}"}}"#, "a".repeat(MAX_BODY)),
-    );
-    assert_eq!(call(LIST, json!({})).await.unwrap_err(), TOO_LARGE);
-}
-
 /// Accepts and drops every connection: a deterministic transport failure.
 async fn dead_service() -> Url {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -971,7 +894,7 @@ async fn dead_service() -> Url {
 async fn bl_items_are_reread_on_every_call_and_skip_the_browser() {
     let f = fixture().await;
     f.seed("one");
-    assert!(f.host.auth().await.unwrap().unwrap().shared);
+    assert_eq!(f.host.auth().await.unwrap().unwrap().profile, "default");
     f.seed("two");
     f.host.auth().await.unwrap().unwrap();
     let (browser, _) = Browser::new(Mode::Code("c"));
@@ -1038,17 +961,7 @@ async fn unreachable_service_keeps_the_item_but_not_through_sign_out() {
         "Builderlab session check failed"
     );
     assert_eq!(browser.opened(), 0);
-    assert_eq!(
-        f.host
-            .authenticated(
-                "/v1/buzz/communities/list",
-                json!({}),
-                Duration::from_secs(5)
-            )
-            .await
-            .unwrap_err(),
-        "Builderlab request failed"
-    );
+
     assert_eq!(f.stored_credential().as_deref(), Some("kept"));
     f.host.sign_out().await.unwrap();
     assert!(f.stored().is_none());
@@ -1099,17 +1012,7 @@ async fn corrupt_store_fails_every_operation_with_the_read_string() {
         f.host.login(browser.as_ref()).await.unwrap_err(),
         STORE_READ
     );
-    assert_eq!(
-        f.host
-            .authenticated(
-                "/v1/buzz/communities/list",
-                json!({}),
-                Duration::from_secs(5)
-            )
-            .await
-            .unwrap_err(),
-        STORE_READ
-    );
+
     assert!(f.kgoose.requests.lock().unwrap().is_empty());
     assert!(!f.pending());
 }
@@ -1137,4 +1040,153 @@ async fn read_only_store_fails_writes_and_revokes_what_was_minted() {
     assert_eq!(f.kgoose.credentials(LOGOUT), ["a", "minted-1"]);
     assert_eq!(f.stored_credential().as_deref(), Some("a"));
     assert!(!f.pending());
+}
+
+#[path = "storage_tests.rs"]
+mod storage_tests;
+
+#[test]
+fn relocated_skills_file_selects_the_shared_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("elsewhere.yaml");
+    std::fs::write(&path, "current_profile: relocated\n").unwrap();
+    let mut env = Env {
+        skills_config: Some(path.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    let config = Config::resolve(&env, dir.path()).unwrap();
+    assert!(key_matches(
+        &config,
+        dir.path(),
+        "relocated",
+        "https://block.builderlab.xyz",
+        "/api/goose"
+    ));
+    env.profile = Some("explicit".into());
+    assert_eq!(
+        Config::resolve(&env, dir.path()).unwrap().profile,
+        "explicit"
+    );
+}
+
+#[tokio::test]
+async fn malformed_exchange_credentials_and_missing_subject_are_rejected() {
+    let f = fixture().await;
+    for credential in [
+        "".into(),
+        "x".repeat(4097),
+        "has space".into(),
+        "non-ascii-🔑".into(),
+        "line\nbreak".into(),
+    ] {
+        f.kgoose.script(
+            EXCHANGE,
+            200,
+            &json!({"session_credential":credential}).to_string(),
+        );
+        let (browser, _) = Browser::new(Mode::Code("c"));
+        assert_eq!(
+            f.host.login(browser.as_ref()).await.unwrap_err(),
+            "Builderlab returned an invalid credential"
+        );
+        assert!(f.stored().is_none());
+    }
+    assert!(f.kgoose.requests(ME).is_empty());
+    for subject in [Value::Null, json!(" "), json!(42)] {
+        f.kgoose
+            .script(ME, 200, &json!({"subject":subject}).to_string());
+        let (browser, _) = Browser::new(Mode::Code("c"));
+        assert_eq!(
+            f.host.login(browser.as_ref()).await.unwrap_err(),
+            "invalid Builderlab session response"
+        );
+    }
+    assert_eq!(
+        f.kgoose.credentials(LOGOUT),
+        ["minted-1", "minted-2", "minted-3"]
+    );
+    assert!(f.stored().is_none());
+}
+
+#[tokio::test]
+async fn cut_off_and_stalled_me_bodies_preserve_the_cli_session() {
+    for stall in [false, true] {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sent, received) = oneshot::channel();
+        let (release, held) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"subject\":")
+                .await
+                .unwrap();
+            sent.send(()).unwrap();
+            if stall {
+                let _ = held.await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let url = Url::parse(&format!("http://{address}{SERVICE_PATH}")).unwrap();
+        let host = BuilderlabHost::new(Ok(test_config(&url, dir.path())));
+        let f = Fixture {
+            config: host.config().unwrap(),
+            host,
+            dir,
+            kgoose: Arc::new(Kgoose::default()),
+        };
+        f.seed("kept");
+        let host = f.host.clone();
+        let checked = tokio::spawn(async move { host.auth().await });
+        received.await.unwrap();
+        if stall {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(31)).await;
+        }
+        assert_eq!(
+            checked.await.unwrap().unwrap_err(),
+            "Builderlab session check failed"
+        );
+        if stall {
+            tokio::time::resume();
+        }
+        drop(release);
+        server.await.unwrap();
+        assert_eq!(f.stored_credential().as_deref(), Some("kept"));
+    }
+}
+
+#[tokio::test]
+async fn an_exchange_survives_a_dropped_ipc_caller_and_restores_from_storage() {
+    let f = fixture().await;
+    let (started, release) = f.kgoose.hold(EXCHANGE);
+    let (_, _, login) = f.login(Mode::Code("c"));
+    started.await.unwrap();
+    login.abort();
+    assert!(login.await.unwrap_err().is_cancelled());
+    release.send(()).unwrap();
+    eventually(|| ready(!f.pending())).await;
+    assert_eq!(f.stored_credential().as_deref(), Some("minted-1"));
+    assert!(f.host.auth().await.unwrap().is_some());
+    assert!(f.kgoose.credentials(LOGOUT).is_empty());
+}
+
+#[tokio::test]
+async fn logout_timeout_still_removes_the_local_session() {
+    let f = fixture().await;
+    f.seed("saved");
+    let (started, release) = f.kgoose.hold(LOGOUT);
+    let host = f.host.clone();
+    let logout = tokio::spawn(async move { host.sign_out().await });
+    started.await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(6)).await;
+    logout.await.unwrap().unwrap();
+    tokio::time::resume();
+    drop(release);
+    assert!(f.stored().is_none());
 }

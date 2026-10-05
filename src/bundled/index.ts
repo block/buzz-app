@@ -138,6 +138,18 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: sessions,
     enabledByDefault: true,
   },
+  ...(import.meta.env.VITE_BUZZ_BUILDERLAB === "1"
+    ? [
+        {
+          manifest: {
+            ...(await import("./builderlab/manifest.json")).default,
+            apiVersion: 1 as const,
+          },
+          module: await import("./builderlab"),
+          enabledByDefault: true,
+        },
+      ]
+    : []),
   {
     manifest: { ...hostedManifest, apiVersion: 1 },
     module: hosted,

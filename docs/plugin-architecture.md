@@ -105,7 +105,7 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+The standard catalog contains 21 plugins. Opt-in Builderlab builds add a 22nd. **Channels is the only required plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
 Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
@@ -115,8 +115,8 @@ Saved enabled/disabled flags win over defaults (except required Channels). There
 is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities signs in natively on desktop but
-still needs its development broker for community actions. Disabling Community
+only on macOS/Linux desktop; Hosted communities contributes only in browsers
+and requires its development broker. Disabling Community
 admin removes its Invite to community shortcut.
 
 Projects
@@ -161,15 +161,31 @@ re-read and verified before dispatch; browser local storage has no atomic compar
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address.
-Sign-in is native on desktop: `src-tauri/src/builderlab.rs` opens the browser,
-receives the loopback callback and keeps the session in the store the `bl` CLI
-uses, so one login serves both tools and signing out of either ends it for both
-([shared session](configuration.md#builderlab-session-shared-with-the-bl-cli)).
-Browser builds still need the broker. Identity binding and community actions
-still use the `/api/builderlab/*` routes in the development broker
-(`dev/builderlab.mjs`), which keeps the signing key in Node; a native build
-reports "Hosted community actions are not available natively yet" for them until
-the native routes land.
+On desktop the Hosted communities card is not registered: its community actions
+still require the development broker. The optional **Builderlab** plugin
+(`block.builderlab`) supplies the sole desktop sign-in card under Settings →
+Integrations. Its React UI and observation lifecycle live in
+`src/bundled/builderlab`; its Tauri companion lives in
+`crates/tauri-plugin-builderlab`, behind the app's `builderlab` Cargo feature.
+Both the frontend module and native catalog entry are opt-in
+([build and shared-session configuration](configuration.md#builderlab-session-shared-with-the-bl-cli)).
+Within an opted-in build it is enabled by default; saved plugin choices win.
+
+The companion owns browser opening, its private loopback receiver, exchange,
+verification, revocation, and the store shared with `bl`. Plugin JavaScript gets
+account metadata only. It has no generic host/network grant and cannot obtain
+the credential through this API. `plugin:builderlab|auth`, `login`, `cancel` and
+`sign_out` are granted only to the local main webview. This remains trusted
+same-process plugin code, not isolation from other trusted plugins in that view.
+The standard app registers none of those commands or permissions.
+
+Opening or refreshing the card reads the store; activation alone never opens a
+Keychain prompt. Disable cancels pending login and removes the card without
+logging the CLI out. Completed sessions survive reloads and plugin re-enable.
+The native finish task settles an already-started exchange after an IPC caller
+disappears, preventing a minted credential from being orphaned. The card explains
+that sharing depends on matching profile/service configuration; browser-only
+Hosted communities continues to use its separate development-broker session.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no

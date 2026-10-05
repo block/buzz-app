@@ -2,15 +2,10 @@
 //!
 //! Storage is the source of truth: every operation re-reads the item under the
 //! key `bl` derives, so a `bl auth login` shows up here without a second sign-in
-//! and a sign-out here ends the session for `bl` too. The credential exists in
-//! process memory only as `Zeroizing<String>` for the duration of one HTTP call,
-//! and no error string ever carries a response body, header, path or credential.
-use axum::{
-    extract::{Path as RoutePath, Query, State as RouteState},
-    response::{Html, IntoResponse, Response},
-    routing::get,
-    Router,
-};
+//! when both resolve the same profile and service URL. Credentials never cross
+//! IPC. Owned response buffers and credentials are zeroized; HTTP, serde, the
+//! CLI storage crate and OS layers may retain internal copies. Errors never
+//! include provider bodies, headers, paths or credentials.
 use builderlab_auth::{
     auth_storage::{
         default_session_storage_for_bl_home, FileSessionCredentialStorage,
@@ -25,31 +20,31 @@ use builderlab_auth::{
     org_routing::resolve_org_kgoose_base_url,
     SESSION_CREDENTIAL_HEADER,
 };
-use buzz_agent::auth::BrowserOpener;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
-    future::IntoFuture,
-    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::sync::oneshot;
 use url::Url;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
-use crate::agent_models::Opener;
+use crate::callback::await_callback;
 
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(600);
+pub(crate) trait BrowserOpener: Send + Sync {
+    fn open(&self, url: &str) -> Result<(), String>;
+}
+impl<F: Fn(&str) -> Result<(), String> + Send + Sync> BrowserOpener for F {
+    fn open(&self, url: &str) -> Result<(), String> {
+        self(url)
+    }
+}
+
+pub(crate) const LOGIN_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_BODY: usize = 64 * 1024;
-const MAX_ERROR_BODY: usize = 16 * 1024;
 const USER_AGENT: &str = "buzz-app";
-const COMPLETE_HTML: &str = "<!doctype html><meta charset=utf-8><title>Buzz authentication complete</title><p>You're signed in. You can close this window and return to Buzz.";
-const FAILED_HTML: &str = "<!doctype html><meta charset=utf-8><title>Buzz authentication failed</title><p>Sign-in did not complete. You can close this window and try again from Buzz.";
-
 /// `bl` has no non-interactive org default; Block is the only tenant Buzz targets.
 const DEFAULT_ORG: &str = "block";
 /// `bl`'s repository default (`kgoose.sqprod.co`) does not serve `/v1/auth/*`.
@@ -67,13 +62,10 @@ const STORE_UPDATE: &str = "The Builderlab session store could not be updated.";
 const KEYCHAIN_DENIED: &str =
     "Keychain access was denied. Allow Buzz to use the Builderlab session in Keychain and retry.";
 const KEYCHAIN_FAILED: &str = "The Builderlab session could not be accessed in Keychain.";
-const CANCELED: &str = "Builderlab authentication canceled";
+pub(crate) const CANCELED: &str = "Builderlab authentication canceled";
 const CHANGED: &str = "Builderlab session changed";
-const TIMED_OUT: &str = "Builderlab authentication timed out";
-const LISTENER: &str = "Could not start the local sign-in callback";
+pub(crate) const TIMED_OUT: &str = "Builderlab authentication timed out";
 const TOO_LARGE: &str = "Builderlab response was too large";
-const INVALID_RESPONSE: &str = "Builderlab returned an invalid response";
-const SIGN_IN_FIRST: &str = "Sign in to Builderlab first";
 
 /// The `bl` environment Buzz mirrors, captured once so resolution is a pure
 /// function of its inputs and tests never read the process environment.
@@ -81,6 +73,7 @@ const SIGN_IN_FIRST: &str = "Sign in to Builderlab first";
 pub(crate) struct Env {
     bl_home: Option<String>,
     profile: Option<String>,
+    skills_config: Option<String>,
     base_url: Option<String>,
     service_path: Option<String>,
     storage: Option<String>,
@@ -92,6 +85,7 @@ impl Env {
         Self {
             bl_home: var(BL_HOME_ENV_VAR),
             profile: var(BL_SKILLS_PROFILE_ENV_VAR),
+            skills_config: var("BL_SKILLS_CONFIG"),
             base_url: var(KGOOSE_BASE_URL_ENV_VAR),
             service_path: var(KGOOSE_SERVICE_PATH_ENV_VAR),
             storage: var(BL_AUTH_STORAGE_ENV_VAR),
@@ -99,7 +93,7 @@ impl Env {
         }
     }
 }
-/// The two fields of `bl`'s `skills.yaml` that name the active profile.
+/// The field of `bl`'s `skills.yaml` that names the active profile.
 #[derive(Deserialize)]
 struct SkillsFile {
     current_profile: Option<String>,
@@ -114,8 +108,10 @@ enum StorageSelection {
 /// the endpoint cannot disagree.
 pub(crate) struct Config {
     service_url: Url,
-    origin: String,
+    storage_lock: Mutex<()>,
+    factory: Arc<dyn StoreFactory>,
     key: SessionStorageKey,
+    profile: String,
     bl_home: PathBuf,
     storage: StorageSelection,
 }
@@ -132,7 +128,12 @@ impl Config {
             .profile
             .clone()
             .or_else(|| {
-                let bytes = std::fs::read(bl_home.join("skills.yaml")).ok()?;
+                let path = env
+                    .skills_config
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| bl_home.join("skills.yaml"));
+                let bytes = std::fs::read(path).ok()?;
                 serde_yaml::from_slice::<SkillsFile>(&bytes)
                     .ok()?
                     .current_profile
@@ -154,7 +155,18 @@ impl Config {
             .map_err(|_| INVALID_SETTINGS)?;
         let service_url =
             Url::parse(&kgoose_service_url(&base, &service_path)).map_err(|_| INVALID_SETTINGS)?;
-        if !matches!(service_url.scheme(), "http" | "https") || service_url.host().is_none() {
+        if !(service_url.scheme() == "https"
+            || (service_url.scheme() == "http"
+                && matches!(
+                    service_url.host_str(),
+                    Some("localhost" | "127.0.0.1" | "[::1]")
+                )))
+            || !service_url.username().is_empty()
+            || service_url.password().is_some()
+            || service_url.query().is_some()
+            || service_url.fragment().is_some()
+            || service_url.host().is_none()
+        {
             return Err(INVALID_SETTINGS.into());
         }
         let storage = if env.storage.is_some() || env.storage_file.is_some() {
@@ -170,8 +182,14 @@ impl Config {
             StorageSelection::File(bl_home.join("auth-sessions.json"))
         };
         Ok(Config {
-            origin: service_url.origin().ascii_serialization(),
-            key: SessionStorageKey::from_profile_and_kgoose_base_url(profile, &base, &service_path),
+            storage_lock: Mutex::new(()),
+            factory: Arc::new(SharedStore),
+            key: SessionStorageKey::from_profile_and_kgoose_base_url(
+                &profile,
+                &base,
+                &service_path,
+            ),
+            profile,
             service_url,
             bl_home,
             storage,
@@ -201,14 +219,22 @@ fn storage_error(op: Op, error: impl std::fmt::Display) -> String {
     }
     .into()
 }
-fn open_storage(config: &Config, op: Op) -> Result<Box<dyn SessionCredentialStorage>, String> {
-    match &config.storage {
-        StorageSelection::File(path) => {
-            Ok(Box::new(FileSessionCredentialStorage::new(path.clone())))
-        }
-        StorageSelection::CrateDefault => {
-            default_session_storage_for_bl_home(config.bl_home.clone())
-                .map_err(|error| storage_error(op, error))
+/// Construct the CLI's !Send handle inside the serialized blocking operation.
+/// Fixtures substitute this boundary to pause or fail individual storage calls.
+trait StoreFactory: Send + Sync {
+    fn open(&self, config: &Config, op: Op) -> Result<Box<dyn SessionCredentialStorage>, String>;
+}
+struct SharedStore;
+impl StoreFactory for SharedStore {
+    fn open(&self, config: &Config, op: Op) -> Result<Box<dyn SessionCredentialStorage>, String> {
+        match &config.storage {
+            StorageSelection::File(path) => {
+                Ok(Box::new(FileSessionCredentialStorage::new(path.clone())))
+            }
+            StorageSelection::CrateDefault => {
+                default_session_storage_for_bl_home(config.bl_home.clone())
+                    .map_err(|error| storage_error(op, error))
+            }
         }
     }
 }
@@ -224,7 +250,10 @@ async fn with_storage<T: Send + 'static>(
         + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let storage = open_storage(&config, op)?;
+        // Held inside the blocking closure, including if its async caller drops.
+        // This serializes Buzz operations, not other processes such as bl.
+        let _lock = config.storage_lock.lock().map_err(|_| STORE_UNAVAILABLE)?;
+        let storage = config.factory.open(&config, op)?;
         action(storage.as_ref(), &config.key)
     })
     .await
@@ -245,10 +274,14 @@ async fn read(config: Arc<Config>) -> Result<Stored, String> {
                 .map_err(|error| storage_error(Op::Read, error))?
             {
                 None => Stored::Absent,
-                Some(stored) => match stored.session_credential_header_value() {
-                    None => Stored::Blank,
-                    Some(credential) => Stored::Credential(Zeroizing::new(credential)),
-                },
+                Some(mut stored) => {
+                    let value = stored.session_credential_header_value();
+                    stored.session_credential.zeroize();
+                    match value {
+                        None => Stored::Blank,
+                        Some(credential) => Stored::Credential(Zeroizing::new(credential)),
+                    }
+                }
             },
         )
     })
@@ -260,43 +293,79 @@ async fn write(
     config: Arc<Config>,
     credential: Zeroizing<String>,
     expires_at: Option<String>,
-) -> Result<Option<Zeroizing<String>>, String> {
+    host: BuilderlabHost,
+    id: u64,
+) -> Result<(bool, Option<Zeroizing<String>>), String> {
     with_storage(config, Op::Update, move |storage, key| {
+        // A superseded write may have waited behind a Keychain operation.
+        if !host.owns(id)? {
+            return Err(CANCELED.into());
+        }
         let previous = storage
             .get(key)
             .map_err(|error| storage_error(Op::Update, error))?
-            .and_then(|stored| stored.session_credential_header_value())
+            .and_then(|mut stored| {
+                let value = stored.session_credential_header_value();
+                stored.session_credential.zeroize();
+                value
+            })
             .map(Zeroizing::new)
             .filter(|previous| previous.as_str() != credential.as_str());
-        let stored = StoredSessionCredential {
+        let mut stored = StoredSessionCredential {
             session_credential: credential.as_str().to_owned(),
             expires_at,
         };
-        storage
-            .set(key, &stored)
-            .map_err(|error| storage_error(Op::Update, error))?;
-        Ok(previous)
+        let result = storage.set(key, &stored);
+        stored.session_credential.zeroize();
+        result.map_err(|error| storage_error(Op::Update, error))?;
+        // Commit or roll back before another Buzz operation can observe the write.
+        // The state lock is never held while a Keychain prompt is open.
+        let current = {
+            let mut state = host.lock()?;
+            let current = state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.id == id);
+            if current {
+                state.pending = None;
+                state.generation += 1;
+            }
+            current
+        };
+        if !current {
+            let _ = delete_from(storage, key, Some(credential.as_str()));
+        }
+        Ok((current, previous))
     })
     .await
 }
-/// Deletes the item, or only while it still holds `expected`, so an item `bl`
-/// rotated during a `/me` round-trip survives.
+/// Compare-and-delete under the same transaction as every Buzz read/write.
+/// None means absent/blank, never an unconditional delete of a newer credential.
+fn delete_from(
+    storage: &dyn SessionCredentialStorage,
+    key: &SessionStorageKey,
+    expected: Option<&str>,
+) -> Result<(), String> {
+    let current = storage
+        .get(key)
+        .map_err(|error| storage_error(Op::Update, error))?
+        .and_then(|mut stored| {
+            let value = stored.session_credential_header_value();
+            stored.session_credential.zeroize();
+            value
+        })
+        .map(Zeroizing::new);
+    if current.as_deref().map(String::as_str) != expected {
+        return Ok(());
+    }
+    storage
+        .delete(key)
+        .map(drop)
+        .map_err(|error| storage_error(Op::Update, error))
+}
 async fn delete(config: Arc<Config>, expected: Option<Zeroizing<String>>) -> Result<(), String> {
     with_storage(config, Op::Update, move |storage, key| {
-        if let Some(expected) = &expected {
-            let current = storage
-                .get(key)
-                .map_err(|error| storage_error(Op::Update, error))?
-                .and_then(|stored| stored.session_credential_header_value())
-                .map(Zeroizing::new);
-            if current.as_deref().map(String::as_str) != Some(expected.as_str()) {
-                return Ok(());
-            }
-        }
-        storage
-            .delete(key)
-            .map(drop)
-            .map_err(|error| storage_error(Op::Update, error))
+        delete_from(storage, key, expected.as_deref().map(String::as_str))
     })
     .await
 }
@@ -308,8 +377,8 @@ pub(crate) struct Account {
     email: Option<String>,
     name: Option<String>,
     capabilities: Capabilities,
-    /// Always true natively: the session is the `bl` CLI's too.
-    shared: bool,
+    profile: String,
+    service_url: String,
 }
 /// Inner key stays snake_case, as the hosted-communities `api.ts` expects.
 #[derive(Debug, Serialize)]
@@ -321,7 +390,9 @@ enum Me {
     Unauthenticated(u16),
 }
 /// The exchange result; nothing holding the credential derives Debug.
+#[derive(Deserialize)]
 struct Exchanged {
+    #[serde(rename = "session_credential")]
     credential: Zeroizing<String>,
     expires_at: Option<String>,
 }
@@ -336,7 +407,7 @@ impl Config {
         url.set_query(None);
         url
     }
-    fn login_url(&self, return_to: &str) -> Url {
+    pub(crate) fn login_url(&self, return_to: &str) -> Url {
         let mut url = self.endpoint("/v1/auth/login");
         url.query_pairs_mut()
             .append_pair("type", "cli")
@@ -364,14 +435,14 @@ async fn read_bounded(
     mut response: reqwest::Response,
     limit: usize,
     failed: &str,
-) -> Result<Vec<u8>, String> {
+) -> Result<Zeroizing<Vec<u8>>, String> {
     if response
         .content_length()
         .is_some_and(|length| length > limit as u64)
     {
         return Err(TOO_LARGE.into());
     }
-    let mut body = Vec::new();
+    let mut body = Zeroizing::new(Vec::new());
     while let Some(chunk) = response.chunk().await.map_err(|_| failed.to_owned())? {
         if chunk.len() > limit - body.len() {
             return Err(TOO_LARGE.into());
@@ -379,106 +450,6 @@ async fn read_bounded(
         body.extend_from_slice(&chunk);
     }
     Ok(body)
-}
-/// Loopback callback text is attacker-influenceable; bound it before display.
-fn sanitize(detail: &str) -> String {
-    detail
-        .chars()
-        .take(200)
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
-}
-
-struct CallbackState {
-    nonce: String,
-    sender: Mutex<Option<oneshot::Sender<Result<String, String>>>>,
-}
-/// Sends on drop so every exit path closes the accept loop while an in-flight
-/// page still flushes.
-struct Shutdown(Option<oneshot::Sender<()>>);
-impl Drop for Shutdown {
-    fn drop(&mut self) {
-        if let Some(stop) = self.0.take() {
-            let _ = stop.send(());
-        }
-    }
-}
-async fn callback(
-    RoutePath(nonce): RoutePath<String>,
-    Query(query): Query<HashMap<String, String>>,
-    RouteState(state): RouteState<Arc<CallbackState>>,
-) -> Response {
-    let not_found = || (StatusCode::NOT_FOUND, "Not found").into_response();
-    if nonce != state.nonce {
-        return not_found();
-    }
-    // A second callback finds the sender already consumed.
-    let Some(sender) = state
-        .sender
-        .lock()
-        .ok()
-        .and_then(|mut sender| sender.take())
-    else {
-        return not_found();
-    };
-    match query.get("code").filter(|code| !code.is_empty()) {
-        Some(code) => {
-            let _ = sender.send(Ok(code.clone()));
-            Html(COMPLETE_HTML).into_response()
-        }
-        None => {
-            let detail = query
-                .get("error_description")
-                .or_else(|| query.get("error"))
-                .map(|detail| sanitize(detail))
-                .unwrap_or_else(|| "Authentication callback did not include a code".into());
-            let _ = sender.send(Err(detail));
-            (StatusCode::BAD_REQUEST, Html(FAILED_HTML)).into_response()
-        }
-    }
-}
-/// Binds, arms shutdown, then opens the browser; waits on the callback, the
-/// ten-minute timeout or cancel. Browser-side failures never reach the
-/// loopback, so the timeout is their only exit.
-async fn await_callback(
-    config: &Config,
-    opener: &dyn BrowserOpener,
-    canceled: &mut oneshot::Receiver<()>,
-) -> Result<String, String> {
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .await
-        .map_err(|_| LISTENER)?;
-    let port = listener.local_addr().map_err(|_| LISTENER)?.port();
-    let (stop, stopped) = oneshot::channel();
-    let _shutdown = Shutdown(Some(stop));
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let (sender, receiver) = oneshot::channel();
-    let state = Arc::new(CallbackState {
-        nonce: nonce.clone(),
-        sender: Mutex::new(Some(sender)),
-    });
-    let router = Router::new()
-        .route("/callback/{nonce}", get(callback))
-        .with_state(state);
-    // Detached: the command never waits on a lingering browser keep-alive.
-    tokio::spawn(
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async {
-                let _ = stopped.await;
-            })
-            .into_future(),
-    );
-    let return_to = format!("http://127.0.0.1:{port}/callback/{nonce}");
-    opener.open(config.login_url(&return_to).as_str())?;
-    // Only an explicit cancel counts; a dropped sender disables the branch.
-    tokio::select! {
-        outcome = tokio::time::timeout(LOGIN_TIMEOUT, receiver) => match outcome {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(_)) => Err(LISTENER.into()),
-            Err(_) => Err(TIMED_OUT.into()),
-        },
-        Ok(()) = canceled => Err(CANCELED.into()),
-    }
 }
 async fn exchange(config: &Config, code: &str) -> Result<Exchanged, String> {
     const FAILED: &str = "Builderlab code exchange failed";
@@ -490,39 +461,21 @@ async fn exchange(config: &Config, code: &str) -> Result<Exchanged, String> {
         .map_err(|_| FAILED)?;
     let status = response.status();
     if !status.is_success() {
-        let mut message = format!("{FAILED} with HTTP {}", status.as_u16());
-        // A structured `{error: {code}}` body names the cause; plain text does not.
-        let body = read_bounded(response, MAX_ERROR_BODY, FAILED)
-            .await
-            .unwrap_or_default();
-        if let Some(code) = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .and_then(|value| value.get("error")?.get("code")?.as_str().map(sanitize))
-        {
-            message.push_str(&format!(" ({code})"));
-        }
-        return Err(message);
+        return Err(format!("{FAILED} with HTTP {}", status.as_u16()));
     }
-    let body = Zeroizing::new(read_bounded(response, MAX_BODY, FAILED).await?);
-    let value: Value =
+    let body = read_bounded(response, MAX_BODY, FAILED).await?;
+    let exchanged: Exchanged =
         serde_json::from_slice(&body).map_err(|_| "invalid Builderlab code exchange response")?;
-    let credential = Zeroizing::new(
-        value
-            .get("session_credential")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-    );
-    if credential.is_empty() {
-        return Err("Builderlab code exchange returned an empty credential".into());
+    if exchanged.credential.is_empty()
+        || exchanged.credential.len() > 4096
+        || !exchanged
+            .credential
+            .bytes()
+            .all(|b| (33..=126).contains(&b))
+    {
+        return Err("Builderlab returned an invalid credential".into());
     }
-    Ok(Exchanged {
-        credential,
-        expires_at: value
-            .get("expires_at")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
+    Ok(exchanged)
 }
 /// 401 and 403 mean signed out; any other failure keeps the stored item. A 3xx
 /// lands here unfollowed. Capabilities use strict boolean equality.
@@ -545,6 +498,13 @@ async fn me(config: &Config, credential: &str) -> Result<Me, String> {
     let body = read_bounded(response, MAX_BODY, FAILED).await?;
     let value: Value = serde_json::from_slice(&body).map_err(|_| INVALID)?;
     let object = value.as_object().ok_or(INVALID)?;
+    if object
+        .get("subject")
+        .and_then(Value::as_str)
+        .is_none_or(|s| s.trim().is_empty())
+    {
+        return Err(INVALID.into());
+    }
     let text = |field: &str| object.get(field).and_then(Value::as_str).map(str::to_owned);
     Ok(Me::Account(Account {
         expires_at: text("expires_at"),
@@ -556,7 +516,8 @@ async fn me(config: &Config, credential: &str) -> Result<Me, String> {
                 .and_then(|capabilities| capabilities.get("can_delete_buzz_communities"))
                 == Some(&Value::Bool(true)),
         },
-        shared: true,
+        profile: config.profile.clone(),
+        service_url: config.service_url.to_string(),
     }))
 }
 /// `POST /v1/auth/logout` revokes exactly one CLI session and always answers
@@ -641,58 +602,6 @@ impl BuilderlabHost {
             }
         }
     }
-    /// The follow-on's `Origin` header and challenge origin.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn origin(&self) -> Result<String, String> {
-        self.config().map(|config| config.origin.clone())
-    }
-    /// A snapshot so a bind can refuse to sign after a sign-out or new login.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn generation(&self) -> Result<u64, String> {
-        self.lock().map(|state| state.generation)
-    }
-    /// POST with the session header and Origin for the follow-on's `/v1/buzz/*`
-    /// routes. Objects pass through on 2xx or with an `error` member, with the
-    /// status for the deletion flow's 202. A 401 does not clear the item; the
-    /// UI maps `unauthorized` to its reconnect state.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) async fn authenticated(
-        &self,
-        path: &str,
-        body: Value,
-        timeout: Duration,
-    ) -> Result<(StatusCode, Value), String> {
-        const FAILED: &str = "Builderlab request failed";
-        let config = self.config()?;
-        let Stored::Credential(credential) = read(config.clone()).await? else {
-            return Err(SIGN_IN_FIRST.into());
-        };
-        let response = client()?
-            .post(config.endpoint(path))
-            .header(SESSION_CREDENTIAL_HEADER, credential.as_str())
-            .header("Origin", &config.origin)
-            .json(&body)
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|_| FAILED)?;
-        drop(credential);
-        let status = response.status();
-        let body = read_bounded(response, MAX_BODY, FAILED).await?;
-        let value = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .filter(Value::is_object);
-        let structured = value
-            .as_ref()
-            .and_then(|value| value.get("error"))
-            .is_some_and(|error| !error.is_null());
-        match value {
-            Some(value) if status.is_success() || structured => Ok((status, value)),
-            // A gateway error page is a failed request, not an invalid one.
-            _ if status.is_success() => Err(INVALID_RESPONSE.into()),
-            _ => Err(format!("{FAILED} (HTTP {}).", status.as_u16())),
-        }
-    }
     pub(crate) async fn login(&self, opener: &dyn BrowserOpener) -> Result<Account, String> {
         let config = self.config()?;
         let (cancel, mut canceled) = oneshot::channel();
@@ -721,7 +630,11 @@ impl BuilderlabHost {
             Ok(()) = &mut *canceled => return Err(CANCELED.into()),
         };
         if let Some(Me::Account(account)) = probed {
-            return Ok(account);
+            return if self.owns(id)? {
+                Ok(account)
+            } else {
+                Err(CANCELED.into())
+            };
         }
         let code = await_callback(config, opener, canceled).await?;
         // The finish settles on its own, so cancel returns promptly and a
@@ -752,7 +665,15 @@ impl BuilderlabHost {
             revoke(&config, &credential).await;
             return Err(CANCELED.into());
         }
-        let previous = match write(config.clone(), credential.clone(), expires_at).await {
+        let (current, previous) = match write(
+            config.clone(),
+            credential.clone(),
+            expires_at,
+            self.clone(),
+            id,
+        )
+        .await
+        {
             Ok(previous) => previous,
             Err(error) => {
                 // Never leave a live session that no tool holds.
@@ -760,37 +681,20 @@ impl BuilderlabHost {
                 return Err(error);
             }
         };
-        let current = {
-            let mut state = self.lock()?;
-            let current = state
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.id == id);
-            if current {
-                state.pending = None;
-            }
-            current
-        };
+        if let Some(previous) = previous {
+            revoke(&config, &previous).await;
+        }
         if !current {
-            let _ = delete(config.clone(), Some(credential.clone())).await;
             revoke(&config, &credential).await;
             return Err(CANCELED.into());
         }
-        if let Some(previous) = previous {
-            // Two live sessions under one key would leave one nobody can reach.
-            tokio::spawn(async move { revoke(&config, &previous).await });
+        if self.lock()?.generation != id + 1 {
+            return Err(CHANGED.into());
         }
         Ok(account)
     }
     pub(crate) fn cancel(&self) -> Result<(), String> {
-        if let Some(Pending {
-            cancel: Some(cancel),
-            ..
-        }) = self.lock()?.pending.take()
-        {
-            let _ = cancel.send(());
-        }
-        Ok(())
+        self.begin(None).map(drop)
     }
     /// Revokes server-side under a short cap, then deletes locally regardless:
     /// the user asked to sign out of this key, and only a failed local delete
@@ -800,8 +704,10 @@ impl BuilderlabHost {
         self.begin(None)?;
         if let Stored::Credential(credential) = read(config.clone()).await? {
             revoke(&config, &credential).await;
+            delete(config, Some(credential)).await
+        } else {
+            delete(config, None).await
         }
-        delete(config, None).await
     }
     /// Re-reads the store every time; nothing in memory is authoritative.
     pub(crate) async fn auth(&self) -> Result<Option<Account>, String> {
@@ -830,46 +736,28 @@ async fn finish(
     id: u64,
     code: String,
 ) -> Result<Account, String> {
-    let exchanged = exchange(&config, &code).await?;
-    let account = match me(&config, &exchanged.credential).await {
-        Ok(Me::Account(account)) => account,
-        Ok(Me::Unauthenticated(status)) => {
-            revoke(&config, &exchanged.credential).await;
-            return Err(format!(
-                "Builderlab session check failed with HTTP {status}"
-            ));
-        }
-        Err(error) => {
-            revoke(&config, &exchanged.credential).await;
-            return Err(error);
-        }
-    };
-    host.settle(config, id, exchanged, account).await
-}
-
-#[tauri::command]
-pub(crate) async fn builderlab_auth(
-    host: tauri::State<'_, BuilderlabHost>,
-) -> Result<Option<Account>, String> {
-    host.inner().clone().auth().await
-}
-#[tauri::command]
-pub(crate) async fn builderlab_login<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    host: tauri::State<'_, BuilderlabHost>,
-) -> Result<Account, String> {
-    host.inner().clone().login(&Opener(app)).await
-}
-#[tauri::command]
-pub(crate) fn builderlab_cancel(host: tauri::State<'_, BuilderlabHost>) -> Result<(), String> {
-    host.cancel()
-}
-#[tauri::command]
-pub(crate) async fn builderlab_sign_out(
-    host: tauri::State<'_, BuilderlabHost>,
-) -> Result<(), String> {
-    host.inner().clone().sign_out().await
+    let result = async {
+        let exchanged = exchange(&config, &code).await?;
+        let account = match me(&config, &exchanged.credential).await {
+            Ok(Me::Account(account)) => account,
+            Ok(Me::Unauthenticated(status)) => {
+                revoke(&config, &exchanged.credential).await;
+                return Err(format!(
+                    "Builderlab session check failed with HTTP {status}"
+                ));
+            }
+            Err(error) => {
+                revoke(&config, &exchanged.credential).await;
+                return Err(error);
+            }
+        };
+        host.settle(config, id, exchanged, account).await
+    }
+    .await;
+    host.retire(id);
+    result
 }
 
 #[cfg(test)]
+#[path = "tests.rs"]
 mod tests;

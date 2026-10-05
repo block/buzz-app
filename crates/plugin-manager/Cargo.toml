@@ -8,6 +8,9 @@ rust-version = "1.89"
 name = "buzzodz"
 path = "src/main.rs"
 
+[features]
+builderlab = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,28 @@
+[package]
+name = "tauri-plugin-builderlab"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+links = "tauri-plugin-builderlab"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = ["dynamic-acl"] }
+tauri-plugin-opener = "2"
+builderlab-auth = { git = "https://github.com/block/builderlab-cli.git", rev = "78f9ea0044f7265b5e72aacd822215f6621fad7b", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["sync", "time", "macros", "io-util", "net", "rt"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1.9", features = ["serde"] }
+
+[dev-dependencies]
+anyhow = "1"
+axum = "0.8"
+tempfile = "3"
+tokio = { version = "1", features = ["test-util", "rt-multi-thread"] }

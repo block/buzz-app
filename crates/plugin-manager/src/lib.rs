@@ -99,6 +99,11 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        #[cfg(feature = "builderlab")]
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/builderlab/manifest.json"
+        ))
+        .expect("bundled Builderlab manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
@@ -377,6 +382,7 @@ impl Manager {
                                 | "buzz.workflows"
                                 | "buzz.sessions"
                                 | "block.hosted-communities"
+                                | "block.builderlab"
                                 | "buzz.moderation"
                         ));
                 PluginInfo {

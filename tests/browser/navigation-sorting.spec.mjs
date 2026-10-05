@@ -134,7 +134,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect(
     menu.getByRole("menuitemradio", { name: "Recent" }),
   ).toHaveAttribute("aria-checked", "true");
-  // Real layout verifies that the shared pill recipe reaches both the lone
+  // Real layout verifies that the shared nested-radius recipe reaches both the lone
   // submenu trigger and grouped radio choices, without feature-local corners.
   const sort = page
     .getByRole("menu", { name: "More actions for Channels", exact: true })
@@ -146,13 +146,14 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     for (const width of [720, 1000, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       const radius = await sort.evaluate((element) => {
-        const rem = Number.parseFloat(
-          getComputedStyle(element).getPropertyValue("--radius-pill"),
-        );
-        const rootSize = Number.parseFloat(
-          getComputedStyle(document.documentElement).fontSize,
-        );
-        return `${rem * rootSize}px`;
+        const popup = element.closest(".buzz-menu-popup");
+        const style = getComputedStyle(popup);
+        return `${Math.max(
+          0,
+          Number.parseFloat(style.borderTopLeftRadius) -
+            Number.parseFloat(style.paddingLeft) -
+            Number.parseFloat(style.borderLeftWidth),
+        )}px`;
       });
       for (const item of [
         sort,

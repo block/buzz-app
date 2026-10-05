@@ -161,8 +161,8 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
-  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
-  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
+  /** The host authenticates and sends exact bytes without exposing credentials to JS. */
+  request(url: string, body: string, signal?: AbortSignal): Promise<Response>;
   /** Native hosts sign and send `PUT /upload` for these exact bytes. */
   upload?(file: File, signal: AbortSignal): Promise<Response>;
   /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
@@ -887,10 +887,6 @@ export async function connectBrokerTransport(
   };
 }
 
-const hex = (buffer: ArrayBuffer) =>
-  [...new Uint8Array(buffer)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 const signedAdmissions = createHostAdmission();
 /** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
 export function admittedSignedWorkflowRead(
@@ -918,7 +914,7 @@ export const admitSignedRequest = (
     signal,
     priority,
   );
-/** NIP-98 signed reads for a host that owns a signer (Tauri, NIP-07). Reads and writes use the same identity and relay scope. */
+/** NIP-98 signed reads and writes through a host that owns the signer and authenticates each HTTP request. Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
   signer: Signer,
   httpOrigin: string,
@@ -1083,58 +1079,12 @@ async function signedPost(
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
-    const request = signer.request?.bind(signer);
-    if (request)
-      return dispatch(() => {
-        signal?.throwIfAborted();
-        return profiling.measureAsync("http.fetch", id, () =>
-          request(url, body, signal),
-        );
-      });
-    const payload = hex(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
-    );
-    if (signal?.aborted) throw signal.reason;
-    const auth = await profiling.measureAsync("http.auth", id, () =>
-      signer.signEvent({
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        content: "",
-        tags: [
-          ["u", url],
-          ["method", "POST"],
-          ["payload", payload],
-          ["nonce", crypto.randomUUID()],
-        ],
-      }),
-    );
-    if (signal?.aborted) throw signal.reason;
-    // Preparation retains this principal. Dispatch rechecks capacity and any
-    // server pause learned during asynchronous signing.
-    const queued = profiling.start("http.admission", id);
-    try {
-      return await dispatch(() => {
-        queued();
-        signal?.throwIfAborted();
-        if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
-          throw new ApiNotSent(
-            "Request authentication expired before dispatch; retry available",
-          );
-        return profiling.measureAsync("http.fetch", id, () =>
-          fetch(url, {
-            method: "POST",
-            headers: {
-              Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-              "Content-Type": "application/json",
-            },
-            body,
-            signal: signal ?? null,
-          }),
-        );
-      });
-    } finally {
-      queued();
-    }
+    return dispatch(() => {
+      signal?.throwIfAborted();
+      return profiling.measureAsync("http.fetch", id, () =>
+        signer.request(url, body, signal),
+      );
+    });
   });
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */

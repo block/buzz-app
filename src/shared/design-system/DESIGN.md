@@ -152,14 +152,49 @@ Use the surface that matches the content and its position in the interface.
 
 ### Floating surfaces
 
-Menus, Select, Popover, and PreviewCard share `floating-surface`: an opaque fill,
-primary boundary, panel radius, and lift. Each component owns its content spacing
-and interaction. Shared material does not make these controls interchangeable.
+Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
+mode-aware fill, 8px backdrop blur, standard border, 16px `radius-container` corners,
+and shared lift. `popover-surface` composes this same recipe for feature-owned
+anchored content. Reduced transparency, forced colors, and browsers without blur
+support use the opaque fill.
 
-Default and wide menus, content popovers, pickers, dialogs, and alert dialogs use
-24px `radius-panel` corners. Short action menus and compact account popovers opt
-into 10px `radius-row` corners, a 4px list inset, and 8px inner rows. Choose compact
-for the content, never automatically because the viewport is narrow.
+Default menus, selects, and list popovers share a 4px list inset. Content popovers
+use 12px padding. Menu items and select options share 8px vertical / 12px
+horizontal padding and corners derived from the outer radius and inset. Their hover treatment also comes from the same rule. Use Menu for
+actions and nested submenus, Select for a value, and Popover for interactive
+content; Base UI retains each control's keyboard and focus semantics.
+
+Short action menus and compact account popovers retain 8px `radius-row`
+corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
+never automatically because the viewport is narrow. Dialogs and alert dialogs
+use the same `elevated-material` fill, blur, and accessibility fallback while
+retaining their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
+apply the material to each step; their shared wrapper stays transparent.
+
+### Corner scale and nesting
+
+Standalone containers use the 4 / 8 / 12 / 16 / 20px scale: `radius-chip` for
+tight details, `radius-row` for independent rows, `radius-control` for fields,
+`radius-container` for medium containers and standard floating surfaces, and
+`radius-panel` for large surfaces. These are rem-based values at the default
+scale. Circles, capsules and pills are separate shape roles; full-window sheets
+can be square.
+
+When a nested fill or container follows its parent's contour, use
+`max(0px, outer radius - inset)`, measured between the painted edges. Include
+padding and the parent's border in that inset. Do not round a derived radius
+back to a scale step: a 16px menu with 4px padding and a 1px border has 11px
+row corners; an 8px compact menu with the same inset has 3px row corners.
+
+`floating-surface` owns `--floating-radius`, `--floating-inset` (the padding),
+and `--floating-inner-radius` (subtracting its 1px border). Menu, Select,
+list-popover and completion fills consume that derived radius. A feature that
+changes the surface padding must update `--floating-inset` on the same owner.
+An additional nested container measures from its immediate painted parent.
+Hover, selected, pressed and focus fills retain the same geometry. Edge-to-edge
+fills inherit the container radius and clip at its boundary. Independent controls
+and identity artwork retain their own shapes rather than becoming concentric
+with an unrelated container.
 
 Floating rows use `affordance-floating-hover` (neutral 2 light / neutral 5 dark).
 Supporting text becomes standard text on highlight. Keep persistent selection
@@ -240,6 +275,12 @@ NavigationItem still do not accept caller-supplied `className`; popup portals ke
 their own floating recipe. Availability's existing contrast exceptions remain
 recorded in `docs/presence.md`.
 
+Top-bar ghost icon actions remain unfilled at rest. Their backdrop hover and
+pressed roles use translucent fills (black 6% / 10% in light mode, white 10% / 16%
+in dark mode), so the gradient remains visible. The shell owns this context;
+content-panel actions retain their opaque surface recipes. Only the fill is
+translucent: icons stay at full opacity, without adding blur or a rim.
+
 Actions consume contextual fill/hover/pressed/selected/boundary roles rather than
 redefining global semantic tokens that also color avatars or chips. Floating
 rows remain transparent at rest, then use the existing floating highlight with
@@ -279,15 +320,28 @@ clamped naturally on shorter controls, and bounded on taller ones. Reuse this
 role for similarly sized actions; `--radius-pill` remains the fully round role
 for circles and pills of any height. Fields retain `--radius-control`.
 
+Settings scopes the text-button radius to 12px `--radius-control` so actions
+use rounded rectangles. Icon actions retain their independent 10px radius.
+
+Floating unread cues and Jump to latest use Button's `shape="control"` with
+12px `--radius-control` corners in every state. Any backing surface uses the
+same radius so its painted edges align with the button.
+
+The message hover toolbar uses the 12px rounded-container radius
+with a 2px inset. Its independent icon actions retain their shared 10px corners.
+
 Button labels stay on one line and do not shrink in flex layouts (`whitespace-nowrap
 shrink-0`). Parents must reflow whole controls or provide
 scrolling when space is limited. Composite reply summaries may reflow whole
-avatar/count groups without wrapping individual labels. Small buttons use 16px
+avatar/count groups without wrapping individual labels. Thread reply summaries
+use the same 10px corners as icon actions, including hover and pressed fills.
+Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`.
 
-IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
+IconButton defaults to a 10px rounded rectangle (`--radius-icon-button`) and uses the same
+sm/md/lg sizes. Existing names
 remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
@@ -301,12 +355,18 @@ Keep keyboard-only focus and reduced-motion behavior owned by the system.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
-IconButton defaults to round across all sizes and variants. Use `shape="control"`
-only when a rectangular control shape is explicitly needed. Disabled ghost icons
-remain unfilled; their muted foreground communicates unavailability without
+Utility icon actions share the rounded rectangle in resting, hover, pressed, and
+selected states. Avatar controls default to round; use `shape="round"` for deliberate
+circular controls such as media playback, the avatar edit badge, and Add reaction.
+Top-bar, sidenav and content-toolbar icon actions share square 32px containers, 16px artwork,
+and the same 10px radius on all four corners, including actions beside the outer
+panel edge. The top bar retains its translucent backdrop interaction fills.
+These independent control shapes stay separate from the container scale and
+derived nested-fill corners.
+Disabled ghost icons remain unfilled; their muted foreground communicates unavailability without
 adding a container to an otherwise empty toolbar.
 
-Composer picker surfaces use the 24px `--radius-panel` role and the shared
+Composer picker surfaces use the 16px `--radius-container` role and the shared
 popup motion below. Filtering does not stagger results. Search fields follow
 the shared form treatment below.
 
@@ -402,8 +462,8 @@ for identity choices, retaining human/agent shapes.
 
 PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
 spacing. Use `size="compact"` with list padding for short account/action surfaces: 14rem
-width and 10px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
-hover treatment for short action lists. Content and wide popovers retain 24px corners.
+width and 8px corners. `MenuPopup size="compact"` uses the same corner, inset, row and
+hover treatment for short action lists. Content and wide popovers retain 16px corners.
 Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as
@@ -475,8 +535,9 @@ and the actions; returning to the form restores the normal body-bottom padding.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
-one flexing scrollport. Keep all results and recovery feedback reachable in that
-scrollport. Without footer actions, the flex body omits its bottom padding so
+one flexing scrollport. Keep results and their recovery feedback reachable; Members
+administration errors sit outside that scrollport, below its fixed search controls.
+Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
 body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
 The shared Dialog uses state opacity and settling transform tokens for a centered
@@ -484,16 +545,18 @@ The shared Dialog uses state opacity and settling transform tokens for a centere
 keep the controlled component mounted while setting `open={false}` for an exit.
 Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
 `motion="none"` for frequently used surfaces such as the search palette.
-Channel Create/Edit privacy confirmation opts into a keyed `step` inside that same
-modal. The complete surface crossfades over 200ms with 4px blur: the form grows to
+Channel Create/Edit privacy and Members confirmations opt into a keyed `step`
+inside that same modal. The complete surface crossfades over 200ms with 4px blur: the form grows to
 1.05 while confirmation grows from 0.95 to 1; returning reverses those positions.
 This explicitly requested, bounded dialog transition is an exception to the
 no-blur rule below, not a new default for dialogs. One stable Base UI title and
 description label the modal; outgoing content is inert and hidden from assistive
 technology. Reduced motion, keyboard navigation and `motion="none"` swap steps
 immediately. The caller still owns draft state and focus between steps; no second
-modal, backdrop or write owner is introduced. This opt-in is for content-sized,
-centered dialogs; expanded, stable-height and side-sheet compositions are unchanged.
+modal, backdrop or write owner is introduced. Each centered step retains its own
+height and body layout while exiting, so a stable-height Members list can switch
+to a content-sized confirmation without collapsing its scrollport. Expanded and
+side-sheet compositions are unchanged.
 
 
 Use Accordion for collapsible sections. Form sections pass `keepMounted` so
@@ -534,7 +597,8 @@ remain above the stack. Content updates do not restart expiry; timeout changes d
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. Tabs can also
 compose NavigationItem through the `navigation` variant: these retain tab
-semantics, use 12rem widths with ellipsis and a subtle selected fill, accept avatars/icons, and place a sibling close
+semantics, use 12rem widths with ellipsis, 10px corners matching adjacent icon
+actions, and a subtle selected fill, accept avatars/icons, and place a sibling close
 button over reserved trailing space. Tab close icons use 1rem artwork to match
 container header actions while retaining their compact hit areas. Close buttons stay visible on the active tab; inactive tabs reveal them on hover or keyboard focus. Touch devices keep close buttons visible. Navigation tab strips scroll only horizontally. Their rounded thumb uses the sidebar’s quiet scrollbar role, with a 3px visible thumb in the header’s 4px bottom inset. The tab row keeps its vertical position as overflow starts or stops. It appears only while the strip is hovered; touch devices retain the thumb without requiring hover. The main
 channel header uses the same control with a single non-closable tab with `showSelection={false}` (no selection or hover fill); channel
@@ -565,13 +629,13 @@ the hovered row’s trailing action unobstructed.
 
 ## Menu row corners
 
-Default and wide menus use `--radius-pill` for every row. First, middle, and last
-items keep the same highlight shape, including grouped choices and submenu
-triggers. Compact menus use their shared 8px inner corners within the 10px outer
-surface.
+Menu rows use `--floating-inner-radius` in every position, including grouped
+choices and submenu triggers. Default and wide menus derive 11px inner corners
+from their 16px surface; compact menus derive 3px from their 8px surface.
+Both include the 4px padding and 1px border in the inset.
 
 Use these shared recipes. Do not add positional or feature-local radius overrides,
-derive a new inset radius, or change the global row radius for one menu.
+derive another inset formula, or change the global row radius for one menu.
 
 ## Align row content, not state backgrounds
 

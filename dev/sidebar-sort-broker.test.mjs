@@ -51,7 +51,11 @@ async function harness() {
         return Response.json({ accepted: true, event_id: body.id });
       }
       if (queryFailure) return queryFailure;
-      const head = heads.get(body[0]["#d"][0]);
+      // Model an empty stale replica: only strong reads observe the writer head.
+      const head =
+        body[0].consistency === "strong"
+          ? heads.get(body[0]["#d"][0])
+          : undefined;
       return Response.json(head ? [head] : []);
     },
   }).configureServer({
@@ -122,7 +126,13 @@ it("real broker sorting preserves saved-section keys in transport confirmation a
     "/query",
   ]);
   expect(h.calls[0].body).toEqual([
-    { kinds: [30078], authors: [h.viewer], "#d": ["channel-sort"], limit: 1 },
+    {
+      kinds: [30078],
+      authors: [h.viewer],
+      "#d": ["channel-sort"],
+      limit: 1,
+      consistency: "strong",
+    },
   ]);
   expect(
     await h.transport.writeSidebarSort(
@@ -132,6 +142,9 @@ it("real broker sorting preserves saved-section keys in transport confirmation a
       signal,
     ),
   ).toEqual({ forums: "recent" });
+  const queries = h.calls.filter(({ url }) => url.endsWith("/query"));
+  expect(queries).toHaveLength(4);
+  for (const { body } of queries) expect(body).toEqual(h.calls[0].body);
 });
 
 it.each(["query", "oversized", "publication", "receipt", "conflict"])(

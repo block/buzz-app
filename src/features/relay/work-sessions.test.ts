@@ -1038,7 +1038,7 @@ function setup(
   // agent added to a session and its parent with two concurrent exact roster
   // reads and no rediscovery".
   const refreshRoster = vi.fn<NonNullable<ChannelQueries["refreshRoster"]>>(
-    async () => {},
+    async () => true,
   );
   const refreshList = vi.fn();
   const channels = {
@@ -1245,6 +1245,7 @@ it("confirms an agent added to a listed channel from one exact roster read witho
   test.refreshRoster.mockImplementation(async (channelId) => {
     expect(channelId).toBe(id);
     test.setList(after);
+    return true;
   });
   await expect(
     test.service.refresh(id, { member }, false),
@@ -1263,7 +1264,7 @@ it("confirms an agent added to a listed channel from one exact roster read witho
 it("confirms an addition the live roster lists while its roster read is still in flight", async () => {
   const { id, member, before, after } = listedChannel();
   const test = setup(true, before);
-  test.refreshRoster.mockImplementation(() => new Promise<void>(() => {}));
+  test.refreshRoster.mockImplementation(() => new Promise<boolean>(() => {}));
   const refreshing = test.service.refresh(id, { member }, false);
   await vi.waitFor(() => expect(test.refreshRoster).toHaveBeenCalledOnce());
   const lookup = lookupSignal(test, test.refreshRoster);
@@ -1316,7 +1317,10 @@ it.each([
   async (_outcome, lookup) => {
     const { id, member, before, after } = listedChannel();
     const test = setup(true, before);
-    test.refreshRoster.mockImplementation(lookup);
+    test.refreshRoster.mockImplementation(async () => {
+      await lookup();
+      return true;
+    });
     let settled = false;
     const refreshing = test.service
       .refresh(id, { member }, false)

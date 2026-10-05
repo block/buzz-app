@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { InboxDetail } from "./InboxDetail";
@@ -120,6 +121,7 @@ async function fixture() {
     [
       ["p", viewer.pubkey],
       ["imeta", "url https://fixture.test/video.mp4", "m video/mp4"],
+      ["imeta", "url https://fixture.test/image.png", "m image/png"],
     ],
   );
   const events = [
@@ -386,6 +388,25 @@ it.each([false, true])(
     }
   },
 );
+it("Escape dismisses a thread's fullscreen image without closing the detail", async () => {
+  const h = await fixture();
+  const { reader, editor } = await opened(h);
+  const thumbnail = within(reader).getByRole("link", {
+    name: "Open image attachment",
+  });
+  fireEvent.click(thumbnail, { detail: 1 });
+  const close = within(
+    screen.getByRole("dialog", { name: "Image attachment" }),
+  ).getByRole("button", { name: "Close fullscreen viewer" });
+  expect(close).toHaveFocus();
+  // The portal bubbles through ThreadPanel and InboxDetail in React.
+  fireEvent.keyDown(close, { key: "Escape" });
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  expect(screen.getByRole("complementary", { name: "Thread" })).toBe(reader);
+  expect(screen.getByRole("textbox")).toBe(editor);
+  await frame();
+  expect(thumbnail).toHaveFocus();
+});
 it("withholds first-incomplete admission and retires an admitted reader on actual access removal", async () => {
   const h = await fixture();
   const gate = h.hold();

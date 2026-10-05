@@ -650,6 +650,138 @@ it("shows provider-owned pending and retry states and hides an empty publication
   expect(input).not.toHaveAttribute("aria-controls");
 });
 
+it.each(["click", "Enter", "Tab", " "])(
+  "accepts the displayed completion by stable ID during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const other = { id: "other", label: "Other", edit: { text: "other" } };
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    act(() => {
+      publish({ items: [other, chosen], spaceId: chosen.id });
+    });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const option = screen.getByRole("option", { name: "Chosen" });
+    expect(option).toHaveAttribute("aria-selected", "true");
+
+    act(() => {
+      publish({
+        items: [
+          { ...chosen, label: "Refreshed", edit: { text: "fresh" } },
+          other,
+        ],
+        spaceId: chosen.id,
+      });
+      // Hold React's commit until after the event, as when a provider's
+      // passive effect publishes just before an input event is dispatched.
+      expect(option).toHaveTextContent("Chosen");
+      if (key === "click") fireEvent.click(option);
+      else fireEvent.keyDown(input, { key });
+    });
+    expect(input).toHaveValue("fresh ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "rejects withdrawn or ineligible refreshed completions via %s without sending",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    const canSelect = vi.fn(() => false);
+    const replacements: (CompletionResult | undefined)[] = [
+      undefined,
+      { items: [{ id: "other", label: "Other", edit: { text: "other" } }] },
+      { items: [{ ...chosen, disabled: "No longer eligible" }] },
+      { items: [{ ...chosen, canSelect }] },
+    ];
+    for (const replacement of replacements) {
+      let withdraw: ReturnType<typeof publish> = false;
+      act(() => {
+        withdraw = publish({ items: [chosen] });
+      });
+      const option = screen.getByRole("option", { name: "Chosen" });
+      act(() => {
+        if (replacement) publish(replacement);
+        else if (withdraw) withdraw();
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(canSelect).toHaveBeenCalledExactlyOnceWith(key);
+  },
+);
+
+it.each([undefined, "other"])(
+  "leaves space alone if the latest publication's exact match is %s",
+  (spaceId) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const items = [
+      { id: "chosen", label: "Chosen", edit: { text: "chosen" } },
+      { id: "other", label: "Other", edit: { text: "other" } },
+    ];
+    act(() => {
+      publish({ items, spaceId: "chosen" });
+    });
+    act(() => {
+      publish({ items, spaceId });
+      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+    });
+    expect(input).toHaveValue("!search");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "uses only the current retry action during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const oldRetry = vi.fn();
+    const retry = vi.fn();
+    for (const currentRetry of [retry, undefined]) {
+      act(() => {
+        publish({ items: [], retry: oldRetry });
+      });
+      const option = screen.getByRole("option", { name: "Retry suggestions" });
+      act(() => {
+        // A new item at the displayed retry's index is not the user's choice.
+        publish({
+          items: [{ id: "other", label: "Other", edit: { text: "other" } }],
+          ...(currentRetry ? { retry: currentRetry } : {}),
+        });
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(oldRetry).not.toHaveBeenCalled();
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(retry).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("revokes stale completion publications across editor and ownership lifecycles and recovers freshly", () => {
   const h = mount();
   const input = h.input();
@@ -2210,7 +2342,7 @@ it("keeps inline recipient identity and source stable through directory collisio
 });
 
 it.each([false, true])(
-  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  "asks before mentioning a removed person in an untyped channel without enrolling anyone (mixed native=%s)",
   async (mixed) => {
     const viewer = keypair(),
       relay = keypair();
@@ -2266,12 +2398,17 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      // An ordinary removed recipient must reject synchronously. Awaiting an
-      // async act here would hide a transient enrollment lock on the composer.
+      // An untyped channel is an ordinary channel: a removed recipient is now
+      // outside it, so the sender chooses. Nothing enrolls or sends meanwhile.
       h.submit();
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "no longer a channel member",
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        mixed
+          ? "Honey, Honey are not in this channel."
+          : "Honey is not in this channel.",
+      );
+      await userEvent.setup().keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
       expect(sign).not.toHaveBeenCalled();
@@ -2955,6 +3092,72 @@ it("uses the full channel choice set for one selected chip and follows membershi
   names.dispose();
 });
 
+it("sends someone outside a DM as a reference without asking", async () => {
+  const h = mount();
+  const add = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    // A writer that could add members still cannot add anyone to a DM.
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(add).not.toHaveBeenCalled();
+});
+
+it("does not ask about outside recipients in a session media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without session
+  // mode, so the session rule must come from the channel type.
+  const h = mount({ threadRootId: "f".repeat(64) });
+  const add = vi.fn();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey, second.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  // The first person leaves the session after being named.
+  channel.members = [second.pubkey];
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+  expect(add).not.toHaveBeenCalled();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
@@ -3298,6 +3501,14 @@ describe("project resource picker", () => {
     ).toBeVisible();
     const choice = await screen.findByRole("button", { name: row });
     expect(choice).toHaveTextContent("Issue · Game repo");
+    // Synthetic coverage checks the guard, not native IME behavior.
+    const search = screen.getByRole("searchbox");
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+      fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      expect(p.validations).toHaveLength(0);
+    }
     // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
     await p.h.user.keyboard("{ArrowDown}");
     expect(choice).toHaveFocus();

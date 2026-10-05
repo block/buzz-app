@@ -1,0 +1,97 @@
+@layer components {
+  .buzz-theme-picker {
+    min-width: 0;
+    max-inline-size: 100%;
+  }
+  .buzz-theme-picker .buzz-radio-group {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .buzz-theme-picker .buzz-choice {
+    position: relative;
+    min-width: 0;
+  }
+  .buzz-theme-picker .buzz-radio-group > *,
+  .buzz-theme-picker .buzz-choice > span {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+  .buzz-theme-picker .buzz-radio {
+    @apply sr-only;
+  }
+  .buzz-theme-choice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    max-inline-size: 100%;
+  }
+  .buzz-theme-thumbnail {
+    position: relative;
+    display: block;
+    inline-size: 5rem;
+    max-inline-size: 100%;
+    aspect-ratio: 10 / 7;
+    border-radius: var(--space-2);
+    outline: 1px solid var(--border-standard);
+    outline-offset: 2px;
+  }
+  .buzz-theme-preview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .buzz-theme-thumbnail[data-mode="system"] [data-tone="light"] {
+    clip-path: inset(0 50% 0 0);
+  }
+  .buzz-theme-thumbnail[data-mode="system"] [data-tone="dark"] {
+    clip-path: inset(0 0 0 50%);
+  }
+  .buzz-theme-preview-backdrop {
+    fill: var(--surface-base);
+  }
+  .buzz-theme-preview-panel {
+    fill: var(--surface-panel);
+  }
+  .buzz-theme-preview-lines {
+    stroke: var(--text-metadata);
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+  .buzz-theme-preview-divider {
+    stroke: var(--border-standard);
+  }
+  .buzz-theme-preview-accent {
+    fill: var(--affordance-accent-prominent);
+  }
+  .buzz-theme-preview-composer {
+    fill: none;
+    stroke: var(--border-standard);
+  }
+  .buzz-theme-picker .buzz-choice:hover .buzz-theme-thumbnail {
+    outline-color: var(--border-prominent);
+  }
+  .buzz-theme-picker .buzz-choice:has([data-checked]) .buzz-theme-thumbnail {
+    outline: 2px solid var(--border-focus);
+  }
+  html[data-keyboard-navigation]
+    .buzz-theme-picker
+    .buzz-choice:has(:focus-visible)
+    .buzz-theme-thumbnail {
+    outline: 2px solid var(--border-focus);
+    outline-offset: var(--space-1);
+  }
+  .buzz-keyboard-shortcut {
+    @apply text-body-sm;
+    display: inline-flex;
+    max-inline-size: 100%;
+    align-items: center;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+    color: var(--text-subtle);
+    overflow-wrap: anywhere;
+  }
+}

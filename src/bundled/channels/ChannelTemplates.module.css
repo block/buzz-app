@@ -41,3 +41,17 @@
   width: 100%;
   min-height: 18rem;
 }
+
+/* Keep disclosure labels aligned with the form fields, preserving shared padding. */
+.disclosures {
+  margin-inline: calc(-1 * var(--space-2));
+}
+
+.row > :first-child {
+  flex-shrink: 1;
+}
+.entryName {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}

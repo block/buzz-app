@@ -1,3 +1,4 @@
+import { editSidebarToggle } from "../src/features/relay/sidebar-edits.ts";
 import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
 import { decodeSidebarPreferences } from "./sidebar-preferences.mjs";
 
@@ -38,22 +39,14 @@ export function prepareSidebarStar(events, intent, secret, now = Date.now()) {
     const current = head
       ? JSON.parse(nip44.v2.decrypt(head.content, key))
       : { version: 1, channels: {} };
-    const previous = Object.hasOwn(current.channels, intent.channelId)
-      ? current.channels[intent.channelId]
-      : undefined;
-    if (previous?.starred === intent.starred || (!previous && !intent.starred))
-      return { stars: current };
-    const stars = {
-      ...current,
-      channels: {
-        ...current.channels,
-        [intent.channelId]: {
-          ...previous,
-          starred: intent.starred,
-          updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1),
-        },
-      },
-    };
+    const stars = editSidebarToggle(
+      current,
+      intent.channelId,
+      "starred",
+      intent.starred,
+      now,
+    );
+    if (stars === current) return { stars };
     const event = finalizeEvent(
       {
         kind: 30078,

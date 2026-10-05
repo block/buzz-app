@@ -35,7 +35,13 @@ function browser(stored: string | null = null, systemDark = false) {
   const host = {
     localStorage: storage,
     matchMedia: () => scheme,
-    document: { documentElement: root, querySelector: () => meta },
+    document: {
+      documentElement: root,
+      querySelector: () => meta,
+      createElement: () => ({ textContent: "", remove: vi.fn() }),
+      head: { append: vi.fn() },
+    },
+    requestAnimationFrame: (callback: () => void) => callback(),
     getComputedStyle: () => ({
       getPropertyValue: () =>
         root.dataset.colorMode === "dark" ? " #11181d " : " #e7f0ef ",

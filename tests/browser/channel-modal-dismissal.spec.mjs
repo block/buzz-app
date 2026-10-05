@@ -54,6 +54,8 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
   });
   const text = editor.getByRole("textbox", { name: "Canvas Markdown" });
   await expect(text).toHaveValue("Local draft");
+  await expect(editor).toHaveCSS("backdrop-filter", "blur(8px)");
+  await expect(editor).toHaveCSS("background-color", "rgba(40, 40, 40, 0.9)");
   const reload = editor.getByRole("button", { name: "Reload saved Canvas" });
   await reload.click();
   const confirmation = page.getByRole("dialog", {

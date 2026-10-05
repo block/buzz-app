@@ -39,7 +39,7 @@ import {
   readRelayLibrary,
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
-import { createIdentityArchives } from "./identity-archives";
+import { archiveHides, createIdentityArchives } from "./identity-archives";
 import type { SidebarStorage } from "./sidebar-journal";
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
@@ -212,6 +212,7 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
+  let resolveChannelAccess: (id: string) => Promise<void> = async () => {};
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -620,10 +621,17 @@ export function createRelaySession(
       : undefined,
     notify,
   );
+  const archives = createIdentityArchives(
+    requests.reader,
+    transport?.archiveAuthority,
+    notify,
+    { writer: transport?.identityArchive, viewer: transport?.viewer },
+  );
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
     library: agentLibrary.queries,
     native: options.agentChoices,
+    archives: archives.queries,
     signal: lifetime.signal,
   });
   const nameSource = {
@@ -639,12 +647,7 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-  );
-  const archives = createIdentityArchives(
-    requests.reader,
-    transport?.archiveAuthority,
-    notify,
-    { writer: transport?.identityArchive, viewer: transport?.viewer },
+    (channel) => resolveChannelAccess(channel),
   );
   const channels = createChannelStore(
     transport
@@ -673,6 +676,10 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  resolveChannelAccess = (id) =>
+    channels.queries.list().coverage === "partial"
+      ? (channels.queries.resolve?.([id]) ?? Promise.resolve())
+      : Promise.reject(new Error("Channel access is fully resolved"));
   retainedChannelEvent = channels.retainedEvent;
   const projects = projectDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
@@ -1053,7 +1060,12 @@ export function createRelaySession(
           event.pubkey === transport.viewer,
       );
     },
-    () => agentChoices.snapshot().identities.map((agent) => agent.pubkey),
+    {
+      selectable: () =>
+        agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
+      archived: (pubkey) =>
+        archiveHides(archives.queries, pubkey, transport?.viewer),
+    },
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
   );
@@ -1282,20 +1294,17 @@ export function createRelaySession(
             // Native teams never consume the legacy inventory as a fallback.
             await Promise.all([
               ...(setup.agents.length
-                ? [
-                    agentChoices.refresh("templates"),
-                    archives.queries.refresh(),
-                  ]
+                ? [agentChoices.refresh("templates")]
                 : []),
               ...(setup.groupId ? [sidebarPreferences.queries.refresh()] : []),
             ]);
             lifetime.signal.throwIfAborted();
             if (setup.agents.length) {
-              if (archives.queries.snapshot().status !== "ready")
+              const choices = agentChoices.snapshot();
+              if (choices.archives.status !== "ready")
                 throw new Error(
                   "Agent archive state is unavailable; refresh before creating this lineup",
                 );
-              const choices = agentChoices.snapshot();
               if (choices.templates.status !== "ready")
                 throw new Error(
                   choices.templates.error ??
@@ -1308,9 +1317,7 @@ export function createRelaySession(
                 ),
               );
               const unavailable = setup.agents.filter(
-                (key) =>
-                  !available.has(key) ||
-                  archives.queries.state(key) !== "not-archived",
+                (key) => !available.has(key),
               );
               if (unavailable.length)
                 throw new Error(
@@ -1737,6 +1744,7 @@ export function createRelaySession(
     channelDetails: details.capability,
     memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
+    agentManagement: activity.management,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),

@@ -10,6 +10,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { relayOrigin } from "../../features/communities/destination";
 import { AgentCard } from "./AgentCard";
+import type { ProfileResolver } from "./AgentCard";
 import {
   localHereGroup,
   localOtherGroup,
@@ -67,7 +68,10 @@ export function InventoryView({
   edit,
   duplicate,
   remove,
+  removeRelay,
   importedId,
+  resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   children,
@@ -83,7 +87,12 @@ export function InventoryView({
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
   importedId: string | null;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(
     pubkey: string,
     action: "use" | "clone",
@@ -161,7 +170,10 @@ export function InventoryView({
                       edit={edit}
                       duplicate={duplicate}
                       remove={remove}
+                      removeRelay={removeRelay}
                       importedId={importedId}
+                      resolveProfile={resolveProfile}
+                      profileKeys={profileKeys}
                       onUseHere={onUseHere}
                       onImport={onImport}
                       selectedSource={selectedSources[row.pubkey]}

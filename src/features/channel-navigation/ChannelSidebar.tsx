@@ -239,6 +239,18 @@ function ReadySidebar({
     startup.ready &&
       list.status === "ready" &&
       (preferences.status !== "loading" || !!preferences.cached),
+    // The sidebar entry a destination selects, not its message or thread.
+    // A target for another workspace is not a destination in this sidebar.
+    "scope" in target &&
+      target.scope &&
+      (target.scope.viewer !== viewer ||
+        target.scope.communityOrigin !== scope.slice(0, -(viewer.length + 1)))
+      ? undefined
+      : target.kind === "conversation"
+        ? `conversation:${target.channelId}`
+        : target.kind === "page"
+          ? `page:${target.pluginId}/${target.pageId}:${JSON.stringify(target.route?.params ?? null)}`
+          : target.kind,
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -717,7 +729,6 @@ function ReadySidebar({
         ? sectionKey.slice("group:".length)
         : undefined;
       const starred = sectionKey === "starred";
-      if (actions.length) actions.push(<MenuSeparator key="group-actions" />);
       actions.push(
         <MenuSubmenu key="move-channel">
           <MenuSubmenuTrigger>
@@ -820,8 +831,6 @@ function ReadySidebar({
     const muteable =
       queries.sidebarPreferences.muteWritable && !!preferences.data;
     const readable = queries.unread.sync().capability === "frontier-sync";
-    if (actions.length && (muteable || readable))
-      actions.push(<MenuSeparator key="attention-separator" />);
     if (muteable) {
       const intent = mute.intents.get(channel.id);
       const muted = intent?.pending
@@ -859,7 +868,7 @@ function ReadySidebar({
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
-          separator={actions.length > 0}
+          separator={false}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}

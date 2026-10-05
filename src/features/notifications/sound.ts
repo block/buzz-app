@@ -15,10 +15,13 @@ export const SOUND_NAMES = [
   "ping",
   "unison",
 ] as const;
-export type SoundName = (typeof SOUND_NAMES)[number];
+export type SoundName = (typeof SOUND_NAMES)[number] | "silent";
 const SOUND_NAME_SET: ReadonlySet<string> = new Set(SOUND_NAMES);
 export function isSoundName(value: unknown): value is SoundName {
-  return typeof value === "string" && SOUND_NAME_SET.has(value);
+  return (
+    value === "silent" ||
+    (typeof value === "string" && SOUND_NAME_SET.has(value))
+  );
 }
 
 export const DEFAULT_SOUND: SoundName = "flutter";
@@ -36,12 +39,6 @@ export const CATEGORY_SOUND_LABELS: Record<NotificationCategory, string> = {
   mention: "@Mentions",
   thread: "Thread replies",
 };
-export const CATEGORY_SOUND_DESCRIPTIONS: Record<NotificationCategory, string> =
-  {
-    direct: "When someone messages you directly.",
-    mention: "When someone tags you in a channel.",
-    thread: "When someone replies in a thread you follow or posted in.",
-  };
 export const RECOMMENDED_SOUND_BY_CATEGORY: Record<
   NotificationCategory,
   SoundName
@@ -75,6 +72,7 @@ function getAudio(name: SoundName): HTMLAudioElement {
 export function playNotificationSound(
   name: SoundName,
 ): HTMLAudioElement | null {
+  if (name === "silent") return null;
   try {
     const audio = getAudio(name);
     audio.currentTime = 0;

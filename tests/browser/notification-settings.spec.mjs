@@ -52,8 +52,8 @@ test("Notifications keeps settings separated and button labels contained at supp
       await expect(section.getByRole("combobox", { name })).toBeVisible();
     }
     await expect(
-      section.getByRole("button", { name: "Preview flutter" }),
-    ).toHaveCount(3);
+      section.getByRole("button", { name: /^Preview / }),
+    ).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     for (const width of [800, 390]) {
       await page.setViewportSize({ width, height: 900 });

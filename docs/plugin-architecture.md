@@ -52,7 +52,7 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         builtin Bestie page, companion panel and its snake launcher
+bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
@@ -105,10 +105,10 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+All 22 plugins remain bundled. **Channels is the only required plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
-Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
+Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Saved enabled/disabled flags win over defaults (except required Channels). There
@@ -131,10 +131,12 @@ agent execution remain future shared capabilities.
 
 ### Optional channel templates and Settings cards
 
-`ctx.settingsCards.register({ id, title, component })` contributes a card under
+`ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
 Settings → Messages, not a new route. Adding `group` instead gives the card its own
 Settings destination under that labelled navigation group; its section id is the
-contribution key (`plugin/card`) and disappears with the plugin. Cards receive `active()` and use ordinary
+contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
+uses the shared design-system icon gateway; the host supplies a fallback when omitted.
+Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
@@ -352,10 +354,11 @@ while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
-so this mechanism does not promise persistent agent sessions or drafts. Bestie
-currently supplies art and truthful not-connected copy, with no send control or
-agent API. Both browser and Rust native/CLI catalogs keep it bundled but off by default;
-saved enabled or disabled flags still win. Enable it under Settings → Plugins.
+so this mechanism does not promise persistent agent sessions or drafts. The bundled
+Bestie page currently supplies art and truthful not-connected copy, with no send
+control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
+keep it bundled but off by default; saved enabled or disabled flags still win.
+Enable it under Settings → Plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
@@ -376,7 +379,7 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
-External plugins can declare host access in `manifest.json`:
+Plugins can declare host access in `manifest.json`:
 
 ```json
 {
@@ -389,7 +392,7 @@ External plugins can declare host access in `manifest.json`:
 
 Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
-ID; the program and arguments come only from the installed manifest. Native
+ID; the program and arguments come only from the plugin's manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout. The direct command invocation has a five-second deadline;
 cancellation or timeout kills its process group on Unix or its job process tree
@@ -399,7 +402,17 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
-Requests use the native HTTPS client, so an external plugin can declare an exact
+Bundled host grants use the effective compiled manifest at revision `bundled` and
+require the plugin to be enabled in the native catalog. External grants require the
+enabled current artifact and its integrity checks; safe mode pauses external
+plugins while enabled bundled plugins remain usable.
+
+Builderlab's effective manifest derives its exact origin from the validated
+[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
+Its source manifest contains no deployment origins; external plugin declarations
+remain fixed in their installed artifacts.
+
+Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling
@@ -640,6 +653,15 @@ methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` component
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
+`conversation.format` returns the host's date labels, so plugin text reads like
+the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
+"Yesterday at 9:05 AM"), `dayGroupLabel(seconds)` for day dividers ("Today",
+"Monday"), `fullTimestamp(seconds)` for the full hover date, and
+`relativeTimestamp(seconds)` for link previews ("5 minutes ago"). They use the
+current locale and time zone; all but `fullTimestamp` take an optional `now`
+for tests. They compute the label when called. `conversation.ui.Message` and
+the host's day dividers re-render at local midnight; a plugin that shows these
+labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 

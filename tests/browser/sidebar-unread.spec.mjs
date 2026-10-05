@@ -165,6 +165,11 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await expect(row(page, ids["dm-030"]).getByRole("img")).toHaveCount(1);
     await expect(row(page, ids["dm-090"]).getByRole("img")).toHaveCount(1);
     await expect(cue(page, "below")).toBeVisible();
+    await expect(cue(page, "below")).toHaveCSS("border-radius", "12px");
+    await expect(cue(page, "below").locator("..")).toHaveCSS(
+      "border-radius",
+      "12px",
+    );
     await expect.poll(() => pages().length).toBe(7); // Pages, not retries.
     expect(new Set(pages().map(({ params }) => params.cursor)).size).toBe(7);
     expect(app.report.sidebarHolds).toEqual([
@@ -177,7 +182,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   }
 });
 
-test("edge pills follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
+test("edge controls follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
   page,
   app,
 }, info) => {

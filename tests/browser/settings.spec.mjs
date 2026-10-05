@@ -415,6 +415,10 @@ confirmedPresence(
       await tab();
       await expect(customEmoji).toBeFocused();
       await tab();
+      await expect(
+        sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
+      await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
       await expect(
@@ -442,7 +446,7 @@ confirmedPresence(
       await expect(settingsRegion).toHaveCSS("border-radius", "0px");
       await expect(page.locator(".shell-body > [data-joined]")).toHaveCSS(
         "border-radius",
-        "24px",
+        "20px",
       );
       const frame = await settingsRegion.boundingBox();
       expect(frame.height).toBeGreaterThan(700);
@@ -453,7 +457,7 @@ confirmedPresence(
         expect(navigation).not.toBeNull();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - frame.y).toBe(24);
+        expect(content.y - frame.y).toBe(32);
       } else {
         await expect(settingsSidebar).toBeHidden();
         expect(
@@ -480,6 +484,10 @@ confirmedPresence(
       await expect(personalGroups).toBeFocused();
       await tab();
       await expect(customEmoji).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
@@ -827,8 +835,8 @@ test("Settings loads and publishes the selected community profile", async ({
   ).toBeFocused();
   await page.keyboard.press(tab);
   await expect(
-    profileRegion().getByRole("textbox", {
-      name: "Public key (hex)",
+    profileRegion().getByRole("button", {
+      name: "Copy public key",
       exact: true,
     }),
   ).toBeFocused();

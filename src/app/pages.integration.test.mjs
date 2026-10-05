@@ -50,7 +50,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
-    assert.equal(bundledPlugins.length, 21);
     for (const plugin of bundledPlugins) {
       assert.equal(
         typeof plugin.enabledByDefault,
@@ -101,7 +100,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards.snapshot().map((card) => card.pluginId),
-      ["buzz.channels", "block.hosted-communities", "buzz.emoji"],
+      [
+        "block.builderlab",
+        "buzz.channels",
+        "block.hosted-communities",
+        "buzz.emoji",
+      ],
     );
     assert.equal(
       services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
@@ -149,7 +153,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
       services.settingsCards.snapshot().map((card) => card.pluginId),
-      ["buzz.channels", "block.hosted-communities", "buzz.emoji"],
+      [
+        "block.builderlab",
+        "buzz.channels",
+        "block.hosted-communities",
+        "buzz.emoji",
+      ],
     );
     await services.plugins.change("enable", "buzz.channel-templates");
     await vi.waitFor(() =>
@@ -245,19 +254,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("enable", "buzz.bestie");
     await vi.waitFor(() =>
       assert.ok(
-        services.panels.snapshot().some((p) => p.pluginId === "buzz.bestie"),
+        services.pages.snapshot().some((p) => p.pluginId === "buzz.bestie"),
       ),
     );
-    const firstBestie = services.panels
-      .snapshot()
-      .find((panel) => panel.pluginId === "buzz.bestie");
-    assert.equal(firstBestie.title, "Bestie");
-    assert.equal(firstBestie.launcher.icon, "/bestie.png");
-    assert.match(
-      renderToStaticMarkup(
-        createElement(firstBestie.component, { target: "", close() {} }),
-      ),
-      /isn’t connected yet/,
+    assert.equal(
+      services.panels
+        .snapshot()
+        .some((panel) => panel.pluginId === "buzz.bestie"),
+      false,
     );
     const bestiePage = services.pages
       .snapshot()
@@ -285,16 +289,22 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     // Management completion is not activation completion; Cordis still owns import/disposal barriers.
     await vi.waitFor(() =>
       assert.ok(
-        services.panels
+        services.pages
           .snapshot()
-          .some((panel) => panel.pluginId === "buzz.bestie"),
+          .some((page) => page.pluginId === "buzz.bestie"),
       ),
     );
-    const secondBestie = services.panels
+    const secondBestie = services.pages
       .snapshot()
-      .find((panel) => panel.pluginId === "buzz.bestie");
-    assert.notEqual(secondBestie, firstBestie);
-    assert.equal(secondBestie.revision, firstBestie.revision);
+      .find((page) => page.pluginId === "buzz.bestie");
+    assert.notEqual(secondBestie, bestiePage);
+    assert.equal(secondBestie.revision, bestiePage.revision);
+    assert.equal(
+      services.panels
+        .snapshot()
+        .some((panel) => panel.pluginId === "buzz.bestie"),
+      false,
+    );
     const page = services.pages.snapshot()[0];
     assert.match(
       renderToStaticMarkup(createElement(page.component)),

@@ -22,6 +22,7 @@ export type ButtonProps = Omit<
   children: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
+  shape?: "capsule" | "control";
   loading?: boolean;
 };
 
@@ -30,6 +31,7 @@ export function Button({
   children,
   variant = "subtle",
   size = "md",
+  shape = "capsule",
   type = "button",
   loading = false,
   disabled,
@@ -63,6 +65,7 @@ export function Button({
             : variant
       }
       data-size={size === "compact" ? "sm" : size === "default" ? "md" : size}
+      data-button-shape={shape}
       data-loading={loading || undefined}
     >
       <span className="buzz-button-label">{children}</span>

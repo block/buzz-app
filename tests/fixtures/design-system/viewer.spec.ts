@@ -5,6 +5,72 @@ import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory"
 
 const viewer = "/tests/fixtures/design-system.html";
 
+test("floating fills nest with their painted owner across themes, widths and text scales", async ({
+  page,
+}) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["light", "dark"]) {
+      for (const scale of [1, 1.5]) {
+        await page.goto(`${viewer}#/design/components/popover`);
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        await page.evaluate((scale) => {
+          document.documentElement.style.fontSize = `${16 * scale}px`;
+        }, scale);
+        for (const [label, size, radius] of [
+          ["Account actions", "compact", 8],
+          ["Recent activity", "wide", 16],
+        ] as const) {
+          const trigger = page.getByRole("button", {
+            name: label,
+            exact: true,
+          });
+          await trigger.click();
+          const popup = page.locator(
+            `.buzz-popover-popup[data-size="${size}"]`,
+          );
+          await expect(popup).toHaveCSS("border-radius", `${radius * scale}px`);
+          const row = popup.locator(".navigation-item").first();
+          await row.hover();
+          const geometry = await popup.evaluate((element) => {
+            const child = element.querySelector(".navigation-item");
+            if (!child) throw new Error("List popover has no row");
+            const outer = getComputedStyle(element);
+            const inner = getComputedStyle(child);
+            const bounds = element.getBoundingClientRect();
+            return {
+              outer: Number.parseFloat(outer.borderTopLeftRadius),
+              inset:
+                Number.parseFloat(outer.paddingLeft) +
+                Number.parseFloat(outer.borderLeftWidth),
+              corners: [
+                inner.borderTopLeftRadius,
+                inner.borderTopRightRadius,
+                inner.borderBottomLeftRadius,
+                inner.borderBottomRightRadius,
+              ],
+              left: bounds.left,
+              right: bounds.right,
+            };
+          });
+          for (const corner of geometry.corners) {
+            expect(Number.parseFloat(corner)).toBeCloseTo(
+              Math.max(0, geometry.outer - geometry.inset),
+              4,
+            );
+          }
+          expect(geometry.left).toBeGreaterThanOrEqual(0);
+          expect(geometry.right).toBeLessThanOrEqual(width);
+          await page.keyboard.press("Escape");
+          await expect(popup).toHaveCount(0);
+          await expect(trigger).toBeFocused();
+        }
+      }
+    }
+  }
+});
+
 test("badge motion centered pill scales with its avatar and reverses without jumping", async ({
   page,
 }) => {
@@ -1049,15 +1115,7 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
         await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
         if (kind === "icon-button") {
           await expect(button).toHaveCSS("width", `${height}px`);
-          await expect
-            .poll(() =>
-              button.evaluate(
-                (el) =>
-                  parseFloat(getComputedStyle(el).borderRadius) >=
-                  el.clientWidth / 2,
-              ),
-            )
-            .toBe(true);
+          await expect(button).toHaveCSS("border-radius", "10px");
         } else {
           // Half the 52px large height; shorter sizes clamp to their own half-height.
           await expect(button).toHaveCSS("border-radius", "26px");
@@ -1329,17 +1387,13 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
-  // Every position and grouped choice uses the shared full-round token.
+  // Real painted edges prove concentric nesting, including grouped choices.
   const expectRounded = async (item: Locator) => {
     const radius = await item.evaluate((element) => {
-      // The shared pill token is rem-based; computed corner values are pixels.
-      const rem = Number.parseFloat(
-        getComputedStyle(element).getPropertyValue("--radius-pill"),
-      );
-      const rootSize = Number.parseFloat(
-        getComputedStyle(document.documentElement).fontSize,
-      );
-      return `${rem * rootSize}px`;
+      const popup = element.closest(".buzz-menu-popup");
+      if (!popup) throw new Error("Menu item has no popup owner");
+      const outer = getComputedStyle(popup);
+      return `${Math.max(0, Number.parseFloat(outer.borderTopLeftRadius) - Number.parseFloat(outer.paddingLeft) - Number.parseFloat(outer.borderLeftWidth))}px`;
     });
     for (const corner of [
       "top-left",
@@ -2315,4 +2369,126 @@ test("documentation code tabs and contents work with keyboard and narrow layouts
       exact: true,
     }),
   ).toBeVisible();
+});
+
+// Real font metrics, wrapping, and RTL geometry cannot be established in jsdom.
+test("empty states preserve grouping and contain translated copy at 200 percent", async ({
+  page,
+}, info) => {
+  await page.goto(`${viewer}#/design/components/empty-state`);
+  const cards = page.locator(".buzz-empty-state");
+  await expect(cards).toHaveCount(2);
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1440, 800, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const scale of ["100%", "200%"]) {
+      for (const direction of ["ltr", "rtl"]) {
+        for (const copy of [
+          {
+            lang: "en",
+            title: "No emojis yet",
+            description: "Add a custom emoji to use in messages and reactions.",
+            action: "Add emoji",
+          },
+          {
+            lang: "de",
+            title: "Noch keine persönlichen Gruppen",
+            description:
+              "Organisiere zusammengehörige Kanäle in persönlichen Gruppen. Deine Gruppen sind nur für dich sichtbar.",
+            action: "Persönliche Gruppen verwalten",
+          },
+          {
+            lang: "en",
+            title: "[Ñöö pëërsöönââl gröüps yëët]",
+            description:
+              "[Këëp rëëlââtëëd châânnëëls töögëëthëër ïïn yöüür sëëttïïngs. Thëësëë gröüps âârëë prïïvââtëë töö yöüü.]",
+            action: "[Mâânââgëë pëërsöönââl gröüps]",
+          },
+        ]) {
+          // Test-only copy substitutions stress the real shared component.
+          await cards.first().evaluate(
+            (root, { scale, direction, copy }) => {
+              document.documentElement.style.fontSize = scale;
+              document.documentElement.dir = direction;
+              root.setAttribute("lang", copy.lang);
+              const title = root.querySelector(".buzz-empty-state-title");
+              const description = root.querySelector(
+                ".buzz-empty-state-description",
+              );
+              const action = root.querySelector(".buzz-button-label");
+              if (!title || !description || !action)
+                throw new Error("Empty-state specimen is incomplete");
+              title.textContent = copy.title;
+              description.textContent = copy.description;
+              action.textContent = copy.action;
+            },
+            { scale, direction, copy },
+          );
+          for (const card of await cards.all()) {
+            await expect
+              .poll(
+                () =>
+                  card.evaluate((root) => {
+                    const bounds = root.getBoundingClientRect();
+                    return (
+                      [...root.querySelectorAll("*")].every((node) => {
+                        const box = node.getBoundingClientRect();
+                        return (
+                          box.left >= bounds.left && box.right <= bounds.right
+                        );
+                      }) && root.scrollWidth <= root.clientWidth
+                    );
+                  }),
+                { message: `${width}px, ${scale}, ${direction}, ${copy.lang}` },
+              )
+              .toBe(true);
+          }
+          const typography = await cards.first().evaluate((root) => {
+            const title = root.querySelector("h3");
+            const description = root.querySelector("p");
+            if (!title || !description)
+              throw new Error("Empty-state copy is missing");
+            const heading = getComputedStyle(title);
+            const body = getComputedStyle(description);
+            return {
+              headingWeight: heading.fontWeight,
+              bodyWeight: body.fontWeight,
+              lineHeight:
+                parseFloat(body.lineHeight) / parseFloat(body.fontSize),
+            };
+          });
+          expect(typography.headingWeight).toBe("500");
+          expect(typography.bodyWeight).toBe("400");
+          expect(typography.lineHeight).toBeGreaterThanOrEqual(1.4);
+          if (copy.lang === "de") {
+            const fitsWords = await cards
+              .first()
+              .getByRole("button")
+              .evaluate((button) => {
+                const label = button.querySelector(".buzz-button-label");
+                if (!label) throw new Error("Missing action label");
+                const style = getComputedStyle(label);
+                const canvas = document.createElement("canvas");
+                const context = canvas.getContext("2d");
+                if (!context)
+                  throw new Error("Missing font measurement context");
+                context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                const longest = Math.max(
+                  ...(label.textContent ?? "")
+                    .split(/\s+/)
+                    .map((word) => context.measureText(word).width),
+                );
+                return label.getBoundingClientRect().width >= longest;
+              });
+            expect(fitsWords, "Translated action retains whole words").toBe(
+              true,
+            );
+          }
+        }
+      }
+    }
+    await cards.first().screenshot({
+      path: info.outputPath(`empty-state-${width}-200-rtl.png`),
+    });
+  }
 });

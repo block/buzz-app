@@ -112,6 +112,20 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "empty-state",
+    name: "EmptyState",
+    purpose:
+      "Explain an empty collection, introduce setup, or present a status action.",
+    behavior:
+      "Static content with a decorative icon, grouped copy, and an optional action. Uses label-sm/body-sm type, a 48ch measure, and logical spacing; callers distinguish empty results from loading or errors.",
+    variants: ["with action", "informational"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/EmptyState.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "calendar",
     name: "Calendar",
     purpose: "Choose a date using a month grid.",
@@ -308,6 +322,49 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["panel-header"],
   },
   {
+    slug: "theme-picker",
+    name: "ThemePicker",
+    purpose:
+      "Choose System, Light, or Dark using miniature interface previews.",
+    behavior: "Shared radio keyboard navigation and accessible choice labels.",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/ThemePicker.tsx",
+    baseUi: [],
+    composes: ["field", "radio-group"],
+  },
+  {
+    slug: "keyboard-shortcut",
+    name: "KeyboardShortcut",
+    purpose:
+      "Present one keyboard chord in a quiet capsule with spoken key names.",
+    behavior: "Semantic keyboard hint; not interactive.",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/KeyboardShortcut.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "settings-group",
+    name: "SettingsGroup",
+    purpose:
+      "A subtle bordered container for related settings rows or form fields.",
+    behavior:
+      "Presentation only; children retain their labels, state, and interactions.",
+    variants: ["rows", "form"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/SettingsGroup.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "preference-row",
     name: "PreferenceRow",
     purpose:
@@ -359,6 +416,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inverted",
       "link",
       "size: xs | sm | md | lg",
+      "shape: capsule (default) | control (12px)",
       "loading",
     ],
     status: "proposed",
@@ -386,7 +444,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "chrome",
       "avatar",
       "media",
-      "shape: round (default) | control | row-end",
+      "shape: control (default, 10px) | round (avatar default) | row-end",
       "size: xs (20px, 12px icon) | sm (32px) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],

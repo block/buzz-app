@@ -1,4 +1,22 @@
 .root {
+  --github-checks-success: var(--text-success);
+  --github-checks-failure: var(--text-danger);
+  --github-checks-pending: var(--text-warning);
+  /* GitHub owns status meanings; shared roles own their themed paint.
+     Merged is categorical purple, never the customizable app accent. */
+  --github-open-text: var(--text-success);
+  --github-open-bg: var(--affordance-success);
+  --github-draft-text: var(--text-subtle);
+  --github-draft-bg: var(--affordance-selected);
+  --github-closed-text: var(--text-subtle);
+  --github-closed-bg: var(--affordance-selected);
+  --github-merged-text: var(--text-categorical-purple);
+  --github-merged-bg: var(--surface-categorical-purple);
+  --github-additions-text: var(--text-success);
+  --github-deletions-text: var(--text-danger);
+  --github-review-approved: var(--text-success);
+  --github-review-commented: var(--text-standard);
+  --github-review-changes-requested: var(--text-danger);
   padding: var(--space-5);
   overflow-y: auto;
   min-height: 0;
@@ -12,6 +30,34 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+.identity > div {
+  min-width: 0;
+}
+.repository {
+  font-size: var(--text-label);
+  font-weight: var(--text-label--font-weight);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+  overflow-wrap: anywhere;
+}
+.repositorySeparator,
+.titleNumber {
+  color: var(--text-subtle);
+}
+.titleNumber {
+  font-weight: var(--text-body-lg--font-weight);
+  white-space: nowrap;
+}
+.titleLink {
+  --link-text: var(--text-standard);
+  --link-hover: transparent;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .titleLink:hover {
+    text-decoration: underline;
+  }
 }
 .identity small,
 .identity strong {
@@ -36,6 +82,18 @@
   background: var(--affordance-selected);
   color: var(--text-standard);
 }
+.errorActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.errorExternal {
+  max-width: 100%;
+}
+.errorActionLabel {
+  white-space: normal;
+}
 .external {
   display: flex;
   align-items: center;
@@ -57,13 +115,54 @@
   letter-spacing: var(--text-body-lg--letter-spacing);
   overflow-wrap: anywhere;
 }
+.root .pullTitle {
+  margin-bottom: var(--space-2);
+}
+.pullTitle + .byline {
+  margin-bottom: var(--space-6);
+}
 .state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border-radius: var(--radius-chip);
   padding: var(--space-half) var(--space-1h);
   background: var(--affordance-selected);
   text-transform: capitalize;
 }
+.state[data-pr-state="open"] {
+  color: var(--github-open-text);
+  background: var(--github-open-bg);
+}
+.state[data-pr-state="draft"] {
+  color: var(--github-draft-text);
+  background: var(--github-draft-bg);
+}
+.state[data-pr-state="closed"] {
+  color: var(--github-closed-text);
+  background: var(--github-closed-bg);
+}
+.state[data-pr-state="merged"] {
+  color: var(--github-merged-text);
+  background: var(--github-merged-bg);
+}
+.additions,
+.deletions {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: bold;
+}
+.additions {
+  color: var(--github-additions-text);
+}
+.deletions {
+  color: var(--github-deletions-text);
+}
 .facts {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   padding: var(--space-3);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
@@ -81,8 +180,33 @@
 }
 .facts dd {
   margin: 0;
+  min-width: 0;
   text-align: right;
   overflow-wrap: anywhere;
+}
+.branch,
+.branchLabel {
+  font-family: var(--font-system-mono);
+  font-size: var(--text-mono);
+  font-weight: var(--text-mono--font-weight);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+}
+.branch {
+  display: inline-block;
+  max-width: 100%;
+  padding: var(--space-half) var(--space-1h);
+  border-radius: var(--radius-chip);
+  background: var(--affordance-link-hover);
+  color: var(--text-link);
+  vertical-align: baseline;
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .branch:hover {
+    text-decoration: underline;
+  }
 }
 .body {
   overflow-wrap: anywhere;
@@ -154,4 +278,448 @@
   margin-top: var(--space-6);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
+}
+
+.checksCard {
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+}
+.checkSummary {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-4);
+}
+.checkSummary > svg {
+  width: 2rem;
+  height: 2rem;
+  grid-row: 1 / span 2;
+  color: var(--text-subtle);
+}
+.checkSummaryLabel {
+  font-weight: var(--text-label--font-weight);
+  overflow-wrap: anywhere;
+}
+.checkSummary:where([data-check-state="success"]) > svg {
+  color: var(--github-checks-success);
+}
+.checkSummary:where([data-check-state="failure"]) > svg {
+  color: var(--github-checks-failure);
+}
+.checkSummary:where([data-check-state="pending"]) > svg {
+  color: var(--github-checks-pending);
+}
+:where(.checkSummary) .checksDescription {
+  margin: 0;
+}
+.checkSegment {
+  fill: none;
+  stroke: var(--check-color, var(--border-standard));
+  stroke-width: 3;
+}
+
+.pullTabs {
+  padding-block: var(--space-5);
+}
+
+.checksDescription {
+  color: var(--text-subtle);
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+.checksRetry {
+  padding: 0 var(--space-4) var(--space-3);
+}
+.checkGroups {
+  border-top: 1px solid var(--border-standard);
+  padding: var(--space-2) var(--space-4);
+}
+.checkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+.checkRow + .checkRow {
+  border-top: 1px solid var(--border-standard);
+}
+.checkRow > svg {
+  flex-shrink: 0;
+  margin-top: var(--space-half);
+  color: var(--check-color, var(--text-subtle));
+}
+.checkActions {
+  flex-shrink: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .checkActions {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .checkRow:hover .checkActions,
+  .checkRow:focus-within .checkActions,
+  .checkActions[data-menu-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.checkContent {
+  flex: 1;
+  min-width: 0;
+}
+.checkHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  overflow-wrap: anywhere;
+}
+.checkHeading > :where(:first-child) {
+  min-width: 0;
+}
+.checkName {
+  --link-text: var(--text-standard);
+  --link-hover: transparent;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .checkName:hover {
+    text-decoration: underline;
+  }
+}
+.checkResult {
+  color: var(--text-subtle);
+}
+:is(.checkRow, .checkSegment):is(
+  [data-check-category="failing"],
+  [data-check-category="cancelled"]
+) {
+  --check-color: var(--github-checks-failure);
+}
+:is(.checkRow, .checkSegment)[data-check-category="pending"] {
+  --check-color: var(--github-checks-pending);
+}
+:is(.checkRow, .checkSegment)[data-check-category="successful"] {
+  --check-color: var(--github-checks-success);
+}
+.conversation {
+  container-type: inline-size;
+  margin-top: var(--space-5);
+}
+.conversationMessage {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) 0;
+}
+.conversationMessage[data-bodyless] {
+  align-items: center;
+}
+.messageMarker {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  width: 2rem;
+}
+.eventIcon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-subtle);
+}
+.eventIcon[data-review-state] {
+  color: var(--github-review-commented);
+}
+.eventIcon[data-review-state="DISMISSED"] {
+  color: var(--text-subtle);
+}
+.eventIcon[data-review-state="APPROVED"] {
+  color: var(--github-review-approved);
+}
+.eventIcon[data-review-state="CHANGES_REQUESTED"] {
+  color: var(--github-review-changes-requested);
+}
+.messageContent {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+.messageHeader {
+  position: relative;
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.messageMeasure {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  overflow: hidden;
+  pointer-events: none;
+}
+.messageMeasureText {
+  padding-right: var(--space-6);
+}
+.messageMeasureText > .body > :first-child {
+  margin-top: 0;
+}
+.messageMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+  padding-right: var(--space-6);
+  pointer-events: none;
+}
+.messageMetadata time {
+  color: var(--text-subtle);
+}
+.messageAuthor {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  font-weight: var(--text-label--font-weight);
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.messageTime {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  margin-left: auto;
+  color: var(--text-subtle);
+  text-align: right;
+}
+.messageTrigger {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  padding: 0;
+}
+.messageTrigger > svg {
+  position: absolute;
+  top: var(--space-1);
+  /* Center the 14px caret over the 20px action’s footprint. */
+  right: calc((var(--space-5) - 0.875rem) / 2);
+  color: var(--text-subtle);
+}
+.messageLabel {
+  color: var(--text-subtle);
+}
+.previewText {
+  display: block;
+  padding-top: var(--space-1);
+  padding-right: var(--space-6);
+  pointer-events: none;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.commentActions {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  margin-top: var(--space-2);
+}
+.commentActions[data-menu-action] {
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: end;
+  margin-top: 0;
+}
+.conversationMessage[data-single-line] .commentActions[data-menu-action] {
+  align-self: start;
+  top: calc(var(--space-1) - (var(--space-5) - 0.875rem) / 2);
+}
+.conversationMessage[data-bodyless] .commentActions {
+  align-self: center;
+}
+@media (hover: hover) and (pointer: fine) {
+  .commentActions[data-menu-action] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .conversationMessage:hover .commentActions,
+  .conversationMessage:focus-within .commentActions,
+  .commentActions[data-menu-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.thumbnails {
+  margin-top: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  min-width: 0;
+}
+.thumbnail {
+  display: block;
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+}
+/* Paint above the image: matching-color content cannot cover its edge. */
+.thumbnail::after,
+.attachment [data-image-preview]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid var(--border-standard);
+  border-radius: inherit;
+}
+.thumbnail [data-image-preview] {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: inherit;
+}
+.thumbnail [data-image-preview] > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.conversationMessage[data-open]
+  > .messageContent
+  > .messageHeader
+  > .previewText,
+.conversationMessage[data-open] > .messageContent > .thumbnails {
+  display: none;
+}
+.thumbnailCount {
+  pointer-events: none;
+  position: absolute;
+  inset: auto 0 0 auto;
+  padding: var(--space-half) var(--space-1);
+  border-radius: var(--radius-control) 0 0 0;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.messageBody {
+  padding-right: var(--space-6);
+  padding-top: var(--space-1);
+}
+.messageBody > .body > :first-child,
+.messageBody > p {
+  margin-top: 0;
+}
+@container (max-width: 24rem) {
+  .previewText {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+.conversationNotice,
+.sourceStatus {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+.conversationNotice {
+  margin: var(--space-3) 0;
+}
+.conversationTimeline {
+  display: grid;
+  gap: var(--space-3);
+  position: relative;
+}
+.conversationTimeline[data-has-events]::before {
+  content: "";
+  position: absolute;
+  left: 1rem;
+  top: var(--space-5);
+  bottom: var(--space-5);
+  border-left: 1px solid var(--border-standard);
+}
+.conversationSources {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--border-standard);
+  padding-top: var(--space-2);
+}
+.sourceStatus {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+.sourceStatus > :last-child {
+  margin-left: auto;
+}
+@container (max-width: 18rem) {
+  .conversationMessage:not([data-bodyless]) {
+    display: block;
+  }
+  .conversationMessage:not([data-bodyless]) .messageMarker {
+    margin-bottom: var(--space-2);
+  }
+  .conversationTimeline[data-has-events]::before {
+    display: none;
+  }
+}
+
+.eventIcon[data-merged] {
+  color: var(--github-merged-text);
+}
+.commentRunTrigger {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-2) 0;
+  text-align: left;
+}
+.commentRunSummary {
+  overflow-wrap: anywhere;
+}
+.commentRunSummary > span {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.historyReveal {
+  overflow: hidden;
+}
+.commentRunEvents {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
 }

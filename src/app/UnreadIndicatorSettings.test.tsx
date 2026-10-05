@@ -87,7 +87,10 @@ it("shows no dead permission actions when Dock badges are unavailable", async ()
   const h = setup("unavailable");
   await act(() => h.dock.refresh());
   expect(
-    screen.getByText(/running Buzz from the development server/),
+    screen.getByRole("heading", { name: "Dock unread badge" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/Dock badges require a bundled macOS app/),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(h.permission.mock.calls).toEqual([[false]]);

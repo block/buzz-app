@@ -135,7 +135,8 @@ and agents use squircles. Avatar artwork is decorative; the button's accessible
 name gives the conversation count and direction without implying a DM-first target.
 The controls use shared prominent buttons with an inverse surface, with
 interruptible tooltip-style transitions and reduced-motion support. Hidden cues
-remain inert during exit. Thread-only rows participate.
+remain inert during exit. They share 12px corners with Jump to latest, including
+their backing surfaces. Thread-only rows participate.
 The controls measure existing rendered badges/dots—no extra unread
 subscriptions or relay reads just to show them. Search-filtered rows do not
 participate. Collapsed sections use the summary's position and expand when revealed.

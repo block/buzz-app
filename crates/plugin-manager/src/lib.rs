@@ -98,7 +98,22 @@ pub fn valid_id(id: &str) -> Result<()> {
     Ok(())
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
+    let mut builderlab: Manifest = serde_json::from_str(include_str!(
+        "../../../src/bundled/builderlab/manifest.json"
+    ))
+    .expect("builderlab manifest");
+    // The build script derives this compile-time constant from BUZZ_BUILDERLAB_URL.
+    let origin = env!("BUZZ_BUILDERLAB_ORIGIN");
+    builderlab.host = Some(HostGrants {
+        network_origins: if origin.is_empty() {
+            vec![]
+        } else {
+            vec![origin.into()]
+        },
+        ..HostGrants::default()
+    });
     vec![
+        builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
@@ -377,6 +392,7 @@ impl Manager {
                                 | "buzz.workflows"
                                 | "buzz.sessions"
                                 | "block.hosted-communities"
+                                | "block.builderlab"
                                 | "buzz.moderation"
                         ));
                 PluginInfo {
@@ -574,6 +590,17 @@ impl Manager {
         Ok(self.current_artifact(id, revision)?.code)
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
+        if revision == "bundled" {
+            let plugin = self
+                .catalog()?
+                .plugins
+                .into_iter()
+                .find(|plugin| {
+                    plugin.source == "bundled" && plugin.manifest.id == id && plugin.enabled
+                })
+                .ok_or("Bundled plugin is disabled or unavailable")?;
+            return Ok(plugin.manifest.host.unwrap_or_default());
+        }
         Ok(self
             .current_artifact(id, revision)?
             .manifest
@@ -796,6 +823,9 @@ mod tests {
             .revision;
         assert!(manager.host_grants("example.page", &first).is_err());
         manager.change("enable", "example.page").unwrap();
+        assert!(manager.host_grants("example.page", "bundled").is_err());
+        let paused = Manager::open(Some(temp.path().into()), "test", true).unwrap();
+        assert!(paused.host_grants("example.page", &first).is_err());
         assert_eq!(
             manager
                 .host_grants("example.page", &first)
@@ -824,6 +854,46 @@ mod tests {
         assert_eq!(grants.network_origins, ["https://two.example"]);
         manager.change("disable", "example.page").unwrap();
         assert!(manager.host_grants("example.page", &second).is_err());
+    }
+
+    #[test]
+    fn host_grants_follow_enabled_bundled_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
+        assert_eq!(
+            grants.network_origins,
+            if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
+                vec![]
+            } else {
+                vec![env!("BUZZ_BUILDERLAB_ORIGIN").to_owned()]
+            }
+        );
+        assert!(grants.commands.is_empty());
+        assert!(manager
+            .host_grants("block.builderlab", "wrong-revision")
+            .is_err());
+        assert!(manager.host_grants("unknown.plugin", "bundled").is_err());
+        assert_eq!(
+            manager.host_grants("buzz.channels", "bundled").unwrap(),
+            super::HostGrants::default()
+        );
+
+        manager.change("disable", "block.builderlab").unwrap();
+        let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        assert!(reopened.host_grants("block.builderlab", "bundled").is_err());
+        manager.change("enable", "block.builderlab").unwrap();
+        assert_eq!(
+            reopened.host_grants("block.builderlab", "bundled").unwrap(),
+            grants
+        );
+
+        // Safe mode pauses external plugins; enabled bundled plugins remain usable.
+        let paused = Manager::open(Some(temp.path().into()), "test", true).unwrap();
+        assert_eq!(
+            paused.host_grants("block.builderlab", "bundled").unwrap(),
+            grants
+        );
     }
 
     #[test]

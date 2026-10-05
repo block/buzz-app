@@ -277,7 +277,6 @@ export function MediaAttachment({
             <IconButton
               size="compact"
               variant="media"
-              shape="round"
               type="button"
               aria-label="Open video fullscreen"
               onClick={(event) => {
@@ -324,7 +323,8 @@ export function MediaAttachment({
   );
 }
 
-function MediaViewer({
+/** The plain fullscreen fallback for surfaces that host no media review. */
+export function MediaViewer({
   title,
   close,
   children,

@@ -69,7 +69,7 @@ export async function settleShellToggle(page) {
   );
 }
 
-export async function selectSettingsSection(page, name) {
+export async function selectSettingsSection(page, name, regionName = name) {
   await settleShellToggle(page);
   const show = page.getByRole("button", {
     name: "Show navigation",
@@ -80,5 +80,13 @@ export async function selectSettingsSection(page, name) {
     .getByRole("complementary", { name: "Settings sidebar", exact: true })
     .getByRole("button", { name, exact: true })
     .click();
-  await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: regionName, exact: true }),
+  ).toBeVisible();
+}
+
+export async function chooseColorMode(page, name) {
+  const choice = page.getByRole("radio", { name, exact: true });
+  await page.locator("label").filter({ has: choice }).click();
+  await expect(choice).toBeChecked();
 }

@@ -394,3 +394,65 @@ it("a deferred submission revalidates the sound decision before playing", async 
   await settle();
   expect(t.plays).toEqual(["flutter"]);
 });
+
+it.each(["direct", "mention", "thread"] as const)(
+  "Silent for %s preserves banners and other categories' audio across reload",
+  async (category) => {
+    const t = setup();
+    t.service.updatePreferences({
+      sounds: {
+        ...t.service.snapshot().preferences.sounds,
+        [category]: "silent",
+      },
+    });
+    t.service.reloadPreferences();
+    expect(t.service.snapshot().preferences.sounds[category]).toBe("silent");
+    await t.service.admit(
+      category,
+      category,
+      { sourceKey: "silent", target },
+      () => true,
+    );
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(1);
+    expect(t.plays).toEqual([]);
+    const other = category === "mention" ? "direct" : "mention";
+    await t.service.admit(
+      other,
+      other,
+      { sourceKey: "audible", target },
+      () => true,
+    );
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(2);
+    expect(t.plays).toEqual(["flutter"]);
+  },
+);
+
+it.each([true, false])(
+  "Silent before=%s or during submission cannot resurrect pending audio",
+  async (initiallySilent) => {
+    const t = setup();
+    const sounds = t.service.snapshot().preferences.sounds;
+    if (initiallySilent)
+      t.service.updatePreferences({ sounds: { ...sounds, mention: "silent" } });
+    let release!: () => void;
+    vi.mocked(t.platform.show).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await t.submit("pending");
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledOnce();
+    try {
+      t.service.updatePreferences({ sounds: { ...sounds, mention: "silent" } });
+      t.service.updatePreferences({ sounds });
+    } finally {
+      release();
+      await flush();
+    }
+    expect(t.plays).toEqual([]);
+  },
+);

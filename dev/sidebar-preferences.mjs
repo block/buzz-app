@@ -1,8 +1,5 @@
-import {
-  editSidebarRecord,
-  nextSidebarSectionOrder,
-  projectSidebarRecord,
-} from "../src/features/relay/sidebar-registers.ts";
+import { editSidebarAssignment } from "../src/features/relay/sidebar-edits.ts";
+import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -151,42 +148,10 @@ export function prepareSidebarAssignment(
   assertSidebarAssignmentIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
-  const sectionId = intent.createSection?.id ?? intent.sectionId;
-  let sections = current.blob.sections;
-  let created = false;
-  if (intent.createSection) {
-    const name = intent.createSection.name.trim();
-    const existing = sections.find((section) => section.id === sectionId);
-    // The dialog retains one ID across retries, including an unknown publish
-    // outcome. Never duplicate or silently rename a section on retry.
-    if (existing && existing.name !== name)
-      throw new Error("The new section changed; reload and try again");
-    if (!existing) {
-      const order = nextSidebarSectionOrder(current.blob);
-      sections = [...sections, { id: sectionId, name, order }];
-      created = true;
-    }
-  }
-  if (
-    sectionId !== undefined &&
-    !sections.some((section) => section.id === sectionId)
-  )
-    throw new Error("Sidebar group no longer exists");
-  const writes = [[["a", intent.channelId], sectionId ?? null]];
-  if (created) {
-    const added = sections.find((section) => section.id === sectionId);
-    writes.push(
-      [["s", sectionId, "name"], added.name],
-      [["s", sectionId, "icon"], null],
-      [["s", sectionId, "order"], added.order],
-      [["s", sectionId, "live"], true],
-    );
-  }
-  const blob = editSidebarRecord(
-    SECTION_COORDINATE,
+  const blob = editSidebarAssignment(
     current.blob,
     current.createdAt,
-    writes,
+    intent,
     now,
   );
   const groups = projectSidebarPreferences(blob, undefined);

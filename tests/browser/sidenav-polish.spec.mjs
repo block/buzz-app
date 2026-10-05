@@ -1,4 +1,4 @@
-import { settleShellToggle } from "./navigation.mjs";
+import { settleShellToggle, openPage } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect, ids } from "./fixture.mjs";
 
@@ -32,6 +32,10 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       ),
     )
     .toBe(true);
+  // Without a saved position, startup reveals the current entry.
+  await expect(sidebar.locator('[aria-current="page"]').first()).toBeInViewport(
+    { ratio: 1 },
+  );
   const geometry = await sidebar.evaluate((viewport) => {
     const frame = viewport.parentElement;
     if (!(frame instanceof HTMLElement))
@@ -43,14 +47,12 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       rightInset: panelBounds.right - bounds.right,
       clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
-      scrollTop: viewport.scrollTop,
     };
   });
   expect(geometry).toEqual({
     rightInset: 2,
     clipped: false,
     paddingTop: 8,
-    scrollTop: 0,
   });
 });
 
@@ -253,7 +255,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
     else await expect(content).toHaveAttribute("inert", "");
     await expect
       .poll(() => section.evaluate((el) => el.getBoundingClientRect().height))
-      .toBe(opening ? expanded : 28);
+      .toBe(opening ? expanded : 32);
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await summary.click();
@@ -268,11 +270,11 @@ test("section disclosure toggles content and honors reduced motion", async ({
   expect(durations).toEqual(["0s", "0s"]);
   expect(
     await section.evaluate((el) => el.getBoundingClientRect().height),
-  ).toBe(28);
+  ).toBe(32);
 });
 
 // Browser layout verifies the header contract, including inline icon sizing.
-test("top bar keeps ghost navigation and glass Search and Bestie controls", async ({
+test("top bar uses consistent square controls and translucent ghost fills", async ({
   page,
   app,
 }, info) => {
@@ -284,31 +286,32 @@ test("top bar keeps ghost navigation and glass Search and Bestie controls", asyn
   expect(await controls.count()).toBeGreaterThanOrEqual(5);
   for (const control of await controls.all()) {
     const box = await control.boundingBox();
-    expect([box.width, box.height]).toEqual([28, 28]);
+    expect([box.width, box.height]).toEqual([32, 32]);
   }
-  const icons = header.locator(
-    '.buzz-button[data-icon-variant] svg, .buzz-button[data-icon-variant="chrome"] img:not([src="/bestie.png"])',
-  );
+  const icons = header.locator(".buzz-button[data-icon-variant] svg");
   expect(await icons.count()).toBeGreaterThanOrEqual(4);
   for (const icon of await icons.all()) {
     const box = await icon.boundingBox();
     expect([box.width, box.height]).toEqual([16, 16]);
   }
-  const bestie = header.getByRole("button", { name: "Bestie", exact: true });
-  await expect(bestie.locator('img[src="/bestie.png"]')).toBeVisible();
-  for (const control of [
-    bestie,
-    header.getByRole("button", { name: "Search Buzz", exact: true }),
-  ])
-    await expect(control).toHaveAttribute("data-icon-variant", "chrome");
+  await expect(
+    header.getByRole("button", { name: "Bestie", exact: true }),
+  ).toHaveCount(0);
+  const search = header.getByRole("button", {
+    name: "Search Buzz",
+    exact: true,
+  });
+  await expect(search).toHaveAttribute("data-icon-variant", "ghost");
+  const ghosts = header.locator('[data-icon-variant="ghost"]');
   await page.mouse.move(700, 500);
-  for (const control of await header
-    .locator('[data-icon-variant="ghost"]')
-    .all())
+  for (const control of await ghosts.all())
     await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 950 });
-    for (const group of [".shell-communities", ".shell-actions"]) {
+    for (const [group, gap] of [
+      [".shell-communities", 0],
+      [".shell-actions", 8],
+    ]) {
       const boxes = await header
         .locator(`${group} .buzz-button[data-icon-variant]`)
         .evaluateAll((nodes) =>
@@ -318,42 +321,46 @@ test("top bar keeps ghost navigation and glass Search and Bestie controls", asyn
           }),
         );
       for (let i = 1; i < boxes.length; i++)
-        expect(boxes[i].x - boxes[i - 1].x - boxes[i - 1].width).toBe(8);
+        expect(boxes[i].x - boxes[i - 1].x - boxes[i - 1].width).toBe(gap);
     }
-    const avatar = await header
-      .getByRole("button", { name: "Your profile" })
-      .boundingBox();
-    for (const control of await controls.all()) {
+    await expect(
+      header.getByRole("button", { name: "Your profile" }),
+    ).toHaveAttribute("data-icon-shape", "round");
+    for (const control of await ghosts.all()) {
+      await expect(control).toHaveCSS("border-radius", "10px");
       if (await control.isDisabled()) continue;
-      await control.hover();
-      const box = await control.boundingBox();
-      expect([box.width, box.height]).toEqual([avatar.width, avatar.height]);
-      await expect(control).toHaveCSS(
-        "border-radius",
-        await header
-          .getByRole("button", { name: "Your profile" })
-          .evaluate((node) => getComputedStyle(node).borderRadius),
-      );
+      for (const [mode, fill] of [
+        ["light", "rgba(0, 0, 0, 0.06)"],
+        ["dark", "rgba(255, 255, 255, 0.1)"],
+      ]) {
+        await page.emulateMedia({ colorScheme: mode });
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-color-mode",
+          mode,
+        );
+        await control.hover();
+        await expect(control).toHaveCSS("background-color", fill);
+      }
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
-  await header
-    .getByRole("button", { name: "Search Buzz", exact: true })
-    .hover();
+  await search.hover();
   await page.screenshot({
     path: info.outputPath("top-bar.png"),
     clip: { x: 0, y: 0, width: 1440, height: 100 },
   });
-  await bestie.click();
-  await expect(bestie).toHaveAttribute("aria-expanded", "true");
+  await search.click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await expect(
+    dialog.getByRole("combobox", { name: "Search Buzz" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(search).toBeFocused();
+  await openPage(page, "Bestie");
   await expect(
     page.getByRole("heading", { name: "Meet your Bestie" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Close Bestie panel", exact: true })
-    .click();
-  await expect(bestie).toHaveAttribute("aria-expanded", "false");
-  await expect(bestie).toBeFocused();
 });
 
 // Real responsive layout owns the Settings overlay and the desktop sidebar.
@@ -377,7 +384,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   await expect(sidebar).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   const box = await toggle.boundingBox();
-  expect([box.width, box.height]).toEqual([28, 28]);
+  expect([box.width, box.height]).toEqual([32, 32]);
   await toggle.click();
   await expect(sidebar).not.toBeVisible();
 

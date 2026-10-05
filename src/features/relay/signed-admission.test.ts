@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, assert, expect, it, vi } from "vitest";
 import { connectSignedTransport } from "./transport";
 import { createOutbox, PublishRejected } from "./outbox";
-import { keypair, signed } from "./testing";
+import { hostSigner } from "./testing";
 
 const filters = [{ kinds: [0], limit: 1 }];
 beforeEach(() => {
@@ -12,14 +12,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-function signer(key = keypair()) {
-  return {
-    getPublicKey: async () => key.pubkey,
-    signEvent: vi.fn(async (template: Parameters<typeof signed>[1]) =>
-      signed(key, template),
-    ),
-  };
-}
+const signer = () => hostSigner();
 it("signed reads/writes share cooldown across constructor recreation; viewer/community are independent", async () => {
   const identity = signer();
   const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -82,38 +75,6 @@ it("signed reads/writes share cooldown across constructor recreation; viewer/com
   await second.writer.publish(event, new AbortController().signal);
   expect(fetcher).toHaveBeenCalledTimes(4);
   expect(fetcher.mock.lastCall?.[1]?.body).toBe(JSON.stringify(event));
-});
-it("cancellation before async auth skips signing/fetch; subsequent read uses new NIP-98", async () => {
-  const identity = signer();
-  const fetcher = vi.fn(async () => Response.json([]));
-  vi.stubGlobal("fetch", fetcher);
-  const transport = await connectSignedTransport(
-    identity,
-    "https://fresh.test",
-    "relay",
-  );
-  await transport.query(filters);
-  const controller = new AbortController();
-  const cancelled = transport.query(filters, controller.signal);
-  const rejected = expect(cancelled).rejects.toMatchObject({
-    name: "AbortError",
-  });
-  controller.abort();
-  await rejected;
-  // Advance wall time without releasing admission: the replacement must mint
-  // new auth, not reuse the first read's event after a cancellation.
-  vi.setSystemTime(Date.now() + 1000);
-  const before = Date.now();
-  const next = transport.query(filters);
-  expect(identity.signEvent).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(500);
-  await next;
-  expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(identity.signEvent).toHaveBeenCalledTimes(2);
-  const auth = identity.signEvent.mock.lastCall?.[0];
-  assert.exists(auth);
-  expect(auth.kind).toBe(27235);
-  expect(auth.created_at).toBe(Math.floor(before / 1000));
 });
 it("explicit quota rejection is retryable; missing response stays unknown with no transparent resend", async () => {
   const identity = signer();

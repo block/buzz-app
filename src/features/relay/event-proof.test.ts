@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
 import { createEventVerifier, eventDto } from "./events";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
-import { keypair, signed } from "./testing";
+import { hostSigner, keypair, signed } from "./testing";
 import { ByteLru } from "./budget";
 
 // Count the actual dependency verifier; never replace its cryptographic result.
@@ -148,10 +148,7 @@ it.each(["broker", "signed"])(
       mode === "broker"
         ? connectBrokerTransport()
         : connectSignedTransport(
-            {
-              getPublicKey: async () => key.pubkey,
-              signEvent: async (t) => signed(key, t),
-            },
+            hostSigner(key),
             "https://proof.test",
             key.pubkey,
           );

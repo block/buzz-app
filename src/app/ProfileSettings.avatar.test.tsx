@@ -147,7 +147,9 @@ it("edits the existing selected community without another destination control an
     screen.queryByRole("combobox", { name: "Profile to edit" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText(/Set your profile details for this community/),
+    screen.getByText(
+      "Update this community’s profile. Other community profiles stay unchanged.",
+    ),
   ).toBeInTheDocument();
   vi.mocked(api.inspectProfile).mockResolvedValueOnce({
     ...original("Alpha human"),

@@ -92,7 +92,8 @@ test("video speed options escape the thread and restore focus after selection an
   // The scoped dark owner must keep the explicit floating recipe, not the
   // ordinary dark control fill (#232323), even though the host stays light.
   await expect(menu).toHaveCSS("--interaction-fill", "#404040");
-  await expect(menu).toHaveCSS("background-color", "rgb(40, 40, 40)");
+  await expect(menu).toHaveCSS("background-color", "rgba(40, 40, 40, 0.9)");
+  await expect(menu).toHaveCSS("backdrop-filter", "blur(8px)");
   const fast = menu.getByRole("menuitemradio", { name: "2x", exact: true });
   await expect
     .poll(() =>

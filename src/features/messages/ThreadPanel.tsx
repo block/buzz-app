@@ -88,7 +88,13 @@ export function ThreadPanel(props: ThreadPanelProps) {
       onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !tabbed && close) {
+        // Portalled viewers bubble here through React but own their Escape.
+        if (
+          event.key === "Escape" &&
+          !tabbed &&
+          close &&
+          event.currentTarget.contains(event.target as Node)
+        ) {
           event.stopPropagation();
           close();
         }

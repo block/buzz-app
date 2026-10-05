@@ -54,6 +54,7 @@
    component — families name the jobs, roles name the meanings.
    ============================================================ */
 
+.light,
 :root {
   /* gray */
 
@@ -265,6 +266,7 @@
    number reads as a lightness and means a role.
    ============================================================ */
 
+.light,
 :root {
   /* --- Neutral. Twelve steps. --------------------------------
      Keeps its numbering: unlike the coloured families these steps
@@ -310,11 +312,16 @@
   --neutral-action-pressed: #525252;
   --neutral-12: #000000; /* prominent controls and focus boundary   */
 
+  /* Backdrop interaction fills let the shell gradient show through. */
+  --backdrop-hover-fill: rgb(0 0 0 / 6%);
+  --backdrop-pressed-fill: rgb(0 0 0 / 10%);
+
   /* --- Glass. A translucency ramp of fills. ---------------- */
   --glass-1: #ffffff5c; /* barely there   */
   --glass-2: #ffffff85; /* quiet glass    */
   --glass-3: #ffffff9e; /* default glass  */
   --glass-4: #ffffffc7; /* glass hovered  */
+  --popover-glass-fill: rgb(255 255 255 / 90%);
   --glass-5: #ffffffe0; /* nearly solid   */
 
   /* Media glass stays dark over video pixels in either app mode. */
@@ -371,10 +378,11 @@
   --space-8: 2rem;
   --space-16: 4rem;
 
-  /* --- Corner. Four shapes, each with a distinct job. ------- */
-  --corner-row: 0.625rem;
+  /* --- Corner. Containers stop at 20px; pills/circles are separate shapes. */
+  --corner-row: 0.5rem;
   --corner-control: 0.75rem;
-  --corner-panel: 1.5rem;
+  --corner-container: 1rem;
+  --corner-panel: 1.25rem;
   --corner-round: 9999rem;
 
   /* --- Time. State is quick; geometry settles deliberately. - */
@@ -426,10 +434,14 @@
      This block used to hold 50 hand-picked values, which is where the accent
      tint and a hand-picked categorical purple drifted apart. */
 
+  --backdrop-hover-fill: rgb(255 255 255 / 10%);
+  --backdrop-pressed-fill: rgb(255 255 255 / 16%);
+
   --glass-1: #1c1c1c5c;
   --glass-2: #1c1c1c85;
   --glass-3: #1c1c1ca8;
   --glass-4: #1c1c1cc7;
+  --popover-glass-fill: rgb(40 40 40 / 90%);
   --glass-5: #1c1c1ce0;
 
   /* Dark treatments are their own scenes, not dimmed versions of their light
@@ -504,10 +516,12 @@
 
 /* Semantic colors: color / purpose / emphasis / state.
    Components consume roles; palette steps stay inside this shared layer. */
+.light,
 :root {
   --surface-base: var(--neutral-2);
   --surface-panel: var(--neutral-1);
   --surface-popover: var(--neutral-1);
+  --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --text-navigation: var(--neutral-navigation-text);
@@ -526,6 +540,8 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-8);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
@@ -545,6 +561,8 @@
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-2);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
+  --affordance-backdrop-hover: var(--backdrop-hover-fill);
+  --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
   --affordance-subtle-pressed: var(--neutral-4);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-panel-hover: var(--neutral-2);
@@ -574,6 +592,7 @@
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-raised);
+  --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --text-navigation: var(--neutral-11);
@@ -592,6 +611,8 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-10);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
   --text-link: var(--blue-11);
   --affordance-link-hover: var(--blue-3);
@@ -611,6 +632,8 @@
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-4);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
+  --affordance-backdrop-hover: var(--backdrop-hover-fill);
+  --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
   --affordance-subtle-pressed: var(--neutral-5);
   --affordance-panel-hover: var(--neutral-4);
   --affordance-floating-hover: var(--neutral-5);
@@ -725,15 +748,17 @@
   --size-resize-seam: 0.875rem;
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
+  --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
+  /* Independent icon controls use an even contour on all four corners. */
+  --radius-icon-button: 0.625rem;
   /* Half the large (52px) action height; smaller controls clamp naturally. */
   --radius-capsule: 1.625rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */
-  --radius-chip: 0.375rem;
-  /* Profile refinements: compact popovers and emphasized availability. */
-  --radius-profile-popover: 1.25rem;
+  --radius-chip: 0.25rem;
+  /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
   --duration-fast: var(--time-fast);
@@ -834,6 +859,8 @@
   --text-color-danger: var(--text-danger);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);
+  --text-color-categorical-purple: var(--text-categorical-purple);
+  --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
   --border-color-prominent: var(--border-prominent);

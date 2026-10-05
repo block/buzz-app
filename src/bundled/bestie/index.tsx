@@ -6,7 +6,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 
-export const inject = ["pages", "panels"];
+export const inject = ["pages"];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.pages.register({
     id: "bestie",
@@ -15,16 +15,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     primary: true,
     component: BestiePage,
   });
-  ctx.panels.register({
-    id: "companion",
-    title: "Bestie",
-    matches: () => false,
-    launcher: { icon: "/bestie.png", target: "" },
-    component: Bestie,
-  });
 };
 
-// Bestie's home page; the companion card shares its body until agent chat connects.
+// Bestie's home page until agent chat connects.
 function BestiePage() {
   return (
     <div className="h-full min-h-0">

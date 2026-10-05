@@ -129,18 +129,36 @@ export function createChannelLifecycle({
       throw new Error("Unexpected channel state response");
     return events;
   }
-  async function load(id: string, signal: AbortSignal, checkOwnedAgent = true) {
+  type OwnedAgentAction = "archive" | "unarchive" | "delete";
+  async function load(
+    id: string,
+    signal: AbortSignal,
+    // Which action needs owner-agent evidence; "any" checks for every action
+    // the channel's state allows and false skips the optional profile reads.
+    need: OwnedAgentAction | "any" | false = "any",
+  ) {
     assertAccess(id);
     const events = await read([39000, 39001, 39002], id, signal);
     assertAccess(id);
     const settings = lifecycleSettings(events, id, viewer, relayAuthor);
     const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
+    const archived =
+      !!metadata && exactLifecycleTag(metadata, "archived") === "true";
+    // The relay lets an owner-agent's human archive, unarchive and delete like
+    // a direct owner. Read profiles only when the action fits the archive state
+    // and a direct role does not already grant it. Delete implies the rest.
+    const action = need === "any" ? (archived ? "unarchive" : "delete") : need;
+    const granted = {
+      archive: settings.canArchive,
+      unarchive: settings.canUnarchive,
+      delete: settings.canDelete,
+    };
     if (
       !reader ||
-      !checkOwnedAgent ||
-      settings.canDelete ||
+      !action ||
       settings.canHide ||
-      (metadata && exactLifecycleTag(metadata, "archived") === "true")
+      archived !== (action === "unarchive") ||
+      granted[action]
     )
       return settings;
     // lifecycleSettings validated every owner against the signed member roster.
@@ -178,16 +196,24 @@ export function createChannelLifecycle({
           profileSignal.throwIfAborted();
           assertAccess(id);
           if (owner === viewer)
-            return Object.freeze({ ...settings, canDelete: true });
+            return Object.freeze({
+              ...settings,
+              canArchive: !archived,
+              canUnarchive: archived,
+              canDelete: !archived,
+            });
         }
       }
       return settings;
     } catch {
-      // Optional read failures affect only Delete. Cancellation/access loss still
-      // invalidate the whole result, including late replies from an old session.
+      // Optional read failures affect only owner-agent actions. Cancellation and
+      // access loss still invalidate the whole result, including late replies
+      // from an old session. An archived channel has no Delete to retry.
       signal.throwIfAborted();
       assertAccess(id);
-      return Object.freeze({ ...settings, deleteUnavailable: true });
+      return archived
+        ? settings
+        : Object.freeze({ ...settings, deleteUnavailable: true });
     }
   }
   async function readVisibility(signal: AbortSignal, strong = false) {
@@ -294,10 +320,18 @@ export function createChannelLifecycle({
           };
           const authorize = async () => {
             if (action === "join") return joined();
-            const settings = await load(id, signal, action === "delete");
-            if (action === "delete" && settings.deleteUnavailable)
+            const settings = await load(
+              id,
+              signal,
+              action === "archive" ||
+                action === "unarchive" ||
+                action === "delete"
+                ? action
+                : false,
+            );
+            if (settings.deleteUnavailable)
               throw new Error(
-                "Delete check unavailable. Retry channel permissions.",
+                `${action === "delete" ? "Delete" : "Archive"} check unavailable. Retry channel permissions.`,
               );
             const permitted = {
               archive: settings.canArchive,

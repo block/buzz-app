@@ -365,9 +365,9 @@ change shared-menu styling.
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
 Archive/Unarchive/Delete/Leave or DM Hide. Archive and Unarchive require a direct
-owner/admin role;
-Delete is offered to a direct owner or a member with verified ownership evidence
-for an owner-role agent; the last direct owner cannot Leave. The menu omits Leave
+owner/admin role or verified ownership evidence for an owner-role agent, matching
+the relay and desktop. Delete is offered to a direct owner or a member with that
+same evidence; the last direct owner cannot Leave. The menu omits Leave
 when it is forbidden, without an ownership-transfer explanation. Action labels
 have no trailing ellipsis. DMs offer Hide only.
 
@@ -376,10 +376,11 @@ owners' latest signed kind-0 profiles in bounded exact-author batches, then veri
 the unique NIP-OA tag, target binding, owner signature and conditions against the
 profile event. Display-only owner fields and agent hints never qualify. The
 existing shared verifier owns these checks; no new relay query or deployment is
-needed. Direct owners, DMs, archived channels and Archive/Unarchive/Leave
-execution do not require these optional profile reads. A failed five-second owner-profile lookup
-preserves independently established Archive/Leave, omits Delete and exposes
-"Delete check unavailable" with explicit retry in both surfaces. Settings keeps
+needed. Direct owners, DMs, Leave, and actions a direct role already grants do
+not require these optional profile reads. A failed five-second owner-profile lookup
+preserves independently established actions, omits the owner-agent actions and,
+on an active channel, exposes "Delete check unavailable" with explicit retry in
+both surfaces. Settings keeps
 its retry button focusable and busy during a fresh read, without retaining stale
 actions. Pending progress stays inside the button spinner, not a duplicate visible
 status sentence. If focus is still on recovery when the read finishes, it moves to the

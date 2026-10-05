@@ -466,10 +466,31 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         json!({
             "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
-            "providers": providers
+            "providers": providers,
+            "configurationPolicy": {
+                "authentication": "provider", "provider": "selector",
+                "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+                "selectorEnvironment": {"model": "BUZZ_AGENT_MODEL", "provider": "BUZZ_AGENT_PROVIDER"}
+            }
         })
     );
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(
+        before["harnessOptions"][2]["configurationPolicy"],
+        json!({
+            "authentication": "harnessWithOverrides", "provider": "discovered",
+            "supportedModes": [], "model": "withProvider", "effortDiscovery": "unknown",
+            "selectorEnvironment": null
+        })
+    );
+    assert_eq!(
+        before["harnessOptions"][1]["configurationPolicy"],
+        json!({
+            "authentication": "harnessWithOverrides", "provider": "selector",
+            "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+            "selectorEnvironment": {"model": "GOOSE_MODEL", "provider": "GOOSE_PROVIDER"}
+        })
+    );
     assert_eq!(
         before["harnessOptions"][2]["available"],
         before["harnessOptions"][2]["status"] == "ready"

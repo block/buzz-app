@@ -23,6 +23,7 @@ import { ProviderApiKeyField } from "./ProviderApiKeyField";
 import { harnessPreset } from "../../features/agents/harness-presets";
 import { PresetSetupHint } from "../../features/agents/PresetSetupHint";
 import { Button } from "../../shared/design-system/ui/Button";
+import { harnessPolicy } from "./harness-policy";
 
 // Draft → Agent defaults → build floor, as native resolves it; null when a
 // saved or global BUZZ_AGENT_PROVIDER override hides the effective value.
@@ -52,6 +53,11 @@ function providerApiKey(
   savedKeys: string[],
   data: AgentControlState["data"],
 ) {
+  if (
+    harnessPolicy(data?.harnessOptions, draft.command)?.authentication ===
+    "external"
+  )
+    return undefined;
   if (draft.command.split("/").at(-1) === "buzz-pi-acp")
     return PI_API_KEYS[draft.provider];
   if (harnessKind(draft.command) === "buzz-agent")
@@ -97,6 +103,7 @@ export function AgentSettingsFields({
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const preset = harnessPreset(draft.command);
+  const policy = harnessPolicy(state.data?.harnessOptions, draft.command);
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -129,11 +136,13 @@ export function AgentSettingsFields({
   const buzzAgent = harnessKind(draft.command) === "buzz-agent";
   const windows = /Win/i.test(globalThis.navigator?.platform ?? "");
   // An environment selector can override the visible scalar default.
-  const [modelKey, providerKey] = buzzAgent
-    ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
-    : goose
-      ? ["GOOSE_MODEL", "GOOSE_PROVIDER"]
-      : [undefined, undefined];
+  const [modelKey, providerKey] = policy
+    ? [policy.selectorEnvironment?.model, policy.selectorEnvironment?.provider]
+    : buzzAgent
+      ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
+      : goose
+        ? ["GOOSE_MODEL", "GOOSE_PROVIDER"]
+        : [undefined, undefined];
   const providerHidden = !!providerKey && overridden(providerKey);
   const modelHidden =
     (!!modelKey && overridden(modelKey)) || (buzzAgent && !modelDefaultKnown);
@@ -294,6 +303,7 @@ export function AgentSettingsFields({
             </div>
           ) : (
             <AgentModelPicker
+              policy={policy}
               onPiProviders={setPiProviders}
               disabled={disabled}
               id={id}

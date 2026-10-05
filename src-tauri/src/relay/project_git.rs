@@ -171,7 +171,10 @@ async fn serve(
             .prefix("buzz-project-read-")
             .tempdir()
             .map_err(|_| "Repository read failed")?;
-        let git = Git::new(directory.path(), &header, deadline, stop);
+        let git = match Git::new(directory.path(), &header, deadline, stop) {
+            Ok(git) => git,
+            Err(status) => return Ok(failure(status)),
+        };
         let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
@@ -229,7 +232,7 @@ fn stored(path: &Path) -> u64 {
 type Read<T> = std::result::Result<T, u16>;
 
 struct Git {
-    program: PathBuf,
+    program: Option<PathBuf>,
     directory: PathBuf,
     env: Vec<(OsString, OsString)>,
     deadline: Instant,
@@ -237,8 +240,57 @@ struct Git {
     store_bytes: u64,
 }
 
+/// Only the Git read has this macOS availability rule. The Apple shim is an
+/// executable file but can present an installation dialog when tools are missing.
+#[cfg(target_os = "macos")]
+fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
+    git_program_with_tools(path, || {
+        std::process::Command::new("/usr/bin/xcode-select")
+            .arg("-p")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn git_program_with_tools(
+    path: &std::ffi::OsStr,
+    tools_available: impl FnOnce() -> bool,
+) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let shim = Path::new("/usr/bin/git");
+    let mut tools_available = Some(tools_available);
+    std::env::split_paths(path)
+        .map(|directory| directory.join("git"))
+        .find(|candidate| {
+            if !std::fs::metadata(candidate)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            {
+                return false;
+            }
+            candidate != shim || tools_available.take().is_some_and(|probe| probe())
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
+    Some(crate::host_command::resolve_program("git", path))
+}
+
 impl Git {
-    fn new(directory: &Path, header: &str, deadline: Instant, stop: watch::Receiver<bool>) -> Self {
+    fn new(
+        directory: &Path,
+        header: &str,
+        deadline: Instant,
+        stop: watch::Receiver<bool>,
+    ) -> Read<Self> {
+        // `ls-remote` runs before `init`. A ceiling at the canonical parent
+        // prevents discovery of a repository in that parent or above it.
+        let directory = directory.canonicalize().map_err(|_| 502u16)?;
+        let ceiling = directory.parent().ok_or(502u16)?;
         let path = crate::host_command::effective_path();
         let settings = [
             ("http.extraHeader", header),
@@ -258,6 +310,7 @@ impl Git {
         env.extend([
             ("PATH".into(), path.clone()),
             ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            ("GIT_CEILING_DIRECTORIES".into(), ceiling.as_os_str().into()),
             // Git for Windows maps `/dev/null` to `NUL`.
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
             ("GIT_TERMINAL_PROMPT".into(), "0".into()),
@@ -267,20 +320,20 @@ impl Git {
             env.push((format!("GIT_CONFIG_KEY_{index}").into(), (*name).into()));
             env.push((format!("GIT_CONFIG_VALUE_{index}").into(), (*value).into()));
         }
-        Self {
-            program: crate::host_command::resolve_program("git", &path),
-            directory: directory.into(),
+        Ok(Self {
+            program: git_program(&path),
+            directory,
             env,
             deadline,
             stop,
             store_bytes: STORE_BYTES,
-        }
+        })
     }
 
     /// Stdout and stored objects are bounded. On failure, timeout or cancellation the whole
     /// process tree (remote helpers, index-pack) is killed and Git is reaped before returning.
     async fn run(&self, args: &[&str]) -> Read<Vec<u8>> {
-        let mut command = Command::new(&self.program);
+        let mut command = Command::new(self.program.as_ref().ok_or(503u16)?);
         command
             .args(args)
             .current_dir(&self.directory)

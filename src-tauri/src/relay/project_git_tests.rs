@@ -37,6 +37,7 @@ fn production_git(directory: &Path) -> Git {
         Instant::now() + DEADLINE,
         STOP.get_or_init(|| watch::channel(false).0).subscribe(),
     )
+    .unwrap()
 }
 
 /// Production configuration with only file transport re-enabled, so the full read runs offline.
@@ -75,6 +76,96 @@ fn go(git: &Git, url: &str, read: &GitRead) -> Read<Value> {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(fetch_snapshot(git, url, read))
+}
+
+#[test]
+fn first_advertisement_does_not_discover_parent_git_config() {
+    let parent = tempfile::tempdir().unwrap();
+    let nested = parent.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    sh(&nested, &["init", "-q"]);
+    let work = nested.join("read");
+    std::fs::create_dir(&work).unwrap();
+    let original = "https://example.test/repo.git";
+    let replacement = "file:///offline-only/";
+    sh(
+        &nested,
+        &[
+            "config",
+            "--local",
+            &format!("url.{replacement}.insteadOf"),
+            "https://example.test/",
+        ],
+    );
+    let git = production_git(&work);
+    // Prove the fixture rewrites when the discovery boundary is removed.
+    let mut without_ceiling = production_git(&work);
+    without_ceiling
+        .env
+        .retain(|(key, _)| key != "GIT_CEILING_DIRECTORIES");
+    let probe = |git: &Git| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(git.run(&["ls-remote", "--get-url", original]))
+            .unwrap()
+    };
+    assert_eq!(
+        String::from_utf8(probe(&without_ceiling)).unwrap().trim(),
+        "file:///offline-only/repo.git"
+    );
+    assert_eq!(String::from_utf8(probe(&git)).unwrap().trim(), original);
+    assert!(git
+        .env
+        .iter()
+        .any(|(key, value)| key == "GIT_CEILING_DIRECTORIES"
+            && value == work.parent().unwrap().as_os_str()));
+    let (_source, url, _) = source();
+    let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    assert_eq!(
+        go(&local_git(&work), &url, &base).unwrap()["commits"][0]["subject"],
+        "second"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_git_selection_skips_unavailable_shim_without_launching_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let other = tempfile::tempdir().unwrap();
+    let alternative = other.path().join("git");
+    std::fs::write(&alternative, "fixture, never executed").unwrap();
+    std::fs::set_permissions(&alternative, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths([Path::new("/usr/bin"), other.path()]).unwrap();
+    let mut calls = 0;
+    let selected = git_program_with_tools(&path, || {
+        calls += 1;
+        false
+    });
+    assert_eq!(selected, Some(alternative.clone()));
+    assert_eq!(calls, 1);
+    assert_eq!(
+        git_program_with_tools(Path::new("/usr/bin").as_os_str(), || false),
+        None
+    );
+    assert_eq!(
+        git_program_with_tools(Path::new("/usr/bin").as_os_str(), || true),
+        Some("/usr/bin/git".into())
+    );
+    let path = std::env::join_paths([other.path(), Path::new("/usr/bin")]).unwrap();
+    assert_eq!(
+        git_program_with_tools(&path, || panic!("shim probe should not run")),
+        Some(alternative)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unavailable_git_fails_before_spawning_or_fetching() {
+    let work = tempfile::tempdir().unwrap();
+    let mut git = production_git(work.path());
+    git.program = None;
+    let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    assert_eq!(go(&git, "https://example.test/repo.git", &base), Err(503));
 }
 
 #[test]
@@ -359,7 +450,7 @@ async fn cancelled_reads_remove_repositories_held_by_descendants() {
     .unwrap();
     let (stop, stopped) = watch::channel(false);
     let mut git = production_git(directory.path());
-    git.program = "powershell.exe".into();
+    git.program = Some("powershell.exe".into());
     git.stop = stopped;
     let outer = outer.to_string_lossy().into_owned();
     let run = tokio::spawn(async move {

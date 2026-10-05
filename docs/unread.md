@@ -200,6 +200,21 @@ viewer posts in it or is mentioned there. Explicit per-message unread intent sti
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
+**Follow thread** / **Unfollow thread** in a message's menu records an explicit
+choice for the message's canonical thread root (`threadRootId ?? id`), so every
+reply under that root, at any depth, uses it. Follow makes the thread one of the
+viewer's conversations without posting; Unfollow removes it even after the
+viewer wrote the root or replied, and replying again does not undo it. Mentions
+and broadcasts still count, as they do outside conversations. Without a choice
+the label shows Unfollow when the viewer wrote the root, or replied or was
+mentioned anywhere in the thread. DMs have no menu item: every DM message is
+direct attention. `session.unread.following(channelId, rootId)` reads the
+effective state and `follow(channelId, rootId, following)` saves a choice,
+throwing without change when it cannot. Choices are device-local, like the
+reference client: `buzz.thread-follows.v1:<partition>` in local storage, keyed by
+`channel:root`, newest 1,000 kept, shared with other windows through storage
+events and forgotten with the rest of a left community's device state.
+
 Membership is checked in the reply's own channel, and lookups are keyed by
 channel and parent, so a reply in another channel that tags the same parent
 gets its own answer. It starts from retained

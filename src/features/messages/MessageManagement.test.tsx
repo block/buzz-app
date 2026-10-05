@@ -497,6 +497,77 @@ it("toggles actual unread state immediately without a dialog", async () => {
   expect(h.publications).toHaveLength(0);
 });
 
+const savedFollows = () =>
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith("buzz.thread-follows.v1:"))
+    .map((key) => localStorage.getItem(key));
+
+it("follows a thread without replying and keeps the saved choice", async () => {
+  localStorage.clear();
+  const h = await fixture(false, true);
+  expect(h.owner.session.unread.following("room", h.original.id)).toBe(false);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Follow thread" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.unread.following("room", h.original.id)).toBe(true),
+  );
+  expect(savedFollows()).toEqual([
+    JSON.stringify([[`room:${h.original.id}`, true]]),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Unfollow thread" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.unread.following("room", h.original.id)).toBe(false),
+  );
+  expect(savedFollows()).toEqual([
+    JSON.stringify([[`room:${h.original.id}`, false]]),
+  ]);
+  expect(h.publications).toHaveLength(0);
+});
+
+it("unfollows a thread the viewer started", async () => {
+  localStorage.clear();
+  const h = await fixture();
+  expect(h.owner.session.unread.following("room", h.original.id)).toBe(true);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Unfollow thread" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.unread.following("room", h.original.id)).toBe(false),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Follow thread" }),
+  ).toBeVisible();
+});
+
+it("keeps showing Follow thread when the choice cannot be saved", async () => {
+  localStorage.clear();
+  const h = await fixture(false);
+  const setItem = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+  try {
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Follow thread" }),
+    );
+    expect(setItem).toHaveBeenCalled();
+  } finally {
+    setItem.mockRestore();
+  }
+  expect(h.owner.session.unread.following("room", h.original.id)).toBe(false);
+  expect(savedFollows()).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Follow thread" }),
+  ).toBeVisible();
+});
+
 it("keeps deletion recovery outside the optimistically removed row", async () => {
   const h = await fixture();
   fireEvent.click(

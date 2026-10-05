@@ -89,6 +89,7 @@ import {
   type OutboxStorage,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
+import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -829,6 +830,7 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     notify,
+    follows: browserThreadFollows(readScope),
   });
   const inboxFeed = createInboxFeed({
     // A withheld auxiliary event is not proof of an exhausted history page.

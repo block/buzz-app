@@ -16,6 +16,12 @@ import type {
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
+import {
+  memoryThreadFollows,
+  THREAD_FOLLOW_LIMIT,
+  type ThreadFollows,
+  type ThreadFollowStorage,
+} from "./thread-follows";
 
 export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
@@ -88,6 +94,12 @@ export interface UnreadCapability {
   /** Access/cache/connection retirement fence. */
   generation(): number;
   reading(channelId: string): ReadingHandle;
+  /** Whether the viewer follows this canonical root: an explicit choice,
+   * otherwise authoring the root, or replying or being mentioned in it. */
+  following(channelId: string, rootId: string): boolean;
+  /** Saves an explicit choice on this device; throws, unchanged, if not saved.
+   * Wakes `subscribeSync` listeners. */
+  follow(channelId: string, rootId: string, following: boolean): void;
   /** Explicit prefix intent, unlike individual-message visibility observations. */
   markThrough(
     target: ReadTarget,
@@ -176,6 +188,7 @@ export function createUnread({
   viewer,
   relayAuthor,
   notify = (listener) => listener(),
+  follows = memoryThreadFollows(),
 }: {
   reads: ReturnType<typeof createReadState>;
   channels: ChannelQueries;
@@ -183,6 +196,7 @@ export function createUnread({
   viewer: string;
   relayAuthor?: string;
   notify?: (listener: () => void) => void;
+  follows?: ThreadFollowStorage;
 }) {
   let closed = false,
     epoch = 0;
@@ -269,6 +283,8 @@ export function createUnread({
     rootId: string | undefined;
     /** Direct parent of a reply; undefined for top-level messages. */
     parentId: string | undefined;
+    /** The reply's canonical marked root, which explicit follows key on. */
+    threadRootId: string | undefined;
     mentioned: boolean;
     broadcast: boolean;
   };
@@ -281,6 +297,8 @@ export function createUnread({
   // replies to one parent.
   const own = new Map<string, string>();
   const joined = new Set<string>();
+  // `channel:root` of every thread the viewer replied or was mentioned in.
+  const ownThreads = new Set<string>();
   // Relay lookups for parents the sampled window cannot decide. They are kept
   // apart from counted evidence: fetched events never count, never fill the
   // window and survive its overflow reset, because whether the viewer wrote or
@@ -362,6 +380,7 @@ export function createUnread({
     tombstones.clear();
     own.clear();
     joined.clear();
+    ownThreads.clear();
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
       for (const [name, id] of event.tags)
@@ -373,9 +392,12 @@ export function createUnread({
       const channel = channelOf(event);
       if (!channel) continue;
       const rootId = root(event);
-      const parentId = threadReference(event)?.parentId;
+      const reference = threadReference(event);
+      const parentId = reference?.parentId;
       if (event.pubkey === viewer) {
         own.set(event.id, channel);
+        if (reference)
+          ownThreads.add(conversationKey(channel, reference.rootId));
         if (parentId) {
           joined.add(`${channel}:${parentId}`);
           // A later reply of the viewer outlives the window that showed it.
@@ -389,11 +411,14 @@ export function createUnread({
         channelId: channel,
         rootId: parentId ? rootId : undefined,
         parentId,
+        threadRootId: reference?.rootId,
         mentioned: mentionsViewer(event),
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),
       };
+      if (entry.mentioned && reference)
+        ownThreads.add(conversationKey(channel, reference.rootId));
       rows.push(entry);
       byChannel.set(channel, rows);
       byId.set(event.id, entry);
@@ -415,11 +440,23 @@ export function createUnread({
   const isDm = (channelId: string) =>
     channels.list().channels.find((channel) => channel.id === channelId)
       ?.channelType === "dm";
+  // Read on first use: constructing a session touches no storage.
+  let saved: ThreadFollows | undefined;
+  const choices = () => (saved ??= follows.read());
+  /** An explicit follow choice for the reply's whole thread, if any. */
+  const chosen = ({ channelId, threadRootId }: Evidence) =>
+    threadRootId === undefined
+      ? undefined
+      : choices().get(conversationKey(channelId, threadRootId));
   /** The reply is in a conversation the viewer is part of in its own channel:
-   * it answers the viewer's message, or the viewer also replied to the same
-   * parent. Undecided parents are not members until their lookup finishes. */
-  const conversation = ({ parentId, channelId }: Evidence) => {
+   * the viewer follows its thread, or (without an explicit choice) it answers
+   * the viewer's message, or the viewer also replied to the same parent.
+   * Undecided parents are not members until their lookup finishes. */
+  const conversation = (entry: Evidence) => {
+    const { parentId, channelId } = entry;
     if (!parentId) return false;
+    const explicit = chosen(entry);
+    if (explicit !== undefined) return explicit;
     const key = conversationKey(channelId, parentId);
     return (
       own.get(parentId) === channelId ||
@@ -439,6 +476,7 @@ export function createUnread({
   const undecided = (entry: Evidence, dm: boolean) =>
     !!entry.parentId &&
     !relevant(entry, dm) &&
+    chosen(entry) === undefined &&
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
@@ -973,6 +1011,15 @@ export function createUnread({
         notify(listener);
   }
   const stopRead = reads.subscribe(publish);
+  /** A choice changes relevance in every projection and held live alert. */
+  function followsChanged(channelIds?: ReadonlySet<string>) {
+    publish(channelIds);
+    for (const listener of [...membershipListeners]) listener();
+  }
+  const stopFollows = follows.subscribe(() => {
+    saved = undefined;
+    followsChanged();
+  });
   function purge() {
     // A revoke/regrant must not revive a transaction accepted under the old access epoch.
     epoch++;
@@ -1565,6 +1612,36 @@ export function createUnread({
       await reads.flush();
     },
     syncedManualUnread: false,
+    following(channelId, rootId) {
+      if (closed || !allowed(channelId)) return false;
+      const id = rootId.toLowerCase();
+      const key = conversationKey(channelId, id);
+      const explicit = choices().get(key);
+      if (explicit !== undefined) return explicit;
+      indexEvidence();
+      // The reference's automatic follow: the viewer wrote the root, or replied
+      // or was mentioned anywhere in its thread.
+      return (
+        own.get(id) === channelId ||
+        ownThreads.has(key) ||
+        lookups.get(key)?.evidence !== undefined
+      );
+    },
+    follow(channelId, rootId, following) {
+      if (closed || !allowed(channelId) || !/^[0-9a-f]{64}$/i.test(rootId))
+        throw new Error("Thread unavailable");
+      const key = conversationKey(channelId, rootId.toLowerCase());
+      const next = new Map(choices());
+      next.delete(key);
+      next.set(key, following);
+      for (const [oldest] of next) {
+        if (next.size <= THREAD_FOLLOW_LIMIT) break;
+        next.delete(oldest);
+      }
+      follows.write(next);
+      saved = next;
+      followsChanged(new Set([channelId]));
+    },
     reading(channelId) {
       if (closed || !allowed(channelId) || handles.size >= 64)
         throw new Error("Reading handle unavailable");
@@ -1961,6 +2038,7 @@ export function createUnread({
       membershipListeners.clear();
       for (const stop of [...handles]) stop();
       stopRead();
+      stopFollows();
       stopChannels();
       listeners.clear();
       snapshots.clear();

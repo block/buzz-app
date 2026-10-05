@@ -1528,6 +1528,7 @@ export function createRelaySession(
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
     authorizeAgentLog: transport?.authorizeAgentLog,
+    authorizeGit: transport?.authorizeGit,
     scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
     subscribeIncoming(listener: IncomingListener) {

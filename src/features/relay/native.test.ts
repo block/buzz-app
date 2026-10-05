@@ -1394,6 +1394,21 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
       "nonce",
     ),
   ).rejects.toThrow("Log authorization unavailable");
+  const repository = `${community}/git/${agent.pubkey}/plugins`;
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_git_authorization");
+    expect(args).toEqual({ community, repository });
+    return "dG9rZW4=";
+  });
+  expect(await transport.authorizeGit?.(repository)).toEqual({
+    repository,
+    token: "dG9rZW4=",
+  });
+  const calls = dispatch.mock.calls.length;
+  expect(
+    await transport.authorizeGit?.(`https://other.test/git/${agent.pubkey}/x`),
+  ).toBeNull();
+  expect(dispatch).toHaveBeenCalledTimes(calls);
 });
 
 const hash = "c".repeat(64);

@@ -32,7 +32,12 @@ export type ImportPreview = {
 };
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
-  git(repository: string, reference: string): Promise<ImportPreview | null>;
+  /** `authorization` is a NIP-98 token signed for exactly `repository`. */
+  git(
+    repository: string,
+    reference: string,
+    authorization?: string,
+  ): Promise<ImportPreview | null>;
   install(token: string, path: string): Promise<StorageResult>;
   discard(token: string): Promise<void>;
 };

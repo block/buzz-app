@@ -12,7 +12,10 @@ import {
 import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
-import { parseGitRead } from "../src/features/projects/git.ts";
+import {
+  communityGitRepository,
+  parseGitRead,
+} from "../src/features/projects/git.ts";
 import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
@@ -1364,6 +1367,7 @@ export function relayBrokerPlugin({
               sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,
+              gitAuthorization: true,
               agentMemories: true,
               live: true,
               presence: true,
@@ -1904,6 +1908,7 @@ export function relayBrokerPlugin({
               "/api/relay/direct-message",
               "/api/relay/authorize-agent",
               "/api/relay/agent-log-proof",
+              "/api/relay/git-authorization",
               "/api/relay/resolve-agent-community",
               "/api/relay/agent-inventory",
               "/api/relay/claim",
@@ -2000,6 +2005,34 @@ export function relayBrokerPlugin({
             } finally {
               gitReads--;
             }
+          }
+          if (route === "/api/relay/git-authorization") {
+            // NIP-98 for one repository on this community, never a general signing API.
+            const repository =
+              scoped &&
+              filters &&
+              Object.keys(filters).length === 1 &&
+              typeof filters.repository === "string"
+                ? communityGitRepository(relay, filters.repository)
+                : null;
+            if (!repository || repository !== filters.repository)
+              return json(res, 400, { error: "Invalid repository" });
+            cancel.signal.throwIfAborted();
+            const auth = finalizeEvent(
+              {
+                kind: 27235,
+                created_at: Math.floor(Date.now() / 1000),
+                content: "",
+                tags: [
+                  ["u", repository],
+                  ["method", "GET"],
+                ],
+              },
+              key,
+            );
+            return json(res, 200, {
+              token: Buffer.from(JSON.stringify(auth)).toString("base64"),
+            });
           }
           if (route === "/api/relay/agent-log-proof") {
             // A proof never delegates the broker's key as a general signing API.

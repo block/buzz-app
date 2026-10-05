@@ -533,6 +533,27 @@ fn isolated_agent_ipc_probe() {
     assert_eq!(event["pubkey"], public);
     verify(&event);
 
+    let repository = format!("https://relay.test/git/{}/plugins", "a".repeat(64));
+    let token = invoke(
+        "relay_git_authorization",
+        serde_json::json!({"community": "https://relay.test", "repository": repository}),
+    )
+    .unwrap();
+    let auth: serde_json::Value =
+        serde_json::from_slice(&STANDARD.decode(token.as_str().unwrap()).unwrap()).unwrap();
+    verify(&auth);
+    assert_eq!(auth["pubkey"], public);
+    assert_eq!(auth["kind"], 27235);
+    assert_eq!(
+        auth["tags"],
+        serde_json::json!([["u", repository], ["method", "GET"]])
+    );
+    assert!(invoke(
+        "relay_git_authorization",
+        serde_json::json!({"community": "https://relay.test", "repository": "https://other.test/git/x/y"}),
+    )
+    .is_err());
+
     // The old direct attestation IPC must be absent, not merely unused by the UI.
     assert!(invoke(
         "relay_agent_authorize",
@@ -2165,5 +2186,51 @@ fn member_commands_sign_through_production_ipc() {
         command(9032, serde_json::json!([["p", target], ["role", "owner"]])),
     ] {
         assert!(sign(&event).is_err(), "signed {event}");
+    }
+}
+
+#[test]
+fn git_authorization_covers_only_this_communitys_repositories() {
+    let owner = "a".repeat(64);
+    for repository in [
+        format!("https://relay.test/git/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins.git"),
+        format!("https://relay.test/git/{owner}/plugins."),
+        format!("https://relay.test/git/{owner}/plugins..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(64)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(64)),
+    ] {
+        assert_eq!(
+            git_repository("https://relay.test/", &repository)
+                .unwrap()
+                .as_str(),
+            repository
+        );
+    }
+    for repository in [
+        format!("https://other.test/git/{owner}/plugins"),
+        format!("http://relay.test/git/{owner}/plugins"),
+        format!("https://relay.test:444/git/{owner}/plugins"),
+        format!("https://me@relay.test/git/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins/"),
+        format!("https://relay.test/git/{owner}/plugins?service=git-receive-pack"),
+        format!("https://relay.test/git/{owner}/plugins#x"),
+        format!("https://relay.test/git/{owner}/.hidden"),
+        format!("https://relay.test/git/{owner}/a..b"),
+        format!("https://relay.test/git/{owner}/a..b.git"),
+        format!("https://relay.test/git/{owner}/.git"),
+        format!("https://relay.test/git/{owner}/..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(65)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(65)),
+        format!("https://relay.test/git/{}/plugins", "A".repeat(64)),
+        format!("https://relay.test/api/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins/info/refs"),
+        format!("https://RELAY.test/git/{owner}/plugins"),
+        "https://relay.test/query".into(),
+    ] {
+        assert!(
+            git_repository("https://relay.test/", &repository).is_err(),
+            "{repository}"
+        );
     }
 }

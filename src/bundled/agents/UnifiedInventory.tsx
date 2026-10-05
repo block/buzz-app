@@ -110,8 +110,20 @@ export function UnifiedInventory({
   // Archive is the first removal step and hides the row. Keep a started
   // removal's card in its starting section (true: Archived) until it
   // finishes, so its later steps and errors stay visible. Moving the card
-  // would unmount Remove and cancel its own request.
-  const [held, setHeld] = useState<ReadonlyMap<string, boolean>>(new Map());
+  // would unmount Remove and cancel its own request. A failed removal keeps
+  // its hold for the error and Retry, until a later Archive or Unarchive
+  // succeeds and the archive state decides the section again.
+  const [held, setHeld] = useState<
+    ReadonlyMap<string, { archived: boolean; failed?: true }>
+  >(new Map());
+  const release = (key: string, onlyFailed: boolean) =>
+    setHeld((saved) => {
+      if (!saved.has(key) || (onlyFailed && !saved.get(key)?.failed))
+        return saved;
+      const next = new Map(saved);
+      next.delete(key);
+      return next;
+    });
   const communityName =
     client?.memberships.find((membership) => {
       try {
@@ -140,6 +152,7 @@ export function UnifiedInventory({
     archives,
     destination,
     (pubkey, action) => {
+      release(`${destination} ${pubkey}`, true);
       const name = rows.get(pubkey)?.displayName ?? "Agent";
       const id = notify(
         `${name} ${action === "archive" ? "archived" : "unarchived"} in ${communityName}`,
@@ -209,7 +222,9 @@ export function UnifiedInventory({
     const run = archiving.runs.get(row.pubkey);
     if (removed.has(key) && !row.localIdentity) rows.delete(row.pubkey);
     else if (
-      run ? run.action === "unarchive" : (held.get(key) ?? archived(row.pubkey))
+      run
+        ? run.action === "unarchive"
+        : (held.get(key)?.archived ?? archived(row.pubkey))
     )
       archivedHere.add(row.pubkey);
   }
@@ -222,17 +237,26 @@ export function UnifiedInventory({
       ? async (pubkey: string, signal: AbortSignal) => {
           const key = `${destination} ${pubkey}`;
           const startedArchived = archivedHere.has(pubkey);
+          // A retry keeps the section the first attempt started in.
           setHeld((saved) =>
-            saved.has(key) ? saved : new Map(saved).set(key, startedArchived),
+            new Map(saved).set(key, {
+              archived: saved.get(key)?.archived ?? startedArchived,
+            }),
           );
-          // A failed removal stays held: the card shows the error and Retry.
-          await removeRelayAgent(connection.session, viewer, pubkey, signal);
+          try {
+            await removeRelayAgent(connection.session, viewer, pubkey, signal);
+          } catch (reason) {
+            // The card keeps its section to show the error and Retry.
+            setHeld((saved) => {
+              const hold = saved.get(key);
+              return hold
+                ? new Map(saved).set(key, { ...hold, failed: true })
+                : saved;
+            });
+            throw reason;
+          }
           setRemoved((saved) => new Set([...saved, key]));
-          setHeld((saved) => {
-            const next = new Map(saved);
-            next.delete(key);
-            return next;
-          });
+          release(key, false);
           // The removed set already hides the card. A community recheck here
           // would show its status lines above the list and shift the page.
           void library.refresh();

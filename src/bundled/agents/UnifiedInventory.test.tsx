@@ -1287,6 +1287,41 @@ it("keeps an archived card in Archived while Remove runs and after it fails", as
   expect(relay.archived.has(agent)).toBe(true);
 });
 
+it("moves an archived card to the active list when Unarchive succeeds after a failed Remove", async () => {
+  const { relay, agent } = archiveSetup(undefined, true);
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const card = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  await within(card).findByRole("alert");
+  await openMenuItem(card, "Not imported", "Unarchive agent");
+  await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Archived agents" }),
+    ).toBeNull(),
+  );
+  const active = within(
+    screen.getByRole("region", { name: "Relay-only agents" }),
+  ).getByRole("article", { name: "Agent Not imported" });
+  expect(within(active).queryByText("Archived")).toBeNull();
+  await openMenuItem(active, "Not imported", "Archive agent");
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+});
+
 it("asks for archive permission again on Refresh agents after a failed read", async () => {
   let refuse = true;
   archiveSetup(undefined, false, (transport) => ({

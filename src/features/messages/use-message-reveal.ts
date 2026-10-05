@@ -61,14 +61,19 @@ export function useMessageReveal({
         behavior: "instant",
       });
       settled.current = true;
-      // Take focus once per mounted row: a rescheduled reveal must not pull it
-      // back from wherever the user or another owner has since moved it.
+      // A replacement may recover lost focus, but must not take it from another
+      // control after this request already focused a row successfully.
+      let focusPending = false;
       if (
         focus &&
-        (focused.current?.signal !== signal || focused.current.row !== row)
+        (focused.current?.signal !== signal ||
+          (focused.current.row !== row &&
+            (!document.activeElement ||
+              document.activeElement === document.body)))
       ) {
         row.focus({ preventScroll: true });
-        if (document.activeElement === row) focused.current = { signal, row };
+        focusPending = document.activeElement !== row;
+        if (!focusPending) focused.current = { signal, row };
       }
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
@@ -82,13 +87,7 @@ export function useMessageReveal({
           box.top < Math.min(viewport.bottom, window.innerHeight) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if (
-          (focus &&
-            (focused.current?.signal !== signal ||
-              focused.current.row !== row ||
-              row.closest("[inert]"))) ||
-          !visible
-        )
+        if ((focus && (focusPending || row.closest("[inert]"))) || !visible)
           return;
         revealed.current = signal;
         cancel();

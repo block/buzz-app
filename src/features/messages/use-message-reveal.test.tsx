@@ -188,14 +188,60 @@ it("cancels pending verification when the request is aborted", async () => {
   expect(complete).not.toHaveBeenCalled();
 });
 
-it("takes focus on a replacement row before completing the same request", async () => {
-  const { row, complete, remountRow } = mount();
+it.each([false, true])(
+  "replaces the row without stealing moved focus (moved: %s)",
+  async (moved) => {
+    const { row, outside, complete, remountRow } = mount();
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(row);
+    if (moved) outside.focus();
+    await act(async () => remountRow());
+    const replacement = screen.getByText("Target");
+    expect(replacement).not.toBe(row);
+    expect(document.activeElement).toBe(moved ? outside : document.body);
+    const focus = vi.spyOn(replacement, "focus");
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(moved ? outside : replacement);
+    expect(focus).toHaveBeenCalledTimes(moved ? 0 : 1);
+    expect(complete).toHaveBeenCalledOnce();
+    await mutate(replacement);
+    expect(frames.size).toBe(0);
+  },
+);
+
+it("completes after focus leaves another control between replacement reveal and verification", async () => {
+  const { outside, complete, remountRow } = mount();
   await frame();
   await frame();
-  expect(document.activeElement).toBe(row);
+  outside.focus();
   await act(async () => remountRow());
   const replacement = screen.getByText("Target");
-  expect(replacement).not.toBe(row);
+  const focus = vi.spyOn(replacement, "focus");
+  await frame();
+  expect(document.activeElement).toBe(outside);
+  outside.blur();
+  await frame();
+  expect(document.activeElement).toBe(document.body);
+  expect(focus).not.toHaveBeenCalled();
+  expect(complete).toHaveBeenCalledOnce();
+  expect(frames.size).toBe(0);
+});
+
+it("retries failed focus recovery on a replacement before completing", async () => {
+  const { complete, remountRow } = mount();
+  await frame();
+  await frame();
+  await act(async () => remountRow());
+  const replacement = screen.getByText("Target");
+  const blocked = vi.spyOn(replacement, "focus").mockImplementation(() => {});
+  await frame();
+  await frame();
+  expect(document.activeElement).toBe(document.body);
+  expect(complete).not.toHaveBeenCalled();
+  blocked.mockRestore();
+  await mutate(replacement);
   await frame();
   await frame();
   expect(document.activeElement).toBe(replacement);

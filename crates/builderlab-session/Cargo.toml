@@ -8,6 +8,7 @@ rust-version = "1.89"
 builderlab-auth = { git = "https://github.com/block/builderlab-cli.git", rev = "78f9ea0044f7265b5e72aacd822215f6621fad7b", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+sha2 = "0.10"
 tokio = { version = "1", features = ["sync", "rt"] }
 url = "2"
 zeroize = "1.9"

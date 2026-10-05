@@ -25,8 +25,8 @@ type BrokerStats = {
 
 const STATS_POLL_MS = 5000;
 
-/** Only the dev broker serves /api/relay/*. Packaged builds and proxied
- * deployments have no such endpoint, so absence is normal, not an error. */
+/** Only the pinned development broker serves /api/relay/*. Missing stats in
+ * that environment are normal, not an error. */
 async function fetchStats(): Promise<BrokerStats | undefined> {
   try {
     const res = await fetch("/api/relay/stats");

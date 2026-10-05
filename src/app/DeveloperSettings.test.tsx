@@ -80,7 +80,7 @@ it("disables unsupported runtime settings without requesting their API", async (
 
 const brokerStats = { queries: 12, errors: 1, media: 3, connects: 4 };
 
-it("omits broker activity and never polls stats in a packaged bundle", async () => {
+it("omits broker activity and never polls stats without the development broker", async () => {
   vi.stubEnv("VITE_BUZZ_LIVE", "0");
   const fetcher = vi.fn(async (url: string) => {
     if (url === "/api/relay/stats")

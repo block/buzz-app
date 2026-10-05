@@ -973,7 +973,16 @@ test.describe("thread activity", () => {
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .locator("..")
       .getByRole("status", { name: "Typing activity" });
+    // The agent's activity row replaces its typing line. A human still gets
+    // the upstream typing layout above activity, without duplicating the agent.
+    await expect(channelTyping).toHaveCount(0);
+    const humanKey = generateSecretKey();
+    sendTyping(undefined, humanKey);
     await expect(channelTyping).toBeVisible();
+    await expect(channelTyping).toContainText(
+      getPublicKey(humanKey).slice(0, 10),
+    );
+    await expect(channelTyping).not.toContainText(agent.slice(0, 10));
     const channelTypingBox = await channelTyping.boundingBox();
     expect(channelTypingBox.y + channelTypingBox.height).toBeLessThan(
       channelBox.y,

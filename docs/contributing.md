@@ -264,16 +264,19 @@ into an ever-growing full test suite.
 
 ### Pre-commit checks
 
-Install once **per worktree** after `pnpm install --frozen-lockfile`:
+Install once **per clone**; it applies to every existing and future worktree:
 
 ```sh
-bin/pnpm hooks:install
+just hooks
 ```
 
-The installer enables pre-commit and pre-push using Git's worktree-local
-`core.hooksPath`, leaves sibling worktrees
-alone, and refuses existing custom hooks rather than overwriting them. Repeat
-installation is safe. Do not run `lefthook install`: the tracked Git hook calls a
+`just hooks` runs `pnpm hooks:install`, which sets the clone's
+`core.hooksPath` to the relative `.githooks`. Git resolves that from each
+worktree's root, so every worktree runs its own branch's tracked hooks. A
+worktree with its own explicit `core.hooksPath` keeps it and is not changed. The
+installer refuses an existing different `core.hooksPath` or custom hooks rather
+than overwriting them. Repeat installation is safe, including in clones that
+used the earlier per-worktree setting. Do not run `lefthook install`: the tracked Git hook calls a
 custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
 Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged

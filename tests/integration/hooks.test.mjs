@@ -216,37 +216,86 @@ test("staged deletions and documentation-only commits do not rewrite source", (t
   assert.equal(f.read("untouched.ts"), "export const unrelated={value:1}\n");
 });
 
-test("installation is worktree-local, repeatable, and refuses custom hooks", (t) => {
+test("installation covers every worktree, is repeatable, and refuses custom hooks", (t) => {
   const f = fixture(t);
+  assert.equal(
+    f.git("config", "--local", "--get", "core.hooksPath").trim(),
+    ".githooks",
+  );
+  // A linked worktree runs its own checkout's hooks, not the main checkout's.
+  const hook = path.join(f.sibling, ".githooks/pre-commit");
+  writeFileSync(hook, '#!/bin/sh\npwd > "$(git rev-parse --git-dir)/ran"\n');
+  const sibling = (...args) =>
+    spawnSync("git", args, { cwd: f.sibling, env, encoding: "utf8" });
+  assert.equal(
+    sibling("commit", "-q", "--allow-empty", "-m", "probe").status,
+    0,
+  );
+  const gitDir = sibling("rev-parse", "--absolute-git-dir").stdout.trim();
+  assert.equal(
+    readFileSync(path.join(gitDir, "ran"), "utf8").trim(),
+    sibling("rev-parse", "--show-toplevel").stdout.trim(),
+  );
+  assert.equal(f.install().status, 0);
+
+  // A clone set up per worktree by the earlier installer reinstalls cleanly
+  // and keeps its existing worktree setting.
+  f.git("config", "--local", "--unset", "core.hooksPath");
+  f.git("config", "--local", "extensions.worktreeConfig", "true");
+  f.git("config", "--worktree", "core.hooksPath", ".githooks");
+  assert.equal(f.install().status, 0);
+  assert.equal(
+    f.git("config", "--local", "--get", "core.hooksPath").trim(),
+    ".githooks",
+  );
   assert.equal(
     f.git("config", "--worktree", "--get", "core.hooksPath").trim(),
     ".githooks",
   );
-  assert.equal(
-    f.run("git", ["config", "--local", "--get", "core.hooksPath"]).status,
-    1,
-  );
-  assert.equal(f.install().status, 0);
 
-  const result = spawnSync("git", ["config", "--get", "core.hooksPath"], {
-    cwd: f.sibling,
-    env,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 1);
   f.git("config", "--worktree", "--unset", "core.hooksPath");
+  f.git("config", "--local", "--unset", "core.hooksPath");
   f.write(".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n");
   const before = f.read(".git/hooks/pre-commit");
   const refused = f.install();
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /Existing hooks/);
   assert.equal(f.read(".git/hooks/pre-commit"), before);
-  f.git("config", "--worktree", "core.hooksPath", "custom-hooks");
+  f.git("config", "--local", "core.hooksPath", "custom-hooks");
   assert.notEqual(f.install().status, 0);
   assert.equal(
     f.git("config", "--get", "core.hooksPath").trim(),
     "custom-hooks",
   );
+});
+
+test("an old worktree override does not mask shared hooks the install would replace", (t) => {
+  const f = fixture(t);
+  const masked = () => {
+    f.git("config", "--local", "extensions.worktreeConfig", "true");
+    f.git("config", "--worktree", "core.hooksPath", ".githooks");
+  };
+  // A different clone-wide path that siblings rely on.
+  f.git("config", "--local", "core.hooksPath", "custom-hooks");
+  masked();
+  const refusedPath = f.install();
+  assert.notEqual(refusedPath.status, 0);
+  assert.match(refusedPath.stderr, /Existing core.hooksPath \(custom-hooks\)/);
+  assert.equal(
+    f.git("config", "--local", "--get", "core.hooksPath").trim(),
+    "custom-hooks",
+  );
+  // Custom default hooks that a clone-wide path would stop running.
+  f.git("config", "--local", "--unset", "core.hooksPath");
+  f.write(".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n");
+  const refusedHooks = f.install();
+  assert.notEqual(refusedHooks.status, 0);
+  assert.match(refusedHooks.stderr, /Existing hooks \(pre-commit\)/);
+  assert.equal(
+    f.run("git", ["config", "--local", "--get", "core.hooksPath"]).status,
+    1,
+  );
+  assert.equal(f.read(".git/hooks/pre-commit"), "#!/bin/sh\nexit 1\n");
 });
 
 test("unstaged lint configuration cannot hide a staged warning", (t) => {

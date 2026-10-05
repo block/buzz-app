@@ -8,6 +8,10 @@ default:
 install:
     pnpm install --frozen-lockfile
 
+# Install Git hooks once for every worktree of this clone.
+hooks: install
+    pnpm hooks:install
+
 # Run the shared frontend in a browser; forward Vite arguments (e.g. --port 1431).
 [positional-arguments]
 web *args: install

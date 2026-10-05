@@ -32,7 +32,7 @@ git-ignored `.env.local` without overwriting an existing target, then uses that
 worktree's Hermit proxy to run `bin/pnpm install --frozen-lockfile`. Do not copy
 other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Follow the
-per-worktree hook setup in `docs/contributing.md` before committing or pushing.
+once-per-clone hook setup in `docs/contributing.md` before committing or pushing.
 
 ## Engineering standard
 
@@ -203,7 +203,7 @@ confirmation, not app runs.
 ## Before pushing
 
 - Use the agreed feature worktree and pinned `bin/` tools. Follow
-  [hook setup](docs/contributing.md#pre-commit-checks) once per worktree;
+  [hook setup](docs/contributing.md#pre-commit-checks) once per clone;
   preserve custom hooks and never bypass failures.
 - Refresh remote refs; confirm destination, base, and head. Review `git status`,
   the full PR diff, and `git diff --check` against the base. Include only intended

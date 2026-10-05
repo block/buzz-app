@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
-const config = (key) => {
-  const result = spawnSync("git", ["config", "--get", key], {
+const config = (key, ...scope) => {
+  const result = spawnSync("git", ["config", ...scope, "--get", key], {
     encoding: "utf8",
   });
   if (result.status === 1) return "";
@@ -13,13 +13,18 @@ const config = (key) => {
   return result.stdout.trim();
 };
 process.chdir(git("rev-parse", "--show-toplevel"));
+// Refuse a different hooks path in this worktree or in the clone-wide setting
+// this install replaces; a worktree override must not mask the shared one.
 const existing = config("core.hooksPath");
-if (existing && existing !== ".githooks")
-  throw new Error(
-    `Existing core.hooksPath (${existing}); reconcile it before installing.`,
-  );
-if (!existing) {
-  const hooks = git("rev-parse", "--git-path", "hooks");
+const shared = config("core.hooksPath", "--local");
+for (const value of [existing, shared])
+  if (value && value !== ".githooks")
+    throw new Error(
+      `Existing core.hooksPath (${value}); reconcile it before installing.`,
+    );
+if (!shared) {
+  // The clone's default hooks directory, whatever this worktree overrides.
+  const hooks = join(resolve(git("rev-parse", "--git-common-dir")), "hooks");
   const custom = existsSync(hooks)
     ? readdirSync(hooks).filter((name) => !name.endsWith(".sample"))
     : [];
@@ -28,15 +33,16 @@ if (!existing) {
       `Existing hooks (${custom.join(", ")}); reconcile them before installing.`,
     );
 }
-// Worktree-specific hooks must not replace a sibling checkout's workflow.
 // Git requires special migration for explicit core.worktree/bare repositories.
 if (config("core.worktree") || config("core.bare") === "true")
   throw new Error(
     "Nonstandard worktree configuration; install hooks manually.",
   );
 execFileSync(resolve("bin/lefthook"), ["validate"], { stdio: "inherit" });
-git("config", "--local", "extensions.worktreeConfig", "true");
-git("config", "--worktree", "core.hooksPath", ".githooks");
+// One clone-wide setting covers every worktree: Git resolves the relative path
+// from each worktree's root, so each runs its own branch's tracked .githooks.
+// Explicit per-worktree settings, including earlier installs, stay in place.
+git("config", "--local", "core.hooksPath", ".githooks");
 console.log(
-  "Installed Lefthook pre-commit and pre-push for this worktree only.",
+  "Installed Lefthook pre-commit and pre-push for every worktree of this clone.",
 );

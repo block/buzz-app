@@ -1,4 +1,8 @@
-import { selectSettingsSection, settleShellToggle } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  selectSettingsSection,
+  settleShellToggle,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
@@ -53,17 +57,16 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expectMode(page, "light");
   await settings(page);
   const system = page.getByRole("radio", { name: "System", exact: true });
-  const light = page.getByRole("radio", { name: "Light", exact: true });
-  const dark = page.getByRole("radio", { name: "Dark", exact: true });
   await expect(system).toBeChecked();
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "dark", true);
   await page.emulateMedia({ colorScheme: "light" });
   await expectMode(page, "light", true);
-  await light.check();
+  await chooseColorMode(page, "Light");
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "light", true);
-  await light.focus();
+  const dark = page.getByRole("radio", { name: "Dark", exact: true });
+  await page.getByRole("radio", { name: "Light", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(dark).toBeChecked();
   await expect(dark).toBeFocused();
@@ -90,14 +93,28 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
     "dark",
   );
+  const palettes = {};
   for (const mode of ["dark", "light"]) {
-    await page
-      .getByRole("radio", {
-        name: mode === "dark" ? "Dark" : "Light",
-        exact: true,
-      })
-      .check();
+    await chooseColorMode(page, mode === "dark" ? "Dark" : "Light");
     await expectMode(page, mode, true);
+    // Preview artwork uses the real mode's roles, even inside the other mode.
+    palettes[mode] = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const colors = Object.fromEntries(
+        [
+          "surface-base",
+          "surface-panel",
+          "text-metadata",
+          "affordance-accent-prominent",
+        ].map((role) => {
+          probe.style.color = `var(--${role})`;
+          return [role, getComputedStyle(probe).color];
+        }),
+      );
+      probe.remove();
+      return colors;
+    });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
       await expect(
@@ -115,11 +132,26 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgba(40, 40, 40, 0.9)" : "rgba(255, 255, 255, 0.9)",
     );
+    await expect(dialog).toHaveCSS("backdrop-filter", "blur(8px)");
     await page.keyboard.press("Escape");
   }
-  await dark.check();
+  for (const [mode, colors] of Object.entries(palettes)) {
+    const preview = page.locator(`.buzz-theme-thumbnail[data-mode="${mode}"]`);
+    for (const [part, property, role] of [
+      ["backdrop", "fill", "surface-base"],
+      ["panel", "fill", "surface-panel"],
+      ["lines", "stroke", "text-metadata"],
+      ["accent", "fill", "affordance-accent-prominent"],
+    ]) {
+      for (const element of await preview
+        .locator(`.buzz-theme-preview-${part}`)
+        .all())
+        await expect(element).toHaveCSS(property, colors[role]);
+    }
+  }
+  await chooseColorMode(page, "Dark");
   await page.reload();
   await expectMode(page, "dark", true);
   await settings(page);
@@ -134,8 +166,8 @@ test("System appearance follows computer changes and keeps the selected choice a
   await page.goto(app.origin);
   await settings(page);
   const system = page.getByRole("radio", { name: "System", exact: true });
-  await page.getByRole("radio", { name: "Dark", exact: true }).check();
-  await system.check();
+  await chooseColorMode(page, "Dark");
+  await chooseColorMode(page, "System");
   await expect(system).toBeChecked();
   await expectMode(page, "light", true);
   await page.screenshot({ path: testInfo.outputPath("system-light.png") });
@@ -151,7 +183,7 @@ test("System appearance follows computer changes and keeps the selected choice a
   await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
   await page.emulateMedia({ colorScheme: "light" });
   await expectMode(page, "light", true);
-  await page.getByRole("radio", { name: "Dark", exact: true }).check();
+  await chooseColorMode(page, "Dark");
   await page.emulateMedia({ colorScheme: "light" });
   await expectMode(page, "dark", true);
 });
@@ -195,7 +227,7 @@ test("storage denial is visible and retryable; another window updates a live con
         return original.call(this, k, v);
       };
     }, key);
-    await other.getByRole("radio", { name: "Dark", exact: true }).check();
+    await chooseColorMode(other, "Dark");
     await expectMode(other, "dark", true);
     await expect(
       other.getByRole("dialog", {
@@ -240,7 +272,7 @@ test("storage denial is visible and retryable; another window updates a live con
     // create another relay session after the destination is ready.
     expect(app.report.sessions.length).toBe(settingsSessions);
     await page.screenshot({ path: testInfo.outputPath("messages-dark.png") });
-    await other.getByRole("radio", { name: "Light", exact: true }).check();
+    await chooseColorMode(other, "Light");
     await expectMode(page, "light");
     await expect(page.locator("em-emoji-picker #root")).toHaveAttribute(
       "data-theme",
@@ -349,7 +381,7 @@ test("compiled host preserves compatibility utility meanings", async ({
   });
   for (const mode of ["Light", "Dark"]) {
     await settings(page);
-    await page.getByRole("radio", { name: mode, exact: true }).check();
+    await chooseColorMode(page, mode);
     await expect(page.locator("#primary-text")).toHaveCSS(
       "color",
       mode === "Light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",

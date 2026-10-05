@@ -105,15 +105,28 @@ it("uploads, suggests a name, saves to the viewer's set and survives a reload", 
   const store = relayStore();
   const upload = vi.fn(async (file: File) => uploaded(file));
   const view = store.connect(upload);
+  expect(screen.getByRole("tab", { name: "Add emoji" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(
-    await screen.findByText("You haven't added any emoji yet. Add one above."),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "Save emoji" }),
+  ).not.toBeInTheDocument();
   expect(
-    screen.getByText(
-      "Choose an image first; Buzz will suggest a name from the filename.",
-    ),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save emoji" })).toBeDisabled();
+    screen.queryByRole("button", { name: "Clear" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("img", { name: "Selected custom emoji preview" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "My emojis" }));
+  expect(await screen.findByText("No emojis yet")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Add emoji" }));
+  expect(screen.getByRole("tab", { name: "Add emoji" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Upload image" })).toHaveFocus();
   await user.upload(
     screen.getByLabelText("Upload image"),
     png("Party Parrot.png"),
@@ -127,18 +140,25 @@ it("uploads, suggests a name, saves to the viewer's set and survives a reload", 
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Save emoji" }));
   expect(await screen.findByText("Added :party_parrot:")).toBeVisible();
-  expect(screen.getByText("My emoji (1)")).toBeVisible();
+  expect(screen.getByText("My emojis (1)")).toBeVisible();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Upload image" })).toHaveFocus();
+  await user.click(screen.getByRole("tab", { name: "My emojis (1)" }));
   expect(screen.getByRole("img", { name: ":party_parrot:" })).toBeVisible();
-  expect(screen.getByRole("textbox")).toHaveValue("");
   expect(store.stored[0]?.tags).toEqual([
     ["d", "buzz:custom-emoji"],
     ["emoji", "party_parrot", `${origin}/media/${"a".repeat(64)}.png`],
   ]);
   view.unmount();
   store.connect(upload);
-  expect(await screen.findByText("My emoji (1)")).toBeVisible();
-  await user.type(screen.getByRole("textbox"), "party_parrot");
+  expect(await screen.findByText("My emojis (1)")).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "My emojis (1)" }));
+  expect(screen.getByRole("img", { name: ":party_parrot:" })).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Add emoji" }));
   await user.upload(screen.getByLabelText("Upload image"), png("other.png"));
+  await screen.findByRole("textbox");
+  await user.clear(screen.getByRole("textbox"));
+  await user.type(screen.getByRole("textbox"), "party_parrot");
   expect(
     await screen.findByText(
       "You already have :party_parrot: — saving will replace its image.",
@@ -146,31 +166,95 @@ it("uploads, suggests a name, saves to the viewer's set and survives a reload", 
   ).toBeVisible();
 });
 
-it("preserves name edits and disables Clear until a pending upload settles", async () => {
+it("preserves drafts across tabs and name edits during replacement, then returns focus after Clear", async () => {
   const user = userEvent.setup();
   const store = relayStore();
   const pending = deferred<ReturnType<typeof uploaded>>();
-  store.connect(vi.fn(() => pending.promise));
-  await screen.findByText("You haven't added any emoji yet. Add one above.");
-
+  const upload = vi
+    .fn()
+    .mockImplementationOnce(async (file: File) => uploaded(file))
+    .mockImplementationOnce(() => pending.promise);
+  store.connect(upload);
+  await user.upload(screen.getByLabelText("Upload image"), png("first.png"));
+  await screen.findByRole("textbox");
+  await user.clear(screen.getByRole("textbox"));
+  await user.type(screen.getByRole("textbox"), "custom_name");
+  await user.click(screen.getByRole("tab", { name: "My emojis" }));
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Add emoji" }));
+  expect(screen.getByRole("textbox")).toHaveValue("custom_name");
   await user.upload(
     screen.getByLabelText("Upload image"),
-    png("suggested.png"),
+    png("replacement.png"),
   );
-  await user.type(screen.getByRole("textbox"), "custom_name");
+  try {
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    await user.type(screen.getByRole("textbox"), "_edited");
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save emoji" })).toBeDisabled();
+  } finally {
+    pending.resolve(uploaded(png("replacement.png")));
+  }
   const clear = screen.getByRole("button", { name: "Clear" });
-  expect(clear).toBeDisabled();
-
-  pending.resolve(uploaded(png("suggested.png")));
-  await screen.findByRole("img", { name: "Selected custom emoji preview" });
-  expect(screen.getByRole("textbox")).toHaveValue("custom_name");
-  expect(clear).toBeEnabled();
-
+  await waitFor(() => expect(clear).toBeEnabled());
+  expect(screen.getByRole("textbox")).toHaveValue("custom_name_edited");
   await user.click(clear);
-  expect(screen.getByRole("textbox")).toHaveValue("");
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("img", { name: "Selected custom emoji preview" }),
-  ).toBeNull();
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Upload image" })).toHaveFocus();
+});
+
+it("keeps upload focus when the setup card becomes the selected-image editor", async () => {
+  const user = userEvent.setup();
+  const pending = deferred<ReturnType<typeof uploaded>>();
+  const upload = vi.fn(() => pending.promise);
+  relayStore().connect(upload);
+  await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
+  try {
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    const button = screen.getByRole("button", { name: "Uploading…" });
+    button.focus();
+    expect(button).toHaveFocus();
+    expect(
+      screen.getByRole("heading", { name: "Upload an image" }),
+    ).toBeVisible();
+  } finally {
+    pending.resolve(uploaded(png("wave.png")));
+  }
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Choose different image" }),
+    ).toHaveFocus(),
+  );
+  expect(screen.queryByRole("heading", { name: "Upload an image" })).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveValue("wave");
+});
+
+it("keeps initial upload controls minimal and completes an upload across tab switches", async () => {
+  const user = userEvent.setup();
+  const pending = deferred<ReturnType<typeof uploaded>>();
+  const upload = vi.fn(() => pending.promise);
+  relayStore().connect(upload);
+  await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
+  try {
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "Uploading…" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Clear" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "My emojis" }));
+  } finally {
+    pending.resolve(uploaded(png("wave.png")));
+  }
+  await user.click(screen.getByRole("tab", { name: "Add emoji" }));
+  expect(await screen.findByRole("textbox")).toHaveValue("wave");
+  expect(screen.getByRole("button", { name: "Save emoji" })).toBeEnabled();
 });
 
 it("shows reference copy for invalid names, non-images and upload failures", async () => {
@@ -185,7 +269,6 @@ it("shows reference copy for invalid names, non-images and upload failures", asy
     }))
     .mockImplementation(async (file) => uploaded(file));
   store.connect(upload);
-  await screen.findByText("You haven't added any emoji yet. Add one above.");
   await user.upload(screen.getByLabelText("Upload image"), png("one.png"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The server could not accept this file. Its format or metadata may not be supported.",
@@ -214,7 +297,6 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
   const user = userEvent.setup();
   const store = relayStore();
   store.connect(vi.fn(async (file: File) => uploaded(file)));
-  await screen.findByText("You haven't added any emoji yet. Add one above.");
   await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
   await screen.findByRole("img", { name: "Selected custom emoji preview" });
   store.rejectNext(new PublishRejected("blocked: no"));
@@ -250,10 +332,10 @@ it("shows the viewer's emoji but hides authoring without upload or kind-30030 wr
     }),
   );
   const settled = async () => {
-    expect(await screen.findByText("My emoji (1)")).toBeVisible();
+    expect(await screen.findByText("My emojis (1)")).toBeVisible();
     expect(screen.getByRole("img", { name: ":mine:" })).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByText(/Add one above/)).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Add emoji" })).toBeNull();
   };
   const view = store.connect(vi.fn(), [9]);
   await settled();
@@ -264,4 +346,13 @@ it("shows the viewer's emoji but hides authoring without upload or kind-30030 wr
   await settled();
   expect(screen.queryByLabelText("Upload image")).toBeNull();
   expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
+});
+
+it("shows an informational empty state when emoji authoring is unavailable", async () => {
+  relayStore().connect(null);
+  expect(
+    await screen.findByRole("heading", { name: "No emojis yet" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Add emoji" })).toBeNull();
+  expect(screen.queryByRole("tab", { name: "Add emoji" })).toBeNull();
 });

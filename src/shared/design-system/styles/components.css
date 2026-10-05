@@ -1021,29 +1021,38 @@
   .buzz-preview-card-positioner {
     z-index: var(--layer-popover);
   }
+  /* One list inset and row recipe for choices and contextual actions. */
+  .buzz-menu-popup,
+  .buzz-select-popup,
+  .buzz-popover-popup[data-padding="list"] {
+    --floating-inset: var(--space-1);
+    padding: var(--space-1);
+  }
   .buzz-menu-popup {
     min-width: 11.5rem;
     max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
     max-height: min(24rem, var(--available-height));
     overflow-y: auto;
-    padding: var(--space-1);
     @apply floating-surface;
     color: var(--text-standard);
   }
   .buzz-menu-popup[data-size="wide"] {
     max-width: min(28rem, var(--available-width), calc(100vw - var(--space-4)));
   }
-  .buzz-menu-item {
+  .buzz-menu-item,
+  .buzz-select-option {
     display: flex;
     min-height: var(--size-row);
     align-items: center;
-    gap: var(--space-row-gap);
     border-radius: var(--floating-inner-radius);
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-2) var(--space-3);
     color: var(--text-standard);
     cursor: default;
     outline: none;
     user-select: none;
+  }
+  .buzz-menu-item {
+    gap: var(--space-row-gap);
   }
   html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
     outline: 2px solid var(--border-focus);
@@ -1108,12 +1117,12 @@
   }
   .buzz-popover-popup {
     @apply floating-surface;
-    --floating-inset: var(--space-4);
+    --floating-inset: var(--space-3);
     width: 20rem;
     max-width: min(var(--available-width), calc(100vw - var(--space-4)));
     max-height: var(--available-height);
     overflow-y: auto;
-    padding: var(--space-4);
+    padding: var(--space-3);
     color: var(--text-standard);
   }
   .buzz-popover-popup[data-size="compact"] {
@@ -1127,6 +1136,14 @@
     --interaction-selected: var(--affordance-subtle-pressed);
     --floating-radius: var(--radius-row);
   }
+  .buzz-menu-popup[data-size="compact"],
+  .buzz-popover-popup[data-size="compact"][data-padding="list"] {
+    --floating-inset: var(--space-half);
+    padding: var(--space-half);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-item {
+    padding: var(--space-1) var(--space-2);
+  }
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
   .buzz-popover-popup[data-size="compact"] .navigation-item {
     border-radius: var(--floating-inner-radius);
@@ -1138,10 +1155,6 @@
   }
   .buzz-popover-popup[data-size="wide"] {
     width: 24rem;
-  }
-  .buzz-popover-popup[data-padding="list"] {
-    --floating-inset: var(--space-1);
-    padding: var(--space-1);
   }
   .buzz-popover-popup[data-padding="list"] .navigation-item {
     border-radius: var(--floating-inner-radius);
@@ -1284,8 +1297,6 @@
     max-height: var(--available-height);
     overflow-y: auto;
     @apply floating-surface;
-    --floating-inset: var(--space-2);
-    padding: var(--space-2);
     color: var(--text-standard);
     z-index: var(--layer-popover);
     opacity: 1;
@@ -1328,13 +1339,8 @@
     padding: var(--space-2) var(--space-3) var(--space-1);
   }
   .buzz-select-option {
-    display: flex;
-    align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--floating-inner-radius);
-    cursor: default;
   }
   .buzz-select-option[data-highlighted] {
     outline: none;
@@ -1496,7 +1502,8 @@
     .buzz-preference-row-trailing:has(
         button:not([role="switch"]):not([role="checkbox"])
       ),
-    .buzz-preference-row-trailing:has([role="combobox"]) {
+    .buzz-preference-row-trailing:has([role="combobox"]),
+    .buzz-preference-row-trailing:has([role="radiogroup"]) {
       grid-column: 1 / -1;
       justify-content: flex-start;
     }
@@ -1505,7 +1512,9 @@
         button:not([role="switch"]):not([role="checkbox"])
       ),
     .buzz-preference-row[data-has-icon]
-      > .buzz-preference-row-trailing:has([role="combobox"]) {
+      > .buzz-preference-row-trailing:has([role="combobox"]),
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has([role="radiogroup"]) {
       grid-column: 2 / -1;
     }
   }

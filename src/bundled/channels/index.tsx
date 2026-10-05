@@ -4,6 +4,7 @@ import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
+import { FolderSimpleIcon } from "../../shared/design-system/icons";
 export const inject = [
   "pages",
   "agentControl",
@@ -31,6 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "groups",
     title: "Personal groups",
+    icon: FolderSimpleIcon,
     component: ({ active }) => (
       <ChannelSetupSettings
         relay={relay}

@@ -2370,3 +2370,125 @@ test("documentation code tabs and contents work with keyboard and narrow layouts
     }),
   ).toBeVisible();
 });
+
+// Real font metrics, wrapping, and RTL geometry cannot be established in jsdom.
+test("empty states preserve grouping and contain translated copy at 200 percent", async ({
+  page,
+}, info) => {
+  await page.goto(`${viewer}#/design/components/empty-state`);
+  const cards = page.locator(".buzz-empty-state");
+  await expect(cards).toHaveCount(2);
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1440, 800, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const scale of ["100%", "200%"]) {
+      for (const direction of ["ltr", "rtl"]) {
+        for (const copy of [
+          {
+            lang: "en",
+            title: "No emojis yet",
+            description: "Add a custom emoji to use in messages and reactions.",
+            action: "Add emoji",
+          },
+          {
+            lang: "de",
+            title: "Noch keine persönlichen Gruppen",
+            description:
+              "Organisiere zusammengehörige Kanäle in persönlichen Gruppen. Deine Gruppen sind nur für dich sichtbar.",
+            action: "Persönliche Gruppen verwalten",
+          },
+          {
+            lang: "en",
+            title: "[Ñöö pëërsöönââl gröüps yëët]",
+            description:
+              "[Këëp rëëlââtëëd châânnëëls töögëëthëër ïïn yöüür sëëttïïngs. Thëësëë gröüps âârëë prïïvââtëë töö yöüü.]",
+            action: "[Mâânââgëë pëërsöönââl gröüps]",
+          },
+        ]) {
+          // Test-only copy substitutions stress the real shared component.
+          await cards.first().evaluate(
+            (root, { scale, direction, copy }) => {
+              document.documentElement.style.fontSize = scale;
+              document.documentElement.dir = direction;
+              root.setAttribute("lang", copy.lang);
+              const title = root.querySelector(".buzz-empty-state-title");
+              const description = root.querySelector(
+                ".buzz-empty-state-description",
+              );
+              const action = root.querySelector(".buzz-button-label");
+              if (!title || !description || !action)
+                throw new Error("Empty-state specimen is incomplete");
+              title.textContent = copy.title;
+              description.textContent = copy.description;
+              action.textContent = copy.action;
+            },
+            { scale, direction, copy },
+          );
+          for (const card of await cards.all()) {
+            await expect
+              .poll(
+                () =>
+                  card.evaluate((root) => {
+                    const bounds = root.getBoundingClientRect();
+                    return (
+                      [...root.querySelectorAll("*")].every((node) => {
+                        const box = node.getBoundingClientRect();
+                        return (
+                          box.left >= bounds.left && box.right <= bounds.right
+                        );
+                      }) && root.scrollWidth <= root.clientWidth
+                    );
+                  }),
+                { message: `${width}px, ${scale}, ${direction}, ${copy.lang}` },
+              )
+              .toBe(true);
+          }
+          const typography = await cards.first().evaluate((root) => {
+            const title = root.querySelector("h3");
+            const description = root.querySelector("p");
+            if (!title || !description)
+              throw new Error("Empty-state copy is missing");
+            const heading = getComputedStyle(title);
+            const body = getComputedStyle(description);
+            return {
+              headingWeight: heading.fontWeight,
+              bodyWeight: body.fontWeight,
+              lineHeight:
+                parseFloat(body.lineHeight) / parseFloat(body.fontSize),
+            };
+          });
+          expect(typography.headingWeight).toBe("500");
+          expect(typography.bodyWeight).toBe("400");
+          expect(typography.lineHeight).toBeGreaterThanOrEqual(1.4);
+          if (copy.lang === "de") {
+            const fitsWords = await cards
+              .first()
+              .getByRole("button")
+              .evaluate((button) => {
+                const label = button.querySelector(".buzz-button-label");
+                if (!label) throw new Error("Missing action label");
+                const style = getComputedStyle(label);
+                const canvas = document.createElement("canvas");
+                const context = canvas.getContext("2d");
+                if (!context)
+                  throw new Error("Missing font measurement context");
+                context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                const longest = Math.max(
+                  ...(label.textContent ?? "")
+                    .split(/\s+/)
+                    .map((word) => context.measureText(word).width),
+                );
+                return label.getBoundingClientRect().width >= longest;
+              });
+            expect(fitsWords, "Translated action retains whole words").toBe(
+              true,
+            );
+          }
+        }
+      }
+    }
+    await cards.first().screenshot({
+      path: info.outputPath(`empty-state-${width}-200-rtl.png`),
+    });
+  }
+});

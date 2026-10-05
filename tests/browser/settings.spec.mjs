@@ -453,7 +453,7 @@ confirmedPresence(
         expect(navigation).not.toBeNull();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - frame.y).toBe(24);
+        expect(content.y - frame.y).toBe(32);
       } else {
         await expect(settingsSidebar).toBeHidden();
         expect(
@@ -827,8 +827,8 @@ test("Settings loads and publishes the selected community profile", async ({
   ).toBeFocused();
   await page.keyboard.press(tab);
   await expect(
-    profileRegion().getByRole("textbox", {
-      name: "Public key (hex)",
+    profileRegion().getByRole("button", {
+      name: "Copy public key",
       exact: true,
     }),
   ).toBeFocused();

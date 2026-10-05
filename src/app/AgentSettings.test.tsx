@@ -135,8 +135,10 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
   async (piStatus) => {
     const user = userEvent.setup();
     setupHarnesses(piStatus);
-    const list = await screen.findByRole("list");
-    const rows = within(list).getAllByRole("listitem");
+    const list = await screen.findByRole("list", { name: "Harnesses" });
+    const rows = within(list)
+      .getAllByRole("listitem")
+      .filter((row) => row.parentElement === list);
     expect(rows).toHaveLength(3);
     const pi = rows[2];
     if (!pi) throw new Error("Missing Pi row");
@@ -150,10 +152,18 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
       expect(copyPi).not.toBeInTheDocument();
       expect(screen.queryByText(/npm install -g/)).not.toBeInTheDocument();
     } else {
-      expect(screen.getByText("Copy Pi command")).not.toBeVisible();
+      expect(screen.getByLabelText("Copy Pi command")).not.toBeVisible();
       const manual = within(pi).getByText("Manual setup");
       expect(manual.closest("details")).not.toHaveAttribute("open");
       await user.click(manual);
+      const steps = within(
+        screen.getByRole("list", { name: "Manual setup steps" }),
+      ).getAllByRole("listitem");
+      expect(steps).toHaveLength(4);
+      expect(steps[0]).toHaveTextContent("Install Node.js");
+      expect(steps[1]).toHaveTextContent("Install Pi");
+      expect(steps[2]).toHaveTextContent("Install the ACP adapter");
+      expect(steps[3]).toHaveTextContent("Check the installation");
       expect(
         screen.getByText(
           "npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'",
@@ -213,6 +223,8 @@ it("Check again re-reads the native snapshot without restarting the app", async 
   const user = userEvent.setup();
   const { fixture } = setupHarnesses("adapter-needed");
   expect(await screen.findByText("Adapter needed")).toBeVisible();
+  await user.hover(screen.getByRole("button", { name: "Check again" }));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Check again");
   const before = fixture.calls.filter(
     (call) => call.action === "snapshot",
   ).length;
@@ -226,12 +238,16 @@ it("Check again re-reads the native snapshot without restarting the app", async 
   await user.click(screen.getByRole("button", { name: "Check again" }));
   await waitFor(() =>
     expect(
-      within(screen.getByRole("list")).getAllByRole("listitem")[2],
+      within(screen.getByRole("list", { name: "Harnesses" })).getAllByRole(
+        "listitem",
+      )[2],
     ).toHaveTextContent("PiReady"),
   );
   expect(screen.queryByRole("button", { name: "Copy Pi command" })).toBeNull();
   expect(
-    within(screen.getByRole("list")).getAllByRole("listitem")[1],
+    within(screen.getByRole("list", { name: "Harnesses" })).getAllByRole(
+      "listitem",
+    )[1],
   ).toHaveTextContent("GooseReady");
   expect(
     fixture.calls.filter((call) => call.action === "snapshot"),
@@ -256,7 +272,9 @@ it("keeps the last statuses and offers Check again after a failed read", async (
   expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
   expect(installPi).not.toHaveBeenCalled();
   expect(
-    within(screen.getByRole("list")).getAllByRole("listitem")[0],
+    within(screen.getByRole("list", { name: "Harnesses" })).getAllByRole(
+      "listitem",
+    )[0],
   ).toHaveTextContent("Buzz AgentReady");
   await user.click(screen.getByRole("button", { name: "Check again" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
@@ -273,15 +291,15 @@ it.each([
   "shows Pi Install only when needed and supported (%s, %s)",
   async (status, supported, visible) => {
     setupHarnesses(status, { installSupported: supported, installPi: vi.fn() });
-    const pi = within(await screen.findByRole("list")).getAllByRole(
-      "listitem",
-    )[2];
+    const pi = within(
+      await screen.findByRole("list", { name: "Harnesses" }),
+    ).getAllByRole("listitem")[2];
     if (!pi) throw new Error("Missing Pi row");
     expect(within(pi).queryByRole("button", { name: "Install" }) !== null).toBe(
       visible,
     );
     if (status !== "ready") {
-      expect(screen.getByText("Copy Pi command")).not.toBeVisible();
+      expect(screen.getByLabelText("Copy Pi command")).not.toBeVisible();
       if (supported)
         expect(
           within(pi).getByText(
@@ -302,9 +320,9 @@ it("offers no Pi update or command for a current or user-global Pi install", asy
     updateSupported: false,
     installPi: vi.fn(),
   });
-  const pi = within(await screen.findByRole("list")).getAllByRole(
-    "listitem",
-  )[2];
+  const pi = within(
+    await screen.findByRole("list", { name: "Harnesses" }),
+  ).getAllByRole("listitem")[2];
   if (!pi) throw new Error("Missing Pi row");
   expect(within(pi).getByText("Ready")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Update Pi" })).toBeNull();
@@ -329,9 +347,9 @@ it("updates an outdated app-owned Pi and tells the user to restart running agent
     updateSupported: true,
     installPi,
   });
-  const pi = within(await screen.findByRole("list")).getAllByRole(
-    "listitem",
-  )[2];
+  const pi = within(
+    await screen.findByRole("list", { name: "Harnesses" }),
+  ).getAllByRole("listitem")[2];
   if (!pi) throw new Error("Missing Pi row");
   await user.click(within(pi).getByRole("button", { name: "Update Pi" }));
   expect(installPi).toHaveBeenCalledTimes(1);
@@ -351,9 +369,9 @@ it("keeps Pi install progress and report across Settings remounts without taking
     installSupported: true,
     installPi,
   });
-  const pi = within(await screen.findByRole("list")).getAllByRole(
-    "listitem",
-  )[2];
+  const pi = within(
+    await screen.findByRole("list", { name: "Harnesses" }),
+  ).getAllByRole("listitem")[2];
   if (!pi) throw new Error("Missing Pi row");
   await user.click(within(pi).getByRole("button", { name: "Install" }));
   expect(
@@ -403,7 +421,9 @@ it("keeps bundled Goose Ready during a Pi installation", async () => {
     installSupported: true,
     installPi: () => pending,
   });
-  const rows = within(await screen.findByRole("list")).getAllByRole("listitem");
+  const rows = within(
+    await screen.findByRole("list", { name: "Harnesses" }),
+  ).getAllByRole("listitem");
   if (!rows[1] || !rows[2]) throw new Error("Missing Harness rows");
   await user.click(within(rows[2]).getByRole("button", { name: "Install" }));
   expect(within(rows[1]).queryByRole("button", { name: "Install" })).toBeNull();

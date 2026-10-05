@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { FolderSimpleIcon, GlobeIcon } from "../shared/design-system/icons";
 import {
   act,
   cleanup,
@@ -99,6 +100,28 @@ const host = {
     snapshot: () => communityState,
   },
 } as unknown as Parameters<typeof Settings>[0];
+
+it("uses contributed icons in community and account navigation", () => {
+  const { cards } = registry([
+    { ...card("groups", "Personal groups"), icon: FolderSimpleIcon },
+    { ...card("hosted", "Hosted communities", "Communities"), icon: GlobeIcon },
+    card("other", "Other settings"),
+  ]);
+  render(<Settings {...host} cards={cards} />);
+  expect(
+    screen
+      .getByRole("button", { name: "Personal groups" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-folder");
+  expect(
+    screen
+      .getByRole("button", { name: "Hosted communities" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-world");
+  expect(
+    screen.getByRole("button", { name: "Other settings" }).querySelector("svg"),
+  ).toHaveClass("tabler-icon-message-circle");
+});
 
 it("keeps grouped cards available without a selected community", () => {
   const { cards } = registry([

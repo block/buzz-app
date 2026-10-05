@@ -942,12 +942,17 @@
   gap: var(--space-1h);
 }
 .channelDrawer {
+  --panel-motion-offset: translateY(var(--space-3));
   height: 42%;
   min-height: 11.25rem;
   max-height: 65%;
   flex-shrink: 0;
   border-top: 1px solid var(--border-standard);
   overflow: hidden;
+}
+
+.channelDrawer > section {
+  height: 100%;
 }
 
 .indicatorStack {

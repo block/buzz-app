@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { CopyIcon } from "../../shared/design-system/icons";
 import { TemplateEditor, GroupDefault } from "./TemplateEditor";
 import { TemplateSettings, SaveAsTemplate } from "./TemplateSettings";
 export const inject = ["relay", "settingsCards", "channelTemplates"];
@@ -7,6 +8,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "templates",
     title: "Templates & teams",
+    icon: CopyIcon,
     component: ({ active }) => (
       <TemplateSettings relay={relay} active={active} />
     ),

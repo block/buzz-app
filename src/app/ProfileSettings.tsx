@@ -1,11 +1,15 @@
-import { Header } from "../shared/design-system/ui/Header";
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import type { Identity } from "../features/identity/service";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { profileDefault } from "../features/communities/profile-default";
 import { AvatarEditor } from "../features/profiles/AvatarEditor";
 import { Button } from "../shared/design-system/ui/Button";
-import { Input } from "../shared/design-system/ui/Input";
+import { IconButton } from "../shared/design-system/ui/IconButton";
+import { CopyIcon } from "../shared/design-system/icons";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
+import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useCallback,
@@ -154,8 +158,8 @@ export function ProfileSettings({
         title="Profile"
         subtitle={
           community
-            ? "Set your profile details for this community. Any existing community profiles won’t be changed."
-            : "Set your profile details. Any existing community profiles won’t be changed."
+            ? "Update this community’s profile. Other community profiles stay unchanged."
+            : "Used for new communities. Existing community profiles stay unchanged."
         }
       />
       <div>
@@ -189,28 +193,33 @@ export function ProfileSettings({
             )}
           </div>
         ) : (
-          <>
+          <SettingsGroup layout="form">
             <section aria-label="Profile preview" className={styles.preview}>
-              <AvatarEditor
-                value={profile.picture}
-                name={profile.name}
-                community={community?.id}
-                disabled={saving}
-                onBusyChange={setUploading}
-                onChange={(picture) => {
-                  setDraft({ ...profile, picture });
-                  setSaved(false);
-                  setError("");
-                }}
-              />
-              <h3 className="text-label">
-                {profile.name.trim() || "Your profile"}
-              </h3>
-              {profile.about?.trim() ? (
-                <p className={`${styles.about} text-body-sm text-muted`}>
-                  {profile.about.trim()}
-                </p>
-              ) : null}
+              <div>
+                <AvatarEditor
+                  size="compact"
+                  value={profile.picture}
+                  name={profile.name}
+                  community={community?.id}
+                  disabled={saving}
+                  onBusyChange={setUploading}
+                  onChange={(picture) => {
+                    setDraft({ ...profile, picture });
+                    setSaved(false);
+                    setError("");
+                  }}
+                />
+              </div>
+              <div className={styles.previewCopy}>
+                <h3 className="text-label-sm">
+                  {profile.name.trim() || "Your profile"}
+                </h3>
+                {profile.about?.trim() ? (
+                  <p className={`${styles.about} text-body-sm text-muted`}>
+                    {profile.about.trim()}
+                  </p>
+                ) : null}
+              </div>
             </section>
             <form
               onSubmit={(event) => {
@@ -311,7 +320,6 @@ export function ProfileSettings({
                   className="mt-6 flex flex-wrap items-center justify-end gap-3"
                 >
                   <Button
-                    size="sm"
                     type="button"
                     disabled={saving || uploading}
                     onClick={() => {
@@ -323,7 +331,6 @@ export function ProfileSettings({
                     Cancel
                   </Button>
                   <Button
-                    size="sm"
                     type="submit"
                     loading={saving}
                     disabled={uploading || !canSaveProfile(profile)}
@@ -342,55 +349,54 @@ export function ProfileSettings({
                 />
               )}
             </form>
-          </>
+          </SettingsGroup>
         )}
         {client.viewer && (
-          <section aria-labelledby="identity-settings-title" className="mt-8">
-            <h3 id="identity-settings-title" className="m-0 text-label-sm">
-              Identity details
-            </h3>
-            <p className="mt-2 mb-4 text-body-sm text-muted">
-              You use the same identity across all communities. Your public
-              identity can be shared safely; it does not reveal your private
-              key.
-            </p>
-            {(
-              [
+          <section
+            aria-labelledby="identity-settings-title"
+            className="mt-section-gap"
+          >
+            <InlineHeader
+              id="identity-settings-title"
+              title="Identity details"
+              subtitle="Your identity is shared across communities. Public keys are safe to share."
+            />
+            <SettingsGroup>
+              {(
                 [
-                  "Public key (hex)",
-                  "Public key",
-                  client.viewer ?? "",
-                  "public-key",
-                ],
-                [
-                  "Nostr address (npub)",
-                  "Nostr address",
-                  npub,
-                  "nostr-address",
-                ],
-              ] as const
-            ).map(([label, copyLabel, value, id]) => (
-              <div className="mb-4 min-w-0" key={label}>
-                <label className="mb-2 block text-label-sm" htmlFor={id}>
-                  {label}
-                </label>
-                <div className={styles.identityRow}>
-                  <Input
-                    id={id}
-                    readOnly
-                    value={value}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => void copyIdentity(value, copyLabel)}
-                  >
-                    Copy {copyLabel.toLowerCase()}
-                  </Button>
-                </div>
+                  ["Public key (hex)", "Public key", client.viewer],
+                  ["Nostr address (npub)", "Nostr address", npub],
+                ] as const
+              ).map(([label, copyLabel, value]) => (
+                <PreferenceRow
+                  key={label}
+                  title={label}
+                  subtitle={
+                    <code className={`text-mono ${styles.identityValue}`}>
+                      {value}
+                    </code>
+                  }
+                  trailing={
+                    <Tooltip content={`Copy ${copyLabel.toLowerCase()}`}>
+                      <IconButton
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Copy ${copyLabel.toLowerCase()}`}
+                        icon={<CopyIcon aria-hidden="true" />}
+                        onClick={() => void copyIdentity(value, copyLabel)}
+                      />
+                    </Tooltip>
+                  }
+                />
+              ))}
+            </SettingsGroup>
+            {identity && active && (
+              <div className="mt-6">
+                <SettingsGroup layout="form">
+                  <PrivateKey identity={identity} />
+                </SettingsGroup>
               </div>
-            ))}
-            {identity && active && <PrivateKey identity={identity} />}
+            )}
             {copyStatus && (
               <ToastNotice
                 title={

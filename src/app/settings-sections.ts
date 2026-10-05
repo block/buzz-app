@@ -66,11 +66,14 @@ export function settingsSections(
   const section = (
     card: Contribution<SettingsCard>,
     icon?: typeof UserIcon,
-  ): SettingsSection => ({
-    id: card.key,
-    label: card.title,
-    ...(icon ? { icon } : {}),
-  });
+  ): SettingsSection => {
+    const resolvedIcon = card.icon ?? icon;
+    return {
+      id: card.key,
+      label: card.title,
+      ...(resolvedIcon ? { icon: resolvedIcon } : {}),
+    };
+  };
   const administration = community
     ? cards
         .filter((card) => card.section === "administration")

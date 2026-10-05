@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -138,7 +139,7 @@ export function Settings({
               ))}
             </nav>
           </aside>
-          <div className={styles.detail}>
+          <div className={`${styles.detail} buzz-settings-page`}>
             {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
@@ -256,7 +257,7 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <div className="divide-y divide-line">
+                  <SettingsGroup>
                     {catalog?.plugins.map((plugin) => {
                       const id = plugin.manifest.id;
                       const running = activation[id];
@@ -334,7 +335,7 @@ export function Settings({
                         </article>
                       );
                     })}
-                  </div>
+                  </SettingsGroup>
                 </div>
               </section>
             </div>

@@ -99,6 +99,20 @@ export function ShareModelPicker({
       {catalog && !catalog.recommended && !model && (
         <p>No recommended model is available. Choose a model under Advanced.</p>
       )}
+      {catalog?.recommended && (model !== catalog.recommended || custom) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          onClick={() => {
+            setCustom(false);
+            setAdvanced(false);
+            if (catalog.recommended) onChange(catalog.recommended);
+          }}
+        >
+          Reset to device recommendation
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="sm"

@@ -124,3 +124,27 @@ it("bounds loading and ignores a late response after timeout", async () => {
     vi.useRealTimers();
   }
 });
+
+it("resets a custom selection to the device recommendation without keeping custom mode", async () => {
+  invoke
+    .mockRejectedValueOnce("Catalog unavailable")
+    .mockResolvedValue(catalog);
+  render(<Fixture />);
+  await screen.findByText("Catalog unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  fireEvent.change(
+    screen.getByLabelText("Model reference or local GGUF path"),
+    { target: { value: "/old.gguf" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reset to device recommendation" }),
+  );
+  expect(
+    screen.queryByLabelText("Model reference or local GGUF path"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Fixture model — automatically selected for this device."),
+  ).toBeInTheDocument();
+});

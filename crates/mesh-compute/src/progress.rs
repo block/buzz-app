@@ -30,6 +30,19 @@ impl Progress {
 }
 impl OutputSink for Progress {
     fn emit_event(&self, event: OutputEvent) -> std::io::Result<()> {
+        if let OutputEvent::Warning { message, context }
+        | OutputEvent::Error { message, context }
+        | OutputEvent::Fatal { message, context } = &event
+        {
+            eprintln!(
+                "Mesh runtime {}: {message}{}",
+                event.event_name(),
+                context
+                    .as_ref()
+                    .map(|value| format!(": {value}"))
+                    .unwrap_or_default()
+            );
+        }
         if let OutputEvent::ModelDownloadProgress {
             label,
             file,

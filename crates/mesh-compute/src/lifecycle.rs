@@ -188,7 +188,7 @@ impl Lifecycle {
             let mut node = match startup.await {
                 Ok(node) => node,
                 Err(error) => {
-                    let phase = Phase::Failed(error.to_string());
+                    let phase = Phase::Failed(format!("{error:#}"));
                     shared.lock().expect("mesh slot poisoned").phase = phase.clone();
                     observe(phase);
                     return;
@@ -220,7 +220,7 @@ impl Lifecycle {
                     token = pending.recv() => {
                         let Some(token) = token else { break; };
                         if let Err(error) = node.join(token).await {
-                            let phase = Phase::Failed(error.to_string());
+                            let phase = Phase::Failed(format!("{error:#}"));
                             shared.lock().expect("mesh slot poisoned").phase = phase.clone();
                             observe(phase);
                             break;
@@ -236,7 +236,7 @@ impl Lifecycle {
             let mut slot = shared.lock().expect("mesh slot poisoned");
             slot.phase = match result {
                 Ok(()) => Phase::Stopped,
-                Err(error) => Phase::Failed(error.to_string()),
+                Err(error) => Phase::Failed(format!("{error:#}")),
             };
             slot.dial = None;
             slot.stop = None;

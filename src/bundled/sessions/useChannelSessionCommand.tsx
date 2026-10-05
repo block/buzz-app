@@ -13,6 +13,7 @@ import type { VisibleEvent } from "../../features/relay/projection";
 import { eventDto } from "../../features/relay/events";
 import {
   sessionCommandDraft,
+  sessionCommandContent,
   type SessionCommandHandler,
 } from "../../features/sessions/session-command";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -380,6 +381,7 @@ export function useChannelSessionCommand({
           createdAt: Math.floor(Date.now() / 1000),
           draft,
           rawDraft: raw,
+          content: sessionCommandContent(raw),
           presentation: "chip",
           generation,
           channelId,
@@ -398,7 +400,7 @@ export function useChannelSessionCommand({
         );
       const id = await session.messages.startChannelSession(
         channelId,
-        saved.draft.text,
+        saved.content ?? saved.draft.text,
         recipients,
         saved,
         "chip",

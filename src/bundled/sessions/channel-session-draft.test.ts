@@ -4,7 +4,14 @@ import {
   readChannelSessionDraft,
   saveChannelSessionDraft,
 } from "./channel-session-draft";
-import { sessionCommandDraft } from "../../features/sessions/session-command";
+import {
+  projectComposerDocument,
+  readComposerDocument,
+} from "../../features/messages/composer-document";
+import {
+  sessionCommandDraft,
+  sessionCommandContent,
+} from "../../features/sessions/session-command";
 const scope = "draft-record-tests",
   channel = "general";
 const rawDraft = {
@@ -34,6 +41,7 @@ it("keeps the old quiet namespace compatible but rejects all chip-command fields
   for (const fields of [
     { presentation: "chip" as const },
     { rawDraft },
+    { content: "wire" },
     { scope },
     { generation: 0 },
     { viewer: command.viewer },
@@ -55,6 +63,7 @@ it("accepts an exactly stripped scoped command and validates the same schema bef
   expect(readChannelSessionDraft(scope, channel, "command")).toEqual(command);
   const bad = [
     { scope: "other" },
+    { content: "incorrect payload" },
     { viewer: "bad" },
     { channelId: "other" },
     { generation: -1 },
@@ -81,4 +90,23 @@ it("accepts an exactly stripped scoped command and validates the same schema bef
       /invalid/,
     );
   }
+});
+
+it("accepts reordered JSON members without migrating legacy content or dropping raw document correlation", () => {
+  const rich = projectComposerDocument(
+    readComposerDocument(rawDraft, rawDraft.recipients),
+  ).draft;
+  const record = {
+    ...command,
+    rawDraft: {
+      recipients: rich.recipients,
+      text: rich.text,
+      document: rich.document,
+    },
+  };
+  saveChannelSessionDraft(scope, channel, record, "command");
+  expect(readChannelSessionDraft(scope, channel, "command")).toEqual(record);
+  const modern = { ...record, content: sessionCommandContent(rich) };
+  saveChannelSessionDraft(scope, channel, modern, "command");
+  expect(readChannelSessionDraft(scope, channel, "command")).toEqual(modern);
 });

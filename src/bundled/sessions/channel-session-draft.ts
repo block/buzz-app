@@ -1,4 +1,7 @@
-import { sessionCommandDraft } from "../../features/sessions/session-command";
+import {
+  sessionCommandDraft,
+  sessionCommandContent,
+} from "../../features/sessions/session-command";
 import {
   mentionDraft,
   type MentionDraft,
@@ -16,6 +19,7 @@ export type ChannelSessionDraft = DraftIdentity &
     messageId?: string;
     presentation?: SessionPresentation;
     rawDraft?: MentionDraft;
+    content?: string;
     generation?: number;
     viewer?: string;
     channelId?: string;
@@ -106,6 +110,15 @@ export function readChannelSessionDraft(
     namespace,
   );
 }
+// JSON object member order is not part of a saved draft's payload.
+const payload = (value: unknown) =>
+  JSON.stringify(value, (_key, item) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : item,
+  );
 function validateChannelSessionDraft(
   value: ChannelSessionDraft,
   scope: string,
@@ -117,6 +130,7 @@ function validateChannelSessionDraft(
     (namespace === "draft" &&
       ((value.presentation !== undefined && value.presentation !== "quiet") ||
         value.rawDraft !== undefined ||
+        value.content !== undefined ||
         value.generation !== undefined ||
         value.viewer !== undefined ||
         value.channelId !== undefined ||
@@ -125,11 +139,11 @@ function validateChannelSessionDraft(
     (namespace === "command" &&
       (value.presentation !== "chip" ||
         typeof value.rawDraft?.text !== "string" ||
+        (value.content !== undefined &&
+          value.content !== sessionCommandContent(value.rawDraft)) ||
         value.rawDraft.text.length > 16000 ||
-        JSON.stringify(sessionCommandDraft(value.rawDraft)) !==
-          JSON.stringify(value.draft) ||
-        JSON.stringify(mentionDraft(value.rawDraft)) !==
-          JSON.stringify(value.rawDraft) ||
+        payload(sessionCommandDraft(value.rawDraft)) !== payload(value.draft) ||
+        payload(mentionDraft(value.rawDraft)) !== payload(value.rawDraft) ||
         !Number.isSafeInteger(value.generation) ||
         (value.generation ?? -1) < 0 ||
         (value.generation ?? 0) >= Number.MAX_SAFE_INTEGER ||
@@ -147,7 +161,7 @@ function validateChannelSessionDraft(
     value.draft.text.length > 16000 ||
     !value.draft.text.trim() ||
     !mentionDraft(value.draft).recipients.length ||
-    JSON.stringify(mentionDraft(value.draft)) !== JSON.stringify(value.draft) ||
+    payload(mentionDraft(value.draft)) !== payload(value.draft) ||
     (value.messageId !== undefined && !/^[0-9a-f]{64}$/.test(value.messageId))
   )
     throw new Error(
@@ -204,7 +218,7 @@ export function matchesChannelSessionDraft(
     sessionRootPresentation(event) !== (saved.presentation ?? "quiet") ||
     event.pubkey !== viewer ||
     event.created_at !== saved.createdAt ||
-    event.content !== saved.draft.text.trim() ||
+    event.content !== (saved.content ?? saved.draft.text).trim() ||
     !event.tags.some((tag) => tag[0] === "h" && tag[1] === channelId) ||
     event.tags.filter((tag) => tag[0] === "client-id").length !== 1 ||
     !event.tags.some(

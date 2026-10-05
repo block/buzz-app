@@ -1,5 +1,16 @@
 import { expect, it } from "vitest";
-import { isSessionCommand, sessionCommandDraft } from "./session-command";
+import { EditorState } from "prosemirror-state";
+import {
+  composerSchema,
+  readComposerDocument,
+  projectComposerDocument,
+} from "../messages/composer-document";
+import {
+  isSessionCommand,
+  sessionCommandDraft,
+  sessionCommandContent,
+  sameSessionCommandDraft,
+} from "./session-command";
 import { mentionDraft } from "../messages/mention-draft";
 
 it.each([
@@ -40,4 +51,42 @@ it("bare command is recognized but has no prompt; typed names never create recip
     text: "@Agent work",
     recipients: [],
   });
+});
+
+it("compares hydrated payloads without discarding recipient or rich-document changes", () => {
+  const raw = {
+    text: "/session @Agent help",
+    recipients: [{ pubkey: "a".repeat(64), name: "Agent", start: 9, end: 15 }],
+  };
+  const doc = readComposerDocument(raw, raw.recipients);
+  const rich = projectComposerDocument(doc).draft;
+  expect(sameSessionCommandDraft(raw, JSON.parse(JSON.stringify(rich)))).toBe(
+    true,
+  );
+  expect(sameSessionCommandDraft(raw, { ...raw, recipients: [] })).toBe(false);
+  const bold = projectComposerDocument(
+    EditorState.create({ doc }).tr.addMark(
+      projectComposerDocument(doc).position(raw.text.indexOf("help")),
+      projectComposerDocument(doc).position(raw.text.length),
+      composerSchema.marks.bold.create(),
+    ).doc,
+  ).draft;
+  expect(bold.text).toBe(raw.text);
+  expect(sameSessionCommandDraft(raw, bold)).toBe(false);
+  expect(sessionCommandContent(bold)).toBe("@Agent **help**");
+});
+it("strips rich command whitespace across paragraphs and retains prompt structure", () => {
+  const doc = composerSchema.node("doc", null, [
+    composerSchema.node("paragraph", null, [composerSchema.text("/session ")]),
+    composerSchema.node("paragraph", null, [
+      composerSchema.text("  @Agent "),
+      composerSchema.text("help", [composerSchema.marks.bold.create()]),
+    ]),
+    composerSchema.node("blockquote", null, [
+      composerSchema.node("paragraph", null, [composerSchema.text("details")]),
+    ]),
+  ]);
+  expect(sessionCommandContent(projectComposerDocument(doc).draft)).toBe(
+    "@Agent **help**\n\n> details",
+  );
 });

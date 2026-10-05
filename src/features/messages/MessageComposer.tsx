@@ -32,6 +32,7 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
 import {
   isSessionCommand,
+  sameSessionCommandDraft,
   type SessionCommandHandler,
 } from "../sessions/session-command";
 import {
@@ -66,6 +67,7 @@ import {
   writeView,
   viewRevision,
   replaceView,
+  clearView,
   subscribeView,
 } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -481,6 +483,14 @@ function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const canAttach = !submission && !!session.attachments;
+  const channelType = list.channels.find(
+    (item) => item.id === channelId,
+  )?.channelType;
+  const commandDestination =
+    !threadRootId &&
+    !sessionConversation &&
+    channelType !== "dm" &&
+    channelType !== "session";
   const showSessionCommand =
     !!startCommand &&
     !startCommand.locked &&
@@ -559,7 +569,13 @@ function Composer({
     if (submission || editing.target || writing.current || accepted) return;
     const current = viewRevision(scope, draftKey);
     if (current === undefined || current === revision.current) return;
-    if (dirty.current || sendAttempt.current || shareReview) setConflict(true);
+    if (startCommand && isSessionCommand(valueRef.current.text)) {
+      setConflict(true);
+      setError(
+        "This command editor is stale. Review the saved draft or reopen the channel before starting another session.",
+      );
+    } else if (dirty.current || sendAttempt.current || shareReview)
+      setConflict(true);
     else loadSaved(current);
   });
   const editingDraft = !!editing.target;
@@ -857,11 +873,24 @@ function Composer({
   useLayoutEffect(() => {
     if (!startCommand || editing.target || submission || threadRootId) return;
     return startCommand.bindEditor((expected) => {
-      if (suspended || conflict || accepted || valueRef.current !== expected)
-        return false;
-      const next = { text: "", recipients: [] };
-      saveDraft(next);
-      input.current?.reset(next);
+      if (suspended || conflict || accepted) return false;
+      const empty = mentionDraft("");
+      const matches = (draft: MentionDraft) =>
+        sameSessionCommandDraft(draft, expected) ||
+        sameSessionCommandDraft(draft, empty);
+      const stored = viewRevision(scope, draftKey);
+      if (stored === undefined || stored !== revision.current) return false;
+      const saved = savedShareDraft(stored);
+      if (!saved || !matches(valueRef.current) || !matches(saved)) return false;
+      // Clear and verify durable input before the command owner advances its
+      // generation. Do not report an optimistic in-memory save as cleanup.
+      writing.current = true;
+      try {
+        clearView(scope, draftKey);
+      } finally {
+        writing.current = false;
+      }
+      loadSaved(null);
       return true;
     });
   });
@@ -999,12 +1028,9 @@ function Composer({
         submission.submit(captured);
         return;
       }
-      if (
-        startCommand &&
-        !threadRootId &&
-        !sessionConversation &&
-        isSessionCommand(captured.text)
-      ) {
+      if (commandDestination && isSessionCommand(captured.text)) {
+        if (!startCommand)
+          throw new Error("Sessions is unavailable. Nothing was sent.");
         if (capturedAttachments.length)
           throw new Error(
             "Remove attachments before starting a session command.",
@@ -1506,6 +1532,9 @@ function Composer({
           />
         </div>
         {startCommand?.notice}
+        {readOnly && commandDestination && isSessionCommand(draft) && (
+          <p role="alert">This channel is unavailable. Nothing was sent.</p>
+        )}
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}

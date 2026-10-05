@@ -4547,3 +4547,30 @@ it("suspension detaches editor/tools/emoji demand while preserving document sele
   act(() => h.input().undo(true));
   expect(h.input().value).toBe("local");
 });
+
+it.each(["dm", "session"])(
+  "leaves /session literal in a %s destination without a command handler",
+  async (channelType) => {
+    const h = mount();
+    const list = {
+      status: "ready",
+      channels: [{ id: "channel", channelType }],
+    };
+    Object.assign(h.session, {
+      channels: {
+        get: () => list.channels[0],
+        list: () => list,
+        subscribeList: () => () => {},
+      },
+    });
+    h.fill("/session literal text");
+    h.submit();
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      "/session literal text",
+      [],
+      [],
+    );
+  },
+);

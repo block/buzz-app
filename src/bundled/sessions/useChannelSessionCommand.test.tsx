@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "../../features/messages/composer-testing";
+composerDOMFixture();
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -14,8 +16,21 @@ import { MessageComposer } from "../../features/messages/MessageComposer";
 import { useChannelSessionCommand } from "./useChannelSessionCommand";
 import {
   readChannelSessionDraft,
+  readChannelSessionEditorGeneration,
+  saveChannelSessionDraft,
   channelSessionDraftKey,
 } from "./channel-session-draft";
+import {
+  composerSchema,
+  projectComposerDocument,
+  readComposerDocument,
+} from "../../features/messages/composer-document";
+import { sessionCommandDraft } from "../../features/sessions/session-command";
+import { EditorState } from "prosemirror-state";
+import {
+  mentionDraft,
+  type MentionDraft,
+} from "../../features/messages/mention-draft";
 import { writeView, readView } from "../../shared/view-state";
 import { MentionPicker } from "../mentions/MentionPicker";
 import type { ComposerToolProps } from "../../features/conversation/contracts";
@@ -80,6 +95,7 @@ async function setup(outboxStorage?: OutboxStorage) {
     ],
   };
   let available = true;
+  let registered = true;
   const open = vi.fn(() => true);
   const tools = [
     {
@@ -118,7 +134,7 @@ async function setup(outboxStorage?: OutboxStorage) {
         channelId="general"
         channelName="General"
         extensions={extensions}
-        startCommand={command}
+        startCommand={registered ? command : undefined}
       />
     );
   }
@@ -131,6 +147,9 @@ async function setup(outboxStorage?: OutboxStorage) {
     open,
     unavailable: () => {
       available = false;
+    },
+    removeCommand: () => {
+      registered = false;
     },
     mount: () => render(<Host />, { reactStrictMode: true }),
   };
@@ -243,6 +262,16 @@ it("two mounted editors cannot create another root after accepted cleanup", asyn
   first.unmount();
   send();
   await screen.findByText(/command editor is stale/);
+  expect(h.report.published).toHaveLength(1);
+  // Re-saving identical text (ABA) cannot refresh this opening's generation.
+  fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(mentionDraft(readView(scope, "draft:general", "")).text).toBe(
+    h.raw.text,
+  );
+  send();
+  await screen.findByText(
+    "This command editor is stale. Reopen the channel before starting another session.",
+  );
   expect(h.report.published).toHaveLength(1);
 });
 
@@ -602,4 +631,208 @@ it("two editors queued behind the command lock claim only one root", async () =>
   }
   await waitFor(() => expect(h.open).toHaveBeenCalledTimes(1));
   expect(h.report.published).toHaveLength(1);
+});
+
+function boldPrompt(raw: MentionDraft) {
+  const doc = readComposerDocument(raw, raw.recipients);
+  const projection = projectComposerDocument(doc);
+  return projectComposerDocument(
+    EditorState.create({ doc }).tr.addMark(
+      projection.position(raw.text.indexOf("help")),
+      projection.position(raw.text.length),
+      composerSchema.marks.bold.create(),
+    ).doc,
+  ).draft;
+}
+
+it("a removed command handler visibly refuses the reserved prefix rather than ordinary send", async () => {
+  const h = await setup();
+  h.removeCommand();
+  h.mount();
+  await act(async () => {});
+  send();
+  await screen.findByText("Sessions is unavailable. Nothing was sent.");
+  expect(h.report.published).toHaveLength(0);
+  expect(readView(scope, "draft:general", "")).toEqual(h.raw);
+});
+
+it.each(["recipients", "formatting"])(
+  "preserves a newer same-text %s draft and finishes only after explicit empty-editor recovery",
+  async (change) => {
+    const h = await setup();
+    const gate = h.holdPublication();
+    const mounted = h.mount();
+    await act(async () => {});
+    send();
+    try {
+      await act(async () => gate.started);
+      const newer =
+        change === "formatting"
+          ? boldPrompt(h.raw)
+          : { ...h.raw, recipients: [] };
+      act(() => {
+        writeView(scope, "draft:general", newer);
+      });
+    } finally {
+      await act(async () => gate.release());
+    }
+    await screen.findByText(/Session accepted, but local draft cleanup failed/);
+    const accepted = readChannelSessionDraft(scope, "general", "command");
+    expect(accepted?.accepted).toBe(true);
+    expect(
+      readChannelSessionEditorGeneration(
+        scope,
+        "general",
+        h.session.viewer,
+        "command",
+      ),
+    ).toBe(0);
+    const newer = readView(scope, "draft:general", "");
+    mounted.unmount();
+    h.mount();
+    await act(async () => {});
+    fireEvent.click(
+      screen.getByRole("button", { name: "Finish accepted session" }),
+    );
+    await screen.findByText(/Session accepted, but local draft cleanup failed/);
+    expect(readView(scope, "draft:general", "")).toEqual(newer);
+    expect(h.open).not.toHaveBeenCalled();
+    const input = screen.getByRole("textbox");
+    (input as HTMLTextAreaElement).value = "";
+    fireEvent.input(input);
+    expect(mentionDraft(readView(scope, "draft:general", "")).text).toBe("");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Finish accepted session" }),
+    );
+    await waitFor(() =>
+      expect(h.open).toHaveBeenCalledWith(accepted?.messageId),
+    );
+    expect(
+      readChannelSessionDraft(scope, "general", "command"),
+    ).toBeUndefined();
+    expect(h.report.published.map((event) => event.id)).toEqual([
+      accepted?.messageId,
+    ]);
+  },
+);
+
+it("a silent durable clear failure retains accepted correlation and its generation", async () => {
+  const h = await setup();
+  const gate = h.holdPublication();
+  h.mount();
+  await act(async () => {});
+  send();
+  await act(async () => gate.started);
+  const remove = Storage.prototype.removeItem;
+  const failure = vi
+    .spyOn(Storage.prototype, "removeItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (!key.startsWith("buzz-view.v1:")) remove.call(this, key);
+    });
+  try {
+    await act(async () => gate.release());
+    await screen.findByText(
+      /Session accepted, but local draft cleanup failed: Could not clear/,
+    );
+    expect(readChannelSessionDraft(scope, "general", "command")?.accepted).toBe(
+      true,
+    );
+    expect(
+      readChannelSessionEditorGeneration(
+        scope,
+        "general",
+        h.session.viewer,
+        "command",
+      ),
+    ).toBe(0);
+    expect(h.open).not.toHaveBeenCalled();
+  } finally {
+    failure.mockRestore();
+    gate.release();
+  }
+  fireEvent.click(
+    screen.getByRole("button", { name: "Finish accepted session" }),
+  );
+  await waitFor(() => expect(h.open).toHaveBeenCalledTimes(1));
+  expect(h.report.published).toHaveLength(1);
+});
+
+it("a rich failed command reloads and retries the original signed Markdown payload", async () => {
+  let failing = true;
+  const h = await setup({
+    load: () => [],
+    save() {
+      if (failing) throw new Error("save unavailable");
+    },
+  });
+  const raw = boldPrompt(h.raw);
+  writeView(scope, "draft:general", raw);
+  const mounted = h.mount();
+  await act(async () => {});
+  send();
+  await screen.findByText("save unavailable");
+  const before = h.session.outbox?.snapshot()[0];
+  expect(before?.event.content).toBe("@Fixture member **help**");
+  expect(
+    readChannelSessionDraft(scope, "general", "command")?.rawDraft,
+  ).toEqual(raw);
+  mounted.unmount();
+  h.mount();
+  await act(async () => {});
+  failing = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry same prompt" }));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith(before?.event.id));
+  expect(h.report.published).toHaveLength(1);
+  expect(h.report.published[0]?.id).toBe(before?.event.id);
+  expect(h.report.published[0]?.content).toBe("@Fixture member **help**");
+  expect(readView(scope, "draft:general", "")).toBe("");
+});
+
+it("a pre-Markdown pending record retries its original text event after reload, never a migrated replacement", async () => {
+  let failing = true;
+  const h = await setup({
+    load: () => [],
+    save() {
+      if (failing) throw new Error("save unavailable");
+    },
+  });
+  const rawDraft = boldPrompt(h.raw);
+  const draft = sessionCommandDraft(rawDraft);
+  assert.exists(draft);
+  const legacy = {
+    id: crypto.randomUUID(),
+    createdAt: Math.floor(Date.now() / 1000),
+    draft,
+    rawDraft,
+    presentation: "chip" as const,
+    generation: 0,
+    viewer: h.viewerKey.pubkey,
+    channelId: "general",
+    scope,
+  };
+  saveChannelSessionDraft(scope, "general", legacy, "command");
+  writeView(scope, "draft:general", rawDraft);
+  await expect(
+    h.session.messages.startChannelSession(
+      "general",
+      draft.text,
+      [h.member],
+      legacy,
+      "chip",
+    ),
+  ).rejects.toThrow("save unavailable");
+  const before = h.session.outbox?.snapshot()[0];
+  expect(before?.event.content).toBe("@Fixture member help");
+  h.mount();
+  await act(async () => {});
+  failing = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry same prompt" }));
+  await waitFor(() => expect(h.open).toHaveBeenCalledWith(before?.event.id));
+  expect(
+    h.report.published.map((event) => ({
+      id: event.id,
+      content: event.content,
+    })),
+  ).toEqual([{ id: before?.event.id, content: "@Fixture member help" }]);
+  expect(readChannelSessionDraft(scope, "general", "command")).toBeUndefined();
 });

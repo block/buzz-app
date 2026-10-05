@@ -236,6 +236,10 @@ report (`ci-report.json` in CI), not the GitHub job-summary table. Raw timings,
 first-visible times and frame diagnostics remain in `evidence.json`, including on
 passing runs. Authors and reviewers should inspect target misses when changing
 opening/rendering paths; green CI does not mean the 100ms target was met.
+In Chromium, each sample also records its Long Animation Frames (`longFrames`).
+A ceiling failure names the longest frame and its top script, or "no script"
+when the browser saw none (for example GC or a descheduled renderer). This only
+attributes a stall; it does not change the measured time or the ceiling.
 
 The ceiling is an explicit tolerance policy, not a statistically established
 flake-free limit. Hosted Chromium recorded intermittent 111–120.5ms misses across

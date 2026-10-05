@@ -16,6 +16,25 @@ const heads = (app, channel) =>
       filter["#h"]?.includes(channel) &&
       filter.until === undefined,
   );
+// Failure text: first visible row, then the longest main-thread block and its
+// top script. "no script" means the browser saw no script in that frame (for
+// example GC or a descheduled renderer). Diagnostic only; the ceiling is unchanged.
+const describeSample = (firstVisibleMs, longFrames) => {
+  const parts = [`first visible ${firstVisibleMs.toFixed(1)}ms`];
+  if (longFrames === null) return `${parts[0]}; long frames unsupported`;
+  const longest = longFrames.toSorted((a, b) => b.blockingMs - a.blockingMs)[0];
+  if (!longest) return `${parts[0]}; no long frame`;
+  const script = longest.scripts.toSorted(
+    (a, b) => b.durationMs - a.durationMs,
+  )[0];
+  parts.push(
+    `longest frame ${longest.durationMs.toFixed(0)}ms at +${Math.max(0, longest.startMs).toFixed(0)}ms, blocking ${longest.blockingMs.toFixed(0)}ms`,
+    script
+      ? `top script ${script.durationMs.toFixed(0)}ms ${script.invokerType} ${script.invoker} ${script.sourceFunctionName || "(anonymous)"} ${script.sourceURL}`
+      : "no script",
+  );
+  return parts.join("; ");
+};
 
 test("cold opening bypasses held DM labels; warm switching paints without a head read and stays within its regression ceiling", {
   tag: "@local-webkit",
@@ -118,6 +137,19 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         .getByRole("button", { name, exact: true })
         .evaluate(
           async (button, { name, ids }) => {
+            // Attribution only: Long Animation Frames name the script, if any,
+            // that held the main thread. They never change warmVisibleMs.
+            const loafSupported =
+              PerformanceObserver.supportedEntryTypes?.includes(
+                "long-animation-frame",
+              ) ?? false;
+            const longEntries = [];
+            const loaf = loafSupported
+              ? new PerformanceObserver((list) =>
+                  longEntries.push(...list.getEntries()),
+                )
+              : null;
+            loaf?.observe({ type: "long-animation-frame" });
             const start = performance.now();
             button.click();
             const clickDispatchMs = performance.now() - start;
@@ -168,8 +200,39 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
               requestAnimationFrame(check);
             });
             const warmVisibleMs = performance.now() - start;
+            // Chromium delivers an entry by observer callback after its frame
+            // renders; takeRecords() stays empty. Finish the measured frame,
+            // then yield at background priority so delivery can run first.
+            if (loaf) {
+              await new Promise((resolve) =>
+                requestAnimationFrame(() => setTimeout(resolve, 0)),
+              );
+              await scheduler.postTask(() => {}, { priority: "background" });
+            }
+            const longFrames = loaf
+              ? longEntries
+                  .filter((entry) => entry.startTime + entry.duration > start)
+                  .map((entry) => ({
+                    startMs: entry.startTime - start,
+                    durationMs: entry.duration,
+                    blockingMs: entry.blockingDuration,
+                    renderStartMs: entry.renderStart - start,
+                    scripts: entry.scripts.map((script) => ({
+                      invoker: script.invoker,
+                      invokerType: script.invokerType,
+                      sourceURL: script.sourceURL,
+                      sourceFunctionName: script.sourceFunctionName,
+                      durationMs: script.duration,
+                      forcedStyleAndLayoutMs:
+                        script.forcedStyleAndLayoutDuration,
+                    })),
+                  }))
+              : null;
+            loaf?.disconnect();
             return {
               warmVisibleMs,
+              // null: this engine has no Long Animation Frame API.
+              longFrames,
               // Synchronous button.click() only, not all React/render work.
               clickDispatchMs,
               frames,
@@ -216,9 +279,17 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
     // A provisional margin for shared-runner scheduling, not a device SLA.
     // Enforce only after the complete functional journey and all four samples.
-    for (const { name, warmVisibleMs } of warmTimings)
+    for (const {
+      name,
+      warmVisibleMs,
+      firstVisibleMs,
+      longFrames,
+    } of warmTimings)
       expect
-        .soft(warmVisibleMs, `${name} warm-switch regression ceiling`)
+        .soft(
+          warmVisibleMs,
+          `${name} warm-switch regression ceiling (${describeSample(firstVisibleMs, longFrames)})`,
+        )
         .toBeLessThan(ceilingMs);
   } finally {
     preferences.resolve();

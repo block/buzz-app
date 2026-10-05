@@ -60,7 +60,7 @@
     inset 0 -1px 0 var(--rim-shade);
 }
 
-/* An opaque surface above a panel: menus, selects, popovers, and previews.
+/* An elevated surface above a panel: menus, selects, popovers, and previews.
    The outer material is intentionally one utility so those components cannot
    drift in fill, boundary, or elevation while retaining independent content
    layout and behavior. Compact action surfaces override the default radius. */
@@ -74,7 +74,7 @@
   );
   border: 1px solid var(--border-standard);
   border-radius: var(--floating-radius);
-  background: var(--surface-popover);
+  @apply elevated-material;
   box-shadow: var(--shadow-sm);
 }
 
@@ -223,5 +223,18 @@
   &[data-status="online"] .buzz-button {
     min-height: var(--space-5);
     padding: var(--space-half) var(--space-2);
+  }
+}
+
+/* Quiet translucency for elevated content, with an opaque accessibility fallback. */
+@utility elevated-material {
+  background: var(--surface-popover);
+  @supports (backdrop-filter: blur(1px)) {
+    background: var(--surface-elevated-glass);
+    backdrop-filter: blur(var(--blur-sm));
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    background: var(--surface-popover);
+    backdrop-filter: none;
   }
 }

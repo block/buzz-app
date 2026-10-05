@@ -97,6 +97,20 @@ function setup() {
   };
   return { ctx, data, disk, connections, source, restored };
 }
+it("resumes and connects one partition: heads keep `viewer:origin`, snapshots `origin:viewer`", async () => {
+  const { data, connections, source, restored } = setup();
+  const viewer = source.viewer;
+  expect((await restored()).scope).toBe(`primary:${viewer}`);
+  await vi.waitFor(() => expect(connections).toHaveLength(1));
+  connections[0]?.resolve(source);
+  await vi.waitFor(() => expect(data.snapshot().status).toBe("ready"));
+  expect(data.snapshot().scope).toBe(`primary:${viewer}`);
+  // Resume and the live session open the same head partition argument order.
+  expect(storage.create.mock.calls).toEqual([
+    [viewer, "primary"],
+    [viewer, "primary"],
+  ]);
+});
 it("retains a timed-out cached startup, rejects the late handshake and promotes a retry without changing generation", async () => {
   vi.useFakeTimers();
   const { data, connections, source, restored } = setup();

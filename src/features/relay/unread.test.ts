@@ -12,6 +12,7 @@ import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
+import { retainReadState } from "./read-state-retention";
 import {
   keypair,
   message,
@@ -2551,3 +2552,249 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
     expect(h.journal()).toEqual(before);
   },
 );
+
+it("catch-up keeps the message marks older clients read; only a channel mark replaces them", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 11);
+  const mention = message(h.alice, "room", "mention", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, mention, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id, mention.id]);
+  // Older clients ignore `activity:`; they read these messages through
+  // their own marks, so catch-up must not replace them.
+  await lease.catchUp(bottom.id);
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${first.id}`]: 11,
+    [`msg:${mention.id}`]: 12,
+    "activity:room": 13,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  lease.dispose();
+  // A channel mark covers everything, including its own catch-up mark.
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+  // Reading a covered message again saves nothing new.
+  const revision = h.journal()?.revision;
+  const again = h.session.unread.reading("room");
+  await again.observe([first.id, mention.id]);
+  again.dispose();
+  expect(h.journal()?.revision).toBe(revision);
+});
+
+it("pruning keeps every mark that still reads something, and unread does not change", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("side");
+  const root = message(h.viewer, "room", "root", 10);
+  const reply = (text: string, at: number, extra: string[][] = []) =>
+    message(h.alice, "room", text, at, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ...extra,
+    ]);
+  const early = reply("early", 11);
+  const mention = reply("mention", 12, [["p", h.viewer.pubkey]]);
+  const top = message(h.alice, "room", "top", 13);
+  const elsewhere = message(h.alice, "side", "elsewhere", 5);
+  const late = reply("late", 25);
+  const after = message(h.alice, "room", "after", 31);
+  h.emit([root, early, mention, top, elsewhere]);
+  const unread = (events: readonly RelayEvent[]) =>
+    events.map(
+      (event) =>
+        h.session.unread.attention(
+          event === elsewhere ? "side" : "room",
+          event.id,
+        ).unread,
+    );
+  const lease = h.session.unread.reading("room");
+  await lease.observe([early.id, mention.id, top.id]);
+  const side = h.session.unread.reading("side");
+  await side.observe([elsewhere.id]);
+  side.dispose();
+  const seen = [early, mention, top, elsewhere];
+  expect(unread(seen)).toEqual([false, false, false, false]);
+  // A thread mark keeps reply marks: a reply finds its thread only while
+  // its root is loaded, so only the channel mark may replace them.
+  const thread = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  await h.session.unread.markThrough(thread, early.id);
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`thread:${root.id}`]: 11,
+    [`msg:${early.id}`]: 11,
+    [`msg:${mention.id}`]: 12,
+    [`msg:${top.id}`]: 13,
+    [`msg:${elsewhere.id}`]: 5,
+  });
+  expect(unread(seen)).toEqual([false, false, false, false]);
+  // A channel mark replaces its channel's marks, the thread mark included;
+  // another channel keeps its marks.
+  clock(20);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({
+    room: 20,
+    [`msg:${elsewhere.id}`]: 5,
+  });
+  expect(unread(seen)).toEqual([false, false, false, false]);
+  // A later reply's mark is not covered, so the next save keeps it.
+  h.emit([late, after]);
+  await lease.observe([late.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toEqual({
+    room: 20,
+    [`msg:${late.id}`]: 25,
+    [`msg:${elsewhere.id}`]: 5,
+  });
+  expect(unread([...seen, late, after])).toEqual([
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+  ]);
+});
+
+it("a channel mark merged from another device drops the local marks it covers", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 11);
+  const later = message(h.alice, "room", "later", 40);
+  h.emit([first, later]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id, later.id]);
+  lease.dispose();
+  clock(30);
+  const marker = await signReadState(
+    {
+      slot: "b".repeat(32),
+      createdAt: 30,
+      blob: { v: 1, client_id: "peer", contexts: { room: 30 } },
+    },
+    h.viewer.secret,
+  );
+  h.emit([marker]);
+  await flush();
+  await h.session.unread.refresh();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers).toEqual({
+      room: 30,
+      [`msg:${later.id}`]: 40,
+    }),
+  );
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", later.id).unread).toBe(false);
+});
+
+it("a read reply stays read after a reload that does not load its root", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 10);
+  const reply = message(h.alice, "room", "mention", 12, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([root, reply]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([reply.id]);
+  lease.dispose();
+  await h.session.unread.markThrough(
+    { kind: "thread", channelId: "room", rootId: root.id },
+    reply.id,
+  );
+  expect(h.journal()?.state.frontiers).toMatchObject({
+    [`thread:${root.id}`]: 12,
+    [`msg:${reply.id}`]: 12,
+  });
+  // Without its root, the reply cannot find its thread mark.
+  await h.clearCache();
+  h.grant("room");
+  h.emit([reply]);
+  await vi.waitFor(() =>
+    expect(h.session.unread.attention("room", reply.id)).toMatchObject({
+      status: "eligible",
+      unread: false,
+    }),
+  );
+});
+
+it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
+  const read = message(keypair(), "dm", "read", 12);
+  // Fill the journal directly: owner tests cover bulk pressure/publication/restart.
+  // This session test exercises eviction and DM policy, not 1,600 signed events
+  // and sequential saves. Replace one full-size key with the older DM receipt.
+  const h = setup({}, true, (journal) => {
+    const state = retainReadState(
+      [
+        {
+          frontiers: Object.fromEntries(
+            Array.from({ length: 1600 }, (_, n) => [
+              `msg:${n.toString(16).padStart(64, "0")}`,
+              100 + n,
+            ]),
+          ),
+          overrides: {},
+        },
+      ],
+      {},
+      journal.clientId,
+    );
+    const frontiers = { ...state.frontiers };
+    const [replaced] = Object.keys(frontiers);
+    assert(replaced);
+    delete frontiers[replaced];
+    frontiers[`msg:${read.id}`] = 12;
+    return { ...journal, state: { ...state, frontiers } };
+  });
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unseen = message(h.alice, "dm", "unseen", 13);
+  h.emit([read, unseen]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBe(12);
+  expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  h.grant("elsewhere");
+  const later = [
+    message(h.alice, "elsewhere", "later", 1700),
+    message(h.alice, "elsewhere", "latest", 1701),
+  ];
+  h.emit(later);
+  const reading = unread.reading("elsewhere");
+  await reading.observe(later.map((event) => event.id));
+  reading.dispose();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBe(12),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  const target = {
+    kind: "message" as const,
+    channelId: "dm",
+    messageId: read.id,
+  };
+  await unread.markUnreadLocal(target);
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  const dmReading = unread.reading("dm");
+  await dmReading.observe([read.id]);
+  dmReading.dispose();
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  await unread.markMessageRead("dm", read.id);
+  expect(unread.snapshot(target).manual).toBe("none");
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+});

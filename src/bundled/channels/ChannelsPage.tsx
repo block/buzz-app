@@ -31,6 +31,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
+import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -223,6 +224,10 @@ function ChannelWorkspace({
     groupEntry?.record.value.type === "groups"
       ? groupEntry.record.value
       : undefined;
+  const [composerFocus, setComposerFocus] = useState(0);
+  // A started join focuses the composer when membership makes it writable,
+  // however that membership arrives. Opening another channel drops the intent.
+  const [joiningChannel, setJoiningChannel] = useState<string>();
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
@@ -362,6 +367,14 @@ function ChannelWorkspace({
     setSelected(current.id);
     writeView(scope, "selected-channel", current.id);
   }, [navigation?.target, current, scope]);
+  useEffect(() => {
+    if (!joiningChannel || !current) return;
+    if (current.id !== joiningChannel) setJoiningChannel(undefined);
+    else if (!current.readOnly) {
+      setJoiningChannel(undefined);
+      setComposerFocus((value) => value + 1);
+    }
+  }, [joiningChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
@@ -1007,6 +1020,10 @@ function ChannelWorkspace({
       setThread,
     ],
   );
+  const openThreadLink = useCallback(
+    (url: string) => openLink(url, true),
+    [openLink],
+  );
   const panelActive = (entry: Opening) => {
     const connection = relay.snapshot();
     return !!(
@@ -1641,9 +1658,17 @@ function ChannelWorkspace({
                   </div>
                 )}
                 {current?.readOnly && !current.cached && (
-                  <p className="px-4 py-2 text-body-sm text-subtle">
-                    Read-only preview · You haven’t joined this conversation.
-                  </p>
+                  <ChannelJoinNotice
+                    key={`join:${current.id}`}
+                    channelId={current.id}
+                    lifecycle={queries.channelLifecycle}
+                    joinable={
+                      !current.archived &&
+                      (current.channelType === "stream" ||
+                        current.channelType === "forum")
+                    }
+                    onJoin={() => setJoiningChannel(current.id)}
+                  />
                 )}
                 {current && (
                   <MessageComposer
@@ -1665,6 +1690,7 @@ function ChannelWorkspace({
                         : undefined
                     }
                     onSend={onComposerSend}
+                    focusRequest={composerFocus}
                   />
                 )}
               </SessionColumn>
@@ -1777,7 +1803,7 @@ function ChannelWorkspace({
                                     afterClose("thread");
                                     closeThread();
                                   }}
-                                  onOpenLink={(url) => openLink(url, true)}
+                                  onOpenLink={openThreadLink}
                                   onOpenMediaReview={openMediaReview}
                                   canOpenLink={canOpenLink}
                                 />

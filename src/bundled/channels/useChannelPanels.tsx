@@ -5,6 +5,7 @@ import type {
   RegisteredPanel,
 } from "../../features/panels/service";
 import { Panel } from "../../shared/design-system/ui/Panel";
+import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
 
@@ -120,18 +121,22 @@ export function useChannelPanels(
         />
       </Panel>
     ),
-    content: selected && selected.panel.channelPlacement !== "side" && (
-      <section
+    content: (
+      <PanelDock
+        open={!!selected && selected.panel.channelPlacement !== "side"}
         className={styles.channelDrawer}
-        aria-label={`${selected.panel.title} drawer`}
       >
-        <PanelView
-          panel={selected.panel}
-          target={selected.target}
-          channelContext={context}
-          close={() => hide(selected)}
-        />
-      </section>
+        {selected && selected.panel.channelPlacement !== "side" && (
+          <section aria-label={`${selected.panel.title} drawer`}>
+            <PanelView
+              panel={selected.panel}
+              target={selected.target}
+              channelContext={context}
+              close={() => hide(selected)}
+            />
+          </section>
+        )}
+      </PanelDock>
     ),
   };
 }

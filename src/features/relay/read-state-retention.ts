@@ -4,16 +4,47 @@ import {
   type ReadState,
 } from "./read-state-model";
 
+/** The mark that already reads all `key` reads, if any. `frontier` looks up
+ * marks that are being kept, plus `key` itself. */
+export type CoveredFrontier = (
+  key: string,
+  frontier: (key: string) => number | undefined,
+) => string | undefined;
+/** Broader marks first: a channel or thread mark covers many messages, so
+ * losing one makes old history unread again. Catch-up marks (`activity:`,
+ * `thread-activity:`) come next: only this app reads them, so recent catch-up
+ * must never push out a quiet channel's mark. Message marks only cover one. */
+const scope = (key: string) =>
+  !key.includes(":")
+    ? 0
+    : key.startsWith("thread:")
+      ? 1
+      : key.startsWith("activity:") || key.startsWith("thread-activity:")
+        ? 2
+        : 3;
+/** Share of the budget that broad marks may fill before recent use decides.
+ * The rest always goes to the most recently used marks, so a new read is never
+ * dropped just because old channel or thread marks fill the budget. */
+const SCOPED_SHARE = 0.75;
 /** Frontier hints are bounded recent activity, not an everlasting receipt log (NIP-RS).
- * Local interaction order wins over event time so reading old history still synchronizes.
+ * Up to `SCOPED_SHARE` of the budget, channel marks outrank thread marks, then
+ * catch-up marks, then message marks. The rest goes by local interaction order,
+ * which wins over event time so reading old history still synchronizes.
  * Every override group and its direct frontier is protected; pressure can never lose a floor.
+ *
+ * Marks that `covered` proves redundant are dropped only after the budget has
+ * chosen what to keep, and only when their covering mark was kept. The freed
+ * space then goes to the next marks in line. A dropped mark gives its recency
+ * to its cover, so a smaller limit later (such as the synced one) protects the
+ * cover as it would have protected the dropped read.
  */
-export function retainReadState(
+export function retainRead(
   states: readonly ReadState[],
   recent: Readonly<Record<string, number>>,
   clientId: string,
   maxBytes = 96 * 1024,
-): ReadState {
+  covered?: CoveredFrontier,
+): { state: ReadState; recent: Readonly<Record<string, number>> } {
   const frontiers = new Map<string, number>();
   let protectedState: ReadState = { frontiers: {}, overrides: {} };
   for (const state of states) {
@@ -24,25 +55,29 @@ export function retainReadState(
       overrides: state.overrides,
     });
   }
+  // Overrides make inherited ancestry load-bearing (see below); keep everything then.
+  const coveredBy = Object.keys(protectedState.overrides).length
+    ? undefined
+    : covered;
   const encoder = new TextEncoder();
   let used = encoder.encode(
     JSON.stringify({ v: 1, client_id: clientId, contexts: {} }),
   ).byteLength;
   let keys = 0;
   const retained = new Map<string, number>();
-  const take = (key: string, value: number) => {
-    const cost =
-      encoder.encode(JSON.stringify(key)).byteLength +
-      1 +
-      String(value).length +
-      (keys ? 1 : 0);
-    if (used + cost > maxBytes || keys >= READ_STATE_KEYS) return false;
-    used += cost;
+  const frontierKey = (key: string) =>
+    /^(ov_|esc:)/.test(key) ? `esc:${key}` : key;
+  // Separators are counted per entry, so release can return exactly what take spent.
+  const cost = (key: string, value: number) =>
+    encoder.encode(JSON.stringify(key)).byteLength + 2 + String(value).length;
+  const take = (key: string, value: number, share = 1) => {
+    const size = cost(key, value);
+    if (used + size > maxBytes * share || keys >= READ_STATE_KEYS * share)
+      return false;
+    used += size;
     keys++;
     return true;
   };
-  const frontierKey = (key: string) =>
-    /^(ov_|esc:)/.test(key) ? `esc:${key}` : key;
   for (const [key, value] of Object.entries(protectedState.overrides)) {
     for (const [prefix, timestamp] of [
       ["ov_s:", value.set],
@@ -75,27 +110,156 @@ export function retainReadState(
       retained.set(key, value);
     }
   }
-  for (const [key, value] of [...frontiers].sort(
-    ([a, av], [b, bv]) =>
-      (recent[b] ?? 0) - (recent[a] ?? 0) || bv - av || a.localeCompare(b),
-  )) {
-    if (!retained.has(key) && take(frontierKey(key), value))
+  const nextRecent: Record<string, number> = { ...recent };
+  const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
+    (nextRecent[b] ?? 0) - (nextRecent[a] ?? 0) ||
+    bv - av ||
+    a.localeCompare(b);
+  const scoped = [...frontiers].sort(
+    (a, b) => scope(a[0]) - scope(b[0]) || byUse(a, b),
+  );
+  const byRecent = [...frontiers].sort(byUse);
+  const dropped = new Set<string>();
+  const select = () => {
+    for (const [key, value] of scoped) {
+      if (retained.has(key) || dropped.has(key)) continue;
+      // Stop at the first broad mark that does not fit, so a narrower mark
+      // never takes the share ahead of it.
+      if (!take(frontierKey(key), value, SCOPED_SHARE)) break;
       retained.set(key, value);
+    }
+    for (const [key, value] of byRecent)
+      if (
+        !retained.has(key) &&
+        !dropped.has(key) &&
+        take(frontierKey(key), value)
+      )
+        retained.set(key, value);
+  };
+  select();
+  // Refilling can keep more covered marks, so repeat until nothing drops.
+  let pruned = true;
+  while (coveredBy && pruned) {
+    pruned = false;
+    // Prune against the kept marks only: a cover that did not fit cannot
+    // replace anything. Decide on one snapshot so a cover is never pruned
+    // after it has already replaced another mark.
+    const kept = new Map(retained);
+    const covers = new Map<string, string>();
+    for (const [key, value] of kept) {
+      const cover = coveredBy(key, (other) =>
+        other === key ? value : kept.get(other),
+      );
+      if (cover !== undefined && cover !== key && kept.has(cover))
+        covers.set(key, cover);
+    }
+    // A cover that is itself covered passes the recency on to what replaced it.
+    const final = (key: string) => {
+      let cover = covers.get(key) ?? key;
+      for (let hops = 0; covers.has(cover) && hops < covers.size; hops++)
+        cover = covers.get(cover) as string;
+      return cover;
+    };
+    for (const key of covers.keys()) {
+      const cover = final(key);
+      if (cover === key || covers.has(cover)) continue;
+      const value = retained.get(key) as number;
+      retained.delete(key);
+      dropped.add(key);
+      pruned = true;
+      used -= cost(frontierKey(key), value);
+      keys--;
+      if (nextRecent[key] !== undefined)
+        nextRecent[cover] = Math.max(nextRecent[cover] ?? 0, nextRecent[key]);
+    }
+    if (pruned) select();
   }
-  return Object.freeze({
+  const state = Object.freeze({
     frontiers: Object.freeze(Object.fromEntries(retained)),
     overrides: protectedState.overrides,
   });
-}
-export function retainReadOrder(
-  state: ReadState,
-  recent: Readonly<Record<string, number>>,
-) {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(recent).filter(([key]) =>
-        Object.hasOwn(state.frontiers, key),
+  return {
+    state,
+    recent: Object.freeze(
+      Object.fromEntries(
+        Object.entries(nextRecent).filter(([key]) => retained.has(key)),
       ),
     ),
+  };
+}
+/** `retainRead` when the caller keeps no recency, such as a publication. */
+export function retainReadState(
+  states: readonly ReadState[],
+  recent: Readonly<Record<string, number>>,
+  clientId: string,
+  maxBytes?: number,
+  covered?: CoveredFrontier,
+): ReadState {
+  return retainRead(states, recent, clientId, maxBytes, covered).state;
+}
+
+/** Local-only receipts evicted from the sync journal. Never passed to publication. */
+export const READ_RESERVE_KEYS = 5000;
+export const READ_RESERVE_BYTES = 512 * 1024;
+export function retainLocalRead(
+  states: readonly ReadState[],
+  recent: Readonly<Record<string, number>>,
+  clientId: string,
+  reserve: Readonly<Record<string, number>> = {},
+  covered?: CoveredFrontier,
+) {
+  const frontiers = new Map(Object.entries(reserve));
+  const overrides = new Set(
+    states.flatMap((state) => Object.keys(state.overrides)),
   );
+  const returning: Record<string, number> = {};
+  for (const state of states)
+    for (const [key, value] of Object.entries(state.frontiers)) {
+      const previous = frontiers.get(key);
+      if (previous !== undefined) returning[key] = previous;
+      frontiers.set(key, Math.max(previous ?? 0, value));
+    }
+  // Direct override floors belong in the journal. Possible inherited floors
+  // stay protected in the reserve instead of overflowing the smaller journal.
+  for (const key of overrides) {
+    const value = frontiers.get(key);
+    if (value !== undefined) returning[key] = value;
+  }
+  const kept = retainRead(
+    [...states, { frontiers: returning, overrides: {} }],
+    recent,
+    clientId,
+    undefined,
+    covered,
+  );
+  for (const key of Object.keys(kept.state.frontiers)) frontiers.delete(key);
+  const encoder = new TextEncoder();
+  let bytes = 2;
+  const entries: [string, number][] = [];
+  const protectedKey = (key: string) =>
+    overrides.size > 0 && !key.startsWith("msg:");
+  // Keep inherited floors first (a subset of the already bounded reserve), then
+  // broad receipts before messages. Event age breaks ties within each scope.
+  // Journal recency still controls newly read old history and sync.
+  for (const [key, value] of [...frontiers].sort(
+    ([a, av], [b, bv]) =>
+      Number(protectedKey(b)) - Number(protectedKey(a)) ||
+      scope(a) - scope(b) ||
+      bv - av ||
+      a.localeCompare(b),
+  )) {
+    const cost =
+      encoder.encode(JSON.stringify(key)).byteLength +
+      1 +
+      String(value).length +
+      (entries.length ? 1 : 0);
+    if (
+      entries.length >= READ_RESERVE_KEYS ||
+      bytes + cost > READ_RESERVE_BYTES
+    )
+      break;
+    entries.push([key, value]);
+    bytes += cost;
+  }
+  return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };
 }

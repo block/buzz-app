@@ -8,11 +8,13 @@ import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
+import { PageIcon } from "./PageIcon";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
 
@@ -28,6 +30,8 @@ export function AppShell({
   workspace,
   sidebar,
   communities,
+  invite,
+  onInviteClose,
   settingsCards,
   accountActions,
   onProfile,
@@ -47,6 +51,8 @@ export function AppShell({
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
+  invite?: (InviteLink & { requestId: number }) | undefined;
+  onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   accountActions: AccountActionsService;
   onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
@@ -102,7 +108,7 @@ export function AppShell({
     const pageNavigation = primaryPages.length ? (
       <nav aria-label="Pages" className="shell-pages">
         {primaryPages.map((page) => {
-          const { label, icon: Icon } = pagePresentation(page);
+          const { label, icon, image } = pagePresentation(page);
           return (
             <NavigationItem
               type="button"
@@ -117,7 +123,12 @@ export function AppShell({
               label={label}
               icon={
                 <span className="shell-page-icon">
-                  <Icon aria-hidden="true" strokeWidth={2.5} size={15} />
+                  <PageIcon
+                    icon={icon}
+                    image={image}
+                    size={15}
+                    strokeWidth={2.5}
+                  />
                 </span>
               }
             />
@@ -206,6 +217,8 @@ export function AppShell({
       <div className="flex min-h-0 flex-1">
         <CommunityRail
           communities={communities}
+          invite={invite}
+          onInviteClose={onInviteClose}
           settingsCards={settingsCards}
           onSelect={onCommunitySelect}
           onOpenTarget={onOpenTarget}

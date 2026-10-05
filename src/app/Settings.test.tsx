@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { FolderSimpleIcon, GlobeIcon } from "../shared/design-system/icons";
 import {
   act,
   cleanup,
@@ -7,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
@@ -75,6 +77,8 @@ for (const [path, name] of [
 ] as const)
   vi.doMock(path, () => ({ [name]: () => null }));
 const { Settings } = await import("./Settings");
+const { SettingsSidebar } = await import("./SettingsSidebar");
+const { developerMode } = await import("./settings-sections");
 const pluginState = {
   configuration: { status: "loading" },
   activation: {},
@@ -96,6 +100,28 @@ const host = {
     snapshot: () => communityState,
   },
 } as unknown as Parameters<typeof Settings>[0];
+
+it("uses contributed icons in community and account navigation", () => {
+  const { cards } = registry([
+    { ...card("groups", "Personal groups"), icon: FolderSimpleIcon },
+    { ...card("hosted", "Hosted communities", "Communities"), icon: GlobeIcon },
+    card("other", "Other settings"),
+  ]);
+  render(<Settings {...host} cards={cards} />);
+  expect(
+    screen
+      .getByRole("button", { name: "Personal groups" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-folder");
+  expect(
+    screen
+      .getByRole("button", { name: "Hosted communities" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-world");
+  expect(
+    screen.getByRole("button", { name: "Other settings" }).querySelector("svg"),
+  ).toHaveClass("tabler-icon-message-circle");
+});
 
 it("keeps grouped cards available without a selected community", () => {
   const { cards } = registry([
@@ -297,3 +323,60 @@ it("keeps Administration hidden after applying a verified ordinary-member roster
   membership.dispose();
   await root.fiber.dispose();
 });
+
+it.each(["primary", null])(
+  "presents the same Settings groups in both navigations (%s)",
+  (selected) => {
+    const { cards } = registry([
+      card("groups", "Example groups"),
+      card("membership", "Membership", undefined, "administration"),
+      card("hosted", "Hosted communities", "Communities"),
+    ]);
+    const state = { ...communityState, selected };
+    const connection = { scope: "settings-parity-test" };
+    const communities = {
+      subscribe: () => () => {},
+      snapshot: () => state,
+      relay: {
+        subscribe: () => () => {},
+        snapshot: () => connection,
+      },
+    } as unknown as Parameters<typeof Settings>[0]["communities"];
+    render(<Settings {...host} communities={communities} cards={cards} />);
+    render(
+      <SettingsSidebar
+        cards={cards}
+        communities={communities}
+        onBack={() => {}}
+        onSection={() => {}}
+      />,
+    );
+    const [standalone, shell] = screen.getAllByRole("navigation", {
+      name: "Settings sections",
+    });
+    const outline = (nav: HTMLElement) =>
+      [...nav.querySelectorAll("section")].map((group) => [
+        group.querySelector("h2")?.textContent,
+        [...group.querySelectorAll("button")].map(
+          (button) => button.textContent,
+        ),
+        [...group.querySelectorAll("button[aria-current]")].map(
+          (button) => button.textContent,
+        ),
+      ]);
+    expect(outline(standalone as HTMLElement)).toEqual(
+      outline(shell as HTMLElement),
+    );
+    expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
+      ...(selected ? ["Primary", "Administration"] : []),
+      "Communities",
+      "App",
+      ...(developerMode ? ["Development"] : []),
+    ]);
+    // Existing presentations differ only in the contributed-group icon.
+    const hosted = (nav: HTMLElement) =>
+      within(nav).getByRole("button", { name: "Hosted communities" });
+    expect(hosted(standalone as HTMLElement).querySelector("svg")).toBeNull();
+    expect(hosted(shell as HTMLElement).querySelector("svg")).not.toBeNull();
+  },
+);

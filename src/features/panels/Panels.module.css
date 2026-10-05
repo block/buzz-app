@@ -86,14 +86,20 @@
 }
 .motion[data-closing] {
   opacity: 0;
-  transform: translateX(var(--panel-motion-distance, var(--space-3)));
+  transform: var(
+    --panel-motion-offset,
+    translateX(var(--panel-motion-distance, var(--space-3)))
+  );
   transition-duration: var(--panel-motion-exit-duration, 0s);
   pointer-events: none;
 }
 @starting-style {
   .motion {
     opacity: 0;
-    transform: translateX(var(--panel-motion-distance, var(--space-3)));
+    transform: var(
+      --panel-motion-offset,
+      translateX(var(--panel-motion-distance, var(--space-3)))
+    );
   }
 }
 html[data-keyboard-input] .motion {

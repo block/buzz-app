@@ -56,8 +56,13 @@ export function ActivityDetails({
     activity.snapshot,
   );
   const agents = useMemo(
-    () => [...new Set(snapshot.records.map((row) => row.agent))],
-    [snapshot.records],
+    () => [
+      ...new Set([
+        ...snapshot.historyAgents,
+        ...snapshot.records.map((row) => row.agent),
+      ]),
+    ],
+    [snapshot.records, snapshot.historyAgents],
   );
   const [selected, select] = useState(selection?.agent ?? "");
   const [channelId, selectChannel] = useState(selection?.channelId ?? "");
@@ -86,6 +91,9 @@ export function ActivityDetails({
     profiles.snapshot,
   );
   const agent = selected || agents[0] || "";
+  useEffect(() => {
+    activity.selectHistory(agent);
+  }, [activity, agent]);
   const [expanded, expand] = useState<string[]>([]);
   const agentRecords = snapshot.records.filter((row) => row.agent === agent);
   const records = useMemo(
@@ -127,14 +135,15 @@ export function ActivityDetails({
     >
       <h2 className="text-heading">Agent activity</h2>
       <p className="text-body-sm text-secondary">
-        Live, owner-only telemetry received while this plugin is enabled. This
-        is not a complete ACP recording; publication must be enabled on the
-        agent.
+        Owner-only activity. Capture is controlled in Settings → Agents,
+        independently of this plugin. Saved records are history, not current
+        working status. This is not a complete ACP recording; the agent must
+        publish telemetry.
       </p>
       {snapshot.status === "unavailable" ? (
         <p>
-          This host cannot decode agent activity. Live activity currently
-          requires the development broker.
+          This host cannot decode agent activity. Use the desktop app or
+          development broker.
         </p>
       ) : (
         <>
@@ -147,10 +156,66 @@ export function ActivityDetails({
               Retry live feed
             </Button>
           )}
+          {snapshot.capture === "off" && (
+            <p role="status">
+              Saving activity is off. Live records are not being saved; existing
+              history is kept.
+            </p>
+          )}
+          {activity.archive && snapshot.capture === "unknown" && (
+            <p role="status">Activity saving status is unknown.</p>
+          )}
+          {snapshot.capture === "error" && (
+            <p role="alert">
+              Some new archive records could not be saved. Check archive
+              settings and retry the connection.
+            </p>
+          )}
+          <p role="status">
+            {snapshot.history === "loading"
+              ? "Loading saved history…"
+              : snapshot.history === "error"
+                ? "Saved history could not be read. Live activity may still appear."
+                : snapshot.history === "unavailable"
+                  ? "Saved history is unavailable on this host."
+                  : "Saved history loaded."}
+          </p>
+          {snapshot.history !== "unavailable" && (
+            <Button
+              size="compact"
+              disabled={snapshot.history === "loading"}
+              onClick={() => void activity.latestHistory()}
+            >
+              Show latest saved activity
+            </Button>
+          )}
+          {!!snapshot.historySkipped && (
+            <p role="alert">
+              {snapshot.historySkipped} saved records could not be decoded on
+              this page.
+            </p>
+          )}
+          {snapshot.historyOlder && (
+            <p role="status">
+              Showing an older saved page. Newer saved pages are not shown; live
+              records may still appear. Use Show latest saved activity to
+              return.
+            </p>
+          )}
+          {snapshot.hasOlder && (
+            <Button
+              size="compact"
+              disabled={snapshot.history === "loading"}
+              onClick={() => void activity.loadOlder()}
+            >
+              Load older activity
+            </Button>
+          )}
           {!agents.length && !selected ? (
             <p>
-              Waiting for live records. Select an agent after its first frame
-              arrives; there is no history backfill.
+              No captured activity yet. New activity appears when an agent
+              publishes telemetry while capture is enabled. There is no relay
+              backfill.
             </p>
           ) : (
             <>
@@ -220,9 +285,16 @@ export function ActivityDetails({
               </p>
               {!records.length && (
                 <p>
-                  Waiting for live records for this identity
+                  No captured records for this identity
                   {channelId ? " in this channel" : ""}. Only owner-visible
-                  agent telemetry appears; there is no history backfill.
+                  agent telemetry appears. Activity published while capture was
+                  off cannot be recovered.
+                </p>
+              )}
+              {snapshot.historyOlder && (
+                <p className="text-body-sm text-secondary">
+                  Gap: this saved page is not continuous with the live display.
+                  Loading another page replaces this saved page.
                 </p>
               )}
               <Accordion
@@ -230,7 +302,7 @@ export function ActivityDetails({
                 onValueChange={expand}
                 items={records.map((row) => ({
                   value: row.id,
-                  title: `${row.kind} · ${new Date(row.receivedAt).toLocaleTimeString()}`,
+                  title: `${row.kind} · ${new Date(row.receivedAt).toLocaleString()}`,
                   content: (
                     <div className="min-w-0">
                       <p className="break-all text-body-sm text-secondary">
@@ -247,13 +319,16 @@ export function ActivityDetails({
           )}
           {snapshot.trimmed > 0 && (
             <p role="status">
-              Retention limited: {snapshot.trimmed} older records or turn states
-              discarded.
+              Live display limited: {snapshot.trimmed} records or turn states
+              left the RAM window. Saved history is paged separately.
             </p>
           )}
           <p className="text-body-sm text-secondary">
-            RAM only: up to 200 envelopes / 2 MiB and 512 turn states. Cleared
-            on disable, cache/access reset, or session replacement.
+            The live display keeps up to 200 records / 2 MiB plus one saved
+            page. Use Load older activity to browse earlier pages, even when a
+            page contains no entries for this channel. Retention and capture are
+            controlled in Settings → Agents; disabling this plugin only clears
+            its live display.
           </p>
         </>
       )}

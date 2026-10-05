@@ -71,6 +71,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_publish_read_state",
         "relay_http",
         "relay_workflow_runs",
+        "relay_project_git",
+        "relay_project_git_cancel",
         "relay_channel_sign",
         "relay_channel_publish",
         "relay_kit_sign",
@@ -80,8 +82,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_decode_sidebar",
         "relay_sign_sidebar",
         "relay_agent_resolve",
+        "relay_git_authorization",
         "relay_agent_log_proof",
         "relay_agent_observer",
+        "relay_archive",
         "relay_agent_memories_read",
         "relay_agent_library",
         "relay_upload",
@@ -99,6 +103,9 @@ fn native_command_permissions_allow_only_main_webview() {
         "plugin_recover",
         "plugin_host_run_command",
         "plugin_host_request",
+        "oauth_callback_begin",
+        "oauth_callback_wait",
+        "oauth_callback_cancel",
         "agent_control_create_prepare",
         "agent_control_create_authorize",
         "agent_control_create_commit",
@@ -122,6 +129,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_models_run",
         "title_bar_double_click",
         "notification_show",
+        #[cfg(target_os = "macos")]
+        "notification_permission_state",
+        #[cfg(target_os = "macos")]
+        "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
         "deep_link_take",
@@ -148,6 +159,7 @@ fn native_command_permissions_allow_only_main_webview() {
     };
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
+    assert!(invoke(&main, "relay_agent_history_decode", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

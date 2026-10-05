@@ -1,7 +1,10 @@
+import { IconButton } from "../shared/design-system/ui/IconButton";
+import { ArrowCounterClockwiseIcon } from "../shared/design-system/icons";
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
-import { Field } from "../shared/design-system/ui/Field";
-import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { ThemePicker } from "../shared/design-system/ui/ThemePicker";
 import { Button } from "../shared/design-system/ui/Button";
 import {
   useCallback,
@@ -9,14 +12,8 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import {
-  MonitorIcon,
-  MoonIcon,
-  SunIcon,
-} from "../shared/design-system/icons/index";
 import type { Appearance } from "../shared/theme/service";
 
-/** Shared radios provide one Tab stop and standard arrow-key selection. */
 export function AppearanceSettings({
   appearance,
   active = true,
@@ -47,71 +44,63 @@ export function AppearanceSettings({
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
       <div>
-        <Field label="Color mode">
-          <RadioGroup
-            name="color-mode"
-            value={preference}
-            onValueChange={(value) => appearance.setMode(value)}
-          >
-            {(
-              [
-                ["light", "Light", SunIcon],
-                ["dark", "Dark", MoonIcon],
-                ["system", "System", MonitorIcon],
-              ] as const
-            ).map(([value, label, Icon]) => (
-              <Radio
-                key={value}
-                value={value}
-                variant="card"
-                label={
-                  <span className="flex items-center gap-3">
-                    <Icon size={20} aria-hidden="true" />
-                    {label}
-                  </span>
-                }
+        <SettingsGroup>
+          <PreferenceRow
+            title="Color mode"
+            trailing={
+              <ThemePicker
+                value={preference}
+                onValueChange={appearance.setMode}
               />
-            ))}
-          </RadioGroup>
-        </Field>
-        <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
-          <legend className="mb-2 p-0 text-label-sm">Interface size</legend>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              size="sm"
-              aria-label="Decrease interface size"
-              disabled={fontScale <= 0.8}
-              onClick={() => appearance.setFontScale(fontScale - 0.1)}
-            >
-              −
-            </Button>
-            <output aria-label="Interface size" className="text-body-sm">
-              {Math.round(fontScale * 100)}%
-            </output>
-            <Button
-              type="button"
-              size="sm"
-              ref={increaseButton}
-              aria-label="Increase interface size"
-              disabled={fontScale >= 2}
-              onClick={() => appearance.setFontScale(fontScale + 0.1)}
-            >
-              +
-            </Button>
-            {fontScale !== 1 && (
-              <Button
-                size="sm"
-                type="button"
-                ref={resetRef}
-                aria-label="Reset interface size"
-                onClick={() => appearance.setFontScale(1)}
+            }
+          />
+          <PreferenceRow
+            title="Interface size"
+            trailing={
+              <fieldset
+                aria-label="Interface size"
+                className="m-0 flex min-w-0 flex-wrap items-center gap-3 border-0 p-0"
               >
-                Reset
-              </Button>
-            )}
-          </div>
-        </fieldset>
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-label="Decrease interface size"
+                  disabled={fontScale <= 0.8}
+                  onClick={() => appearance.setFontScale(fontScale - 0.1)}
+                >
+                  −
+                </Button>
+                <output
+                  aria-label="Interface size"
+                  className="text-body-sm tabular-nums"
+                >
+                  {Math.round(fontScale * 100)}%
+                </output>
+                <Button
+                  type="button"
+                  size="sm"
+                  ref={increaseButton}
+                  aria-label="Increase interface size"
+                  disabled={fontScale >= 2}
+                  onClick={() => appearance.setFontScale(fontScale + 0.1)}
+                >
+                  +
+                </Button>
+                {fontScale !== 1 && (
+                  <IconButton
+                    icon={<ArrowCounterClockwiseIcon aria-hidden="true" />}
+                    title="Reset interface size"
+                    size="sm"
+                    type="button"
+                    ref={resetRef}
+                    aria-label="Reset interface size"
+                    onClick={() => appearance.setFontScale(1)}
+                  />
+                )}
+              </fieldset>
+            }
+          />
+        </SettingsGroup>
         {active && fontError && (
           <ToastNotice
             title="Interface size wasn’t saved"

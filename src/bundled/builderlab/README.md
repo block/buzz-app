@@ -1,0 +1,24 @@
+# Builderlab
+
+The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+
+- `oauth/` owns browser handoff, code exchange, account verification, and the
+  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
+  `session.credential()` provides access to it. The session handles cancellation,
+  sign-out, and disposal.
+- `login/` owns the login experience: pending state, cancellation, retry, email
+  display, and sign-out.
+
+The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
+as its server address and appends `/api/goose`.
+
+On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
+`product=builderlab` to the shared native
+[`oauth_callback` module](../../../src-tauri/src/oauth_callback/README.md).
+Native code inserts a loopback `returnTo` address, opens the browser, and returns
+callback parameters to the plugin. Builderlab explicitly disables native OAuth
+state for its custom protocol and uses a random callback path.
+
+The plugin posts the callback code to `/v1/auth/login/exchange`, then verifies
+the returned session credential with `/v1/auth/me` using the
+`X-BB-Session-Credential` header. These requests use the shared host transport.

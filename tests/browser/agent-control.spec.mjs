@@ -54,6 +54,51 @@ async function chooseOption(page, name) {
   await page.getByRole("option", { name, exact: true }).click();
 }
 
+test("agent menu leaves focus in Profile after its close animation", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  const errors = watchPageErrors(page);
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html?profile-panel`,
+    );
+    const card = page
+      .getByRole("article", { name: "Agent Fixture agent" })
+      .first();
+    const trigger = card.getByRole("button", {
+      name: "Actions for Fixture agent",
+    });
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "View profile" }).click();
+    const profile = page.getByRole("complementary", { name: "Profile" });
+    await expect(profile).toBeVisible();
+    await expect(
+      profile.getByRole("button", {
+        name: `Profile for buzz:agent-profile:${"ab".repeat(32)}`,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        profile.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await profile.getByRole("button", { name: "Close Profile panel" }).click();
+    await expect(profile).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("local controls preserve drafts, confirm operations and distinguish disabled from sleeping", async ({
   page,
 }) => {
@@ -113,7 +158,9 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       editor.getByLabel("Replacement for EXAMPLE_TOKEN"),
     ).toHaveAttribute("type", "password");
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+    await openEditor(page);
     await expect(
       editor.getByText(/Saved revision 2 · Running revision 1/),
     ).toBeVisible();
@@ -619,6 +666,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await expect(save).toBeDisabled();
     await prompt.fill("Unrelated edit");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: original,
       environment: {},
@@ -634,6 +683,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await chooseOption(page, "Databricks v2");
     await expect(model).toHaveValue(original.model);
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -670,6 +721,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await chooseOption(page, "Not set");
     await model.fill("");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -705,6 +758,8 @@ test("native-supplied harness choices preserve current values and save only expl
     // Re-read blank selectors plus unknown/absolute command; unrelated saves stay exact.
     await prompt.fill("Blank selectors stay blank");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -714,6 +769,13 @@ test("native-supplied harness choices preserve current values and save only expl
       },
       environment: {},
     });
+    await provider.click();
+    await page
+      .getByRole("option", {
+        name: "Custom provider / current value",
+        exact: true,
+      })
+      .click();
     await editor
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
@@ -724,8 +786,12 @@ test("native-supplied harness choices preserve current values and save only expl
       .getByRole("textbox", { name: "Arguments (JSON array)", exact: true })
       .fill(JSON.stringify(args));
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     await prompt.fill("Keep unknown values too");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         command: "/custom path/buzz-agent",
@@ -799,6 +865,8 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
     await chooseOption(page, "Host provider");
     await expect(provider).toHaveText("Host provider");
     await editor.getByRole("button", { name: "Save changes" }).click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect(
       await page.evaluate(() => window.agentControlFixture.agent.harness),
     ).toMatchObject({ command: "host-command", provider: "host-provider" });
@@ -1487,6 +1555,25 @@ test("inventory keeps current-community tiles and compact rows without repeated 
         path: testInfo.outputPath(`inventory-${width}.png`),
       });
     }
+    const removeButton = relay
+      .getByRole("article")
+      .first()
+      .getByRole("button", { name: "Remove", exact: true });
+    await removeButton.click();
+    const removal = page.getByRole("alertdialog", {
+      name: "Remove 121212121212?",
+    });
+    await expect(
+      removal.getByText(
+        "Tries to remove the agent from every channel it belongs to.",
+      ),
+    ).toBeVisible();
+    await removal.screenshot({
+      path: testInfo.outputPath("remove-dialog.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(removal).toHaveCount(0);
+    await expect(removeButton).toBeFocused();
     await other
       .getByLabel("Details for Other community agent", { exact: true })
       .click();

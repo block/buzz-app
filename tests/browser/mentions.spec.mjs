@@ -32,7 +32,7 @@ test("settings-enabled mentions fixture renders the composer and preference", as
   }
 });
 
-test("actual composer selects namesakes by exact key, publishes channel/reply tags, and blocks removed members", async ({
+test("actual composer selects namesakes by exact key, publishes channel/reply tags, and asks before mentioning removed members", async ({
   page,
 }) => {
   // This journey exercises one-message recipients; prefill-on has separate coverage.
@@ -428,9 +428,14 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
-    await expect(page.getByRole("alert")).toContainText(
-      "no longer a channel member",
-    );
+    // An untyped channel is an ordinary channel: the removed member is now
+    // outside it, so the sender chooses. Closing keeps the draft unsent.
+    const outside = page.getByRole("dialog", {
+      name: "Mention people outside this channel?",
+    });
+    await expect(outside).toContainText("Honey is not in this channel.");
+    await outside.getByRole("button", { name: "Close" }).click();
+    await expect(outside).toHaveCount(0);
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
@@ -439,6 +444,10 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     ).toBe(2);
     // A child layout effect sees disabled DOM before parent command props refresh.
     // Both commands must fail, even with the previous render's enabled closures.
+    // The outside-person prompt above also disabled the composer once.
+    const before = await page.evaluate(
+      () => window.mentionFixture.disabledCalls.length,
+    );
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -448,7 +457,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(recipients.getByRole("button")).toBeDisabled();
     expect(
       await page.evaluate(() => window.mentionFixture.disabledCalls),
-    ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
+    ).toEqual(
+      Array(before + 1).fill({
+        inputDisabled: true,
+        text: false,
+        mention: false,
+      }),
+    );
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
@@ -729,6 +744,99 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     expect(notified.sort()).toEqual(keys.sort());
   } finally {
     await context.close();
+    await server.close();
+  }
+});
+
+test("saved team selection previews avatars and inserts exact recipients in one undoable edit", async ({
+  page,
+}) => {
+  // Browser-only boundary: completion/picker focus, native editor history and
+  // signed outbox recipient intent must agree after a multi-token transaction.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?teams`,
+    );
+    const input = page.getByRole("textbox", { name: "Message #General" });
+    await expect(input).toBeVisible();
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    await input.fill("@The Honey");
+    const team = page.getByRole("option", { name: /The Honey Team/ });
+    await expect(team).toBeVisible();
+    await expect(team.locator("[data-team-avatars] .buzz-avatar")).toHaveCount(
+      2,
+    );
+    await team.click();
+    await expect(input.locator(".inline-chip")).toHaveText([
+      "@Honey",
+      "@Honey (agent)",
+    ]);
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey ");
+    const recipients = page.getByRole("region", { name: "Explicit mentions" });
+    for (const key of keys)
+      await expect(
+        recipients.getByRole("button", {
+          name: `Remove mention Honey ${key}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+    await input.press("ControlOrMeta+z");
+    await expect(input).toHaveJSProperty("value", "@The Honey");
+    await expect(recipients).toHaveCount(0);
+    await input.press("Escape");
+    await input.fill("");
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    const picker = page.getByRole("dialog", {
+      name: "Mention a member or agent",
+    });
+    await picker.getByRole("searchbox").fill("The Honey");
+    const row = picker.getByRole("button", { name: /The Honey Team/ });
+    await expect(row.locator("[data-team-avatars] .buzz-avatar")).toHaveCount(
+      2,
+    );
+    await row.click();
+    await expect(input).toBeFocused();
+    await expect(input.locator(".inline-chip")).toHaveText([
+      "@Honey",
+      "@Honey (agent)",
+    ]);
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(1);
+    const event = await page.evaluate(
+      () => window.mentionFixture.publications[0],
+    );
+    expect(event.content).toBe("@Honey @Honey");
+    expect(event.tags.filter(([tag]) => tag === "p")).toEqual(
+      keys.map((key) => ["p", key]),
+    );
+    expect(event.tags.filter(([tag]) => tag === "h")).toEqual([["h", "c"]]);
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
     await server.close();
   }
 });

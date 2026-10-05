@@ -1240,11 +1240,15 @@ button.mediaPreview {
 @media (hover: hover) and (pointer: fine) {
   /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
   html:not([data-keyboard-navigation])
-    .imageReviewStage:is(:not(:hover), [data-controls-idle])
+    .imageReviewStage:not([data-controls-revealed]):is(
+      :not(:hover),
+      [data-controls-idle]
+    )
     .imageReviewToolbar,
-  .imageReviewStage:is(:not(:hover), [data-controls-idle]):not(
-      :focus-visible
-    ):not(:has(:focus-visible))
+  .imageReviewStage:not([data-controls-revealed]):is(
+      :not(:hover),
+      [data-controls-idle]
+    ):not(:focus-visible):not(:has(:focus-visible))
     .imageReviewToolbar {
     --image-control-opacity: 0;
     pointer-events: none;

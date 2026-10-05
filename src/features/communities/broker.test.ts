@@ -39,6 +39,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => identity.secret,

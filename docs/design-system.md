@@ -63,6 +63,22 @@ The standalone design viewer imports the real shared controls without app startu
 identity or relay services. Check the actual app as well as specimens, in both
 themes and at narrow, intermediate and wide widths with enlarged text.
 
+### Plugin-owned color meanings
+
+Plugins define integration-specific semantic mappings in their own styles, using
+shared roles where shared improvements should flow through. The shared system
+owns palette values and generic paint roles, not integration-specific status
+names. Categorical purple (`--text-categorical-purple` paired with
+`--surface-categorical-purple`) stays independent of customizable app accent.
+
+GitHub owns its `--github-*` status/diff mappings and browser coverage of the
+resolved text/fill pairs in both themes, including shared-role updates and merged
+independence from accent. Contrast measurements are diagnostic during this design
+iteration, not a new strict gate or a full accessibility audit. Existing base
+contrast checks remain unchanged. Changes to accessibility requirements need the
+calculation/acceptance policy updated too; plugin-owned checks cannot discover a
+new standard automatically.
+
 ## Future theme contributions
 
 There is no theme contribution API yet. A future theme would have an identity separate
@@ -138,15 +154,12 @@ and then title as tie-breakers. The page uses existing components (`Input`, `But
 the shared PreferenceRow layout) and `formatBinding`, which renders chords as glyphs
 in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
 elsewhere (Ctrl+Shift+K), with a plain-words accessible label. When another listed
-shortcut uses the same chord, the row shows “Also used by …” in subtle text. Two
-feature-owned pieces still need a design pass: the key-combo `<kbd>` chip
-(`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
-(`src/features/shortcuts/KeyCaptureControl.tsx`). Both use neutral colors. Capture
-composes Input with feature-owned sizing and keyboard handling; notices retain explicit
-alert text.
-The keycaps use standard text, surface, border and radius tokens. Both live outside
-`src/shared/design-system/ui/`, and are marked with a `DESIGN PASS PENDING` file
-comment and `data-design-pass="pending"` on their root so they are greppable.
+shortcut uses the same chord, the row shows “Also used by …” in subtle text.
+`KeyCombo` keeps platform formatting with the feature and renders the shared
+`KeyboardShortcut`: one neutral capsule per chord, with spoken key names for
+assistive technology. The inline key-capture control remains feature-owned:
+it composes Input with specialized sizing and keyboard handling; notices retain
+explicit alert text.
 Capture keeps the shared keyboard-focus treatment. Escape cancels; Tab/Shift+Tab
 leave capture without saving, with an accessible instruction explaining the exit.
 Rows wrap their actions before the title collapses.
@@ -219,6 +232,17 @@ These are static guardrails, not a substitute for browser checks.
 Anchored emoji, mention, completion, account and diagnostics surfaces use
 `popover-surface` for their border, fill, elevation and layer. Their placement,
 scrolling and specialized keyboard/editor interactions remain feature-owned.
+`popover-surface` composes `floating-surface`, which owns `elevated-material`: a
+90% opaque mode-aware fill and the shared 8px backdrop blur. Both use the 16px
+`radius-container` role. Opaque fills remain
+the fallback without backdrop-filter support, with reduced transparency, or in
+forced colors. Dialogs and alert dialogs also use `elevated-material`, retaining
+their panel corners. Stepped dialogs paint each step without blurring the shared
+wrapper. Panels and dialog backdrops retain their existing materials.
+Default menus, selects, and list popovers share a 4px inset; menu items and
+select options share padding, corners, and hover styling. Compact action surfaces
+retain their denser layout. Use the shared Menu, Select, or Popover according to
+the interaction; their separate Base UI semantics sit on the same visual recipe.
 Completion highlights use `affordance-popover-selected` so they remain visible on the
 raised dark surface. The shared popover recipe maps selection to this same role.
 Completion and picker containers use the 16px container role. Nested fills follow
@@ -265,6 +289,75 @@ the title for labelled regions. `PanelHeader` still owns workspace chrome, and
 `DialogTitle`/`DialogDescription` retain dialog labelling semantics; do not replace
 those with a generic heading. Profile, Plugins, Appearance, Shortcuts, and Notifications
 use these headers. Adopt them on other pages when those pages are updated.
+
+Settings details share a horizontally centered column capped at 48rem. Text and
+controls stay left-aligned within it. Settings page titles use `text-heading` (24px)
+with `space-8` (32px) before their content. Use `space-8` (32px) above settings pages at every width. Headers outside a group align with its content
+inset, including the border; headers inside a group need no extra inset. Keep the scroll
+container full width and let the column shrink with the panel. Use the existing
+spacing tokens: 16px between fields and 32px (`space-section-gap`) between named groups. Place content
+on the panel surface. Use `SettingsGroup` to give related controls a subtle border
+and 16px `radius-container` corners, with no added fill or shadow. Keep the group heading outside
+the container. Do not nest it around an `EmptyState`, which already owns a border.
+
+Use the same lightweight container with three compositions:
+
+- **Preferences:** `PreferenceRow` / `SwitchPreferenceRow` with the control at the
+  trailing edge. Changes apply immediately through the existing service. Dependent
+  rows share the same insets. The default `SettingsGroup` layout separates its
+  direct children with inset dividers; sound choices use the same row layout.
+  Rows retain 12px vertical padding with 14px labels and 12px helper copy,
+  separated by 2px. Compact Select controls use the shared outlined capsule button.
+- **Forms:** `SettingsGroup layout="form"` with stacked `Field` controls with a trailing, wrapping action row: secondary
+  action first, primary Save last, with 12px between controls and 24px above the row.
+  Keep validation and save feedback nearby. Preserve each form's draft, pending,
+  focus handoff, and explicit-save behavior; Clear and Discard retain their meaning.
+- **Management:** `InlineHeader` groups with status and contextual actions, followed
+  by lists or fields inside `SettingsGroup`. Keep permission and recovery notices attached to the
+  section they affect. Use `PanelHeader` only for pane chrome.
+
+Keep routine copy short: omit descriptions that repeat a label. Retain scope,
+security consequences, recovery actions, and explicit-save guidance. Built-in
+settings use shared Header, Field, PreferenceRow, Select, Switch, Button, Tabs,
+Accordion, and EmptyState components. Remaining specialized UI includes the
+profile avatar editor, shortcut recorder, native emoji file input, agent manual
+setup/log disclosures, plugin skipped-folder disclosure, and developer diagnostics.
+External plugin settings own their content.
+
+Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
+color mode and interface size rows share one Appearance group. The
+System, Light, and Dark previews retain shared radio semantics, accessible names,
+and a persistent selection outline without visible captions. Their nested light/dark
+scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label
+when its container is narrow. Palette changes suppress transitions for the swap.
+Hide desktop delivery options and permission actions when
+desktop alerts are off, preserving saved choices. Keep a development-pause notice
+visible so it explains the disabled alert switch. Show sound choices whenever
+desktop alerts and sound are enabled. Selecting a new sound previews it; there is
+no separate play button or waveform. Silent stops playback, and loading settings
+never previews audio. Keep adding agent environment variables behind a `form`
+Accordion; saved variables stay visible. Disclosure alone never changes preferences.
+Keep unfinished input mounted when collapsed. Use the shared disclosure's immediate
+response without extra entrance motion.
+
+`EmptyState` presents a settled empty collection, setup entry point, or status in a quiet rounded rectangle with
+an icon, `text-label-sm` title, `text-body-sm` description, and an optional action
+using `Button`. The card owns its spacing: 8px within the copy, 16px from icon to
+copy, 24px before actions, and 32px block / 24px inline padding. Copy is capped at
+48ch, with balanced titles and pretty-wrapped descriptions. Below a 16rem card
+width, inline card/action insets use 8px and block padding uses 24px, preserving
+room for readable action labels at larger text sizes. Below 8rem, inline insets
+step down to 4px so short action words still fit. Actions wrap in normal flow.
+Informational cards
+have the same bottom inset without a phantom action margin. Use heading level 4
+inside a named settings group; the default is level 3.
+
+Use it for emoji upload and My emojis, plugin loading, software update status, Personal groups, Templates & teams
+(including the library tabs), and hosted-community setup and empty lists. Setup cards
+can remain alongside existing objects; only use empty-result wording once the
+collection has loaded and is empty. Keep loading, permission,
+and error/retry states explicit; never describe them as empty results. Public identity inspection uses `PreferenceRow`
+with selectable full values and Copy actions, rather than read-only input fields.
 
 Light-mode inset fields and quiet fills use neutral-2 (#f5f5f6). Panel and floating hover use
 that same stop; subtle-button hover is #f1f1f2. In dark mode, panels, popovers,

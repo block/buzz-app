@@ -678,14 +678,14 @@ function ownedAgent(role = "admin") {
   return h;
 }
 
-describe("channel owner-agent Delete eligibility", () => {
+describe("channel owner-agent Archive and Delete eligibility", () => {
   it.each(["admin", "member"])(
-    "a %s owning an active owner-agent can delete without gaining other roles",
+    "a %s owning an active owner-agent can archive and delete without gaining other roles",
     async (role) => {
       const h = ownedAgent(role);
       expect(await h.owner.capability.load(id)).toMatchObject({
         canDelete: true,
-        canArchive: role === "admin",
+        canArchive: true,
         canLeave: true,
         canHide: false,
       });
@@ -710,6 +710,52 @@ describe("channel owner-agent Delete eligibility", () => {
       h.owner.dispose();
     },
   );
+  it("a member owning an owner-agent can archive and unarchive", async () => {
+    const h = ownedAgent("member");
+    await h.owner.capability.run("archive", id);
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+      pubkey: viewer,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "true"],
+      ],
+    });
+    expect(await h.owner.capability.load(id)).toMatchObject({
+      canArchive: false,
+      canUnarchive: true,
+      canDelete: false,
+    });
+    await h.owner.capability.run("unarchive", id);
+    expect(h.publish).toHaveBeenCalledTimes(2);
+    expect(h.publish.mock.calls[1]?.[0]).toMatchObject({
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    });
+    h.owner.dispose();
+  });
+  it("a direct admin archives without owner-profile reads", async () => {
+    const h = ownedAgent("admin");
+    await h.owner.capability.run("archive", id);
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(
+      h.read.mock.calls.some(([filters]) => filters[0]?.kinds?.[0] === 0),
+    ).toBe(false);
+    h.owner.dispose();
+  });
+  it("a member's Archive fails closed when the owner check fails", async () => {
+    const h = ownedAgent("member");
+    h.read.mockResolvedValueOnce(h.getEvents().filter((e) => e.kind !== 0));
+    h.read.mockRejectedValueOnce(new Error("profile unavailable"));
+    await expect(h.owner.capability.run("archive", id)).rejects.toThrow(
+      "Archive check unavailable",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
   it.each([
     ["missing profile", () => []],
     ["display owner only", () => [agentProfile([])]],
@@ -1088,7 +1134,8 @@ describe("direct-owner and archived Delete boundaries", () => {
       metadata(true);
       expect(await h.owner.capability.load(id)).toMatchObject({
         canDelete: false,
-        canUnarchive: role !== "member",
+        // The member owns the channel's owner-agent, so it can restore.
+        canUnarchive: true,
         canArchive: false,
         canLeave: true,
       });
@@ -1330,5 +1377,96 @@ describe("Unarchive", () => {
         tags: [["h", id], ...tags],
       }),
     ).toThrow();
+  });
+});
+
+describe("join from a public preview", () => {
+  function preview(tags: string[][] = [["public"]]) {
+    const h = harness("member");
+    const metadata = h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["name", "fixture"],
+      ...tags,
+    ]);
+    const roster = (...members: string[]) =>
+      h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
+    h.setEvents([metadata, roster(other)]);
+    // Nonmember previews never satisfy member-action access.
+    h.deny();
+    h.publish.mockImplementation(async (event: RelayEvent) => {
+      if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
+    });
+    return { ...h, metadata, roster };
+  }
+
+  it("publishes kind 9021 and applies the confirmed roster", async () => {
+    const h = preview();
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 9021, content: "", tags: [["h", id]] }),
+        expect.anything(),
+      );
+      expect(h.publish).toHaveBeenCalledOnce();
+      const [accepted] = h.acceptDiscovery.mock.lastCall ?? [];
+      expect(accepted).toHaveLength(1);
+      expect(accepted?.[0]).toMatchObject({ kind: 39002 });
+      expect(accepted?.[0]?.tags).toContainEqual(["p", viewer]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("applies an existing membership without signing", async () => {
+    const h = preview();
+    h.setEvents([h.metadata, h.roster(viewer)]);
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it.each([
+    [[]],
+    [[["public"], ["private"]]],
+    [[["public"], ["hidden"]]],
+    [[["public"], ["archived", "true"]]],
+  ])("refuses metadata %j before signing", async (tags) => {
+    const h = preview(tags);
+    try {
+      await expect(h.owner.capability.run("join", id)).rejects.toThrow(
+        "Only active public channels can be joined.",
+      );
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("reports an accepted but unconfirmed join, then a retry confirms it", async () => {
+    const h = preview();
+    h.publish.mockImplementationOnce(async () => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = expect(
+        h.owner.capability.run("join", id),
+      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      await vi.advanceTimersByTimeAsync(2500);
+      await pending;
+      vi.useRealTimers();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+      await h.owner.capability.run("join", id);
+      expect(h.publish).toHaveBeenCalledTimes(2);
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      h.owner.dispose();
+    }
   });
 });

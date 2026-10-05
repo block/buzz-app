@@ -34,6 +34,7 @@ async function harness(respond, completed = () => {}) {
     }
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: relay,
     identity: () => key.slice(),
     authority: async () => ({ relayAuthor: getPublicKey(key) }),

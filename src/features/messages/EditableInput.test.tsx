@@ -2400,3 +2400,55 @@ it("leaves a named caret key to the browser", () => {
   expect(modify).not.toHaveBeenCalled();
   expect(h.input.selectionStart).toBe(1);
 });
+
+it("inserts batch recipients in one transaction and undoes both spans together", () => {
+  const h = mount("Before @Court after");
+  const people = [
+    { pubkey: "a".repeat(64), name: "Carl" },
+    { pubkey: "b".repeat(64), name: "Donut" },
+  ];
+  act(() =>
+    expect(
+      h.input.insertText("@Carl @Donut ", people, { start: 7, end: 13 }),
+    ).toBe(true),
+  );
+  expect(h.draft().recipients.map(({ pubkey }) => pubkey)).toEqual(
+    people.map(({ pubkey }) => pubkey),
+  );
+  expect(h.input).toHaveValue("Before @Carl @Donut  after");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("Before @Court after");
+  expect(h.draft().recipients).toEqual([]);
+  act(() => h.input.undo(true));
+  expect(h.draft().recipients).toHaveLength(2);
+});
+it("rejects batch overflow without changing text, recipient spans or undo history", () => {
+  const h = mount();
+  const people = Array.from({ length: 31 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Agent ${i}`,
+  }));
+  act(() => expect(h.input.insertText("", people)).toBe(true));
+  const before = h.draft();
+  const more = [
+    { pubkey: "a".repeat(64), name: "Carl" },
+    { pubkey: "b".repeat(64), name: "Donut" },
+  ];
+  act(() => expect(h.input.insertText("", more)).toBe(false));
+  expect(h.draft()).toEqual(before);
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("");
+});
+it("rejects a batch that exceeds message length without partial insertion", () => {
+  const h = mount("x".repeat(15990));
+  const before = h.draft();
+  act(() =>
+    expect(
+      h.input.insertText("", [
+        { pubkey: "a".repeat(64), name: "Carl" },
+        { pubkey: "b".repeat(64), name: "Donut" },
+      ]),
+    ).toBe(false),
+  );
+  expect(h.draft()).toEqual(before);
+});

@@ -1,6 +1,6 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -14,6 +14,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
@@ -249,6 +250,10 @@ export const MessageRow = memo(function MessageRow({
     // task later lets restored focus keep the row mounted instead.
     return release && (() => void setTimeout(release));
   }, [reportActive, keepMounted, row.id]);
+  const keepRowMounted = useMemo(
+    () => keepMounted && (() => keepMounted(row.id)),
+    [keepMounted, row.id],
+  );
   const report =
     !row.membership &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -315,18 +320,7 @@ export const MessageRow = memo(function MessageRow({
   );
   return (
     <div data-message-id={row.id}>
-      {day && (
-        <div className={styles.day}>
-          <span>
-            {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
-              year: "numeric",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-      )}
+      {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
@@ -579,16 +573,15 @@ export const MessageRow = memo(function MessageRow({
                   <AttachmentImage
                     key={url}
                     attachment={{ ...attachment, url }}
-                    url={url}
                     source={source}
                     cached={cached}
                     thumbnail
+                    keepMounted={keepRowMounted}
                     label={
                       group.length > 1
                         ? `Open image ${index + 1} of ${group.length}`
                         : "Open image attachment"
                     }
-                    onOpenLink={onOpenLink}
                     {...(onOpenMediaReview
                       ? {
                           onOpenReview: (item, seconds) =>

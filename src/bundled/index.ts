@@ -1,6 +1,8 @@
 import canvasManifest from "./canvas/manifest.json";
 import * as canvas from "./canvas";
 import todosManifest from "./todos/manifest.json";
+import builderlabManifest from "./builderlab/manifest.json";
+import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
@@ -48,6 +50,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...canvasManifest, apiVersion: 1 },
     module: canvas,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...builderlabManifest, apiVersion: 1 },
+    module: builderlab,
     enabledByDefault: true,
   },
   {

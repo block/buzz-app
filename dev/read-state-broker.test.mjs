@@ -35,6 +35,7 @@ async function harness(discovered = true) {
     handler(req, res);
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,

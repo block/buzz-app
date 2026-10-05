@@ -44,12 +44,14 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   });
   await input.fill("@M");
   const reads = () => page.evaluate(() => window.mentionFixture.reads());
+  // Both cold reads must start before the baseline: the member profile batch
+  // and the debounced directory search. The first read alone is not readiness.
   await expect
     .poll(
       async () =>
         (await reads()).kinds.filter((kinds) => kinds.includes(0)).length,
     )
-    .toBeGreaterThan(0);
+    .toBe(2);
   const cold = await reads();
   const coldLibraryReads = await page.evaluate(() =>
     window.mentionFixture.libraryReads(),

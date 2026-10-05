@@ -5,6 +5,7 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
+import { AgentUpdateReview } from "../bundled/agents/AgentUpdateReview";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
@@ -55,6 +56,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
     services.communities.subscribe,
     services.communities.snapshot,
   );
+  const invite = useSyncExternalStore(
+    services.invites.subscribe,
+    services.invites.snapshot,
+  );
+  // A queued link cannot be presented under a different identity.
+  useEffect(() => {
+    if (invite && client.viewer && invite.viewer !== client.viewer)
+      services.invites.clear();
+  }, [invite, client.viewer, services.invites]);
   const connection = useSyncExternalStore(
     services.relay.subscribe,
     services.relay.snapshot,
@@ -182,6 +192,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          invite={invite?.viewer === client.viewer ? invite : undefined}
+          onInviteClose={services.invites.clear}
           settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           onProfile={
@@ -206,6 +218,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
           workspace={startup === "ready" && route.page?.layout === "workspace"}
         >
           <AgentWakeNotice control={services.agentControl} />
+          <AgentUpdateReview
+            relay={services.relay}
+            control={services.agentControl}
+          />
           <UpdateNotice updates={services.updates} />
           {startup === "recovery" && !settings ? (
             <RecoveryScreen plugins={plugins} />
@@ -270,6 +286,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
               page={route.page}
               navigation={route.request}
               companion={pageOwnsCompanion ? companion : undefined}
+              companionOpening={
+                pageOwnsCompanion ? launcher.opening : undefined
+              }
             />
           ) : null}
         </AppShell>

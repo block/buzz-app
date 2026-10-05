@@ -172,7 +172,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
       true,
     );
     await expect(assignee).toHaveAttribute("data-size", "sm");
-    await expect(assignee).toHaveAttribute("data-variant", "ghost");
+    await expect(assignee).toHaveAttribute("data-variant", "outline");
   };
   // Channel-specific drawers stay off other pages, but returning to the same
   // channel can reopen its Canvas-backed content with a live launcher.

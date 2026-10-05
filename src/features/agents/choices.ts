@@ -2,6 +2,12 @@ import type { AgentControl, AgentView } from "./control";
 import type { AgentLibrarySnapshot, createAgentLibrary } from "./library";
 import type { ChannelList } from "../relay/contracts";
 import { relayOrigin } from "../communities/destination";
+import {
+  archiveHides,
+  type IdentityArchiveSnapshot,
+  type IdentityArchives,
+} from "../relay/identity-archives";
+import { relayPartition } from "../relay/partition";
 
 /** Community evidence, not process readiness or permission to grant access. */
 export function sameCommunityAgents(
@@ -14,7 +20,7 @@ export function sameCommunityAgents(
     try {
       return (
         agent.configured !== false &&
-        `${relayOrigin(agent.relayUrl)}:${viewer}` === scope
+        relayPartition(relayOrigin(agent.relayUrl), viewer) === scope
       );
     } catch {
       return false;
@@ -33,7 +39,12 @@ type TemplateChoices = Pick<AgentLibrarySnapshot, "status" | "error"> & {
   pending: boolean;
 };
 export type AgentChoicesSnapshot = Omit<AgentLibrarySnapshot, "identities"> & {
+  /** Every known agent, including archived ones: facts about existing content. */
   identities: readonly Choice[];
+  /** Forward-looking choices: `identities` minus known-archived agents. */
+  selectable: readonly Choice[];
+  /** Archive evidence that produced `selectable`; templates require it ready. */
+  archives: IdentityArchiveSnapshot;
   /** Templates mirror Agents, including source readiness and errors. */
   templates: TemplateChoices;
   /** Usable candidates do not imply complete evidence for automatic recipients. */
@@ -47,14 +58,29 @@ export function createAgentChoices({
   scope,
   library,
   native,
+  archives,
   signal,
 }: {
   scope: string;
   library: ReturnType<typeof createAgentLibrary>["queries"];
   native?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh"> | undefined;
+  /** Absent only on hosts without archive evidence; nothing is then hidden. */
+  archives?:
+    | Pick<
+        IdentityArchives,
+        "snapshot" | "subscribe" | "state" | "ensure" | "refresh"
+      >
+    | undefined;
   signal: AbortSignal;
 }) {
+  const viewer = scope.slice(-64);
+  const noArchives: IdentityArchiveSnapshot = Object.freeze({
+    status: "unavailable",
+    archived: [],
+  });
   const empty: AgentChoicesSnapshot = {
+    selectable: [],
+    archives: noArchives,
     status: "unavailable",
     templates: {
       status: "unavailable",
@@ -71,14 +97,20 @@ export function createAgentChoices({
     | {
         legacy: AgentLibrarySnapshot;
         local: ReturnType<AgentControl["snapshot"]> | undefined;
+        archive: IdentityArchiveSnapshot;
         value: AgentChoicesSnapshot;
       }
     | undefined;
   const snapshot = (): AgentChoicesSnapshot => {
     if (signal.aborted) return empty;
     const legacy = library.snapshot(),
-      local = native?.snapshot();
-    if (cached?.legacy === legacy && cached.local === local)
+      local = native?.snapshot(),
+      archive = archives?.snapshot() ?? noArchives;
+    if (
+      cached?.legacy === legacy &&
+      cached.local === local &&
+      cached.archive === archive
+    )
       return cached.value;
     const choices = new Map<string, Choice>();
     if (legacy.status === "ready")
@@ -136,9 +168,13 @@ export function createAgentChoices({
         (!local || local.status === "ready" || local.status === "unavailable"),
       definitions: legacy.status === "ready" ? legacy.definitions : [],
       identities: [...choices.values()],
+      selectable: [...choices.values()].filter(
+        (agent) => !archiveHides(archives, agent.pubkey, viewer),
+      ),
+      archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),
     };
-    cached = { legacy, local, value };
+    cached = { legacy, local, archive, value };
     return value;
   };
   const usesLegacy = (source: SelectionSource) =>
@@ -150,10 +186,12 @@ export function createAgentChoices({
     subscribe(listener: () => void) {
       if (signal.aborted) return () => {};
       const stopLibrary = library.subscribe(listener),
-        stopNative = native?.subscribe(listener);
+        stopNative = native?.subscribe(listener),
+        stopArchives = archives?.subscribe(listener);
       const stop = () => {
         stopLibrary();
         stopNative?.();
+        stopArchives?.();
         signal.removeEventListener("abort", retired);
       };
       const retired = () => {
@@ -163,17 +201,24 @@ export function createAgentChoices({
       signal.addEventListener("abort", retired, { once: true });
       return stop;
     },
-    ensure(includeLegacy = true) {
+    /** Selectors pass `archive` to demand the lazy archive read for `selectable`. */
+    ensure(includeLegacy = true, archive = false) {
       if (signal.aborted) return;
       if (includeLegacy && library.snapshot().status === "idle")
         void library.refresh();
       if (native?.snapshot().status === "idle") void native.refresh();
+      if (archive && archives?.snapshot().status === "idle")
+        void archives.ensure();
     },
     async refresh(source: SelectionSource = true) {
       if (signal.aborted) return;
       await Promise.all([
         usesLegacy(source) ? library.refresh() : undefined,
         native?.refresh(),
+        // Archive reads stay lazy; templates always need fresh evidence.
+        source === "templates" || archives?.snapshot().status !== "idle"
+          ? archives?.refresh()
+          : undefined,
       ]);
     },
     retain() {
@@ -186,7 +231,8 @@ export function createAgentChoices({
 }
 
 /** Match the Agents page's source, retaining community and archive policy at the
- * action boundary. Never substitute old-library identities during a native error. */
+ * action boundary. Never substitute old-library identities during a native error.
+ * Templates are stricter than `selectable`: they need verified non-archived state. */
 export function templateAgentChoices(
   agents: AgentChoicesSnapshot,
   channels: ChannelList,
@@ -196,7 +242,11 @@ export function templateAgentChoices(
       ? channels.channels.flatMap((c) => c.members ?? [])
       : [],
   );
+  const { archives } = agents;
+  if (archives.status !== "ready") return [];
   return agents.templates.identities.filter(
-    (agent) => agent.managed || members.has(agent.pubkey),
+    (agent) =>
+      (agent.managed || members.has(agent.pubkey)) &&
+      !archives.archived.includes(agent.pubkey),
   );
 }

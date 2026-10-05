@@ -11,6 +11,7 @@ import { useRelayConnection } from "../relay/react";
 import { requestLeave, type LeaveOutcome } from "./api";
 import type { Communities, Membership } from "./service";
 import { CommunityDialog } from "./CommunityDialog";
+import type { InviteLink } from "./invite-link";
 import { CommunityRailItem, MEMBERSHIP_SECTION } from "./CommunityRailItem";
 import { communityDestination } from "./destination";
 import type { PurgeFailure } from "./device-state";
@@ -24,11 +25,15 @@ const noSubscription = () => () => {};
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityRail({
   communities,
+  invite,
+  onInviteClose,
   onSelect,
   onOpenTarget,
   settingsCards,
 }: {
   communities: Communities;
+  invite?: (InviteLink & { requestId: number }) | undefined;
+  onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
   onSelect?: ((id: string | null) => void) | undefined;
   /** Menu destinations (Invites, Community settings) open through the host's navigation. */
@@ -233,12 +238,17 @@ export function CommunityRail({
           />
         </Tooltip>
       </nav>
-      {joining && (
+      {(joining || invite) && (
         <CommunityDialog
+          key={invite ? invite.requestId : "manual"}
           communities={communities}
           mode="join"
+          invite={invite}
           onJoined={(id) => select(id)}
-          close={() => setJoining(false)}
+          close={() => {
+            setJoining(false);
+            if (invite) onInviteClose?.(invite.requestId);
+          }}
         />
       )}
       {leaving && (

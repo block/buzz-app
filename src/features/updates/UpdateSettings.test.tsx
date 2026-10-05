@@ -48,23 +48,21 @@ it("checks on request and checks again from the latest version", async () => {
   renderSettings({ check });
   await afterBackgroundCheck(check);
   expect(
-    screen.getByRole("heading", { name: "Software Updates" }),
+    screen.getByRole("heading", { name: "Software updates" }),
   ).toBeVisible();
   expect(
-    screen.getByText(
-      "Keep Buzz up to date with the latest features and fixes.",
-    ),
+    screen.getByRole("heading", { name: "Update status", level: 3 }),
   ).toBeVisible();
   expect(
     screen.getByText("Check if a new version is available."),
   ).toBeVisible();
 
-  fireEvent.click(screen.getByRole("button", { name: "Check for Updates" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
   expect(
     await screen.findByText("You're on the latest version."),
   ).toBeVisible();
   expect(check).toHaveBeenCalledTimes(2);
-  fireEvent.click(screen.getByRole("button", { name: "Check Again" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
   await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(3));
 });
 
@@ -81,12 +79,12 @@ it("shows progress, then applies a downloaded update", async () => {
     close: async () => {},
   };
   renderSettings({ check: async () => update, relaunch });
-  expect(await screen.findByText("Downloading update...")).toBeVisible();
+  expect(await screen.findByText("Downloading update…")).toBeVisible();
   finishDownload();
   expect(
-    await screen.findByText("Update downloaded. Click to apply."),
+    await screen.findByText("Ready to install. Buzz will restart."),
   ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
   await vi.waitFor(() => expect(relaunch).toHaveBeenCalledOnce());
 });
 
@@ -98,7 +96,7 @@ it("reports failures and retries", async () => {
     .mockResolvedValue(null);
   renderSettings({ check });
   await afterBackgroundCheck(check);
-  fireEvent.click(screen.getByRole("button", { name: "Check for Updates" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
   expect(await screen.findByText("Update failed: network down")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(
@@ -108,30 +106,28 @@ it("reports failures and retries", async () => {
 
 it("explains builds without automatic updates", async () => {
   renderSettings({ desktop: false });
-  fireEvent.click(screen.getByRole("button", { name: "Check for Updates" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
   expect(
     await screen.findByText(
       "Automatic updates aren't available on this build. Download the latest release manually.",
     ),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Check Again" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
 });
 
-it("shows the installed version in the header", async () => {
+it("uses the installed version as the card title without a separate description", async () => {
   native.isTauri.mockReturnValue(true);
   try {
     renderSettings({});
-    const subtitle = await screen.findByText(
-      "Keep Buzz up to date with the latest features and fixes.",
-    );
-    // The subtitle renders the version on its own line above the tagline.
-    const lineBreaks = subtitle.querySelectorAll("br");
-    const text = subtitle.textContent ?? "";
-    expect(lineBreaks).toHaveLength(1);
-    expect(text.startsWith("Version 1.2.3")).toBe(true);
     expect(
-      text.endsWith("Keep Buzz up to date with the latest features and fixes."),
-    ).toBe(true);
+      await screen.findByRole("heading", { name: "Version 1.2.3", level: 3 }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Update status" })).toBeNull();
+    expect(
+      screen.queryByText(
+        "Keep Buzz up to date with the latest features and fixes.",
+      ),
+    ).toBeNull();
     expect(native.getVersion).toHaveBeenCalledOnce();
   } finally {
     native.isTauri.mockReturnValue(false);
@@ -161,7 +157,7 @@ it("preserves the focused action and status through held check, failure, retry a
     .mockReturnValueOnce(again.promise);
   renderSettings({ check });
   await afterBackgroundCheck(check);
-  const action = screen.getByRole("button", { name: "Check for Updates" });
+  const action = screen.getByRole("button", { name: "Check for updates" });
   const status = screen.getByRole("status");
   await user.tab();
   expect(action).toHaveFocus();
@@ -171,7 +167,7 @@ it("preserves the focused action and status through held check, failure, retry a
     expect(action).toHaveFocus();
     expect(action).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toBe(status);
-    expect(status).toHaveTextContent("Checking for updates...");
+    expect(status).toHaveTextContent("Checking for updates…");
     await user.keyboard("{Enter}");
     expect(check).toHaveBeenCalledTimes(2);
     await act(async () => first.reject(new Error("offline")));
@@ -181,7 +177,7 @@ it("preserves the focused action and status through held check, failure, retry a
     await waitFor(() => expect(check).toHaveBeenCalledTimes(3));
     expect(action).toHaveFocus();
     await act(async () => retry.resolve(null));
-    expect(screen.getByRole("button", { name: "Check Again" })).toBe(action);
+    expect(screen.getByRole("button", { name: "Check again" })).toBe(action);
     expect(action).toHaveFocus();
     expect(screen.getByRole("status")).toBe(status);
     await user.keyboard("{Enter}");
@@ -220,16 +216,16 @@ it("keeps focus through download, install and refused restart", async () => {
     },
   });
   await afterBackgroundCheck(check);
-  const action = screen.getByRole("button", { name: "Check for Updates" });
+  const action = screen.getByRole("button", { name: "Check for updates" });
   await user.tab();
   try {
     await user.keyboard("{Enter}");
-    await screen.findByText("Downloading update...");
+    await screen.findByText("Downloading update…");
     expect(action).toHaveFocus();
     await act(async () => download.resolve());
-    expect(screen.getByRole("button", { name: "Update Now" })).toBe(action);
+    expect(screen.getByRole("button", { name: "Update now" })).toBe(action);
     await user.keyboard("{Enter}");
-    expect(screen.getByText("Installing update...")).toBeVisible();
+    expect(screen.getByText("Installing update…")).toBeVisible();
     expect(action).toHaveFocus();
     expect(action).toHaveAttribute("aria-busy", "true");
     await act(async () => install.resolve());

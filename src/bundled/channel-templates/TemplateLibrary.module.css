@@ -1,0 +1,71 @@
+.library {
+  display: grid;
+  gap: var(--space-section-gap);
+}
+.section {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.count {
+  margin-inline-start: var(--space-2);
+  color: var(--text-subtle);
+}
+.items {
+  display: grid;
+  gap: var(--space-3);
+}
+.item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.itemHeading {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.itemFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+.itemActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.avatars {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+}

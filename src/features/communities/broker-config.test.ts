@@ -196,6 +196,12 @@ it.each([
     expect(readCredential).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
     // Direct broker users cannot bypass validation by avoiding the Vite entry.
-    expect(() => relayBrokerPlugin({ relayUrl, communityAliases })).toThrow();
+    expect(() =>
+      relayBrokerPlugin({
+        archiveFile: ":memory:",
+        relayUrl,
+        communityAliases,
+      }),
+    ).toThrow();
   },
 );

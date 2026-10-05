@@ -100,12 +100,33 @@ usable, with partial failures surfaced through Retry. `status: ready` means usab
 not complete: automatic-recipient inference must honor `complete`, and automatic
 saved-template resolution must wait for required pending identity/roster evidence.
 
+Archive visibility has one owner. The projection reads `session.archives` and
+exposes `identities` (every known agent, including archived ones, for facts about
+existing content) and `selectable` (known-archived agents removed; unknown state
+fails open; the viewer is never hidden). Every forward-looking agent chooser uses
+`selectable`, including the session agent picker and profile **Add to channel**.
+Session admission in `workSessions.addAgents` rejects every known-archived key,
+including parent-channel members; unknown archive state keeps the library and
+parent-member rules. Selectors demand the lazy archive read through
+`useAgentChoices(session, includeLegacy, true)`, and the session picker shows an
+archive read failure with Retry. The same base rule,
+`archiveHides`, filters mention recipients, channel member invitations and member
+addition, and the Agents page and Agent Library. The Agents page keeps one
+documented exception: an archived identity with local controls stays listed so it
+can still be managed. Do not reimplement the rule per surface.
+
+Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
+an identity without its own avatar shows its linked definition's avatar
+(`inheritDefinitionAvatars`). Surfaces read `identity.avatar` and do not repeat
+the lookup.
+
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
 access. Session invitations retain their existing rules, including legacy choices.
-Templates additionally require verified non-archived state, and legacy-only choices
+Templates additionally require verified non-archived state (`templateAgentChoices`
+returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.
 Template pickers and agent identity details display npubs, not raw hex keys.
 Save-as-template discloses an incomplete inferred
@@ -139,7 +160,8 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 Both the toolbar picker and inline completion use `mention-candidates.ts` and
 `mention-ranking.ts`. Membership permits notification, not a promise that an agent
-will accept or answer the prompt. DMs do not gain outside recipients. Ordinary
+will accept or answer the prompt. DMs, like channels, can name outside people;
+they become references because nobody can be added to a DM. Ordinary
 nonmember consent and session invitation rules remain the access owners;
 selection itself neither grants access nor starts an agent. Invalid recipient
 keys, known-archived identities, and archived/read-only destinations are excluded.
@@ -207,6 +229,19 @@ device. Turning it off stops future prefills without changing the current draft;
 turning it back on does not restore old recipients. Session auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
+
+Saved teams from Templates & teams are available in both mention choosers. A team
+is a shortcut, not a group identity: explicit selection inserts its saved agent
+keys as individual mentions in one undoable edit. Names never resolve membership.
+Typing a team name or Space alone does not select it. Team names also prevent
+Space from accidentally selecting a person with the same name or a prefix.
+Each query shows at most 20 matching teams, with up to four cached avatar thumbnails
+and a remainder count. Empty, oversized (more than 32 agents), changed or partially
+unavailable teams stay disabled; there is no partial expansion. Reopen or change
+the query to refresh changed team choices. The resulting draft must fit the existing
+32-mention and message-length limits. Selection never adds members: ordinary
+channels retain invite-on-send consent, DMs retain reference-only outsiders, and
+session admission remains unchanged.
 
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 
@@ -350,8 +385,8 @@ queries; key fragments distinguish identities without profiles.
 Thread indicators consume the existing kind-20002 typing signal with the resolved
 NIP-10 root, not inferred observer turn IDs. The existing per-channel live route
 carries it; typing bypasses ordinary history, unread and persistent caches.
-Only identities already present in retained owner-visible observer records are
-recognized. Typing before that first frame, or without telemetry publication,
+Only identities observed on the current live owner-visible feed are
+recognized; restored history never establishes typing ownership. Typing before that first frame, or without telemetry publication,
 is deliberately omitted; public typing alone does not establish ownership.
 
 Typing expires eight seconds after its signed timestamp (future clock skew is
@@ -367,8 +402,7 @@ remain explicitly channel-wide.
 
 The display-only source is `session.typing`, not the plugin's typing evidence:
 typing by one of the viewer's own agents (the local library) anywhere in the
-channel, threads included. App-managed agents run without observer telemetry, so
-typing is their working signal. Other people's agents, known only from a
+channel, threads included. Typing remains a working signal when observer telemetry is explicitly disabled. Other people's agents, known only from a
 self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
 future timestamps instead of capping them, schedules its own expiry eight
 seconds after the signed timestamp and stays quiet for two seconds after the
@@ -396,25 +430,106 @@ all-channels diagnostic retains the exact raw envelope. Raw capture is unchanged
 Channels owns contextual panel placement and closes it on channel/session or
 contribution changes; close returns focus to the originating control if retained.
 
-The plugin's activation leases `session.agentActivity`; closing the panel does
-not stop capture. Disabling it releases demand and clears RAM. The shared live
-connection carries one dedicated `#p=viewer` observer route, with no `#h`, history
-limit, or replay: `since` is stamped at actual dispatch and retry. It reserves one
-of the shared subscription slots. Successful toggles/access clears replace only
-that route, not the socket or chat globals. An uncertain control failure can
+The plugin's activation leases `session.agentActivity` for the live display;
+closing the panel does not release that demand. Disabling the plugin clears its
+live evidence, but **does not control archive capture**. The shared live connection
+carries one dedicated owner (`#p=viewer`) route for demanded observer/metrics kinds,
+with no `#h` or history limit. Live activity starts at actual dispatch/retry.
+When a kind-demand change replaces a metrics capture route, stored 44200 replay
+bridges the admission delay with a 60-second in-flight overlap, capped at four
+minutes at dispatch to leave headroom inside the five-minute ingest window. This
+replay floor clears at EOSE; later retries are live-only. Ephemeral 24200 cannot
+be recovered this way. Settings changes and plugin demand replace that route only
+when its combined kind demand changes. While capture is enabled, display-generation
+changes keep the wire and capture floor but advance a separate display freshness
+floor. Without capture, display resets still renew the live-only route. Neither
+lifecycle replaces the socket or chat globals. An uncertain control failure can
 reconnect the shared stream through its existing bounded recovery path.
 
-`dev/agent-observer.mjs` performs signature, exact telemetry tag, recipient/key,
-freshness and size validation before host-only NIP-44 decryption. The browser
-receives a purpose-bound DTO, not keys or a general decrypt API. The relay's
-admission establishes agent ownership; a name, local library entry, or successful
-decryption alone does not. Observer records never enter ordinary history,
-message/unread reconciliation, or disk caches.
+The native identity host and development broker validate signatures, exact tags,
+recipient/key, freshness and size before ingest and host-only NIP-44 decryption.
+The renderer receives purpose-bound DTOs, not keys or a general decrypt API.
+Historical decoding accepts only rows owned by the host archive, not arbitrary
+renderer-supplied old envelopes. Native ingestion is **renderer-delivered,
+host-validated**, not host-captured: the main renderer owns the relay socket and
+supplies fresh envelopes through IPC. The native host does **not** independently
+prove relay delivery or that the signer belongs to the viewer. Buggy or malicious
+trusted renderer/plugin code can plant plausible history and evict genuine rows
+by filling the quota. This deliberately retains the existing
+[trusted main-WebView model](identity.md), not a hostile-plugin boundary; moving
+the relay connection or isolating plugins is outside this change. The development
+broker instead captures only from its own stream and rejects browser ingestion.
+Relay admission, not a name, local library entry or successful decryption, is the
+ownership authority on the normal delivery path. Saved rows are not ownership proof. These records
+never enter ordinary message history, unread reconciliation or channel caches.
 
-Retention is session-owned RAM: at most 200 envelopes / 2 MiB plaintext and 512
-turn states, with visible trimming. Disable, cache/access reset and session
-replacement clear it; generation fences reject prior in-flight deliveries. A raw
-batch with a recognized denied channel is discarded as a whole.
+Live RAM is limited to 200 envelopes / 2 MiB plaintext and 512 turn states, with
+visible trimming. Historical pages do not consume the live-record allowance.
+Disable, cache/access reset and session replacement clear live evidence. A batch
+with a recognized denied channel is hidden as a whole.
+
+### Host-owned saved activity
+
+SQLite stores original signed, owner-encrypted envelopes, partitioned by normalized
+community endpoint and viewer public key. It stores no plaintext, decoded channel
+metadata, turn state or private keys; signed metadata (agent/recipient keys and
+event timestamps) remains visible on disk. The native database lives under the
+app-data directory in `archive/events.sqlite3` (`archive-debug` for debug builds).
+The development broker uses `~/.buzz-foundation/dev-archive/events.sqlite3` on the
+**broker's machine**, not browser-local storage. Settings show the actual path.
+
+The store implements exactly two owner-scoped policies, both enabled. Unused
+`scope`/`value`/`kinds` columns are removed by a transactional v1→v2 migration that
+preserves settings, revisions and ciphertext. General subscription matching and
+management wait for a caller beyond these two policies; the schema does not claim
+that capability:
+
+- **Activity (24200):** 30-day maximum age by default, configurable from 1–90 days
+  (Settings offers 1, 7, 30 and 90); 512 MiB of serialized envelopes per
+  viewer/community, with a 128 MiB per-agent limit.
+- **Turn metrics (44200):** independent capture, 90-day maximum age, 64 MiB per
+  viewer/community and 16 MiB per agent. Metrics remain encrypted, unlike classic's
+  plaintext metrics archive. No usage dashboard or arbitrary-subscription UI is added.
+
+Quota totals choose the overflow; indexed oldest-first scans stop after enough
+bytes are found, rather than rescanning retained history. Oldest records are evicted when byte limits are reached, so retention is a maximum
+age, not a promise of a complete 30-day transcript. Budgets are separate for each
+account/community and kind, not a physical device-wide disk cap. SQLite indexes,
+WAL and other overhead use additional space. Expiry across inactive partitions is
+operation-driven and throttled to once a minute, not an OS background purge;
+reads also exclude expired rows. Pruning reclaims free pages incrementally and
+explicit clear attempts full free-page reclamation after the delete commits.
+Newer schema versions are rejected without downgrade.
+
+Reopening/reloading reads 100-row keyset pages through the key-owning host.
+Historical decode revalidates signatures, exact tags, recipient and retention age,
+without weakening the live five-minute freshness gate. Bad rows are counted and
+skipped without trapping pagination. Live records win event-ID deduplication.
+Restored rows are display-only: they never create working turns or typing evidence.
+Channel-scoped rows need positively known local channel access, including every
+recognized batch child. Access changes immediately re-filter retained rows without
+rewinding pagination. Unknown/capped/suspended membership hides history rather than
+erasing it; positive access can reveal it again. Agent removal and sign-out do not
+erase ciphertext; another account cannot open that partition.
+
+**Settings → Agents → Saved agent activity** has independent capture switches,
+activity retention and confirmed **Clear activity history** / **Clear turn metrics**
+actions for this account/community. Shortening retention requires confirmation.
+Turning capture off preserves saved rows. Clear advances a durable revision to
+fence stale writes and pending hydration; new traffic can be captured afterward.
+Another window's already-decoded display is not synchronously reconciled; reload
+it after clearing elsewhere. Developer cache clear also deletes this community's
+activity partition and reports deletion failure rather than claiming success.
+Storage/decoding errors, including metrics-save failures, are visible and do not
+stop live telemetry. An initial native settings-read failure retries at 1/2/4
+seconds while settings remain unknown; disposal cancels retries and fences late
+responses. After exhaustion, open Settings or reconnect to retry. SQLite waits,
+maintenance and paging run off the async thread under only the archive mutex;
+the identity lock covers envelope validation/decryption, never storage. Viewer
+checks surround storage/decryption. The identity is immutable once ready today;
+a future in-process account switch needs a generation fence for admitted writes.
+Settings values and their CAS revision are read from one SQLite snapshot. No
+old-app import, general relay backfill, export or transcript redesign is included.
 
 Working is fresh per-turn evidence, not process status. Batch children fold
 individually; `session_resolved` is activity, while `turn_completed`, `turn_error`
@@ -429,21 +544,47 @@ Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and ru
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep the existing Buzz runner
 active, with telemetry publication enabled on the agent, then give it work. This
-app does not start agents or turn publishing on. No records may mean publishing
+activity plugin does not start agents. App-managed agents now default to publishing
+on their next normal start; explicit `BUZZ_ACP_RELAY_OBSERVER=false` overrides for
+Pi/Goose remain honored. Existing running processes are not restarted by this change. No records may mean publishing
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
 For a contextual view, click the identity's avatar/mention in the channel, then
 **View activity**. It preselects that exact key and channel; **Channel → All channels**
 broadens the view. Alternatively, select an active agent above the channel or thread composer.
-Expand raw entries, close/reopen the panel, and toggle
-**Your profile → Settings → Plugins → Agent Activity** off/on. Re-enable starts
-empty. The feed is live-only, best-effort telemetry: the producer coalesces/batches
-and may elide oversized content. It is not a complete ACP transcript or archive.
-The development broker and packaged native identity host support this slice;
-native decoding remains purpose-bound to the shared live stream. No runtime controller,
-recording export or old transcript renderer is included.
+Expand raw entries and close/reopen the panel. In **Settings → Agents → Saved agent
+activity**, verify both capture switches and the host path. Disable the **Agent
+Activity** plugin in **Settings → Plugins**, give the agent work, then re-enable:
+archive capture should continue independently, and restored rows must not claim
+the agent is working. Reload and reopen **View activity**; saved entries should
+remain. Use **Load older activity** when another page is available.
+
+Turn **Save agent activity** off, give the agent work and verify live display still
+works without retaining that new activity across reload. Turn it back on. Cancel a
+retention-shortening confirmation and verify the original value remains. Confirm
+**Clear activity history** in Settings, reload, and verify old activity is gone
+while metrics remain independently retained. For native acceptance, quit/relaunch
+the desktop app as well as reloading its view.
+
+The feed is best-effort telemetry: producers coalesce/batch and may elide oversized
+content, and storage budgets can evict rows early. It is not a complete ACP
+transcript. Both the development broker and packaged native identity host implement
+the archive; no runtime controller, recording export or old transcript renderer is
+included.
 
 ### Evidence and remaining acceptance
+
+Archive regression coverage lives in `dev/archive.test.mjs`,
+`src-tauri/src/archive/tests.rs`, `src/features/archive/client.test.ts`, the
+activity/session/native transport tests, and `src/app/ArchiveSettings.test.tsx`.
+The real Tauri IPC test exercises command ACL, persisted encrypted rows through two
+isolated processes, account/community admission and independent clear. The browser
+archive journey uses real broker SQLite and the actual plugin/Settings wiring,
+including ciphertext-at-rest, reload without working evidence and confirmed clear.
+These are synthetic identities/telemetry. Packaged GUI quit/relaunch, real-relay
+agent ownership admission, human acceptance and hosted cross-platform checks remain
+separate gates; consult the PR for results tied to its exact head. Historical
+validation below predates this archive rework and is not evidence for the new head.
 
 `dev/agent-observer.test.mjs`, `dev/relay-broker-live.test.mjs`, and the activity/live
 service tests cover signed/encrypted WS → host decode → SSE → actual session,

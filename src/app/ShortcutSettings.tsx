@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PencilSimpleIcon, XIcon } from "../shared/design-system/icons";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
@@ -253,11 +254,11 @@ export function ShortcutSettings({
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
         {groups.length ? (
-          <div>
+          <div className="grid gap-section-gap">
             {groups.map((group) => (
               <section key={group.id}>
-                <InlineHeader level={2} title={group.label} />
-                <div className="divide-y divide-standard">
+                <InlineHeader title={group.label} />
+                <SettingsGroup>
                   {group.rows.map((row) => (
                     <ShortcutRow
                       key={row.key}
@@ -276,7 +277,7 @@ export function ShortcutSettings({
                       }}
                     />
                   ))}
-                </div>
+                </SettingsGroup>
               </section>
             ))}
           </div>
@@ -357,9 +358,9 @@ function ShortcutRow({
     <article aria-labelledby={titleId}>
       <PreferenceRow
         title={
-          <h3 id={titleId} className="m-0 text-label-sm">
+          <h4 id={titleId} className="m-0 text-label-sm">
             {row.title}
-          </h3>
+          </h4>
         }
         subtitle={
           row.override || sharedWith.length > 0 ? (

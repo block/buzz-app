@@ -6,6 +6,8 @@ import type { SaveTemplateProps } from "../../features/channel-templates/provide
 import type { Template } from "../../features/channel-templates/model";
 import { MenuItem, MenuNote } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Header } from "../../shared/design-system/ui/Header";
+import { TemplateLibrary } from "./TemplateLibrary";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import { useTemplateCatalog } from "./useTemplateCatalog";
 
@@ -18,12 +20,7 @@ export function TemplateSettings({
 }) {
   const connection = useRelayConnection(relay);
   return (
-    <section className="mt-8" aria-label="Templates and teams settings">
-      <h3 className="text-label">Templates &amp; teams</h3>
-      <p className="text-body-sm text-muted">
-        Private reusable starting setups. Apply them with the existing channel +
-        buttons; existing channels are never changed.
-      </p>
+    <section data-buzz-ui="" aria-label="Templates and teams settings">
       {connection.status === "ready" ? (
         <Library
           key={`${connection.scope}:${connection.generation}`}
@@ -31,7 +28,10 @@ export function TemplateSettings({
           active={active}
         />
       ) : (
-        <p role="status">Choose a connected community to manage templates.</p>
+        <>
+          <Header title="Templates & teams" />
+          <p role="status">Choose a connected community to manage templates.</p>
+        </>
       )}
     </section>
   );
@@ -44,44 +44,16 @@ function Library({
   active(): boolean;
 }) {
   const catalog = useTemplateCatalog(session);
-  const [open, setOpen] = useState(false);
   return (
-    <>
-      <Button
-        disabled={
-          !session.channelKit.available ||
-          catalog.kit.status !== "ready" ||
-          !catalog.agentsReady
-        }
-        onClick={() => {
-          if (active()) setOpen(true);
-        }}
-      >
-        Manage templates &amp; teams
-      </Button>
-      {(catalog.kit.status !== "ready" ||
-        !catalog.agentsReady ||
-        catalog.error) && (
-        <p role="status">
-          {catalog.kit.error ??
-            catalog.error ??
-            "Templates or agents are not ready."}{" "}
-          <Button onClick={catalog.refresh}>Reload</Button>
-        </p>
-      )}
-      {open && (
-        <ChannelTemplatesDialog
-          session={session}
-          open={open}
-          onOpenChange={setOpen}
-          kit={session.channelKit}
-          agents={catalog.agents}
-          active={active}
-        />
-      )}
-    </>
+    <TemplateLibrary
+      session={session}
+      kit={session.channelKit}
+      catalog={catalog}
+      active={active}
+    />
   );
 }
+
 export function SaveAsTemplate({
   session,
   channel,

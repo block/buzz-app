@@ -80,7 +80,7 @@ export type ComposerInputElement = HTMLDivElement & {
   setSelectionRange(start: number, end: number, direction?: string): void;
   insertText(
     text: string,
-    recipient?: MentionRecipient,
+    recipient?: MentionRecipient | readonly MentionRecipient[],
     range?: { start: number; end: number },
   ): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */

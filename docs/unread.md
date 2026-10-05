@@ -275,13 +275,48 @@ are uint32 seconds; replaceable publication clocks advance monotonically with a
 bounded lead rather than running indefinitely into the future.
 
 Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
-The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
-plaintext budget. Persisted local interaction order prioritizes newly read old
-history as well as current traffic. Only frontier-only hints can be pruned; older
-messages may look unread again. No synthetic channel prefix is introduced to fit.
+The sync journal has a 96 KiB serialized-blob budget and wire publication a 40 KiB
+plaintext budget. Under pressure, up to three quarters of each budget keeps channel
+marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
+(`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
+many messages, so losing it makes much more old history unread, and recent catch-up
+must never push out a quiet channel's mark. The last quarter, and any room the broad
+marks leave, goes by persisted local interaction order across all marks, so the newest
+read is never dropped because old broad marks fill the budget. Interaction order also
+ranks marks within each group, which prioritizes newly read old history as well as
+current traffic. After the budget chooses what to keep, each save drops marks that a
+kept broader mark already covers, and gives the freed space to the next marks in line.
+A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
+its cover, so the smaller wire budget protects the cover as it would have protected the
+dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
+channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
+replaces a message mark: a reply finds its channel from its own event, but finds its
+thread only while its root is loaded. Catch-up marks never make another mark redundant:
+older clients ignore them and read through the message, thread and channel marks.
+Marks without retained evidence are kept, and nothing is dropped while any override
+exists. Reading an already covered message saves nothing. Only frontier-only hints can
+be pruned; older messages may look unread again. No synthetic channel prefix is
+introduced to fit.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.
+A local-only `reserve` field in the same journal record keeps receipts evicted
+from the sync journal, up to 5,000 keys / 512 KiB of serialized JSON. It preserves
+actual frontiers, never manufactures channel cutoffs, and commits atomically with
+the journal. Local unread decisions use both sets. Returning keys take the maximum
+frontier before leaving the reserve. Its finite eviction order favors channel,
+thread, then catch-up receipts before individual messages; newest event timestamps
+win within each group. While overrides exist, inherited reserve floors stay protected
+and direct override floors return to the journal.
+
+This extends retention only on the same browser profile/install. It cannot recover
+already discarded receipts, prevent loss after exhausting the reserve, or improve a
+fresh profile's smaller synced copy. An automatic observation already covered by
+the reserve does not republish that receipt. Manual unread still wins. Old builds
+can load the unchanged sync journal but discard the optional reserve on their next
+save; community leave on any build deletes both together. No database migration,
+new relay request, or wire-format change is involved.
+
 Override groups, permanent clear floors, directly associated frontiers and possible
 inherited channel/thread frontiers are protected; capacity failure is visible,
 never floor truncation. Publication of any override-bearing state is deliberately

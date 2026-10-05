@@ -347,10 +347,14 @@ kept broader mark already covers, and gives the freed space to the next marks in
 A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
 its cover, so the smaller wire budget protects the cover as it would have protected the
 dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
-channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
-replaces a message mark: a reply finds its channel from its own event, but finds its
-thread only while its root is loaded. Catch-up marks never make another mark redundant:
-older clients ignore them and read through the message, thread and channel marks.
+channel mark, a catch-up mark under its channel or thread mark, and the mark of an
+ordinary top-level message under its channel's `activity:` mark. That last rule needs
+the listed channel, because catch-up never reads DM messages. Mentions, broadcasts and
+DM messages keep their marks. A thread or thread catch-up mark never replaces a message
+mark: a reply finds its channel from its own event, but finds its thread only while its
+root is loaded. Older desktop and mobile clients ignore `activity:`, so they show the
+ordinary top-level messages it covers as unread. This is accepted; it never makes a
+read in those clients unread here.
 Marks without retained evidence are kept, and nothing is dropped while any override
 exists. Reading an already covered message saves nothing. Only frontier-only hints can
 be pruned; older messages may look unread again. No synthetic channel prefix is

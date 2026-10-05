@@ -8,7 +8,6 @@ import { MenuItem, MenuNote } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Header } from "../../shared/design-system/ui/Header";
 import { TemplateLibrary } from "./TemplateLibrary";
-import styles from "./TemplateLibrary.module.css";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import { useTemplateCatalog } from "./useTemplateCatalog";
 
@@ -21,12 +20,7 @@ export function TemplateSettings({
 }) {
   const connection = useRelayConnection(relay);
   return (
-    <section
-      className={styles.page}
-      data-buzz-ui=""
-      aria-label="Templates and teams settings"
-    >
-      <Header title="Templates & teams" />
+    <section data-buzz-ui="" aria-label="Templates and teams settings">
       {connection.status === "ready" ? (
         <Library
           key={`${connection.scope}:${connection.generation}`}
@@ -34,7 +28,10 @@ export function TemplateSettings({
           active={active}
         />
       ) : (
-        <p role="status">Choose a connected community to manage templates.</p>
+        <>
+          <Header title="Templates & teams" />
+          <p role="status">Choose a connected community to manage templates.</p>
+        </>
       )}
     </section>
   );

@@ -1,17 +1,6 @@
-.page {
-  max-width: 64rem;
-  margin-inline: auto;
-}
 .library {
   display: grid;
   gap: var(--space-section-gap);
-}
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 .section {
   display: grid;
@@ -79,13 +68,4 @@
   display: inline-flex;
   flex-shrink: 0;
   border-radius: var(--radius-control);
-}
-.empty {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-3);
-  padding: var(--space-8) var(--space-4);
-  background: var(--surface-inset);
-  border-radius: var(--radius-container);
-  text-align: center;
 }

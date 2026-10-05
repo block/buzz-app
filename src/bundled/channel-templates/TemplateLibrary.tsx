@@ -19,7 +19,7 @@ import {
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuItem,
@@ -27,6 +27,7 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
@@ -95,21 +96,22 @@ export function TemplateLibrary({
   };
   return (
     <div className={styles.library}>
-      <div className={styles.toolbar}>
-        <p className="text-body-sm text-subtle">
-          Private to you in this community
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          loading={state.status === "loading"}
-          onClick={() => {
-            if (active()) catalog.refresh();
-          }}
-        >
-          <ArrowsClockwiseIcon size={16} /> Refresh
-        </Button>
-      </div>
+      <Header
+        title="Templates & teams"
+        subtitle="Private to you in this community"
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={state.status === "loading"}
+            onClick={() => {
+              if (active()) catalog.refresh();
+            }}
+          >
+            <ArrowsClockwiseIcon size={16} /> Refresh
+          </Button>
+        }
+      />
       {(state.status !== "ready" || !catalog.agentsReady || catalog.error) && (
         <p role="status" className="text-body-sm text-subtle">
           {state.error ??
@@ -211,23 +213,20 @@ export function TemplateLibrary({
               })}
             </div>
             {!items.length && state.status === "ready" && (
-              <div className={styles.empty}>
-                {type === "template" ? (
-                  <FileTextIcon size={28} />
-                ) : (
-                  <UsersIcon size={28} />
-                )}
-                <p className="text-label-sm">
-                  {type === "template"
+              <EmptyState
+                level={4}
+                icon={type === "template" ? <FileTextIcon /> : <UsersIcon />}
+                title={
+                  type === "template"
                     ? "Your next channel starts here"
-                    : "Bring your agents together"}
-                </p>
-                <p className="text-body-sm text-subtle">
-                  {type === "template"
+                    : "Bring your agents together"
+                }
+                description={
+                  type === "template"
                     ? "Create a template, or save an existing channel as one from its menu."
-                    : "Create a team to reuse your favorite combination of agents."}
-                </p>
-              </div>
+                    : "Create a team to reuse your favorite combination of agents."
+                }
+              />
             )}
           </section>
         );
@@ -263,6 +262,11 @@ export function TemplateLibrary({
               : newTemplate.current
         }
         title={`Delete “${deleting?.value.name ?? ""}”?`}
+        description={
+          deleting?.value.type === "team"
+            ? "Only this saved team is deleted. Its agents and their channel memberships stay unchanged. Templates using this team will need a replacement."
+            : "Existing channels stay unchanged. Group defaults using this template will need a replacement."
+        }
         actions={
           <>
             <Button
@@ -282,11 +286,6 @@ export function TemplateLibrary({
           </>
         }
       >
-        <p>
-          {deleting?.value.type === "team"
-            ? "Only this saved team is deleted. Its agents and their channel memberships stay unchanged. Templates using this team will need a replacement."
-            : "Existing channels stay unchanged. Group defaults using this template will need a replacement."}
-        </p>
         {error && (
           <p role="alert" className="text-body-sm text-danger">
             {error}

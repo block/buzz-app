@@ -149,6 +149,11 @@ it("delete cancellation leaves the page and saved data intact", async () => {
         within(confirmation).getByRole("button", { name: "Cancel" }),
       ).toHaveFocus(),
     );
+    expect(confirmation).toHaveAccessibleDescription(
+      /Its agents and their channel memberships stay unchanged/,
+    );
+    await user.click(confirmation);
+    expect(confirmation).toBeInTheDocument();
     if (dismissal === "backdrop")
       await user.click(
         document.querySelector(".buzz-dialog-backdrop") as Element,
@@ -404,7 +409,7 @@ it("discloses optional setup without losing edits and retains failed saves for r
     screen.getByRole("dialog", { name: "New template" }),
   ).toHaveAccessibleDescription(/existing channels stay unchanged/);
   const name = screen.getByRole("textbox", { name: "Name" });
-  expect(name).toHaveFocus();
+  await waitFor(() => expect(name).toHaveFocus());
   expect(
     screen.queryByRole("textbox", { name: "Starting Canvas (Markdown)" }),
   ).not.toBeInTheDocument();
@@ -497,4 +502,19 @@ it("opens saved optional sections and keeps missing-member errors visible when c
   expect(screen.getByRole("alert")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(save).not.toHaveBeenCalled();
+});
+
+it("keeps a team editor free of template-only or empty-search fields", async () => {
+  fixture(true);
+  const editor = screen.getByRole("dialog", { name: "Edit team" });
+  expect(editor).toHaveAccessibleDescription(/Choose agents/);
+  expect(
+    within(editor).queryByRole("textbox", { name: "Description" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(editor).queryByRole("textbox", { name: "Find individual agents" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(editor).getByText(/No agents from the Agents page/),
+  ).toBeVisible();
 });

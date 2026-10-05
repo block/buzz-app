@@ -434,14 +434,22 @@ async fn a_socket_reconnect_after_a_media_refusal_asks_for_sign_in() {
     assert_eq!(error, SIGN_IN_REQUIRED);
     assert!(owner.session_snapshot().await.unwrap().is_none());
 
-    let badge = assertions.get_until(
-        &identity,
-        &relay,
-        true,
-        tokio::time::Instant::now() + DEADLINE,
-    );
-    let request = crate::relay_socket::badged_request(&relay, badge).await;
-    assert!(matches!(request, Err(error) if error == SIGN_IN_REQUIRED));
+    use tauri::Manager as _;
+    let app = tauri::test::mock_builder()
+        .manage(identity.clone())
+        .manage(assertions.clone())
+        .manage(crate::relay_socket::RelaySockets::default())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let result = crate::relay_socket::relay_socket_connect(
+        app.state::<IdentityHost>(),
+        app.state::<RelayAssertions>(),
+        app.state::<crate::relay_socket::RelaySockets>(),
+        "wss://relay.example".into(),
+        tauri::ipc::Channel::new(|_| Ok(())),
+    )
+    .await;
+    assert_eq!(result.err().as_deref(), Some(SIGN_IN_REQUIRED));
     assert_eq!(service.records().len(), 1);
 }
 

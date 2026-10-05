@@ -28,7 +28,7 @@ use url::Url;
 
 use crate::{
     identity::IdentityHost,
-    nip_fi_assertion::{Assertion, RelayAssertions, DEADLINE, HEADER},
+    nip_fi_assertion::{RelayAssertions, DEADLINE, HEADER},
 };
 
 /// Bounds DNS, TCP, TLS and the WebSocket upgrade, within what is left of
@@ -252,38 +252,29 @@ pub(crate) async fn relay_socket_connect(
     // One bound covers the badge and the handshake, so the final answer
     // always reaches JavaScript before its own setup deadline.
     let deadline = tokio::time::Instant::now() + DEADLINE;
-    let badge = assertions.get_until(identity.inner(), &url, true, deadline);
-    let Some((request, expires_at)) = badged_request(&url, badge).await? else {
-        return Ok(None);
-    };
-
-    let handshake = deadline.min(tokio::time::Instant::now() + CONNECT_DEADLINE);
-    let stream = connect(request, handshake).await?;
-    let id = sockets.own(stream, move |event| {
-        let _ = on_event.send(event);
-    });
-    Ok(Some(OpenSocket { id, expires_at }))
-}
-
-/// Builds the native upgrade request, or returns `None` for an ordinary relay.
-/// Badge errors, including required sign-in, must propagate so they cannot
-/// fall back to an unbadged webview socket.
-pub(crate) async fn badged_request(
-    url: &Url,
-    badge: impl std::future::Future<Output = Result<Option<Assertion>>>,
-) -> Result<Option<(Request, u64)>> {
-    let Some(assertion) = badge.await? else {
+    let Some(assertion) = assertions
+        .get_until(identity.inner(), &url, true, deadline)
+        .await?
+    else {
         return Ok(None);
     };
     let mut request = url
         .as_str()
         .into_client_request()
         .map_err(|_| "Invalid relay URL")?;
-    let mut header =
+    let mut badge =
         HeaderValue::from_str(&assertion.header).map_err(|_| "Relay badge was invalid")?;
-    header.set_sensitive(true);
-    request.headers_mut().insert(HEADER, header);
-    Ok(Some((request, assertion.expires_at)))
+    badge.set_sensitive(true);
+    request.headers_mut().insert(HEADER, badge);
+    let handshake = deadline.min(tokio::time::Instant::now() + CONNECT_DEADLINE);
+    let stream = connect(request, handshake).await?;
+    let id = sockets.own(stream, move |event| {
+        let _ = on_event.send(event);
+    });
+    Ok(Some(OpenSocket {
+        id,
+        expires_at: assertion.expires_at,
+    }))
 }
 
 /// Starts delivering frames, once JavaScript can send.

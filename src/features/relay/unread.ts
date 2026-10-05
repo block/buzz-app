@@ -546,18 +546,20 @@ export function createUnread({
   function timeline(entry: Evidence, dm: boolean) {
     return !threadReference(entry.event) && !priority(entry, dm);
   }
-  /** The channel catch-up mark reads this message. Until the channel is
-   * listed, it might be a DM, whose messages catch-up never reads. */
+  /** The channel catch-up mark reads this message. Until the channel's type
+   * is known, it might be a DM, whose messages catch-up never reads. A roster
+   * can list a channel before its metadata arrives, so being listed is not
+   * enough. */
   function caughtUp(
     entry: Evidence,
     frontier: (key: string) => number | undefined,
   ) {
-    const listed = channels
+    const type = channels
       .list()
-      .channels.find((channel) => channel.id === entry.channelId);
+      .channels.find((channel) => channel.id === entry.channelId)?.channelType;
     return (
-      !!listed &&
-      timeline(entry, listed.channelType === "dm") &&
+      type !== undefined &&
+      timeline(entry, type === "dm") &&
       (frontier(`activity:${entry.channelId}`) ?? -1) >= entry.event.created_at
     );
   }

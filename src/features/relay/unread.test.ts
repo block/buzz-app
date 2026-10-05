@@ -2731,7 +2731,7 @@ const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
 it("catch-up replaces the ordinary message marks it reads; attention marks stay", async () => {
   const h = setup();
   h.grant("room");
-  h.emit([channelMetadata(h)]);
+  h.emit([channelMetadata(h, "stream")]);
   const first = message(h.alice, "room", "first", 11);
   const mention = message(h.alice, "room", "mention", 12, [
     ["p", h.viewer.pubkey],
@@ -2781,6 +2781,34 @@ it("catch-up keeps message marks in a DM, which it never reads", async () => {
     "activity:room": 13,
   });
   lease.dispose();
+});
+
+it("catch-up keeps message marks while the channel type is unknown", async () => {
+  const h = setup();
+  // The roster lists the channel before its metadata says it is a DM.
+  h.grant("room");
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBeUndefined();
+  const first = message(h.alice, "room", "first", 11);
+  const second = message(h.alice, "room", "second", 12);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, second, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // Pruning keeps the existing mark, and a later read still writes its own.
+  await lease.observe([second.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${first.id}`]: 11,
+    [`msg:${second.id}`]: 12,
+    "activity:room": 13,
+  });
+  h.emit([channelMetadata(h, "dm")]);
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", second.id).unread).toBe(false);
 });
 
 it("pruning keeps every mark that still reads something, and unread does not change", async () => {

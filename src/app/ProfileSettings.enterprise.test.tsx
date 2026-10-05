@@ -61,7 +61,7 @@ it("clears the local enterprise session without changing identity or memberships
   );
   expect(clearEnterpriseAuth).toHaveBeenCalledOnce();
   expect(state).toEqual(before);
-  expect(screen.getByLabelText("Nostr address (npub)")).toBeVisible();
+  expect(screen.getByText("Nostr address (npub)")).toBeVisible();
 });
 
 it("reports a local enterprise-session clear failure and remains retryable", async () => {

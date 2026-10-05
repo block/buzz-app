@@ -327,6 +327,13 @@ fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let output = child.env("BUZZ_ARCHIVE_RESTART", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     #[cfg(target_os = "windows")]
     {
@@ -351,6 +358,7 @@ fn isolated_agent_ipc_probe() {
     let app = mock_builder()
         .manage(IdentityHost::fixture())
         .manage(Uploads::default())
+        .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -405,6 +413,79 @@ fn isolated_agent_ipc_probe() {
         }
     }
     let public = invoke("identity_restore", serde_json::json!({})).unwrap();
+    #[cfg(unix)]
+    {
+        let archive = |request| {
+            invoke(
+                "relay_archive",
+                serde_json::json!({
+                    "community":"https://relay.test", "viewer":public, "request":request
+                }),
+            )
+        };
+        let settings = archive(serde_json::json!({"action":"settings"})).unwrap();
+        let path = std::path::PathBuf::from(settings["path"].as_str().unwrap());
+        assert!(path.starts_with(std::env::var("HOME").unwrap()));
+        if std::env::var("BUZZ_ARCHIVE_RESTART").as_deref() != Ok("1") {
+            for kind in [24200, 44200] {
+                let event = crate::archive::tests::envelope(public.as_str().unwrap(), kind, 0);
+                for _ in 0..2 {
+                    let saved = archive(serde_json::json!({"action":"ingest","event":event,"revision":settings["revision"]})).unwrap();
+                    assert_eq!(saved, serde_json::json!({"saved":true}));
+                }
+            }
+        }
+        for kind in [24200, 44200] {
+            let fresh = crate::archive::tests::envelope(public.as_str().unwrap(), kind, 2);
+            let stale = crate::archive::tests::envelope_at(
+                public.as_str().unwrap(),
+                kind,
+                3,
+                fresh.created_at - 301,
+            );
+            let wrong_viewer = crate::archive::tests::envelope(&fresh.pubkey, kind, 4);
+            for invalid in [stale, wrong_viewer] {
+                assert!(archive(serde_json::json!({"action":"ingest","event":invalid,"revision":settings["revision"]})).is_err());
+            }
+            let page = archive(serde_json::json!({"action":"read","kind":kind})).unwrap();
+            assert_eq!(page["records"].as_array().unwrap().len(), 1);
+            assert!(page["records"][0]["plaintext"]
+                .as_str()
+                .unwrap()
+                .contains("archive-secret-marker"));
+            assert_eq!(page["skipped"], 0);
+        }
+        let stored = archive(serde_json::json!({"action":"read","kind":24200})).unwrap();
+        let event_id = stored["records"][0]["id"].as_str().unwrap().as_bytes();
+        let mut found_event = false;
+        for file in std::fs::read_dir(path.parent().unwrap()).unwrap() {
+            let raw = std::fs::read(file.unwrap().path()).unwrap();
+            found_event |= raw.windows(event_id.len()).any(|bytes| bytes == event_id);
+            assert!(!raw
+                .windows(b"archive-secret-marker".len())
+                .any(|s| s == b"archive-secret-marker"));
+            assert!(!raw.windows(b"channelId".len()).any(|s| s == b"channelId"));
+        }
+        assert!(found_event, "ciphertext scan must include a saved envelope");
+        let isolated = invoke("relay_archive",serde_json::json!({"community":"https://other.test","viewer":public,"request":{"action":"read","kind":24200}})).unwrap();
+        assert!(isolated["records"].as_array().unwrap().is_empty());
+        if std::env::var("BUZZ_ARCHIVE_RESTART").as_deref() == Ok("1") {
+            archive(serde_json::json!({"action":"clear","kind":24200})).unwrap();
+            assert!(
+                archive(serde_json::json!({"action":"read","kind":24200})).unwrap()["records"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                archive(serde_json::json!({"action":"read","kind":44200})).unwrap()["records"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
     let event = invoke(
         "relay_sign",
         serde_json::json!({
@@ -448,6 +529,10 @@ fn isolated_agent_ipc_probe() {
     // reader until a test-only fixture can control that path.
     // Each must reach the command: a handler refusal is fine; an ACL refusal is not.
     for (command, input) in [
+        (
+            "relay_archive",
+            serde_json::json!({"community":"https://relay.test", "viewer":"bad", "request":{"action":"settings"}}),
+        ),
         (
             "relay_agent_memories_read",
             serde_json::json!({"community": "https://relay.test", "agent": public}),

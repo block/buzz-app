@@ -381,7 +381,7 @@ export function createRelaySession(
       profiles.clear();
       emoji.clear();
       statuses.clear();
-      activity.clear();
+      activity.accessChanged();
       memories.clear();
       presence.clear();
       channelActivity.clear();
@@ -665,6 +665,12 @@ export function createRelaySession(
     (channel) => canAccess(channel),
     notify,
     (channel) => resolveChannelAccess(channel),
+    transport?.activityArchive
+      ? {
+          host: transport.activityArchive,
+          canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
+        }
+      : undefined,
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
@@ -2195,6 +2201,7 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
+    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       const candidates = new Set(
@@ -2429,9 +2436,10 @@ export function createRelaySession(
       if (activityRosterKey === key) activityRosterKey = undefined;
     });
   };
-  const stopActivityRoster = channels.queries.subscribeList(
-    refreshChannelActivity,
-  );
+  const stopActivityRoster = channels.queries.subscribeList(() => {
+    refreshChannelActivity();
+    activity.restoreHistory();
+  });
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
   );
@@ -2452,7 +2460,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        activity.clear();
+        const activityCleared = activity.queries.clearHistory();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -2477,8 +2485,13 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        await channels.clearCache();
+        const results = await Promise.allSettled([
+          channels.clearCache(),
+          activityCleared,
+        ]);
         updateInterests();
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
       } finally {
         cacheClearing--;
       }

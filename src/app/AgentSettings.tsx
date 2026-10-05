@@ -17,6 +17,7 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import type { ReactNode } from "react";
 import { AgentDefaultsCard } from "./AgentDefaultsCard";
 import styles from "./AgentSettings.module.css";
 
@@ -38,9 +39,11 @@ const commands = [
 export function AgentSettings({
   control,
   active = true,
+  archive,
 }: {
   control: AgentControl;
   active?: boolean;
+  archive?: ReactNode;
 }) {
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
@@ -296,6 +299,7 @@ export function AgentSettings({
         </SettingsGroup>
       </section>
       <AgentDefaultsCard control={control} state={state} />
+      {archive}
       <div className="mt-section-gap">
         <InlineHeader title="Messages" />
         <SettingsGroup>

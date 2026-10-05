@@ -75,6 +75,7 @@ it.each(["card", "editor", "display-only"] as const)(
     let handler: RequestListener | undefined;
     const server = createServer((req, res) => handler?.(req, res));
     const plugin = relayBrokerPlugin({
+      archiveFile: ":memory:",
       identity: () => identity.secret,
       upstreamFetch: upstream,
     });

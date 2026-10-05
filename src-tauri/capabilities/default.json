@@ -26,6 +26,7 @@
     "allow-relay-agent-resolve",
     "allow-relay-agent-log-proof",
     "allow-relay-agent-observer",
+    "allow-relay-archive",
     "allow-relay-agent-memories-read",
     "allow-relay-agent-library",
     "allow-relay-upload",

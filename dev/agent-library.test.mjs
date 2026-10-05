@@ -136,6 +136,7 @@ it("actual broker and transport expose only the library projection, reject cross
     }),
   );
   await relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     identity: generateSecretKey,
     authority: async () => ({ relayAuthor: getPublicKey(generateSecretKey()) }),

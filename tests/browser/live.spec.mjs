@@ -237,6 +237,11 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
 }) => {
   // Empty is a valid authoritative result: recovery must not depend on a
   // selected channel or on an interest change replacing the global stream.
+  let displayGeneration = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/stream-observer"))
+      displayGeneration = request.postDataJSON().observer;
+  });
   app.relay.emptyRoster();
   app.relay.quotaNextRoster(2);
   await page.clock.install();
@@ -288,6 +293,13 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   await retry(page).click();
   expect(rosters()).toHaveLength(calls);
   await crossCooldown(page, app);
+  const previousGeneration = displayGeneration;
+  const observerUpdated = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/stream-observer") &&
+      response.ok() &&
+      response.request().postDataJSON().observer > previousGeneration,
+  );
   await retry(page).click();
   await expect(
     page.getByText("No channels yet.", { exact: true }),
@@ -295,21 +307,13 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   await expect(retry(page)).toHaveCount(0);
   expect(rosters()).toHaveLength(calls + 1);
   expect(app.relay.sockets).toHaveLength(sockets);
-  // The first authoritative (empty) roster resets the access generation:
-  // activity renews its live-only route and presence retires stale observation.
-  // Neither lifecycle may restart the healthy profile/membership chat globals.
-  await expect.poll(() => observer().length).toBe(2);
-  await expect
-    .poll(() =>
-      app.report.wireFrames.some(
-        (frame) => frame[0] === "EOSE" && frame[1] === observer()[1].id,
-      ),
-    )
-    .toBe(true);
+  // The first authoritative (empty) roster resets the display generation, not
+  // the unchanged owner capture route or healthy profile/membership globals.
+  // Cross the observer control response before asserting no wire was replaced.
+  await observerUpdated;
+  expect(observer()).toHaveLength(1);
   expect(globals()).toHaveLength(2);
-  for (const { socket, id } of healthy)
+  for (const { socket, id } of [...healthy, ...observer()])
     expect(app.relay.sockets[socket].routes.has(id)).toBe(true);
-  expect(observer()[1].filters[0].since).toBeGreaterThanOrEqual(
-    observer()[0].filters[0].since,
-  );
+  expect(observer()[0].filters[0].kinds).toEqual([24200, 44200]);
 });

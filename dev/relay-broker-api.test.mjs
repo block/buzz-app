@@ -58,6 +58,7 @@ async function harness(
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl,
     builderlab,
     communityAliases: fixtureAliases,

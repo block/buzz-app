@@ -34,6 +34,7 @@ async function harness(
     void handler(req, res);
   });
   await relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: "https://a.workflow.test",
     communityAliases: JSON.stringify({ secondary: "https://b.workflow.test" }),
     identity: () => key,

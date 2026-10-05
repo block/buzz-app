@@ -48,6 +48,7 @@ async function harness(chunkBytes) {
     handler(req, res);
   });
   await relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,

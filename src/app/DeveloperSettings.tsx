@@ -182,7 +182,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
         <SettingsGroup layout="form">
           <PreferenceRow
             title="Caches"
-            subtitle="Clear cached channels, messages, and media. Account, relay, and sidebar settings are kept."
+            subtitle="Clear cached channels, messages, media, and this account’s saved activity in the current community. Turn metrics and your account, relay, and sidebar settings are kept."
             trailing={
               <div className={styles.actions}>
                 <Button

@@ -212,6 +212,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
           name: "custom-emoji-broker",
           async configureServer(vite) {
             await relayBrokerPlugin({
+              archiveFile: ":memory:",
               relayUrl: fixtureRelayUrl,
               communityAliases: fixtureAliases,
               identity: () => userKey.slice(),

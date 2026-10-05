@@ -24,6 +24,7 @@ async function harness() {
     void handler(req, res);
   });
   await relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: "https://project.test",
     identity: () => key,
     authority: async () => ({ relayAuthor: viewer }),

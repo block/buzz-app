@@ -297,8 +297,9 @@ test("focus cancellation and local manual-unread survive reload until explicit m
     .toBe(newest);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
   // Reading to the live bottom also ends a manual unread, without moving the
-  // channel mark.
-  // Channel settings is still open from Mark read.
+  // channel mark. Channel settings stays open from Mark read so the timeline
+  // keeps its layout. Reload does not promise the live bottom, so scroll there
+  // as a reader would.
   await park(page);
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
@@ -306,7 +307,12 @@ test("focus cancellation and local manual-unread survive reload until explicit m
   await expect
     .poll(async () => (await journal(page)).localUnread[alphaId])
     .toBeGreaterThan(0);
-  await options(page);
+  await history(page).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeHidden();
   await history(page).focus();
   await expect
     .poll(async () => (await journal(page)).localUnread[alphaId])

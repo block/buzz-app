@@ -14,6 +14,7 @@ export function AgentHarnessEditor({
   defaultProvider,
   piProviders = [],
   onChange,
+  onProviderSelected,
   onOpenHarnesses,
   discardEdits = false,
   disabled = false,
@@ -26,6 +27,7 @@ export function AgentHarnessEditor({
   disabled?: boolean;
   defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
+  onProviderSelected?(): void;
 }) {
   const harness = harnessOption(options, draft.command);
   const policy = harnessPolicy(options, draft.command);
@@ -113,12 +115,13 @@ export function AgentHarnessEditor({
             ? piOptions(piProviders, draft.provider)
             : (harness?.providers ?? [])),
         ]}
-        onChange={(provider) =>
+        onChange={(provider, pickedOption) => {
           onChange({
             provider,
             ...(external ? { model: "" } : {}),
-          })
-        }
+          });
+          if (pickedOption) onProviderSelected?.();
+        }}
       />
       {piLoading && (
         <p role="status" className="text-body-sm text-secondary">

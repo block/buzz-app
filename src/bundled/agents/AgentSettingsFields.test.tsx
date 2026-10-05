@@ -414,6 +414,7 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
     expect(agentEdit(draft(), true).environment).toEqual({
       OPENAI_API_KEY: "test-openai-key",
     });
+    expect(run).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run).toHaveBeenCalledWith(
@@ -434,11 +435,31 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
     );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(await screen.findByRole("option", { name: "Anthropic" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({ provider: "anthropic" }),
+        }),
+      }),
+    );
     expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
       "type",
       "password",
     );
     expect(draft().environment).toEqual({});
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom provider / current value",
+      }),
+    );
+    const custom = screen.getByLabelText("Custom provider");
+    await user.clear(custom);
+    await user.type(custom, "openai");
+    expect(run).toHaveBeenCalledTimes(2);
   } finally {
     view.unmount();
     control.dispose();
@@ -617,6 +638,7 @@ it("uses a draft Goose provider override for the API key and model lookup", asyn
       screen.getByLabelText("Anthropic API key"),
       "anthropic-key",
     );
+    expect(run).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run).toHaveBeenCalledWith(

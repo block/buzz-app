@@ -97,6 +97,7 @@ export function AgentSettingsFields({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
+  const [providerSelection, setProviderSelection] = useState(0);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
   const policy = harnessPolicy(state.data?.harnessOptions, draft.command);
@@ -210,6 +211,9 @@ export function AgentSettingsFields({
             defaultProvider={defaultProvider}
             piProviders={piProviders}
             onChange={change}
+            onProviderSelected={() =>
+              setProviderSelection((value) => value + 1)
+            }
             onOpenHarnesses={onOpenHarnesses}
             discardEdits={discardEdits}
           />
@@ -267,6 +271,7 @@ export function AgentSettingsFields({
           )}
           <AgentModelPicker
             policy={policy}
+            providerSelection={providerSelection}
             onPiProviders={setPiProviders}
             disabled={disabled}
             id={id}

@@ -3,30 +3,11 @@ import { communityDestination } from "./destination";
 export type InviteLink = Readonly<{
   community: string;
   code: string;
-  policyReceipt?: string;
 }>;
 
 /** Parse a relay invite without treating its URL as authority to join. */
 export function parseInviteLink(input: string): InviteLink | null {
   if (input.length > 4096) return null;
-  if (/^https?:\/\//.test(input)) {
-    try {
-      const url = new URL(input);
-      if (
-        url.username ||
-        url.password ||
-        url.hash ||
-        url.search ||
-        !/^\/invite\/[^/]+\/?$/.test(url.pathname)
-      )
-        return null;
-      const code = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      if (!code || code.length > 256) return null;
-      return { community: communityDestination(url.origin).url, code };
-    } catch {
-      return null;
-    }
-  }
   if (!input.startsWith("buzz://join?")) return null;
   try {
     const url = new URL(input);
@@ -58,7 +39,6 @@ export function parseInviteLink(input: string): InviteLink | null {
     return {
       community,
       code: codes[0],
-      ...(receipts[0] ? { policyReceipt: receipts[0] } : {}),
     };
   } catch {
     return null;

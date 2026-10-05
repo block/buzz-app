@@ -47,7 +47,6 @@ export function CommunityDialog({
     | Readonly<{
         community: string;
         code: string;
-        policyReceipt?: string;
       }>
     | undefined;
 }) {
@@ -68,9 +67,10 @@ export function CommunityDialog({
     }
   });
   const [url, setUrl] = useState(
-    recovery.pending
-      ? communityDestination(recovery.pending.community).url
-      : (invite?.community ?? ""),
+    invite?.community ??
+      (recovery.pending
+        ? communityDestination(recovery.pending.community).url
+        : ""),
   );
   const [destination, setDestination] =
     useState<ReturnType<typeof communityDestination>>();
@@ -162,19 +162,19 @@ export function CommunityDialog({
         }
         const transaction = journal?.begin(id);
         if (code.trim()) {
-          let receipt: string | undefined =
-            invite?.community === destination?.url &&
-            invite?.code === code.trim()
-              ? invite?.policyReceipt
-              : undefined;
-          if (policy && !receipt)
-            receipt = (
-              await communityRequest<{ receipt: string }>(id, "accept-policy", {
-                code: code.trim(),
-                policy_version: policy.version,
-                age_confirmed: adult,
-              })
-            ).receipt;
+          const receipt = policy
+            ? (
+                await communityRequest<{ receipt: string }>(
+                  id,
+                  "accept-policy",
+                  {
+                    code: code.trim(),
+                    policy_version: policy.version,
+                    age_confirmed: adult,
+                  },
+                )
+              ).receipt
+            : undefined;
           if (!current(transaction)) return;
           const claim = await communityRequest<{ status: string }>(
             id,

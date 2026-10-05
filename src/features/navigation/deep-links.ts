@@ -87,6 +87,7 @@ export function bindDeepLinks(
   let held:
     | {
         url: string;
+        invite: InviteLink | null;
         viewer: string | undefined;
         selected: string | null;
         reported: boolean;
@@ -101,7 +102,7 @@ export function bindDeepLinks(
     const incoming = held;
     if (
       (incoming.viewer && incoming.viewer !== client.viewer) ||
-      (!parseInviteLink(incoming.url) &&
+      (!incoming.invite &&
         incoming.selected &&
         incoming.selected !== client.selected)
     ) {
@@ -111,7 +112,7 @@ export function bindDeepLinks(
     }
     if (client.status === "loading")
       return Promise.resolve({ status: "failed", reason: "unavailable" });
-    const invite = parseInviteLink(incoming.url);
+    const invite = incoming.invite;
     if (invite && (!client.viewer || client.status !== "ready")) {
       // Retain the invite through identity setup and client restoration.
       return Promise.resolve({ status: "failed", reason: "unavailable" });
@@ -139,9 +140,7 @@ export function bindDeepLinks(
     held.selected ??= client.selected;
     if (
       (held.viewer && held.viewer !== client.viewer) ||
-      (!parseInviteLink(held.url) &&
-        held.selected &&
-        held.selected !== client.selected)
+      (!held.invite && held.selected && held.selected !== client.selected)
     ) {
       held = undefined;
       host.fail("denied");
@@ -187,6 +186,7 @@ export function bindDeepLinks(
         const client = communities.snapshot();
         held = {
           url,
+          invite: parseInviteLink(url),
           viewer: client.viewer,
           selected: client.selected,
           reported: false,
@@ -203,9 +203,7 @@ export function bindDeepLinks(
     const next = communities.snapshot();
     if (
       (client.viewer && client.viewer !== next.viewer) ||
-      (client.selected &&
-        client.selected !== next.selected &&
-        (!held || !parseInviteLink(held.url)))
+      (client.selected && client.selected !== next.selected && !held?.invite)
     )
       clientEpoch++;
     client = next;

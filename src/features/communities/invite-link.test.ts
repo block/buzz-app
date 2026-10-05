@@ -9,13 +9,6 @@ it("parses the reference join form and canonicalizes the relay", () => {
   ).toEqual({
     community: "https://relay.example",
     code: "v2.invite",
-    policyReceipt: "receipt",
-  });
-});
-it("parses the relay-hosted share URL", () => {
-  expect(parseInviteLink("https://relay.example/invite/v2.invite")).toEqual({
-    community: "https://relay.example",
-    code: "v2.invite",
   });
 });
 it.each([

@@ -92,7 +92,7 @@ impl ServeConfig {
         config.admission = node.admission;
         config.storage = node.storage;
         config.log_format = node.log_format;
-        // Classic serve startup budget; model download is prepared by the host.
+        // Bounds SDK management readiness; Mesh owns subsequent model acquisition.
         config.startup_timeout = Duration::from_secs(180);
         config.serving.max_vram_gb = self.max_vram_gb.map(|gb| gb as f64);
         Ok(config)

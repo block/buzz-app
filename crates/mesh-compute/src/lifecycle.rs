@@ -117,14 +117,14 @@ impl Lifecycle {
         request: ServeConfig,
         observe: impl Fn(Phase) + Send + Sync + 'static,
     ) -> anyhow::Result<()> {
-        let model = request.model.clone();
         let config = request.build()?;
         let progress = self.progress.clone();
         self.launch_observed(
             async move {
                 progress.install();
                 mesh_llm_host_runtime::initialize_host_runtime().await?;
-                crate::catalog::prepare(&model).await?;
+                // Serving resolves and acquires its own artifacts (including layer packages).
+                // A separate GGUF download here duplicates acquisition.
                 mesh_llm_sdk::serve::start(config).await
             },
             true,

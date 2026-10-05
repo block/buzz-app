@@ -77,7 +77,9 @@ impl MeshHost {
 }
 
 #[tauri::command]
-pub fn mesh_compute_status(host: tauri::State<'_, MeshHost>) -> serde_json::Value {
+pub async fn mesh_compute_status(
+    host: tauri::State<'_, MeshHost>,
+) -> Result<serde_json::Value, String> {
     #[cfg(feature = "mesh")]
     {
         let (saved, settings_error) = host
@@ -85,8 +87,20 @@ pub fn mesh_compute_status(host: tauri::State<'_, MeshHost>) -> serde_json::Valu
             .lock()
             .map(|prefs| (prefs.hint().cloned(), prefs.error().map(str::to_owned)))
             .unwrap_or_default();
-        serde_json::json!({
+        let model_ready = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
+            host.lifecycle.status().await.ok().is_some_and(|status| {
+                status
+                    .payload
+                    .get("llama_ready")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            })
+        } else {
+            false
+        };
+        Ok(serde_json::json!({
             "available": true,
+            "modelReady": model_ready,
             "savedSharing": saved,
             "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),
@@ -94,15 +108,15 @@ pub fn mesh_compute_status(host: tauri::State<'_, MeshHost>) -> serde_json::Valu
             "startAvailable": true,
             "reason": null,
             "sharing": host.sharing.lock().ok().and_then(|share| share.as_ref().map(|share| share.model.clone()))
-        })
+        }))
     }
     #[cfg(not(feature = "mesh"))]
     {
         let _ = host;
-        serde_json::json!({
+        Ok(serde_json::json!({
             "available": false,
             "reason": "Mesh native runtime is not included in this build"
-        })
+        }))
     }
 }
 

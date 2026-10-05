@@ -486,3 +486,74 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
     }),
   );
 });
+
+it("keeps SDK download progress live after management readiness and cancels on unmount", async () => {
+  vi.useFakeTimers();
+  let bytes = 1_000_000_000;
+  let modelReady = false;
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "lease"
+        : {
+            available: true,
+            lifecycle: { state: "ready" },
+            sharing: "fixture-model",
+            modelReady,
+            download: {
+              label: "layers",
+              file: "layer.gguf",
+              downloadedBytes: bytes,
+              totalBytes: 4_000_000_000,
+              done: false,
+            },
+          },
+    ),
+  );
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  let dispose!: () => void;
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: (setup: () => () => void) => {
+      dispose = setup();
+    },
+    settingsCards: {
+      register: (page: { component: React.ComponentType }) => {
+        Component = page.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  try {
+    await act(async () => {
+      render(<Component />);
+    });
+    expect(screen.getByText(/Downloading layer.gguf/)).toHaveTextContent(
+      "1.00 GB / 4.00 GB",
+    );
+    bytes = 2_000_000_000;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByText(/Downloading layer.gguf/)).toHaveTextContent(
+      "2.00 GB / 4.00 GB",
+    );
+    modelReady = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    const count = native.invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(native.invoke).toHaveBeenCalledTimes(count);
+  } finally {
+    cleanup();
+    dispose();
+    vi.useRealTimers();
+  }
+});

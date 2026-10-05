@@ -164,20 +164,6 @@ fn build(
     }
 }
 
-/// Prepare model weights before serving so SDK byte progress remains visible.
-/// Local paths are validated without attempting a remote download.
-pub async fn prepare(model: &str) -> anyhow::Result<()> {
-    if std::path::Path::new(model).is_absolute() {
-        if !std::path::Path::new(model).is_file() {
-            anyhow::bail!("Local model does not exist: {model}");
-        }
-        return Ok(());
-    }
-    // The SDK downloader verifies cached assets and companion files itself.
-    models::download_model_ref_with_progress_details(model, true).await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,9 +259,5 @@ mod tests {
             |_| false,
         );
         assert_eq!(catalog.recommended.as_deref(), Some(CURATED_MEDIUM));
-    }
-    #[tokio::test]
-    async fn missing_local_model_fails_without_network_download() {
-        assert!(prepare("/fixture-missing-buzz-model.gguf").await.is_err());
     }
 }

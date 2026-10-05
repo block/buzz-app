@@ -11,6 +11,7 @@ import { ConsumerComputeView } from "./ConsumerComputeView";
 
 type MeshStatus = {
   available: boolean;
+  modelReady?: boolean;
   // Configured intent, not proof of serving; lifecycle supplies the actual phase.
   sharing?: string | null;
   savedSharing?: { model: string; enabled: boolean } | null;
@@ -200,7 +201,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         busy ||
         error ||
         (status?.lifecycle?.state !== "starting" &&
-          status?.lifecycle?.state !== "stopping")
+          status?.lifecycle?.state !== "stopping" &&
+          !(
+            status?.lifecycle?.state === "ready" &&
+            status.sharing &&
+            !status.modelReady
+          ))
       )
         return;
       let active = true;
@@ -274,7 +280,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 Boolean(status.sharing)
               }
             />
-            {phase === "starting" && status.download && (
+            {status.sharing && status.download && (
               <p role="status">
                 {status.download.done
                   ? "Download complete; loading model…"

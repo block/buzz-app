@@ -156,6 +156,14 @@ export function useReading({
           const observed = handle;
           handle = undefined;
           observing.add(observed);
+          // The durable lease ends with its write, but the rows stay in view.
+          // A view-only lease keeps that evidence until the next cancellation.
+          try {
+            handle = session.unread.reading(channelId);
+            handle.view([...visible], active);
+          } catch {
+            handle = undefined;
+          }
           void (async () => {
             if (caughtUp) await observed.catchUp(bottom, rootId);
             await observed.observe(remained);

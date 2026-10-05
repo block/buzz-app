@@ -321,10 +321,11 @@ test("a resting pointer does not steal the typed selection when results move und
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
   const rows = dialog.getByRole("option");
-  await expect(rows.nth(2)).toBeVisible();
+  // Hover waits for the row to stop moving as the dialog opens and recent
+  // activity loads, so the measured position is where the row stays.
+  await rows.nth(2).hover({ position: { x: 20, y: 10 } });
   const box = await rows.nth(2).boundingBox();
-  const y = box.y + box.height / 2;
-  await page.mouse.move(box.x + 20, y);
+  const y = box.y + 10;
   await page.mouse.move(box.x + 30, y);
   await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
   await input.fill("a");

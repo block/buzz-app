@@ -81,7 +81,7 @@ test.describe("public channel preview", () => {
     const root = app.searchTarget.tags.find(([key]) => key === "e")[1];
     app.append(
       "primary",
-      "open",
+      app.openChannelId,
       "Public thread video",
       false,
       false,

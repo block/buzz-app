@@ -168,3 +168,25 @@ it("establishment retries a failed retained read without turning idle inventory 
   stop();
   owner.dispose();
 });
+
+it("every library snapshot carries definition art to identities without their own", async () => {
+  const owner = createAgentLibrary(async () => ({
+    definitions: [{ id: "local:brain", name: "Brain", avatar: "art" }],
+    identities: [
+      { pubkey: "a".repeat(64), name: "One", definitionId: "local:brain" },
+      {
+        pubkey: "b".repeat(64),
+        name: "Two",
+        definitionId: "local:brain",
+        avatar: "own",
+      },
+      { pubkey: "c".repeat(64), name: "Custom" },
+    ],
+  }));
+  await owner.queries.refresh();
+  expect(owner.queries.snapshot().identities.map((row) => row.avatar)).toEqual([
+    "art",
+    "own",
+    undefined,
+  ]);
+});

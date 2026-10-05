@@ -927,17 +927,18 @@ export function PopoverSpecimen() {
       <Related />
       <Section title="Choose the surface by its content">
         <p className="text-body text-secondary">
-          Small action menus use 10px outer corners, 8px row corners, and a 4px
-          inset. Their quieter hover fill uses Buzz’s subtle-hover color, with
-          immediate pointer and keyboard feedback. The account menu and a short
-          channel action list use this treatment.
+          Small action menus use 8px outer corners and a 4px inset. Row corners
+          subtract the inset and 1px border, giving 3px. Their quieter hover
+          fill uses Buzz’s subtle-hover color, with immediate pointer and
+          keyboard feedback. The account menu and a short channel action list
+          use this treatment.
         </p>
         <p className="text-body text-secondary">
           Content popovers, larger action or choice menus, forms, activity
-          previews, and emoji/mention pickers keep 24px panel corners and their
-          existing spacing. A narrow viewport does not turn a content popover
-          into a small action menu. Both treatments share the same surface,
-          border, shadow, and opening motion.
+          previews, and emoji/mention pickers use 16px container corners and
+          their existing spacing. A narrow viewport does not turn a content
+          popover into a small action menu. Both treatments share the same
+          surface, border, shadow, and opening motion.
         </p>
         <p className="text-body text-secondary">
           Opt in with size="compact" on MenuPopup. For an account-style

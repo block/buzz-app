@@ -12,6 +12,7 @@ import { AtIcon } from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
+import { outsideMentionDetail } from "../../features/messages/mention-candidates";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
@@ -275,7 +276,7 @@ export function MentionPicker({
                               ? parentAdmission
                                 ? "Adds to session and parent channel when you send"
                                 : "Adds to session when you send"
-                              : "Not in channel · Choose whether to add when you send"}
+                              : outsideMentionDetail(channel)}
                           </small>
                         )}
                       </span>

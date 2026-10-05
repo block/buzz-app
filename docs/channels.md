@@ -24,6 +24,14 @@ arbitrary file paths or application commands. Web keeps ordinary browser link
 behavior. Adding the native opener requires rebuilding/restarting desktop;
 frontend hot reload alone is not enough.
 
+HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
+on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
+**Open in browser** uses the same `_blank` fallback above without consulting pane
+handlers; both actions retain the original URL, including query and fragment.
+Normal and modified clicks are unchanged. Internal `buzz://` links and links outside
+message content retain their existing behavior. Copy failures show a dismissible
+notice and can be retried from the link menu.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Channels is required by the current host; optional page removal does not dispose
@@ -419,7 +427,14 @@ returns to its persistent Settings-tab close control instead of an unrelated sid
 joined archived channels remain available by name in search, labeled **Archived
 channel**, but stay out of the sidebar and Recent activity. Open the search result
 and Settings to restore it. This uses the existing membership discovery and exact
-navigation, not a new archived-channel directory or nonmember discovery.
+navigation, not a new archived-channel directory.
+
+Search also finds active public channels the viewer has not joined, by name,
+labeled **Public channel · not joined** after joined matches. Opening one shows the
+read-only preview. The preview offers **Join channel**; after the relay confirms
+membership, the channel joins the sidebar and the composer becomes available and
+focused. Joining a channel is not available for DMs, private, archived or session
+conversations. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
 Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
 shared discovery; a missing record is not success. Restoration returns the sidebar
@@ -894,13 +909,20 @@ Existing Guest roles remain available to the permission/confirmation flow and ca
 Admin, or removed; they are never automatically converted. This is a menu-only
 restriction, not a change to relay semantics or the broker's supported commands.
 
-DMs and session channels have no administration actions. No ownership transfer,
-community-admin override, delegated agent-owner authority or new invitation
-restriction is introduced. Personal Leave remains a separate lifecycle operation;
-removing a member neither deletes their identity nor stops their agents.
+Current members may also remove their own verified non-owner agents, but cannot
+edit their roles or remove someone else's agent. The service verifies signed
+ownership once per removal attempt, independently of display hints.
 
-Role change and removal use separate deliberate confirmations, initially focused
-on Cancel. The service checks fresh actor/target state before signing and again
+DMs, archived channels and session channels have no administration actions.
+No ownership transfer, community-admin override or new invitation restriction is
+introduced. Personal Leave remains a separate lifecycle operation; removing a
+member neither deletes their identity nor stops their agents.
+
+Role change and removal use deliberate confirmation steps in the same dialog,
+initially focused on Cancel. Removal shows only the avatar/name and actions;
+Cancel returns to the list. Errors appear below Search, outside the scrolling
+list; pending and success banners are omitted.
+The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
 Pending intent survives dialog close/reopen and suppresses duplicate actions.
@@ -912,12 +934,12 @@ unconfirmed intent for fresh readback only. They fence late completions, as does
 disposal, but cannot retract a request already sent. Unsent work is canceled;
 recovery is in-memory, not durable across session disposal or restart.
 
-The development broker advertises a separate `memberAdministration` capability
-and admits only exact `9000` Admin/Member/Guest changes or `9001` other-member
-removals through its purpose-bound routes. Generic invitation signing is unchanged;
-the relay still enforces the authoritative ACL. Hosts without this writer can
-read verified roles but expose no management controls. Native/direct-signer parity
-is deferred rather than silently falling back to an unrestricted writer.
+The development broker and native transport advertise a separate
+`memberAdministration` capability and admit only exact `9000` Admin/Member/Guest
+changes or `9001` other-member removals through purpose-bound routes. Generic
+invitation signing is unchanged; the relay still enforces the authoritative ACL.
+Hosts without this writer can read verified roles but expose no management controls.
+Native support requires a rebuilt binary; no unrestricted writer fallback is used.
 
 **Accepted protocol limitation:** role commands are existing relay upserts, not
 conditional updates. A departure after final preflight can be undone by the role
@@ -926,8 +948,8 @@ checks/readback reduce uncertainty but do not provide atomic conflict rejection.
 Preventing these races requires separately scoped relay support.
 
 Regression coverage lives in `administration.test.ts`,
-`MemberAdministration.test.tsx`, and `dev/relay-broker-api.test.mjs`; existing
-`ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
+`MemberAdministration.test.tsx`, `native.test.ts`, and `dev/relay-broker-api.test.mjs`;
+existing `ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
 writes/recovery and a real-app read/confirmation/cancel exercise do not establish
 native or deployed destructive-write acceptance. Those checks and human tryout
 remain separate delivery gates.

@@ -20,6 +20,26 @@ export type AgentLibrarySnapshot = AgentLibrary &
     error?: string;
   }>;
 const empty = { definitions: Object.freeze([]), identities: Object.freeze([]) };
+
+/** One artwork rule for every agent surface: an identity without its own art
+ * shows its linked definition's art. Applied once where the snapshot is made. */
+export function inheritDefinitionAvatars<T extends AgentLibrary>(
+  library: T,
+): T {
+  const art = new Map(
+    library.definitions.flatMap((row) =>
+      row.avatar ? [[row.id, row.avatar] as const] : [],
+    ),
+  );
+  // Keep reader extras such as a partial-source error.
+  return {
+    ...library,
+    identities: library.identities.map((row) => {
+      const avatar = row.avatar ?? art.get(row.definitionId ?? "");
+      return avatar && avatar !== row.avatar ? { ...row, avatar } : row;
+    }),
+  };
+}
 export function createAgentLibrary(
   read: AgentLibraryReader | undefined,
   notify = (listener: () => void) => listener(),
@@ -51,7 +71,7 @@ export function createAgentLibrary(
       })
       .then((library) => {
         if (!closed && !owned.signal.aborted)
-          publish({ ...library, status: "ready" });
+          publish({ ...inheritDefinitionAvatars(library), status: "ready" });
       })
       .catch(() => {
         if (!closed && !owned.signal.aborted)

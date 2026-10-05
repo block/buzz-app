@@ -328,7 +328,7 @@ agents that were **running** before and after the save and whose **effective**
 launch settings changed. Stopped and disabled agents are never started or
 enabled; a Stop that lands before the restart wins. Save reports “Saved.” or
 “Saved. Restarted N agents.” `restartDiff` compares effective settings, so it
-also flags inherited changes.
+also flags inherited changes. Both requested updates and ordinary agent edits close after a complete save and show the result in a toast. Save errors, restart failures, and unconfirmed profile publication keep the editor open for recovery.
 
 ## Avatar editing
 

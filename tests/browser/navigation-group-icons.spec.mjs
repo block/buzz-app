@@ -86,7 +86,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
       };
     });
     expect(layout.gap).toBe(8);
-    expect(layout.height).toBe(28);
+    expect(layout.height).toBe(32);
     expect(layout.iconTop).toBeGreaterThanOrEqual(layout.summaryTop);
     expect(layout.iconBottom).toBeLessThanOrEqual(layout.summaryBottom);
   }
@@ -289,7 +289,7 @@ test("section labels fade on overflow and recover when widened", async ({
           };
         }),
       )
-      .toEqual({ centered: true, spacing: 28, separateTargets: true });
+      .toEqual({ centered: true, spacing: 32, separateTargets: true });
     await summary.screenshot({
       path: info.outputPath(`section-label-${width}.png`),
     });

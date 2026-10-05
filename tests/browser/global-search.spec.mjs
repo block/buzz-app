@@ -112,11 +112,15 @@ test.describe("public search destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await expect(button(page, "Search Buzz")).toBeVisible();
+    // Waiting for a rendered conversation is an ordering mitigation for the
+    // WebKit lost-fill failure. Its root cause is unknown, and the failing
+    // schedule has not been reproduced against this change.
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
     for (const mode of ["cold", "warm"]) {
       await button(page, "Search Buzz").click();
       const input = page.getByRole("combobox", { name: "Search Buzz" });
       await input.fill("crew-search");
+      await expect(input).toHaveValue("crew-search");
       const result = page.getByRole("option", {
         name: /crew-search exact public reply/,
       });
@@ -156,6 +160,87 @@ test.describe("public search destination", () => {
         .filter(({ filter }) => filter.search)
         .every(({ filter }) => !filter["#h"]),
     ).toBe(true);
+  });
+
+  test("finds an unjoined public channel by name, previews it, joins it and sends a message", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await button(page, "Search Buzz").click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    const result = page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ });
+    await expect(result).toContainText("Public channel · not joined");
+    await result.click();
+    const composer = page.getByRole("textbox", {
+      name: "Message #open",
+      exact: true,
+    });
+    await expect(
+      page.getByText(
+        "Read-only preview · You haven’t joined this conversation.",
+      ),
+    ).toBeVisible();
+    await expect(composer).toHaveAttribute("aria-disabled", "true");
+    const sidebar = page.getByRole("complementary", {
+      name: "Channel sidebar",
+    });
+    await expect(
+      sidebar.getByRole("button", { name: "open", exact: true }),
+    ).toHaveCount(0);
+    await button(page, "Join channel").click();
+    await expect(composer).not.toHaveAttribute("aria-disabled", "true");
+    await expect(composer).toBeFocused();
+    await expect(page.getByText(/Read-only preview/)).toHaveCount(0);
+    await expect(
+      sidebar.getByRole("button", { name: "open", exact: true }),
+    ).toBeVisible();
+    expect(app.report.lifecyclePublications).toEqual([
+      expect.objectContaining({
+        kind: 9021,
+        tags: [["h", app.openChannelId]],
+      }),
+    ]);
+    await composer.pressSequentially("Hello from a new member");
+    await composer.press("Enter");
+    await expect
+      .poll(() =>
+        app.report.publications.map(({ event }) => [
+          event.kind,
+          event.content,
+          event.tags.find(([key]) => key === "h")?.[1],
+        ]),
+      )
+      .toContainEqual([9, "Hello from a new member", app.openChannelId]);
+  });
+
+  test("focuses the composer when live membership arrives before the join request settles", async ({
+    page,
+    app,
+  }) => {
+    const release = app.holdJoin();
+    await page.goto(app.origin);
+    await button(page, "Search Buzz").click();
+    await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
+    await page
+      .getByRole("group", { name: "Channels" })
+      .getByRole("option", { name: /^open/ })
+      .click();
+    const composer = page.getByRole("textbox", {
+      name: "Message #open",
+      exact: true,
+    });
+    await expect(composer).toHaveAttribute("aria-disabled", "true");
+    await button(page, "Join channel").click();
+    await expect(page.getByText(/Read-only preview/)).toHaveCount(0);
+    expect(app.report.lifecyclePublications).toHaveLength(1);
+    await expect(composer).not.toHaveAttribute("aria-disabled", "true");
+    await expect(composer).toBeFocused();
+    release();
+    await composer.pressSequentially("Joined");
+    await expect(composer).toHaveText("Joined");
   });
 });
 

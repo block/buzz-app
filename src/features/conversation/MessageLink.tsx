@@ -9,6 +9,16 @@ import {
 import type { Contribution } from "../../plugins/contributions";
 import type { ContributionReader, LinkRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuPopup,
+  MenuLinkItem,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
+import { BrowserIcon, CopyIcon } from "../../shared/design-system/icons";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
@@ -72,6 +82,32 @@ export function MessageLink({
   const [previewOpen, setPreviewOpen] = useState(false);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
+  const [copying, setCopying] = useState(false);
+  const busy = useRef(false);
+  const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  if (!active && menuOpen) setMenuOpen(false);
+  if (!active && notice) setNotice(undefined);
+  const external = /^https?:\/\//i.test(url);
+  async function copy() {
+    if (!active || busy.current) return;
+    busy.current = true;
+    setCopying(true);
+    setNotice(undefined);
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice({ text: "Link copied", error: false });
+    } catch {
+      setNotice({
+        text: "Couldn’t copy the link. Try again from the link menu.",
+        error: true,
+      });
+    } finally {
+      busy.current = false;
+      setCopying(false);
+    }
+  }
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
@@ -146,6 +182,46 @@ export function MessageLink({
         {content}
       </span>
     );
+    if (active && interactive && external) {
+      return (
+        <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+          <ContextMenuTrigger
+            render={element}
+            onContextMenu={() => setMenuAnchor(undefined)}
+            onTouchStart={() => setMenuAnchor(undefined)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+              ) {
+                event.preventDefault();
+                setMenuAnchor(trigger.current ?? undefined);
+                setMenuOpen(true);
+              }
+            }}
+          />
+          <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
+            <MenuLinkItem
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              closeOnClick
+            >
+              <MenuIcon>
+                <BrowserIcon size={16} />
+              </MenuIcon>
+              Open in browser
+            </MenuLinkItem>
+            <MenuItem disabled={copying} onClick={() => void copy()}>
+              <MenuIcon>
+                <CopyIcon size={16} />
+              </MenuIcon>
+              Copy link
+            </MenuItem>
+          </MenuPopup>
+        </ContextMenuRoot>
+      );
+    }
     return active && interactive && preview && session ? (
       <PreviewCard
         trigger={element}
@@ -182,6 +258,14 @@ export function MessageLink({
   const result = (
     <>
       {link}
+      {active && notice && (
+        <ToastNotice
+          title={notice.text}
+          tone={notice.error ? "error" : "success"}
+          timeout={notice.error ? 0 : 4000}
+          onDismiss={() => setNotice(undefined)}
+        />
+      )}
       {unavailable && (
         <span role="status"> This Buzz link couldn’t be opened here.</span>
       )}

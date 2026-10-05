@@ -50,6 +50,10 @@ checks, not that an OS banner was displayed or read.
   unread/visibility facts. Structured kind-40002 bodies use the same decoded text
   as message rows. No new socket, unread engine or background-community
   subscription is added.
+- Workflow-owner attribution is not a mention. The shared
+  [workflow mention classifier](unread.md#workflow-mentions) preserves explicit
+  template mentions and other recipients; DM and relevant-reply policies still
+  apply. This does not change notification settings or suppress all workflows.
 - History, initial/reconnect replay and own messages stay quiet. Candidates older
   than two minutes (or over 30 seconds in the future) are ignored. Unknown read
   readiness waits; off/access loss cancels pending candidates. A reply whose

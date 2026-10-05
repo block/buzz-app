@@ -169,6 +169,26 @@ and row projection (case-insensitive hex, last valid marker wins). Resolution st
 requires bounded, retained same-channel message evidence; references alone do not
 grant access or trigger a read.
 
+## Workflow mentions
+
+For relay-signed kind-9 workflow output (`buzz:workflow=true`), the `p` tag
+matching `buzz:workflow-owner` is attribution, not a mention. It counts as a
+mention only when the owner also has a `buzz:workflow-mention` tag. Other `p`
+recipients keep ordinary mention semantics, even without template-provenance
+tags. Untrusted senders cannot suppress mentions by copying workflow metadata;
+without a trusted relay identity, ordinary `p`-tag semantics remain in effect.
+
+This shared classification feeds attention badges, Inbox, notifications and the
+channel-mute mention exception. Ordinary unread, DM and participating-thread
+rules still apply. No message or read marker is rewritten.
+
+The relay currently emits `buzz:workflow-mention` only for recipients named in
+the stored template as well as the rendered output. If substituted input alone
+names the owner, its single `p` tag cannot distinguish that mention from owner
+attribution and does not create mention attention. Put the owner's explicit
+`@Name` in the template when they should be alerted. Distinguishing substituted
+owner mentions requires additional relay metadata, not client-side name parsing.
+
 ## Relevant replies
 
 Every top-level message counts. A reply counts only when it is in one of the

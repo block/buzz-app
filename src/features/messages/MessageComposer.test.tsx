@@ -542,6 +542,23 @@ it("does not take focus from a modal when the conversation mounts behind it", ()
   }
 });
 
+it.each([
+  ["an open popup trigger", { "data-popup-open": "" }],
+  ["a menu", { role: "menu" }],
+])("does not take focus from %s when the conversation mounts", (_, attrs) => {
+  const owner = document.createElement("button");
+  for (const [name, value] of Object.entries(attrs))
+    owner.setAttribute(name, value);
+  document.body.append(owner);
+  try {
+    owner.focus();
+    mount({ autoFocus: true });
+    expect(owner).toHaveFocus();
+  } finally {
+    owner.remove();
+  }
+});
+
 it("restores the draft end through StrictMode replay without resetting a deliberate selection on updates", () => {
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount({ autoFocus: true });

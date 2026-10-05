@@ -72,17 +72,63 @@ pub async fn mesh_compute_share(
     lease: String,
     model: Option<String>,
     max_vram_gb: Option<u64>,
+    auto: Option<bool>,
+    reset_only: Option<bool>,
 ) -> Result<(), String> {
-    let share = model
-        .map(|model| Share::new(model, max_vram_gb))
-        .transpose()?;
+    let automatic = auto.unwrap_or(false);
+    let resetting = reset_only.unwrap_or(false);
     let host = app.state::<super::MeshHost>();
     let identity = app.state::<crate::identity::IdentityHost>();
-    let stopping = share.is_none();
+    let stopping = model.is_none();
     let viewer = identity.viewer().await?;
     {
         let _guard = host.preparing.lock().await;
         let community = host.lease.community(&lease)?;
+        let needs_reset_model = resetting
+            && host
+                .preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .hint()
+                .is_none();
+        // The UI currently has no memory override; a future limit must inform Auto's ladder.
+        let recommended = if (automatic && model.is_some() && !resetting) || needs_reset_model {
+            Some(
+                tokio::task::spawn_blocking(buzz_mesh_compute::catalog::recommended_model)
+                    .await
+                    .map_err(|error| format!("Mesh hardware survey failed: {error}"))?,
+            )
+        } else {
+            None
+        };
+        let share = if resetting {
+            None
+        } else {
+            model
+                .map(|model| Share::new(recommended.clone().unwrap_or(model), max_vram_gb))
+                .transpose()?
+        };
+        if resetting {
+            return host.lease.with_current(&lease, |_| {
+                let mut prefs = host
+                    .preferences
+                    .lock()
+                    .map_err(|_| "Mesh settings unavailable")?;
+                let mut config = prefs.hint().cloned().unwrap_or_else(|| {
+                    super::preferences::Config::pending(
+                        viewer.clone(),
+                        community.clone(),
+                        &Share {
+                            model: recommended.clone().unwrap_or_default(),
+                            max_vram_gb: None,
+                        },
+                    )
+                });
+                config.auto = true;
+                // Preserve the current resolved model and consent; reset never starts or stops.
+                prefs.checkpoint(config)
+            });
+        }
         if stopping
             && host
                 .sharing
@@ -127,9 +173,12 @@ pub async fn mesh_compute_share(
                 host.preferences
                     .lock()
                     .map_err(|_| "Mesh settings unavailable")?
-                    .checkpoint(super::preferences::Config::pending(
-                        viewer, community, share,
-                    ))
+                    .checkpoint({
+                        let mut config =
+                            super::preferences::Config::pending(viewer, community, share);
+                        config.auto = automatic;
+                        config
+                    })
             })?;
         }
         // Do not replace the worker until its shutdown is confirmed.

@@ -10,6 +10,8 @@ pub(super) struct Config {
     pub model: String,
     pub max_vram_gb: Option<u64>,
     pub enabled: bool,
+    #[serde(default)]
+    pub auto: bool,
 }
 impl Config {
     pub fn pending(viewer: String, community: String, share: &Share) -> Self {
@@ -19,6 +21,7 @@ impl Config {
             model: share.model.clone(),
             max_vram_gb: share.max_vram_gb,
             enabled: false,
+            auto: false,
         }
     }
 }
@@ -46,6 +49,14 @@ impl Preferences {
                 Ok(bytes) => {
                     let mut config: Config = serde_json::from_slice(&bytes)
                         .map_err(|e| format!("Invalid Mesh sharing settings: {e}"))?;
+                    let legacy = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .map_err(|e| e.to_string())?
+                        .get("auto")
+                        .is_none();
+                    if legacy {
+                        config.auto =
+                            buzz_mesh_compute::catalog::is_legacy_recommendation(&config.model);
+                    }
                     config.model =
                         buzz_mesh_compute::catalog::canonical_curated_model_id(&config.model)
                             .to_owned();
@@ -157,7 +168,7 @@ impl Preferences {
         if *phase == buzz_mesh_compute::lifecycle::Phase::Ready
             || (matches!(phase, buzz_mesh_compute::lifecycle::Phase::Failed(_)) && !reached_ready)
         {
-            let mut config = expected.clone();
+            let mut config = self.hint().cloned().ok_or("Mesh selection expired")?;
             config.enabled = *phase == buzz_mesh_compute::lifecycle::Phase::Ready;
             self.checkpoint(config)?;
         }
@@ -311,5 +322,70 @@ mod recovery_tests {
         prefs.set_error("Could not write sharing settings".into());
         prefs.clear_runtime_error();
         assert_eq!(prefs.error(), Some("Could not write sharing settings"));
+    }
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::*;
+    #[test]
+    fn legacy_curated_models_become_auto_but_custom_and_explicit_overrides_do_not() {
+        for (model, expected) in [
+            ("unsloth/gemma-4-E4B-it-GGUF:Q4_K_M", true),
+            ("unsloth/Qwen3.5-9B-GGUF:Q4_K_M", true),
+            ("unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", true),
+            ("unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", true),
+            ("/models/local.gguf", false),
+            ("other/model:Q4", false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mesh-sharing.json");
+            let legacy = serde_json::json!({"viewer":"viewer", "community":"https://fixture.example", "model":model, "maxVramGb":null, "enabled":false});
+            std::fs::write(&path, legacy.to_string()).unwrap();
+            let mut prefs = Preferences::default();
+            prefs.initialize(Ok(path.clone()));
+            prefs.select("viewer".into(), "https://fixture.example".into());
+            assert_eq!(prefs.hint().unwrap().auto, expected, "{model}");
+            assert!(!prefs.hint().unwrap().enabled);
+            // Migration is read-only until the next explicit settings write.
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy.to_string());
+            let mut explicit = prefs.hint().unwrap().clone();
+            explicit.auto = false;
+            prefs.checkpoint(explicit).unwrap();
+            let mut reopened = Preferences::default();
+            reopened.initialize(Ok(path));
+            reopened.select("viewer".into(), "https://fixture.example".into());
+            assert!(!reopened.hint().unwrap().auto);
+        }
+    }
+    #[test]
+    fn runtime_checkpoint_cannot_undo_a_reset_to_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mesh-sharing.json");
+        let mut prefs = Preferences::default();
+        prefs.initialize(Ok(path.clone()));
+        prefs.select("viewer".into(), "https://fixture.example".into());
+        let config = Config::pending(
+            "viewer".into(),
+            "https://fixture.example".into(),
+            &Share {
+                model: "custom".into(),
+                max_vram_gb: None,
+            },
+        );
+        prefs.checkpoint(config.clone()).unwrap();
+        let mut reset = config.clone();
+        reset.auto = true;
+        prefs.checkpoint(reset).unwrap();
+        prefs
+            .phase(&config, &buzz_mesh_compute::lifecycle::Phase::Ready, false)
+            .unwrap();
+        assert!(prefs.hint().unwrap().auto);
+        assert!(prefs.hint().unwrap().enabled);
+        let mut reopened = Preferences::default();
+        reopened.initialize(Ok(path));
+        reopened.select("viewer".into(), "https://fixture.example".into());
+        assert!(reopened.hint().unwrap().auto);
+        assert_eq!(reopened.hint().unwrap().model, "custom");
     }
 }

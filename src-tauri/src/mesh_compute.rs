@@ -349,6 +349,8 @@ pub async fn mesh_compute_select(
             lease.clone(),
             Some(config.model),
             config.max_vram_gb,
+            Some(config.auto),
+            None,
         )
         .await
         {

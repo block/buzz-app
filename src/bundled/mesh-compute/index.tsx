@@ -14,7 +14,7 @@ type MeshStatus = {
   modelReady?: boolean;
   // Configured intent, not proof of serving; lifecycle supplies the actual phase.
   sharing?: string | null;
-  savedSharing?: { model: string; enabled: boolean } | null;
+  savedSharing?: { model: string; enabled: boolean; auto?: boolean } | null;
   settingsError?: string | null;
   download?: {
     label: string;
@@ -126,13 +126,48 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
     const [model, setModel] = useState("");
+    const [auto, setAuto] = useState(true);
+    const [recommended, setRecommended] = useState<string | null>(null);
     // biome-ignore lint/correctness/useExhaustiveDependencies: identity and community changes retire the prior model selection.
     useEffect(() => {
       setModel("");
+      setAuto(true);
+      setRecommended(null);
     }, [snapshot.viewer, snapshot.scope]);
     useEffect(() => {
-      if (status?.savedSharing?.model) setModel(status.savedSharing.model);
-    }, [status?.savedSharing?.model]);
+      if (status?.savedSharing?.model) {
+        setModel(status.savedSharing.model);
+        setAuto(status.savedSharing.auto ?? false);
+      }
+    }, [status?.savedSharing?.model, status?.savedSharing?.auto]);
+    const reset = async () => {
+      const selected = lease;
+      setBusy(true);
+      setError(null);
+      try {
+        if (!selected) throw new Error("Connect to a community first");
+        const id = await selected;
+        if (disposed || selected !== lease)
+          throw new Error("Community changed");
+        await invoke("mesh_compute_share", {
+          lease: id,
+          model: null,
+          maxVramGb: null,
+          auto: true,
+          resetOnly: true,
+        });
+        const result = await invoke<MeshStatus>("mesh_compute_status");
+        if (!disposed && snapshot === ctx.relay.snapshot()) {
+          setStatus(result);
+          setAuto(true);
+        }
+      } catch (reason) {
+        if (!disposed && snapshot === ctx.relay.snapshot())
+          setError(String(reason));
+      } finally {
+        if (!disposed) setBusy(false);
+      }
+    };
     const share = async (clearSaved = false) => {
       const selected = lease;
       setBusy(true);
@@ -144,8 +179,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
           throw new Error("Community changed");
         await invoke("mesh_compute_share", {
           lease: id,
-          model: clearSaved || status?.sharing ? null : model,
+          model:
+            clearSaved || status?.sharing
+              ? null
+              : auto
+                ? (recommended ?? model)
+                : model,
           maxVramGb: null,
+          auto,
         });
         const result = await invoke<MeshStatus>("mesh_compute_status");
         if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
@@ -267,14 +308,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
           <section aria-label="Share compute">
             <h2 className="text-body">Share your compute</h2>
             <p className="text-body-sm text-secondary">
-              Let this community use a model on your machine. We choose a model
-              for your hardware; Advanced lets you change it. Sharing resumes
-              when you reopen Buzz. Stop sharing keeps it off and stops agents
-              currently using this node.
+              Community prompts run on your hardware. Auto chooses the model;
+              Advanced lets you override it. Sharing resumes when you reopen
+              Buzz. Stop sharing keeps it off.
             </p>
             <ShareModelPicker
               model={model}
-              onChange={setModel}
+              auto={auto}
+              onRecommendation={setRecommended}
+              runningModel={status.sharing ?? null}
+              onReset={() => void reset()}
+              resetDisabled={busy || snapshot.status !== "ready"}
+              onChange={(value) => {
+                setModel(value);
+                setAuto(false);
+              }}
               disabled={
                 busy ||
                 phase === "starting" ||
@@ -296,11 +344,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   ` / ${(status.download.totalBytes / 1e9).toFixed(2)} GB`}
               </p>
             )}
-            {!status.sharing && status.savedSharing && (
+            {!status.sharing && (status.savedSharing || phase === "failed") && (
               <p className="text-body-sm text-secondary">
                 {phase === "failed" ? "Sharing failed. " : ""}
-                Saved model: {status.savedSharing.model}. Resume sharing to let
-                Mesh verify the weights; missing assets may download.
+                {auto
+                  ? "Auto will choose the device recommendation on the next start."
+                  : `Saved model: ${status.savedSharing?.model}. Resume sharing to verify the weights; missing assets may download.`}
                 {phase === "failed" &&
                   " Restart Buzz before resuming if shutdown cannot be confirmed."}
               </p>
@@ -334,14 +383,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 phase === "starting" ||
                 phase === "stopping" ||
                 snapshot.status !== "ready" ||
-                (!status.sharing && !model.trim())
+                (!status.sharing && !auto && !model.trim())
               }
             >
               {status.sharing
                 ? "Stop sharing"
-                : status.savedSharing?.model === model
-                  ? "Resume sharing"
-                  : "Share compute"}
+                : auto
+                  ? "Auto share"
+                  : status.savedSharing?.model === model
+                    ? "Resume sharing"
+                    : "Share compute"}
             </Button>
           </section>
         )}

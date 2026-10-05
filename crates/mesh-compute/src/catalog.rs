@@ -6,6 +6,7 @@ use serde::Serialize;
 const CURATED_SMALL: &str = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const CURATED_MEDIUM: &str = "unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
 const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M";
+const LEGACY_LARGE_XL: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL";
 
 /// Rated-capacity boundary for the balanced Qwen3.5 9B tier.
 const CURATED_MEDIUM_MIN_RATED_GB: u64 = 32;
@@ -22,6 +23,14 @@ pub fn canonical_curated_model_id(model: &str) -> &str {
         "gemma-4-26B-A4B-it-UD-Q4_K_M" => "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M",
         other => other,
     }
+}
+
+/// Older pickers persisted these recommendations without an explicit Auto mode.
+pub fn is_legacy_recommendation(model: &str) -> bool {
+    matches!(
+        model,
+        CURATED_SMALL | CURATED_MEDIUM | CURATED_LARGE | LEGACY_LARGE_XL
+    )
 }
 
 /// Hardware-ranked models with cache evidence, not a claim of runtime readiness.
@@ -103,17 +112,27 @@ fn fit_rank(fit: &str) -> u8 {
         _ => 4,
     }
 }
+/// Device recommendation uses Buzz's hardware ladder, not remote catalog availability.
+/// This performs only a local hardware survey; serving owns artifact acquisition.
+pub fn recommended_model() -> String {
+    recommendation_for_memory(hardware::survey().vram_bytes).to_owned()
+}
+
+fn recommendation_for_memory(bytes: u64) -> &'static str {
+    match vram::rated_capacity_gb(bytes) {
+        Some(gb) if gb >= CURATED_LARGE_MIN_RATED_GB => CURATED_LARGE,
+        Some(gb) if gb >= CURATED_MEDIUM_MIN_RATED_GB => CURATED_MEDIUM,
+        _ => CURATED_SMALL,
+    }
+}
+
 fn build(
     gpu_name: Option<String>,
     bytes: u64,
     models: Vec<RemoteCatalogModel>,
     installed: impl Fn(&str) -> bool,
 ) -> Catalog {
-    let recommendation = match vram::rated_capacity_gb(bytes) {
-        Some(gb) if gb >= CURATED_LARGE_MIN_RATED_GB => CURATED_LARGE,
-        Some(gb) if gb >= CURATED_MEDIUM_MIN_RATED_GB => CURATED_MEDIUM,
-        _ => CURATED_SMALL,
-    };
+    let recommendation = recommendation_for_memory(bytes);
     let mut entries: Vec<Entry> = models
         .iter()
         .filter(|model| {
@@ -284,5 +303,25 @@ mod tests {
         assert!(recommended.installed);
         assert!(recommended.size.is_none());
         assert_eq!(recommended.fit, "unknown");
+    }
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::*;
+    #[test]
+    fn auto_follows_the_hardware_ladder_without_catalog_or_cache_fallback() {
+        assert_eq!(
+            recommendation_for_memory(16 * 1024 * 1024 * 1024),
+            CURATED_SMALL
+        );
+        assert_eq!(
+            recommendation_for_memory(32 * 1024 * 1024 * 1024),
+            CURATED_MEDIUM
+        );
+        assert_eq!(
+            recommendation_for_memory(128 * 1024 * 1024 * 1024),
+            CURATED_LARGE
+        );
     }
 }

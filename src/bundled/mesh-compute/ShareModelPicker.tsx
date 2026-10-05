@@ -23,10 +23,20 @@ export function ShareModelPicker({
   model,
   onChange,
   disabled,
+  auto,
+  onReset,
+  resetDisabled,
+  onRecommendation,
+  runningModel,
 }: {
   model: string;
   onChange: (model: string) => void;
   disabled: boolean;
+  auto: boolean;
+  onReset: () => void;
+  onRecommendation?: (model: string | null) => void;
+  runningModel?: string | null;
+  resetDisabled?: boolean;
 }) {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,10 +77,10 @@ export function ShareModelPicker({
     };
   }, [attempt]);
   useEffect(() => {
-    if (!model && !custom && catalog?.recommended)
-      onChange(catalog.recommended);
-  }, [catalog, model, custom, onChange]);
-  const entry = catalog?.entries.find((entry) => entry.model === model);
+    onRecommendation?.(catalog?.recommended ?? null);
+  }, [catalog?.recommended, onRecommendation]);
+  const displayModel = auto ? (catalog?.recommended ?? "") : model;
+  const entry = catalog?.entries.find((entry) => entry.model === displayModel);
   return (
     <div>
       {catalog && (
@@ -88,29 +98,39 @@ export function ShareModelPicker({
       ) : (
         !catalog && <p role="status">Loading model choices…</p>
       )}
-      {entry && !advanced && (
+      {auto && (
         <p className="text-body">
-          {entry.name}
-          {model === catalog?.recommended
-            ? " — automatically selected for this device."
-            : " — selected model."}
+          {catalog?.recommended
+            ? `Auto — ${entry?.name ?? catalog.recommended} (${catalog.recommended.split(":").at(-1)}) for this device`
+            : "Auto — chooses a model for this device when sharing starts."}
         </p>
       )}
-      {catalog && !catalog.recommended && !model && (
+      {entry && !advanced && !auto && (
+        <p className="text-body">{entry.name} — selected model.</p>
+      )}
+      {catalog && !catalog.recommended && !model && !auto && (
         <p>No recommended model is available. Choose a model under Advanced.</p>
       )}
-      {catalog?.recommended && (model !== catalog.recommended || custom) && (
+      {auto &&
+        runningModel &&
+        catalog?.recommended &&
+        runningModel !== catalog.recommended && (
+          <p className="text-body-sm text-secondary">
+            Auto selection applies next time sharing starts.
+          </p>
+        )}
+      {!auto && (
         <Button
           variant="ghost"
           size="sm"
-          disabled={disabled}
+          disabled={resetDisabled ?? disabled}
           onClick={() => {
+            onReset();
             setCustom(false);
             setAdvanced(false);
-            if (catalog.recommended) onChange(catalog.recommended);
           }}
         >
-          Reset to device recommendation
+          Reset to Auto
         </Button>
       )}
       <Button
@@ -125,7 +145,7 @@ export function ShareModelPicker({
         <Select
           label="Model to share"
           variant="field"
-          value={custom || (model && !entry) ? CUSTOM : model}
+          value={custom || (displayModel && !entry) ? CUSTOM : displayModel}
           disabled={disabled}
           onValueChange={(value) => {
             setCustom(value === CUSTOM);

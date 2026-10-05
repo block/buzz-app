@@ -302,19 +302,20 @@ it("starts sharing the selected model through the existing community lease", asy
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  const button = await screen.findByRole("button", { name: "Share compute" });
+  await screen.findByRole("button", { name: "Auto share" });
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect(button).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Auto share" })).toBeEnabled();
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/models/local.gguf" } },
   );
-  fireEvent.click(button);
+  fireEvent.click(screen.getByRole("button", { name: "Share compute" }));
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
       lease: "share-lease",
       model: "/models/local.gguf",
       maxVramGb: null,
+      auto: false,
     }),
   );
 });
@@ -381,6 +382,7 @@ it.each([
           lease: "share-lease",
           model: null,
           maxVramGb: null,
+          auto: true,
         }),
       );
     }
@@ -483,6 +485,7 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
       lease: "share-lease",
       model: "/models/local.gguf",
       maxVramGb: null,
+      auto: false,
     }),
   );
 });
@@ -556,4 +559,123 @@ it("keeps SDK download progress live after management readiness and cancels on u
     dispose();
     vi.useRealTimers();
   }
+});
+
+it("persists Reset to Auto without restarting an active share, then starts Auto natively after stopping", async () => {
+  let automatic = false;
+  let sharing: string | null = "/running.gguf";
+  const status = () => ({
+    available: true,
+    lifecycle: { state: sharing ? "ready" : "stopped" },
+    modelReady: true,
+    sharing,
+    savedSharing: {
+      model: "/running.gguf",
+      enabled: !!sharing,
+      auto: automatic,
+    },
+  });
+  native.invoke.mockImplementation((command, args) => {
+    if (command === "mesh_compute_select") return Promise.resolve("lease");
+    if (command === "mesh_compute_catalog")
+      return Promise.resolve({
+        gpuName: "GPU",
+        vramDisplay: "128 GB",
+        recommended: "recommended/M",
+        entries: [],
+      });
+    if (command === "mesh_compute_share") {
+      if (args.resetOnly) automatic = true;
+      else sharing = args.model;
+    }
+    return Promise.resolve(status());
+  });
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  fireEvent.click(await screen.findByRole("button", { name: "Reset to Auto" }));
+  await screen.findByText(
+    "Auto — chooses a model for this device when sharing starts.",
+  );
+  expect(sharing).toBe("/running.gguf");
+  expect(
+    native.invoke.mock.calls.filter(
+      ([command]) => command === "mesh_compute_start",
+    ),
+  ).toHaveLength(0);
+  expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+    lease: "lease",
+    model: null,
+    maxVramGb: null,
+    auto: true,
+    resetOnly: true,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Auto share" }));
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+      lease: "lease",
+      model: "/running.gguf",
+      maxVramGb: null,
+      auto: true,
+    }),
+  );
+});
+
+it("shows the failure and native cause in Auto mode without presenting it as an override", async () => {
+  native.invoke.mockImplementation((command) =>
+    Promise.resolve(
+      command === "mesh_compute_select"
+        ? "lease"
+        : {
+            available: true,
+            lifecycle: {
+              state: "failed",
+              reason: "Native model startup failed: fixture cause",
+            },
+            sharing: null,
+            savedSharing: {
+              model: "recommended/M",
+              enabled: false,
+              auto: true,
+            },
+          },
+    ),
+  );
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  await screen.findByText("Native model startup failed: fixture cause");
+  expect(screen.getByText(/Sharing failed\./)).toHaveTextContent(
+    "Auto will choose the device recommendation",
+  );
+  expect(screen.queryByText(/Saved model:/)).not.toBeInTheDocument();
 });

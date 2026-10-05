@@ -179,15 +179,24 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(send(&url, &format!("{}?code=a&code=b", url.path()), "")
             .await
             .starts_with("HTTP/1.1 400"));
-        let response = send(
-            &url,
-            &format!(
-                "{}?code=one%2Btime&state=attempt%2Bstate&extra=a&extra=b",
-                url.path()
-            ),
-            "",
-        )
-        .await;
+        // Keep a second connection queued behind the callback. Its identity stays
+        // tied to this listener even if another test later reuses the port.
+        let address = ("127.0.0.1", url.port().unwrap());
+        let mut callback = TcpStream::connect(address).await.unwrap();
+        let queued = TcpStream::connect(address).await.unwrap();
+        callback
+            .write_all(&request(
+                &format!("127.0.0.1:{}", url.port().unwrap()),
+                &format!(
+                    "{}?code=one%2Btime&state=attempt%2Bstate&extra=a&extra=b",
+                    url.path()
+                ),
+                "",
+            ))
+            .await
+            .unwrap();
+        let mut response = String::new();
+        callback.read_to_string(&mut response).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 200"));
         assert!(response.contains("Cache-Control: no-store"));
         assert!(response.contains("Referrer-Policy: no-referrer"));
@@ -196,8 +205,9 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(!response.contains("one+time"));
         assert!(!response.contains("attempt"));
         assert!(!response.contains("one%2Btime"));
+        queued
     };
-    let (result, ()) = tokio::join!(wait, browser);
+    let (result, mut queued) = tokio::join!(wait, browser);
     let expected = response(&[
         ("code", "one+time"),
         ("state", "attempt+state"),
@@ -210,9 +220,15 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
     );
     assert_eq!(result, Ok(expected));
     assert!(state.0.lock().unwrap().is_none());
-    assert!(TcpStream::connect(("127.0.0.1", url.port().unwrap()))
+    let mut byte = [0];
+    let closed = tokio::time::timeout(Duration::from_secs(5), queued.read(&mut byte))
         .await
-        .is_err());
+        .expect("completed callback must close queued connections");
+    match closed {
+        Ok(0) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => (),
+        other => panic!("expected queued connection to close, got {other:?}"),
+    }
     assert!(state.wait(id).await.is_err());
 }
 

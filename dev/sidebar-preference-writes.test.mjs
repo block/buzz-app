@@ -22,6 +22,9 @@ async function harness(chunkBytes) {
     viewer = getPublicKey(key);
   let handler, queryFailure, publicationFailure;
   let conflict = false;
+  let queryGate;
+  const received = [];
+  const requestWaiters = new Map();
   const heads = new Map(),
     calls = [];
   const server = createServer((req, res) => {
@@ -36,6 +39,12 @@ async function harness(chunkBytes) {
         }
       };
     }
+    const incoming = req[Symbol.asyncIterator].bind(req);
+    req[Symbol.asyncIterator] = async function* () {
+      yield* { [Symbol.asyncIterator]: incoming };
+      received.push(req.url);
+      requestWaiters.get(req.url)?.();
+    };
     handler(req, res);
   });
   await relayBrokerPlugin({
@@ -65,6 +74,12 @@ async function harness(chunkBytes) {
         if (!conflict)
           heads.set(body.tags.find(([name]) => name === "d")[1], body);
         return Response.json({ accepted: true, event_id: body.id });
+      }
+      if (queryGate) {
+        const held = queryGate;
+        queryGate = undefined;
+        held.started.resolve();
+        await held.release.promise;
       }
       if (queryFailure) return queryFailure;
       // Model an empty stale replica: only strong reads observe the writer head.
@@ -96,6 +111,19 @@ async function harness(chunkBytes) {
     transport,
     calls,
     heads,
+    holdNextQuery() {
+      const held = {
+        started: Promise.withResolvers(),
+        release: Promise.withResolvers(),
+      };
+      queryGate = held;
+      return held;
+    },
+    received(route) {
+      const url = `/api/relay/${route}`;
+      if (received.includes(url)) return Promise.resolve();
+      return new Promise((resolve) => requestWaiters.set(url, resolve));
+    },
     failQuery(value) {
       queryFailure = value;
     },
@@ -314,3 +342,60 @@ it.each(["sidebar-assignment", "sidebar-star"])(
     expect(h.calls).toEqual([]);
   },
 );
+
+// All four routes share body handling; sort alone retains its larger budget.
+it("accepts split UTF-8 sort intents above the other routes' 2 KiB budget", async () => {
+  const h = await harness(1);
+  const sectionIds = Array.from(
+    { length: 20 },
+    (_, i) => `${i}-${"é".repeat(100)}`,
+  );
+  const group = `section:${sectionIds[0]}`;
+  const intent = { group, mode: "recent", sectionIds };
+  expect(Buffer.byteLength(JSON.stringify(intent))).toBeGreaterThan(2048);
+  expect(Buffer.byteLength(JSON.stringify(intent))).toBeLessThan(32 * 1024);
+  const response = await h.post(intent, undefined, "sidebar-sort");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ groups: { [group]: "recent" } });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+});
+
+it("serializes different sidebar endpoints through one relay queue", async () => {
+  const h = await harness();
+  const held = h.holdNextQuery();
+  const star = h.post({ channelId: "alpha", starred: true });
+  await held.started.promise;
+  const sort = h.post(
+    { group: "channels", mode: "recent", sectionIds: [] },
+    undefined,
+    "sidebar-sort",
+  );
+  try {
+    // Both HTTP requests have reached the broker before the first read completes.
+    await h.received("sidebar-sort");
+  } finally {
+    held.release.resolve();
+  }
+  const responses = await Promise.all([star, sort]);
+  expect(responses.map(({ status }) => status)).toEqual([200, 200]);
+  await Promise.all(responses.map((response) => response.json()));
+  expect(
+    h.calls.map(({ body, url }) => [
+      new URL(url).pathname,
+      Array.isArray(body)
+        ? body[0]["#d"][0]
+        : body.tags.find(([name]) => name === "d")[1],
+    ]),
+  ).toEqual([
+    ["/query", "channel-stars"],
+    ["/events", "channel-stars"],
+    ["/query", "channel-stars"],
+    ["/query", "channel-sort"],
+    ["/events", "channel-sort"],
+    ["/query", "channel-sort"],
+  ]);
+});

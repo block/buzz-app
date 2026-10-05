@@ -165,11 +165,12 @@ export interface ChannelQueries {
   ): Promise<void>;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
-   * membership change on one it already carries, without a full rediscovery. */
+   * membership change on one it already carries, without a full rediscovery.
+   * Returns true only when the read supplied a fresh roster. */
   refreshRoster?(
     channelId: string,
     options?: ChannelReadOptions,
-  ): Promise<void>;
+  ): Promise<boolean>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

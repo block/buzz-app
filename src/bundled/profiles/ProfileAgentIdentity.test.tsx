@@ -14,6 +14,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { bytesToHex } from "nostr-tools/utils";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { attestedOwner } from "../../features/agents/owner-attestation";
@@ -701,6 +702,7 @@ it("offers instructions only for a signed owner with a unique native instance", 
         target={profileTarget(agent.pubkey) ?? ""}
         close={() => {}}
       />,
+      { wrapper: ToastProvider },
     );
     await screen.findByRole("heading", { name: "Helper" });
     if (viewer === ownerKey) {

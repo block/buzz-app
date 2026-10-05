@@ -246,7 +246,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
           !isTauri()
             ? "Open Buzz desktop to use shared compute."
             : phase
-              ? phaseLabels[phase]
+              ? phase === "ready" && status?.sharing && !status.modelReady
+                ? "Preparing to share"
+                : phaseLabels[phase]
               : status?.available === false
                 ? "Unavailable"
                 : "Checking status…"
@@ -283,8 +285,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
             {status.sharing && status.download && (
               <p role="status">
                 {status.download.done
-                  ? "Download complete; loading model…"
-                  : `Downloading ${status.download.file ?? status.download.label}`}
+                  ? "File downloaded; preparing model…"
+                  : `Downloading ${status.download.file ?? status.download.label} (this file)`}
                 {!status.download.done &&
                   status.download.downloadedBytes != null &&
                   ` · ${(status.download.downloadedBytes / 1e9).toFixed(2)} GB`}
@@ -313,7 +315,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
             {status.sharing && (
               <p role="status">
                 {phase === "ready"
-                  ? `Sharing ${status.sharing}`
+                  ? status.modelReady
+                    ? `Sharing ${status.sharing}`
+                    : `Preparing to share ${status.sharing} — not serving yet`
                   : phase === "starting"
                     ? `Starting sharing ${status.sharing}…`
                     : phase === "failed"

@@ -145,9 +145,11 @@ export function ShareModelPicker({
       {entry && (
         <p className="text-body-sm text-secondary">
           {entry.installed
-            ? "Already installed"
+            ? "GGUF cached; Mesh may need additional serving files"
             : `Downloads ${entry.size ?? "model weights"} when you share`}
-          . Memory fit: {entry.fit.replaceAll("_", " ")}.
+          {entry.fit === "unknown"
+            ? ". Model size estimate unavailable."
+            : `. Memory fit: ${entry.fit.replaceAll("_", " ")}.`}
         </p>
       )}
       {advanced &&

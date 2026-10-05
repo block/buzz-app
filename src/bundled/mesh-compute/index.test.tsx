@@ -321,7 +321,7 @@ it("starts sharing the selected model through the existing community lease", asy
 
 it.each([
   ["starting", "Starting sharing /models/local.gguf…", true],
-  ["ready", "Sharing /models/local.gguf", false],
+  ["ready", "Preparing to share /models/local.gguf", false],
   ["failed", "Sharing failed for /models/local.gguf", false],
 ] as const)(
   "shows serving intent truthfully in %s",

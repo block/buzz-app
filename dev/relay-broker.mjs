@@ -13,6 +13,7 @@ import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
+import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
@@ -65,8 +66,10 @@ import {
   readSnapshotText,
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
+import { readRelayLibrary } from "../src/features/agents/relay-library.ts";
+import { eventDto } from "../src/features/relay/events.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
-import { createBuilderlab } from "./builderlab.mjs";
+import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
@@ -540,6 +543,37 @@ export function validAgentEnrollment(event) {
   );
 }
 /** Base Buzz agent delete: only removal of one member, relay-authorized. */
+/** The owner's NIP-09 deletion of one of their own kind 30177 agent records. */
+export function validAgentRecordDeletion(event, owner) {
+  const hex = /^[0-9a-f]{64}$/;
+  const [coordinate, clientId, ...extra] = Array.isArray(event?.tags)
+    ? event.tags
+    : [];
+  const [kind, author, agent, ...rest] =
+    Array.isArray(coordinate) &&
+    coordinate.length === 2 &&
+    coordinate[0] === "a" &&
+    typeof coordinate[1] === "string"
+      ? coordinate[1].split(":")
+      : [];
+  return (
+    event?.kind === 5 &&
+    event.content === "" &&
+    Number.isSafeInteger(event.created_at) &&
+    event.created_at >= 0 &&
+    !extra.length &&
+    (clientId === undefined ||
+      (Array.isArray(clientId) &&
+        clientId.length === 2 &&
+        clientId[0] === "client-id" &&
+        typeof clientId[1] === "string")) &&
+    kind === "30177" &&
+    !rest.length &&
+    author === owner &&
+    hex.test(author) &&
+    hex.test(agent ?? "")
+  );
+}
 export function validAgentRemoval(event) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const [h, p, clientId, ...extra] = Array.isArray(event?.tags)
@@ -824,7 +858,7 @@ export function relayBrokerPlugin({
                 raw ? JSON.parse(raw) : {},
               );
               return result
-                ? json(res, 200, result)
+                ? json(res, builderlabResponseStatus(result), result)
                 : json(res, 404, { error: "Unknown Builderlab route" });
             } catch (error) {
               return json(res, 502, {
@@ -858,6 +892,52 @@ export function relayBrokerPlugin({
             return json(res, 200, { ...stats, connects: upstream.connects() });
           if (url.pathname === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
+          if (
+            url.pathname === "/api/relay/prepare-remote-agent-authorization" &&
+            req.method === "POST"
+          ) {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 4096)
+                return json(res, 413, {
+                  error: "Authorization request is too large",
+                });
+            }
+            try {
+              const { owner, agentPubkey } = JSON.parse(raw);
+              if (owner !== viewer)
+                return json(res, 403, {
+                  error: "The agent owner is not your signed-in identity",
+                });
+              if (
+                typeof agentPubkey !== "string" ||
+                !/^[0-9a-f]{64}$/.test(agentPubkey)
+              )
+                throw new Error(
+                  "Agent pubkey must be 64 lowercase hex characters",
+                );
+              if (agentPubkey === viewer)
+                throw new Error("Owner and agent pubkeys must differ");
+              cancel.signal.throwIfAborted();
+              const digest = createHash("sha256")
+                .update(`nostr:agent-auth:${agentPubkey}:`)
+                .digest();
+              return json(res, 200, [
+                "auth",
+                viewer,
+                "",
+                Buffer.from(schnorr.sign(digest, key)).toString("hex"),
+              ]);
+            } catch (error) {
+              return json(res, 400, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Owner authorization failed",
+              });
+            }
+          }
           const parts = url.pathname.split("/").filter(Boolean);
           const scoped = parts.length === 4;
           let id;
@@ -1020,6 +1100,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-sort"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1163,6 +1244,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": ["channel-mutes"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1287,6 +1369,7 @@ export function relayBrokerPlugin({
                     authors: [viewer],
                     "#d": [starring ? "channel-stars" : "channel-sections"],
                     limit: 1,
+                    consistency: "strong",
                   },
                 ];
                 const lane = admissions(relay, viewer).api;
@@ -1432,6 +1515,7 @@ export function relayBrokerPlugin({
               ],
               channelLifecycle: true,
               channelDetails: true,
+              memberAdministration: true,
               identityArchives: true,
               workflowReads: true,
               projectGit: true,
@@ -1939,6 +2023,8 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/channel-details-sign",
               "/api/relay/channel-details-publish",
+              "/api/relay/member-administration-sign",
+              "/api/relay/member-administration-publish",
               "/api/relay/channel-lifecycle-sign",
               "/api/relay/channel-lifecycle-publish",
               "/api/relay/identity-archive-sign",
@@ -1952,6 +2038,7 @@ export function relayBrokerPlugin({
               "/api/relay/authorize-agent",
               "/api/relay/agent-log-proof",
               "/api/relay/resolve-agent-community",
+              "/api/relay/agent-inventory",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
@@ -2085,31 +2172,105 @@ export function relayBrokerPlugin({
             ).toString("hex");
             return json(res, 200, { signature });
           }
-          if (route === "/api/relay/resolve-agent-community") {
+          if (
+            [
+              "/api/relay/resolve-agent-community",
+              "/api/relay/agent-inventory",
+            ].includes(route)
+          ) {
+            const inspecting = route === "/api/relay/agent-inventory";
             if (
-              !scoped ||
-              filters?.owner !== viewer ||
-              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
-              filters.pubkey === viewer ||
-              filters?.confirmed !== true ||
-              Object.keys(filters).length !== 3
+              inspecting
+                ? !scoped ||
+                  !filters ||
+                  typeof filters !== "object" ||
+                  Array.isArray(filters) ||
+                  Object.keys(filters).length !== 0
+                : !scoped ||
+                  filters?.owner !== viewer ||
+                  !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+                  filters.pubkey === viewer ||
+                  filters?.confirmed !== true ||
+                  Object.keys(filters).length !== 3
             )
               return json(res, 400, {
                 error: "Explicit owner community resolution required",
               });
+            cancel.signal.throwIfAborted();
             // The signed account confirms setup intent. Native verifies it against
             // retained source-owner authorization; inventory is not permission.
-            cancel.signal.throwIfAborted();
-            const relayUrl = relay.replace(/^https:/, "wss:");
-            const digest = createHash("sha256")
-              .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
-              .digest();
-            return json(res, 200, {
-              pubkey: filters.pubkey,
-              relayUrl,
-              owner: viewer,
-              signature: Buffer.from(schnorr.sign(digest, key)).toString("hex"),
-            });
+            if (!inspecting) {
+              cancel.signal.throwIfAborted();
+              const relayUrl = relay.replace(/^https:/, "wss:");
+              const digest = createHash("sha256")
+                .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
+                .digest();
+              return json(res, 200, {
+                pubkey: filters.pubkey,
+                relayUrl,
+                owner: viewer,
+                signature: Buffer.from(schnorr.sign(digest, key)).toString(
+                  "hex",
+                ),
+              });
+            }
+            // Discovery is independent of setup and local credential import.
+            let inventory;
+            try {
+              inventory = await readRelayLibrary(
+                {
+                  read: async (filters, { signal }) => {
+                    const body = JSON.stringify(filters);
+                    const url = `${relay}/query`;
+                    const auth = finalizeEvent(
+                      {
+                        kind: 27235,
+                        created_at: Math.floor(Date.now() / 1000),
+                        content: "",
+                        tags: [
+                          ["u", url],
+                          ["method", "POST"],
+                          [
+                            "payload",
+                            createHash("sha256").update(body).digest("hex"),
+                          ],
+                          ["nonce", randomBytes(16).toString("hex")],
+                        ],
+                      },
+                      key,
+                    );
+                    const response = await fetchUpstream(url, {
+                      method: "POST",
+                      body,
+                      redirect: "error",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
+                      },
+                      signal,
+                    });
+                    if (!response.ok) throw new Error("Inventory read failed");
+                    const text = await response.text();
+                    if (Buffer.byteLength(text) > 8 * 1024 * 1024)
+                      throw new Error("Inventory evidence is too large");
+                    const events = JSON.parse(text);
+                    if (!Array.isArray(events))
+                      throw new Error("Invalid inventory page");
+                    return events.map(eventDto);
+                  },
+                },
+                viewer,
+                AbortSignal.any([cancel.signal, AbortSignal.timeout(10000)]),
+              );
+            } catch {
+              return json(res, 409, {
+                error: "Community inventory could not be read",
+              });
+            }
+            const identities = inventory.identities.map(
+              (identity) => identity.pubkey,
+            );
+            return json(res, 200, { identities });
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -2295,6 +2456,9 @@ export function relayBrokerPlugin({
           const details =
             route === "/api/relay/channel-details-sign" ||
             route === "/api/relay/channel-details-publish";
+          const administration =
+            route === "/api/relay/member-administration-sign" ||
+            route === "/api/relay/member-administration-publish";
           const lifecycle =
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/channel-lifecycle-publish";
@@ -2304,15 +2468,26 @@ export function relayBrokerPlugin({
           const signing =
             route === "/api/relay/sign" ||
             route === "/api/relay/channel-details-sign" ||
+            route === "/api/relay/member-administration-sign" ||
             route === "/api/relay/channel-lifecycle-sign" ||
             route === "/api/relay/identity-archive-sign";
           const publishing =
             route === "/api/relay/publish" ||
             route === "/api/relay/channel-details-publish" ||
+            route === "/api/relay/member-administration-publish" ||
             route === "/api/relay/channel-lifecycle-publish" ||
             route === "/api/relay/identity-archive-publish";
           if (signing || publishing) {
-            if (archive) {
+            if (administration) {
+              try {
+                validateMemberAdministrationTemplate(filters, viewer);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid member administration command",
+                  sent: false,
+                });
+              }
+            } else if (archive) {
               try {
                 validateArchiveRequestTemplate(filters);
                 if (!(await getAuthority(relay)).archiveAuthority)
@@ -2407,7 +2582,11 @@ export function relayBrokerPlugin({
                 });
             } else if (
               ![7, 9, 40003].includes(filters?.kind) &&
-              !validMessageDeletion(filters)
+              !validMessageDeletion(filters) &&
+              !validAgentRecordDeletion(
+                filters,
+                signing ? viewer : filters?.pubkey,
+              )
             ) {
               try {
                 validateWorkflowEvent(

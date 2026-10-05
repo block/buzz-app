@@ -1,8 +1,9 @@
 # Virtua 0.51.0 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
-`src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller is
-patched; CommonJS, window scrolling, and other-framework exports are untouched.
+`src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller
+and store are patched; CommonJS, window scrolling, and other-framework exports
+are untouched.
 Keep the dependency pinned to 0.51.0 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
 
@@ -20,6 +21,28 @@ fractional, and the existing scheduling, focus and dwell rules are unchanged.
 Installed-driver regressions cover both entry points and RTL; a browser regression
 sets a fractional list height explicitly and requires the final row to be fully
 visible without a pixel tolerance.
+
+## Buffer while the scroll direction is frozen
+
+Virtua renders `bufferSize` only ahead of the scroll direction, and updates that
+direction only during native scrolling. A shift (prepended history) or imperative
+scroll freezes it until the 150ms inferred idle. Continuous trackpad flicks can
+keep it frozen: a downward flick after an upward prepend renders no rows below the
+viewport, and React commits one frame behind, so the leading edge stays blank for
+the rest of the gesture. The range therefore buffers both sides while the
+direction is frozen, as it already does when idle. Native directional buffering
+is unchanged, and the extra buffer is no larger than the idle buffer.
+
+A shift otherwise counts every row resize as an anchoring correction. Rows wholly
+below the viewport are excluded, so a newly buffered row there that resizes (a
+video loading, say) cannot move the reading position. Rows above and in the
+viewport, including prepended history, are still corrected.
+
+In an isolated WKWebView over real channel history (images, video, live relay),
+fast alternating flicks were measured per frame. In two instrumented runs, all 46
+DOM-coverage gap frames moved downward while shift mode held an upward direction.
+Stock showed 3–96 gap frames per run over ten runs; the patch showed none in six.
+Short main-thread stalls and image decode dips remain.
 
 ## Failure and chosen boundary
 
@@ -90,6 +113,75 @@ including a replay already queued as a microtask, and verify a fresh navigation
 still responds to measurements. The browser navigation case exercises real wheel
 input and late row growth, asserting position as well as arrival count. These are
 not native momentum/compositor acceptance, and do not change the limits above.
+
+Cancellation stays owned by those native capture listeners; the timeline does not
+need a second imperative cancellation API. The installed-driver controls cover
+all four input events plus already-queued replays and disposal/remount.
+
+## Corrections after a browser clamp
+
+When rows above the viewport shrink, the automatic correction moves the offset
+by the same amount. Stock Virtua applies it relatively unless the target reaches
+the end, but the layout that `scrollBy` forces clamps an offset beyond the new
+end first, so the shrink lands twice: once from the clamp, once from the
+correction. WebKit reports an integer `scrollTop`, which reads up to 1px short
+of a fractional end, so a reader at the bottom missed the end test there while
+Chromium's fractional offset met it.
+
+The element driver takes the absolute path when the target lies within 1px of
+the end, rounding outward as before, and when the last observed offset lies
+more than 1px beyond the new end, scrolling to the exact target. Interior
+corrections, growth and prepend shifts stay relative. The installed-driver
+regressions clamp the fake viewport like a browser and cover an integer offset
+at a fractional end and a shrink larger than the reader's gap to the end.
+`ChannelTimeline` treats an upward offset that arrives with a shrink as reader
+input only after a gesture; while following, it re-pins the bottom instead of
+demoting to Jump-to-latest.
+
+## A shift outlives a late measurement frame
+
+While older rows are being prepended (`shift`), the store compensates every
+resize so the reader keeps their distance from the end, and it ends the shift
+from its scroll-end timer, 150 ms after the shift jump's own scroll event. The
+prepended rows are measured in the frame after that jump, together with the
+former first row, which the same render re-laid out as a continuation without
+its day divider and author header. When that frame runs late, the timer fires
+first and the batch meets native policy, which keeps the viewport start: the
+former first row sits at that start, so its shrink is dropped, and so is the
+growth of a prepended row whose estimated bottom WebKit's integer `scrollTop`
+reads short of. A reader at the top of history who loaded older messages saw
+their content move about 76 px on Linux WebKit.
+
+The store counts the rows a shift prepends and, at scroll-end, keeps shift
+policy while any of them inside the rendered range is still unmeasured; the
+resize batch that measures them ends the shift. A shift whose prepended rows
+are not mounted ends at scroll-end as before, a batch inside the window is
+unchanged, and a visible row that grows after the shift (an image loading)
+keeps the viewport start as before. Installed-store regressions cover the late
+batch, unrelated/partial batches before completion, the stock window and an
+unmounted prepend.
+
+## Viewport size is delivered in the observer callback
+
+Row resizes are delivered in the next animation frame, outside the native
+ResizeObserver callback. Rendering from that callback can mount rows at the
+same DOM depth and cause WebKit's "loop completed with undelivered
+notifications" cycle. The scroll viewport's own size is an exception: it is
+delivered in the callback. It can only mount rows that are deeper in the DOM,
+which the browser may observe in the same frame without that cycle. Their own
+sizes are still deferred.
+
+When the viewport size arrives, the driver also reads the native scroll offset
+first. A channel switch scrolls imperatively before its scroll event is
+dispatched; without that read, the first range is computed at the old offset
+and the correct rows render one frame later.
+
+Together these let the first rows of a warm channel switch paint one frame
+earlier (median three frames to two). On one Mac, the
+`channel-opening` warm-switch median went from 52–58 ms to 40–42 ms (24 samples
+per run, interleaved runs). Installed-driver regressions cover immediate
+viewport delivery with deferred rows, removal and remount, and the offset read
+in LTR and RTL.
 
 ## Automated checks
 

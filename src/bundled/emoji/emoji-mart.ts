@@ -185,7 +185,7 @@ export function mountEmojiMart({
       width: 100% !important;
     }
     .scroll {
-      padding-inline: var(--space-3);
+      padding-inline: var(--picker-grid-gutter, var(--space-3));
     }
     .scroll > div {
       width: 100% !important;
@@ -199,8 +199,8 @@ export function mountEmojiMart({
       line-height: var(--text-caption--line-height);
     }
     .search.search-field {
-      width: calc(100% - var(--space-2));
-      margin: var(--picker-search-top, var(--space-3)) var(--space-1) var(--space-3);
+      width: calc(100% - 2 * var(--picker-search-margin, var(--space-1)));
+      margin: var(--picker-search-top, var(--space-3)) var(--picker-search-margin, var(--space-1)) var(--space-3);
     }
     .search .icon {
       top: auto;
@@ -218,9 +218,15 @@ export function mountEmojiMart({
       opacity: 1;
       pointer-events: none;
     }
+    /* Emoji Mart fills every SVG; Tabler outline assets must stay unfilled. */
+    svg.icons-tabler-outline {
+      fill: none;
+    }
     .search .icon svg {
+      position: static;
       width: 1rem;
       height: 1rem;
+      color: inherit;
     }
 
     .spacer {

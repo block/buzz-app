@@ -1,7 +1,7 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
-and Rust 1.97.1
+and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the
@@ -60,6 +60,26 @@ need their own validation.
   sessions short. Press Ctrl+C to finalize the capture; the command prints the
   `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
   Chromium DevTools (**Performance** > **Load profile**).
+  Use `just web profile --scenario <file>` for an unattended capture. The file
+  is any JavaScript module, inside or outside the repository (a relative path
+  resolves from the repository root), that default-exports
+  `async (page, { signal }) => {}` and drives the Playwright `page`. When it
+  returns, the command saves the app's [client metrics](client-metrics.md)
+  export as `client-metrics.json` and exits without Ctrl+C. A scenario that
+  throws or does not finish within five minutes fails the run: the command
+  prints the scenario's stack and the directory holding the remaining
+  artifacts, saves no client metrics, and exits nonzero. Ctrl+C during a
+  scenario also saves no client metrics but exits zero, like any interrupted
+  capture. `signal` aborts on Ctrl+C, at the timeout, and when the capture ends,
+  so pass it to any wait that would otherwise outlive the run. A scenario
+  outside the repository resolves bare imports from its own location, not from
+  the repository's `node_modules`. A scenario runs as your real account, so
+  keep it read-only. Every capture starts from a fresh browser profile with no
+  community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set. `manifest.json`
+  records the scenario file and `relay`, the `https://` origin of the
+  `BUZZ_RELAY_URL` that Vite resolves from the environment or its `.env` files;
+  a value the dev server would reject is recorded as `null`. To profile in
+  another Vite mode, pass it as `--mode <mode>` so the manifest follows it.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -329,7 +349,9 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
+- **JavaScript:** two runners, each with Biome, one TypeScript check and a frontend
+  build. Vitest splits all test files across the runners, with two workers each;
+  both shards must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
@@ -337,16 +359,25 @@ the complete suite still runs with `pnpm test` / `just scan`:
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
-  runners; `CI required` still requires both lanes. A separate Ubuntu job builds
-  the native plugin-manager fixture using the repository Rust pin and uploads it
-  for all twelve shards. Shards wait for that job, restore executable permission,
-  and pass its path through `BUZZ_BROWSER_FIXTURE`; local journeys still build
-  with Cargo. No measurements are repeated on shards and no retries hide failures.
+  runners; `CI required` still requires both lanes. A separate required Ubuntu
+  job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
+  It uploads a tar with executable permission, checkout revision and SHA-256
+  checksum; shards download by exact same-run artifact ID and verify all three
+  before running. A missing artifact fails CI rather than rebuilding. Local
+  non-CI journeys retain the locked Cargo build. Each browser test uses its own
+  mutable fixture home. No measurements are repeated on shards and no retries
+  hide failures.
 - Both browser lanes use the version-matched, digest-pinned
   [Playwright Docker image](https://playwright.dev/docs/docker), which supplies
   browsers and Linux libraries without per-job apt provisioning. Follow the
   [CI container guidance](https://playwright.dev/docs/ci#via-containers).
   Update both image references and digests when upgrading `@playwright/test`.
+  Setup verifies installed Playwright against image metadata and launches the
+  selected engine (both for measurements) before tests; it never downloads a
+  missing browser. Hermit pins Node/pnpm through explicit `./bin/` entry points
+  and fails closed if the pnpm store path cannot be resolved. Containers use
+  `HOME=/root` and trust only their exact checked-out workspace. Native host
+  jobs keep their normal toolchain and library setup.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.

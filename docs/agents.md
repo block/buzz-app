@@ -23,14 +23,14 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- Selected definitions remain one card each, including definitions without an
-  identity. Exact linked keys remain available in each card’s identity disclosure, including namesakes; unlinked and
-  unmatched identities use Custom agents/Other identities groupings. Unlike old Buzz's
-  runtime-dependent representative selection, this read-only view shows all
-  non-archived linked keys and has no profile/start action or running badge.
-- Confirmed relay archives hide identity rows, not definition cards. Missing
-  archive evidence is labeled; it does not erase the saved library. This is
-  display behavior, never mention permission.
+- The library shows one tile per exact identity, grouped only by explicit profile
+  links. Each tile discloses its full public key. Profiles with no linked identity
+  appear separately; an archived identity does not become an empty profile.
+- Only distinct keys with the same displayed name need a short npub suffix. Names
+  alone never create a profile group. Suffix collisions extend deterministically using
+  the complete inventory, including identities hidden by archive filtering.
+- Missing archive evidence keeps identities visible. Archive filtering affects
+  display only, never mention permission or runtime control.
 - One lazy host read per opening/Refresh; no polling or relay-directory startup
   scan. Concurrent host requests coalesce. Read caps: 8 MiB / 2000 records;
   malformed/missing files fail visibly without echoing their contents. The host
@@ -100,12 +100,33 @@ usable, with partial failures surfaced through Retry. `status: ready` means usab
 not complete: automatic-recipient inference must honor `complete`, and automatic
 saved-template resolution must wait for required pending identity/roster evidence.
 
+Archive visibility has one owner. The projection reads `session.archives` and
+exposes `identities` (every known agent, including archived ones, for facts about
+existing content) and `selectable` (known-archived agents removed; unknown state
+fails open; the viewer is never hidden). Every forward-looking agent chooser uses
+`selectable`, including the session agent picker and profile **Add to channel**.
+Session admission in `workSessions.addAgents` rejects every known-archived key,
+including parent-channel members; unknown archive state keeps the library and
+parent-member rules. Selectors demand the lazy archive read through
+`useAgentChoices(session, includeLegacy, true)`, and the session picker shows an
+archive read failure with Retry. The same base rule,
+`archiveHides`, filters mention recipients, channel member invitations and member
+addition, and the Agents page and Agent Library. The Agents page keeps one
+documented exception: an archived identity with local controls stays listed so it
+can still be managed. Do not reimplement the rule per surface.
+
+Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
+an identity without its own avatar shows its linked definition's avatar
+(`inheritDefinitionAvatars`). Surfaces read `identity.avatar` and do not repeat
+the lookup.
+
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
 access. Session invitations retain their existing rules, including legacy choices.
-Templates additionally require verified non-archived state, and legacy-only choices
+Templates additionally require verified non-archived state (`templateAgentChoices`
+returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.
 Template pickers and agent identity details display npubs, not raw hex keys.
 Save-as-template discloses an incomplete inferred
@@ -360,10 +381,23 @@ clear only the matching agent/channel/thread scope and suppress delayed typing
 for two seconds. Disconnect, channel-route failure, disable, access/cache clear
 and disposal drop typing evidence. A fresh observer frame does not refresh it.
 
-The sidebar shows a quiet working dot from fresh channel observer turns or
-channel-scoped typing. Thread-only typing never becomes a channel fallback.
-Observer records have no thread identity, so details remain explicitly
-channel-wide. No harness change, new subscription, directory or timer is added.
+The sidebar's quiet working dot has two independent sources. The plugin source
+is fresh channel observer turns or the channel-scoped typing above, and follows
+the plugin's lifecycle. Observer records have no thread identity, so its details
+remain explicitly channel-wide.
+
+The display-only source is `session.typing`, not the plugin's typing evidence:
+typing by one of the viewer's own agents (the local library) anywhere in the
+channel, threads included. App-managed agents run without observer telemetry, so
+typing is their working signal. Other people's agents, known only from a
+self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
+future timestamps instead of capping them, schedules its own expiry eight
+seconds after the signed timestamp and stays quiet for two seconds after the
+typer's message. It is display-only evidence, not ownership; while the plugin is
+off, the channel popover lists such an agent without a **View activity** action.
+A timeline thread summary shows the same dots from this source while one of the
+viewer's agents types in that thread; a thread with no replies yet has no summary to mark.
+No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
 
@@ -520,5 +554,21 @@ service. Each relay session binds its own view. A ready native record takes
 precedence only in its matching community; otherwise the ready legacy display
 inventory supplies the name, then the public profile. Plugin disable restores
 public-profile names. These labels never change identity keys, membership,
-credentials, or runtime admission. Profile panels consume this view; other name
-surfaces are being migrated separately.
+credentials, or runtime admission. Profile panels, messages, mention choices,
+activity, conversation labels and new notifications consume this view. Mention
+parsing still uses signed identity evidence before resolving its visible label.
+
+### Additive community inventory
+
+The active session reads the owner's kind-30175 profiles and kind-30177 identities
+from its accessible relay. It also retains the local library reader. The inventory
+joins exact public keys, not equal names; explicit profile references use the
+publisher's slug mapping only when local definitions do not collide. Local names
+and artwork win for matching keys. Native configuration still wins within its
+matching community. A failed source leaves the other source visible with a warning.
+
+Discovery is not global coverage, verified membership, credentials, or execution
+status. Native cards keep their controls. Other known identities appear in a
+read-only section. Each card offers its own Import; the separate installation
+browser appears only for repair.
+No keys, config, memory, membership, or runtime state are changed by discovery.

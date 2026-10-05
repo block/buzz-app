@@ -1,5 +1,20 @@
+import { settleShellToggle, openPage } from "./navigation.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+
+import { open, wheel } from "./timeline.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
 
 test.use({ savedSidebar: true });
 
@@ -17,6 +32,10 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       ),
     )
     .toBe(true);
+  // Without a saved position, startup reveals the current entry.
+  await expect(sidebar.locator('[aria-current="page"]').first()).toBeInViewport(
+    { ratio: 1 },
+  );
   const geometry = await sidebar.evaluate((viewport) => {
     const frame = viewport.parentElement;
     if (!(frame instanceof HTMLElement))
@@ -28,14 +47,12 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       rightInset: panelBounds.right - bounds.right,
       clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
-      scrollTop: viewport.scrollTop,
     };
   });
   expect(geometry).toEqual({
     rightInset: 2,
     clipped: false,
     paddingTop: 8,
-    scrollTop: 0,
   });
 });
 
@@ -238,7 +255,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
     else await expect(content).toHaveAttribute("inert", "");
     await expect
       .poll(() => section.evaluate((el) => el.getBoundingClientRect().height))
-      .toBe(opening ? expanded : 28);
+      .toBe(opening ? expanded : 32);
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await summary.click();
@@ -253,11 +270,11 @@ test("section disclosure toggles content and honors reduced motion", async ({
   expect(durations).toEqual(["0s", "0s"]);
   expect(
     await section.evaluate((el) => el.getBoundingClientRect().height),
-  ).toBe(28);
+  ).toBe(32);
 });
 
 // Browser layout verifies the header contract, including inline icon sizing.
-test("top bar keeps 28px controls, 16px icons and an 18px Bestie image", async ({
+test("top bar uses consistent square controls and translucent ghost fills", async ({
   page,
   app,
 }, info) => {
@@ -269,19 +286,81 @@ test("top bar keeps 28px controls, 16px icons and an 18px Bestie image", async (
   expect(await controls.count()).toBeGreaterThanOrEqual(5);
   for (const control of await controls.all()) {
     const box = await control.boundingBox();
-    expect([box.width, box.height]).toEqual([28, 28]);
+    expect([box.width, box.height]).toEqual([32, 32]);
   }
-  const icons = header.locator(
-    '.buzz-button[data-icon-variant] svg, .buzz-button[data-icon-variant="chrome"] img:not([src="/bestie.png"])',
-  );
+  const icons = header.locator(".buzz-button[data-icon-variant] svg");
   expect(await icons.count()).toBeGreaterThanOrEqual(4);
   for (const icon of await icons.all()) {
     const box = await icon.boundingBox();
     expect([box.width, box.height]).toEqual([16, 16]);
   }
-  const bestie = await header.locator('img[src="/bestie.png"]').boundingBox();
-  expect([bestie.width, bestie.height]).toEqual([18, 18]);
-  await page.screenshot({ path: info.outputPath("top-bar.png") });
+  await expect(
+    header.getByRole("button", { name: "Bestie", exact: true }),
+  ).toHaveCount(0);
+  const search = header.getByRole("button", {
+    name: "Search Buzz",
+    exact: true,
+  });
+  await expect(search).toHaveAttribute("data-icon-variant", "ghost");
+  const ghosts = header.locator('[data-icon-variant="ghost"]');
+  await page.mouse.move(700, 500);
+  for (const control of await ghosts.all())
+    await expect(control).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const [group, gap] of [
+      [".shell-communities", 0],
+      [".shell-actions", 8],
+    ]) {
+      const boxes = await header
+        .locator(`${group} .buzz-button[data-icon-variant]`)
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const { x, width } = node.getBoundingClientRect();
+            return { x, width };
+          }),
+        );
+      for (let i = 1; i < boxes.length; i++)
+        expect(boxes[i].x - boxes[i - 1].x - boxes[i - 1].width).toBe(gap);
+    }
+    await expect(
+      header.getByRole("button", { name: "Your profile" }),
+    ).toHaveAttribute("data-icon-shape", "round");
+    for (const control of await ghosts.all()) {
+      await expect(control).toHaveCSS("border-radius", "10px");
+      if (await control.isDisabled()) continue;
+      for (const [mode, fill] of [
+        ["light", "rgba(0, 0, 0, 0.06)"],
+        ["dark", "rgba(255, 255, 255, 0.1)"],
+      ]) {
+        await page.emulateMedia({ colorScheme: mode });
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-color-mode",
+          mode,
+        );
+        await control.hover();
+        await expect(control).toHaveCSS("background-color", fill);
+      }
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await search.hover();
+  await page.screenshot({
+    path: info.outputPath("top-bar.png"),
+    clip: { x: 0, y: 0, width: 1440, height: 100 },
+  });
+  await search.click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await expect(
+    dialog.getByRole("combobox", { name: "Search Buzz" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(search).toBeFocused();
+  await openPage(page, "Bestie");
+  await expect(
+    page.getByRole("heading", { name: "Meet your Bestie" }),
+  ).toBeVisible();
 });
 
 // Real responsive layout owns the Settings overlay and the desktop sidebar.
@@ -305,7 +384,7 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
   await expect(sidebar).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   const box = await toggle.boundingBox();
-  expect([box.width, box.height]).toEqual([28, 28]);
+  expect([box.width, box.height]).toEqual([32, 32]);
   await toggle.click();
   await expect(sidebar).not.toBeVisible();
 
@@ -592,77 +671,79 @@ test("shell toggle restores the shared sidebar for Channels and Agents", async (
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
 // Inbox and Bestie leave companion placement to the shell frame, unlike Messages.
-test("Inbox and Bestie pages retain companion layout across navigation and resize", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const pages = page
-    .getByRole("complementary", { name: "Channel sidebar", exact: true })
-    .getByRole("navigation", { name: "Pages" });
-  const launcher = page.locator('.shell-header button[aria-label="Bestie"]');
-  const companion = page.getByRole("complementary", {
-    name: "Bestie",
-    exact: true,
-  });
-  const checkGeometry = async (body, overlay) => {
-    await expect(companion).toBeVisible();
-    await expect
-      .poll(async () => {
-        const card = await companion.boundingBox();
-        const bounds = await body.boundingBox();
-        if (!card || !bounds) return false;
-        return overlay
-          ? Math.abs(card.x + card.width - bounds.x - bounds.width) < 2 &&
-              card.x < bounds.x + bounds.width
-          : card.x >= bounds.x + bounds.width;
-      })
-      .toBe(true);
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-      .toBe(page.viewportSize().width);
-  };
-  const showNavigation = async () => {
-    if (page.viewportSize().width <= 650)
-      await expect(
-        page.locator("[data-shell-sidebar-toggle]"),
-      ).toHaveAccessibleName(/^(Show|Hide) navigation$/);
-    const show = page.getByRole("button", {
-      name: "Show navigation",
+test.extend({ companionFixture: true })(
+  "Inbox and Bestie pages retain companion layout across navigation and resize",
+  async ({ page, app }) => {
+    await open(page, app);
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    const pages = page
+      .getByRole("complementary", { name: "Channel sidebar", exact: true })
+      .getByRole("navigation", { name: "Pages" });
+    const launcher = page.locator(
+      '.shell-header button[aria-label="Companion fixture"]',
+    );
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
       exact: true,
     });
-    if (await show.isVisible()) await show.click();
-  };
-  const selectChannel = async (name) => {
-    await showNavigation();
-    await sidebar.getByRole("button", { name, exact: true }).click();
-  };
-  const openPage = async (name) => {
-    await showNavigation();
-    await pages.getByRole("button", { name, exact: true }).click();
-    const body = page.getByRole("region", { name, exact: true });
-    await expect(
-      body.getByRole("heading", { name, exact: true }),
-    ).toBeVisible();
-    return body;
-  };
-  for (const width of [1440, 900, 600]) {
-    await page.setViewportSize({ width, height: 950 });
-    let body = await openPage("Inbox");
-    await launcher.click();
-    await checkGeometry(body, width <= 1000);
-    body = await openPage("Bestie");
-    await checkGeometry(body, width <= 1000);
-    await launcher.click();
-    await expect(companion).not.toBeVisible();
-    await selectChannel("Alpha");
-    await launcher.click();
-    body = await openPage("Inbox");
-    await checkGeometry(body, width <= 1000);
-    await launcher.click();
-  }
-});
+    const checkGeometry = async (body, overlay) => {
+      await expect(companion).toBeVisible();
+      await expect
+        .poll(async () => {
+          const card = await companion.boundingBox();
+          const bounds = await body.boundingBox();
+          if (!card || !bounds) return false;
+          return overlay
+            ? Math.abs(card.x + card.width - bounds.x - bounds.width) < 2 &&
+                card.x < bounds.x + bounds.width
+            : card.x >= bounds.x + bounds.width;
+        })
+        .toBe(true);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(page.viewportSize().width);
+    };
+    const showNavigation = async () => {
+      // Inbox/Bestie have no collapsible sidebar toggle at wide widths.
+      if (page.viewportSize().width <= 650) await settleShellToggle(page);
+      const show = page.getByRole("button", {
+        name: "Show navigation",
+        exact: true,
+      });
+      if (await show.isVisible()) await show.click();
+    };
+    const selectChannel = async (name) => {
+      await showNavigation();
+      await sidebar.getByRole("button", { name, exact: true }).click();
+    };
+    const openPage = async (name) => {
+      await showNavigation();
+      await pages.getByRole("button", { name, exact: true }).click();
+      const body = page.getByRole("region", { name, exact: true });
+      await expect(
+        body.getByRole("heading", { name, exact: true }),
+      ).toBeVisible();
+      return body;
+    };
+    for (const width of [1440, 900, 600]) {
+      await page.setViewportSize({ width, height: 950 });
+      let body = await openPage("Inbox");
+      await launcher.click();
+      await checkGeometry(body, width <= 1000);
+      body = await openPage("Bestie");
+      await checkGeometry(body, width <= 1000);
+      await launcher.click();
+      await expect(companion).not.toBeVisible();
+      await selectChannel("Alpha");
+      await launcher.click();
+      body = await openPage("Inbox");
+      await checkGeometry(body, width <= 1000);
+      await launcher.click();
+    }
+  },
+);
 
 // Real text layout: a rename changes scrollWidth without resizing the label box.
 test("channel name fades follow renames without resizing the sidebar", async ({
@@ -677,9 +758,7 @@ test("channel name fades follow renames without resizing the sidebar", async ({
   const originalWidth = await label.evaluate((element) => element.clientWidth);
   const sidebarWidth = (await sidebar.boundingBox()).width;
   await expect(label).not.toHaveAttribute("data-overflowing");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
@@ -828,28 +907,31 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
     exact: true,
   });
   await expect(retry).toBeAttached();
+  const scroller = sidebar.locator('[class*="sidebarScroll"]');
   const scrollToBottom = async (target) => {
     await sidebar.hover();
-    await page.mouse.wheel(0, 800);
+    // Visibility is not input completion: focusing early interrupts WebKit's
+    // smooth wheel at a visible-but-not-fully-scrolled Retry button. The shared
+    // helper observes scrollend before dispatch; an already-reached edge needs
+    // no gesture (and would emit no scrollend).
+    if (
+      await scroller.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop > 1,
+      )
+    )
+      await wheel(page, 800, scroller);
+    await expect
+      .poll(() =>
+        scroller.evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        ),
+      )
+      .toBeLessThanOrEqual(1);
     await expect
       .poll(async () => {
         const bounds = await sidebar.boundingBox();
         const row = await target.boundingBox();
-        // A visible row is not the end of WebKit's asynchronous wheel gesture.
-        // Focusing early can stop it before the bottom padding clears the ring.
-        const atEnd = await target.evaluate((element) => {
-          let scroll = element.parentElement;
-          while (scroll && getComputedStyle(scroll).overflowY !== "auto")
-            scroll = scroll.parentElement;
-          return (
-            !!scroll &&
-            Math.abs(
-              scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
-            ) <= 1
-          );
-        });
         return (
-          atEnd &&
           !!bounds &&
           !!row &&
           row.y >= bounds.y &&

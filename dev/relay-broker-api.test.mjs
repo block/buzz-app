@@ -1,4 +1,7 @@
 import { createConsola } from "consola";
+import { Context } from "@deepseek-ai/cordis";
+import { HostService } from "../src/features/host/service.ts";
+import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -33,7 +36,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
+async function harness(
+  respond,
+  capabilities = {},
+  relayUrl = fixtureRelayUrl,
+  builderlab = {},
+) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -51,6 +59,7 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   });
   const plugin = relayBrokerPlugin({
     relayUrl,
+    builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -125,12 +134,141 @@ async function harness(respond, capabilities = {}, relayUrl = fixtureRelayUrl) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+
+test.each([
+  [202, { status: "aborted" }],
+  [409, { error: { code: "must_archive" } }],
+])(
+  "Builderlab HTTP forwards structured deletion status %s",
+  async (status, result) => {
+    let openLogin;
+    const loginOpened = new Promise((resolve) => {
+      openLogin = resolve;
+    });
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "north.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const upstream = [];
+    const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      open: async (url) => openLogin(url),
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith("/v1/auth/login/exchange"))
+          return Response.json({
+            session_credential: "fixture-only",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/auth/me"))
+          return Response.json({
+            email: "fixture@example.com",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/buzz/communities/delete")) {
+          upstream.push(JSON.parse(init.body));
+          return Response.json({ ...request, ...result }, { status });
+        }
+        throw new Error(`Unexpected fixture request: ${path}`);
+      },
+    });
+    try {
+      const login = fetch(`${h.base}/api/builderlab/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const opened = new URL(await loginOpened);
+      const callback = opened.searchParams.get("returnTo");
+      expect(callback).toBeTruthy();
+      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect((await login).status).toBe(200);
+      const response = await fetch(`${h.base}/api/builderlab/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ ...request, ...result });
+      expect(upstream).toEqual([request]);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("remote agent authorization is owner-bound and works without a community", async () => {
+  // No default community is selected, and any upstream request fails.
+  const h = await harness(
+    () => {
+      throw new Error("Authorization must not contact upstream");
+    },
+    {},
+    "",
+  );
+  try {
+    const owner = (await (await h.get("identity")).json()).viewer;
+    const agentPubkey = getPublicKey(generateSecretKey());
+    const http = globalThis.fetch;
+    vi.stubGlobal("fetch", (url, input) => http(new URL(url, h.base), input));
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
+    const context = new Context();
+    const host = new HostService(context);
+    const tag = await host.prepareRemoteAgentAuthorization(agentPubkey);
+    // The host returns an unconditional proof for the requested agent and owner.
+    expect(await authTagOwner(agentPubkey, tag)).toBe(owner);
+    expect(tag.slice(0, 3)).toEqual(["auth", h.event.pubkey, ""]);
+    // The signature binds the exact agent key to the NIP-OA domain.
+    expect(
+      schnorr.verify(
+        Buffer.from(tag[3], "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agentPubkey}:`)
+          .digest(),
+        Buffer.from(tag[1], "hex"),
+      ),
+    ).toBe(true);
+    const route = "prepare-remote-agent-authorization";
+    for (const rejected of [
+      "invalid", // Malformed key.
+      "A".repeat(64), // Uppercase hex.
+      h.event.pubkey, // Self-attestation.
+      null, // Null agent key.
+      42, // Non-string agent key.
+    ]) {
+      expect(
+        (await h.post(route, { owner: h.event.pubkey, agentPubkey: rejected }))
+          .status,
+      ).toBe(400);
+    }
+    // A different owner cannot use the broker's identity to sign.
+    expect(
+      (await h.post(route, { owner: "f".repeat(64), agentPubkey })).status,
+    ).toBe(403);
+    // The request must explicitly bind the current owner.
+    expect((await h.post(route, { agentPubkey })).status).toBe(403);
+    // A non-object request body is rejected.
+    expect((await h.post(route, null)).status).toBe(400);
+    // Oversized requests are rejected before signing.
+    expect(
+      (await h.post(route, { owner, agentPubkey: "a".repeat(4096) })).status,
+    ).toBe(413);
+    // Successful and rejected authorization requests stay local.
+    expect(h.calls).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await h.close();
+  }
+});
 
 test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
   const h = await harness(success);
@@ -955,6 +1093,27 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
   }
 }, 10000);
 
+test("strong channel confirmation filters reach the upstream query unchanged", async () => {
+  const h = await harness(() => Response.json([]));
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const filters = [
+      {
+        kinds: [39002],
+        "#d": ["11111111-1111-4111-8111-111111111111"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ];
+    await transport.query(filters);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].url).toBe(`${fixtureRelayUrl}/query`);
+    expect(h.calls[0].body).toEqual(filters);
+  } finally {
+    await h.close();
+  }
+});
+
 // Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {
   let release;
@@ -1617,6 +1776,41 @@ test("message/reaction deletions pass real signing and publication without admit
       ])
         expect((await h.post(route, { ...event, tags })).status).toBe(400);
     }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("agent record deletions sign and publish only the viewer's own kind 30177 coordinate", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const agent = "b".repeat(64);
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["a", `30177:${h.event.pubkey}:${agent}`],
+        ["client-id", "11111111-1111-4111-8111-111111111111"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const tags of [
+      [["a", `30177:${"c".repeat(64)}:${agent}`]],
+      [["a", `30178:${h.event.pubkey}:${agent}`]],
+      [["a", `30177:${h.event.pubkey}:${agent}:extra`]],
+      [["a", `30177:${h.event.pubkey}:invalid`]],
+      [...template.tags, ["e", "a".repeat(64)]],
+    ])
+      expect((await h.post("sign", { ...template, tags })).status).toBe(400);
     expect(h.publications).toHaveLength(1);
   } finally {
     await h.close();
@@ -2490,6 +2684,21 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       400,
     );
     expect(h.publications).toHaveLength(1);
+    const unarchive = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    };
+    expect((await h.post("sign", unarchive)).status).toBe(400);
+    const restore = await transport.channelLifecycle.sign(unarchive, signal);
+    expect(verifyEvent(restore)).toBe(true);
+    expect(restore).toMatchObject(unarchive);
+    expect((await h.post("publish", restore)).status).toBe(400);
+    await transport.channelLifecycle.publish(restore, signal);
+    expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
     await h.close();
@@ -2858,9 +3067,14 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
       { ...template, kind: 9001 },
       { ...template, content: "extra" },
       { ...template, tags: [...template.tags, ["archived", "true"]] },
+      ...["0", "-1", "1.5", "2147483648"].map((ttl) => ({
+        ...template,
+        tags: [...template.tags, ["ttl", ttl]],
+      })),
+      { ...template, tags: [...template.tags, ["ttl", "60"], ["ttl", "60"]] },
       {
         ...template,
-        tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+        tags: [...template.tags.slice(0, 3), ["visibility", "public"]],
       },
       { ...template, tags: [template.tags[0], ["topic", "x"]] },
       {
@@ -2883,14 +3097,242 @@ test("details routes are narrow, require the live owner, and do not widen lifecy
     live = await openBrokerSocket(transport);
     await transport.channelDetails.publish(event, signal);
     expect(h.publications).toHaveLength(1);
+    for (const ttl of ["604800", ""]) {
+      const change = { ...template, tags: [...template.tags, ["ttl", ttl]] };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    const reopening = {
+      ...template,
+      tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+    };
+    expect((await h.post("sign", reopening)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", reopening)).status).toBe(
+      400,
+    );
+    const reopened = await transport.channelDetails.sign(reopening, signal);
+    expect(reopened).toMatchObject(reopening);
+    expect((await h.post("publish", reopened)).status).toBe(400);
+    await transport.channelDetails.publish(reopened, signal);
+    expect(h.publications).toHaveLength(4);
     const foreign = finalizeEvent(
       structuredClone(template),
       new Uint8Array(32).fill(5),
     );
     expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
-    expect(h.publications).toHaveLength(1);
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
+    await h.close();
+  }
+});
+
+test("member administration uses isolated shape-limited routes and the current community socket", async () => {
+  const h = await harness(success);
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const target = getPublicKey(new Uint8Array(32).fill(5));
+    const signal = new AbortController().signal;
+    const template = {
+      kind: 9000,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", id],
+        ["p", target],
+        ["role", "admin"],
+      ],
+    };
+    const invalid = [
+      { ...template, kind: 9002 },
+      { ...template, content: "metadata" },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "owner"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "bot"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+          ["role", "member"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9001,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+        ],
+      },
+      { ...template, tags: [...template.tags, ["h", id]] },
+      { ...template, tags: null },
+      { ...template, tags: [null] },
+    ];
+    for (const event of invalid)
+      for (const route of [
+        "member-administration-sign",
+        "member-administration-publish",
+      ])
+        expect((await h.post(route, event)).status).toBe(400);
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.memberAdministration.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.memberAdministration.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.memberAdministration.publish(signed, signal);
+    const removal = await transport.memberAdministration.sign(
+      { ...template, kind: 9001, tags: template.tags.slice(0, 2) },
+      signal,
+    );
+    expect(
+      (
+        await h.post("sign", {
+          ...template,
+          kind: 9001,
+          tags: template.tags.slice(0, 2),
+        })
+      ).status,
+    ).toBe(400);
+    await transport.memberAdministration.publish(removal, signal);
+    const foreign = finalizeEvent(
+      structuredClone(template),
+      new Uint8Array(32).fill(5),
+    );
+    expect(
+      (await h.post("member-administration-publish", foreign)).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
+test("inventory inspection returns saved identities without owner resolution or publication", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const pubkey = "ab".repeat(32);
+  let forged = false;
+  let member = true;
+  const h = await harness(
+    () => {
+      const event = finalizeEvent(
+        {
+          kind: 30177,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Saved agent" }),
+          tags: [["d", member ? pubkey : "cd".repeat(32)]],
+        },
+        key,
+      );
+      if (forged) event.sig = "00".repeat(64);
+      return Response.json([event]);
+    },
+    { archiveAuthority: getPublicKey(key) },
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  try {
+    expect((await h.post("agent-inventory", {})).status).toBe(400);
+    expect((await h.post(route, { confirmed: true })).status).toBe(400);
+    expect(h.calls).toHaveLength(0);
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: [pubkey],
+    });
+    member = false;
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: ["cd".repeat(32)],
+    });
+    forged = true;
+    expect((await h.post(route, {})).status).toBe(409);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+  const unavailable = await harness(() => Response.json([]));
+  try {
+    expect(await (await unavailable.post(route, {})).json()).toEqual({
+      identities: [],
+    });
+    expect(unavailable.calls).toHaveLength(1);
+  } finally {
+    await unavailable.close();
+  }
+});
+
+test("inventory rejects foreign pages, ignores invalid heads and follows exact-key pages", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const foreign = new Uint8Array(32);
+  foreign[31] = 8;
+  const pubkey = "ab".repeat(32);
+  const record = (
+    d,
+    content = '{"name":"Same name"}',
+    time = 1,
+    author = key,
+    kind = 30177,
+  ) =>
+    finalizeEvent(
+      { kind, created_at: time, content, tags: [["d", d]] },
+      author,
+    );
+  let rows = [];
+  const h = await harness(({ body }) =>
+    Response.json(body[0].before_id ? [record(pubkey)] : rows),
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  const input = {};
+  try {
+    rows = [record(pubkey, undefined, 1, foreign)];
+    expect((await h.post(route, input)).status).toBe(409);
+    for (const invalid of [
+      [record(pubkey, "not JSON")],
+      [record(pubkey), record(pubkey, "null", 2)],
+
+      [record(pubkey, '{"display_name":"Template"}', 1, key, 30175)],
+    ]) {
+      rows = invalid;
+      expect(await (await h.post(route, input)).json()).toEqual({
+        identities: [],
+      });
+    }
+    rows = Array.from({ length: 200 }, (_, i) =>
+      record(i.toString(16).padStart(64, "0")),
+    );
+    expect((await h.post(route, input)).status).toBe(200);
+    expect(h.calls.at(-1).body[0]).toMatchObject({
+      until: 1,
+      before_id: [...rows]
+        .map((e) => e.id)
+        .sort()
+        .at(-1),
+    });
+    expect(h.publications).toHaveLength(0);
+  } finally {
     await h.close();
   }
 });

@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -12,7 +13,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     conversation.getByRole("tab", { name: "Alpha", exact: true }),
   ).toBeVisible();
   const trigger = page.getByRole("button", {
-    name: "Channel settings",
+    name: "Channel actions",
     exact: true,
   });
   const workspace = page.locator("[data-panel-workspace]");
@@ -20,7 +21,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     name: "Channel settings",
     exact: true,
   });
-  await trigger.click();
+  await openChannelDetails(page);
   await expect(panel).toBeVisible();
   // Joined panels share the workspace frame and keep a token-based header divider.
   const tokens = await page.addStyleTag({
@@ -44,7 +45,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   } finally {
     await tokens.evaluate((node) => node.remove());
   }
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await page.mouse.move(0, 0);
   await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   const channelTab = conversation.getByRole("tab", {
@@ -64,7 +65,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     .getByRole("button", { name: "Toggle tab pane", exact: true })
     .click();
   await expect(workspace).toBeHidden();
-  await trigger.click();
+  await openChannelDetails(page);
   await expect(settingsTab).toBeFocused();
   expect(
     await settingsTab.evaluate(
@@ -94,7 +95,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await page.keyboard.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  await trigger.click();
+  await openChannelDetails(page);
   await expect(
     panel.getByRole("button", { name: "Refresh channels", exact: true }),
   ).toBeHidden();
@@ -104,7 +105,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await expect(panel).toBeVisible();
   await close.click();
   await page.setViewportSize({ width: 600, height: 800 });
-  await trigger.click();
+  await openChannelDetails(page);
   await expect(
     workspace.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
@@ -117,7 +118,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await close.click();
   await expect(trigger).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
-  await trigger.click();
+  await openChannelDetails(page);
   await expect(panel).toBeVisible();
   const messages = page
     .getByRole("navigation", { name: "Subscribed channels" })

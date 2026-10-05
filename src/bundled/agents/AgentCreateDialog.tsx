@@ -54,6 +54,7 @@ export function AgentCreateDialog({
   owner,
   source,
   initialSettings,
+  sharedCompute = false,
   onClose,
   onOpenHarnesses,
 }: {
@@ -64,11 +65,12 @@ export function AgentCreateDialog({
   owner: string;
   source?: AgentView;
   initialSettings?: CloneSettings | undefined;
+  sharedCompute?: boolean;
   onClose(): void;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
-  const [draft, setDraft] = useState<AgentDraft>(() =>
-    source
+  const [draft, setDraft] = useState<AgentDraft>(() => {
+    const initial = source
       ? {
           ...agentDraft(source),
           name: `${source.name} copy`,
@@ -77,8 +79,21 @@ export function AgentCreateDialog({
           ...newAgentDraft(state),
           name: initialSettings?.name ?? "",
           systemPrompt: initialSettings?.systemPrompt ?? "",
-        },
-  );
+        };
+    return {
+      ...initial,
+      ...(sharedCompute
+        ? {
+            name: "Community agent",
+            command: "buzz-agent",
+            args: "[]",
+            provider: "relay-mesh",
+            model: "auto",
+          }
+        : {}),
+      environment: { BUZZ_ACP_AGENTS: "10" },
+    };
+  });
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
@@ -218,6 +233,7 @@ export function AgentCreateDialog({
       <Dialog.Portal>
         <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
+          aria-modal="true"
           data-buzz-ui=""
           className="buzz-dialog agent-dialog text-body"
         >

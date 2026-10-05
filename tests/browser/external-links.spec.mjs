@@ -1,3 +1,4 @@
+import { expectTabler } from "./tabler.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, settle } from "./timeline.mjs";
@@ -91,15 +92,127 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   expect(context.pages()).toHaveLength(1);
 });
 
-test("GitHub object identities have comparable visible artwork at one size", async ({
+// Browser-only: actual _blank handoff through the portaled menu, plugin precedence,
+// keyboard focus return and rendered menu geometry; clipboard failure matrices stay in Vitest.
+test("message link context menus bypass the pane and return keyboard focus", async ({
+  page,
+  context,
+  app,
+}, testInfo) => {
+  const target = `${github}?view=all#discussion_r1`;
+  for (const destination of [github, ordinary]) {
+    await context.route(`${destination}**`, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>External destination</title>",
+      }),
+    );
+  }
+  await page.route("https://api.github.com/repos/block/buzz/pulls/1", (route) =>
+    route.fulfill({ json: { title: "A useful change", state: "open" } }),
+  );
+  await page.addInitScript(() => {
+    window.copiedLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (value) => window.copiedLinks.push(value) },
+    });
+  });
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append("primary", "alpha", `[Review this PR](${target}) ${ordinary}`);
+  await expect(link(page, target)).toBeAttached();
+  await end(page);
+  const anchor = page.getByRole("link", {
+    name: "Review this PR",
+    exact: true,
+  });
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await page.screenshot({
+    path: testInfo.outputPath("link-before-menu-dark.png"),
+  });
+  await anchor.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  const external = menu.getByRole("menuitem", {
+    name: "Open in browser",
+    exact: true,
+  });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in browser",
+    "Copy link",
+  ]);
+  await expect(external).toHaveAttribute("href", target);
+  await expect(panel).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await menu.screenshot({
+      path: testInfo.outputPath(`link-menu-${mode}.png`),
+    });
+    await page.screenshot({
+      path: testInfo.outputPath(`link-menu-context-${mode}.png`),
+    });
+  }
+  expect(await popup(page, external)).toBe(target);
+  await expect(menu).toHaveCount(0);
+  await expect(panel).toHaveCount(0);
+
+  await anchor.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(external).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Link copied", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.copiedLinks))
+    .toEqual([target]);
+  await expect(anchor).toBeFocused();
+  await expect(panel).toHaveCount(0);
+
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(anchor).toBeFocused();
+  await expect(menu).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(
+    panel.getByRole("heading", { name: "A useful change" }),
+  ).toBeVisible();
+  expect(context.pages()).toHaveLength(1);
+
+  await link(page, ordinary).filter({ visible: true }).focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(external).toBeFocused();
+  expect(await popup(page, external)).toBe(ordinary);
+  await expect(menu).toHaveCount(0);
+  await expect(panel).toBeVisible();
+});
+
+test("GitHub object identities use their intended artwork at one size", async ({
   page,
   app,
 }, testInfo) => {
   const targets = [
-    ["Repository", "https://github.com/block/buzz"],
-    ["Pull request", "https://github.com/block/buzz/pull/1"],
+    ["Repository", "https://github.com/block/buzz", "folder"],
+    [
+      "Pull request",
+      "https://github.com/block/buzz/pull/1",
+      "git-pull-request",
+    ],
     ["Issue", "https://github.com/block/buzz/issues/2"],
-    ["Commit", "https://github.com/block/buzz/commit/abcdef1"],
+    ["Commit", "https://github.com/block/buzz/commit/abcdef1", "git-commit"],
   ];
   await page.route("https://api.github.com/repos/block/buzz**", (route) =>
     route.fulfill({ json: { title: "GitHub object", state: "open" } }),
@@ -110,7 +223,7 @@ test("GitHub object identities have comparable visible artwork at one size", asy
 
   const dimensions = [];
   const icons = [];
-  for (const [kind, target] of targets) {
+  for (const [kind, target, glyph] of targets) {
     await expect(link(page, target)).toBeVisible();
     await link(page, target).click();
     const identity = page
@@ -120,21 +233,33 @@ test("GitHub object identities have comparable visible artwork at one size", asy
     const svg = identity.locator("svg");
     await expect(svg).toHaveCSS("width", "22px");
     await expect(svg).toHaveCSS("height", "22px");
+    if (glyph) await expectTabler(svg, glyph);
     icons.push(await svg.evaluate((node) => node.outerHTML));
     dimensions.push(
       await svg.evaluate((node) => {
         const { width, height } = node.getBBox();
-        return { width, height };
+        // Compare rendered extents, not library-specific SVG coordinate units.
+        const canvas = node.viewBox.baseVal;
+        const box = node.getBoundingClientRect();
+        return {
+          width: (width / canvas.width) * box.width,
+          height: (height / canvas.height) * box.height,
+        };
       }),
     );
   }
 
-  for (const { width, height } of dimensions) {
-    expect(width).toBeGreaterThanOrEqual(184);
-    expect(height).toBeGreaterThanOrEqual(111);
+  // Pinned Tabler extents at 22px; the custom issue mark stays unchanged.
+  const expected = [
+    { width: 16.5, height: 13.75 },
+    { width: (16 / 24) * 22, height: (17 / 24) * 22 },
+    { width: (208 / 256) * 22, height: (208 / 256) * 22 },
+    { width: 5.5, height: 16.5 },
+  ];
+  for (const [index, { width, height }] of dimensions.entries()) {
+    expect(width).toBeCloseTo(expected[index].width, 3);
+    expect(height).toBeCloseTo(expected[index].height, 3);
   }
-  expect(dimensions[2].width).toBeCloseTo(208, 3);
-  expect(dimensions[2].height).toBeCloseTo(208, 3);
   await page.setContent(`
     <main style="display:flex;gap:16px;align-items:center;color:#111">
       ${icons.map((icon, index) => `<figure style="margin:0;display:grid;justify-items:center;gap:8px">${icon}<figcaption>${targets[index][0]}</figcaption></figure>`).join("")}

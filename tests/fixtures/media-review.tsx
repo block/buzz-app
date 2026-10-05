@@ -44,6 +44,7 @@ const attachment = {
   kind: "video" as const,
   dimensions: { width: 640, height: 360 },
 };
+const portraitUrl = "https://fixture.test/portrait.png";
 const gifPreview = new URLSearchParams(location.search).has("gif");
 const photo: Attachment = {
   url: gifPreview
@@ -101,7 +102,7 @@ const events = [
     3,
     [["e", rootMessage.id, "", "reply"]],
   ),
-  profile(designer, { name: "Alex" }),
+  profile(designer, { name: "Alex", picture: portraitUrl }),
   profile(viewer, { name: "You" }),
 ];
 // Keep selected and unselected reaction chips visible in the dark viewer fixture.
@@ -131,18 +132,43 @@ const owner = createRelaySession(
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     media: (url) =>
-      url === secondPhoto.url
-        ? "/bestie.png"
-        : url === photo.url || url === thirdPhoto.url
-          ? gifPreview
-            ? "/tests/fixtures/attachment-media/animated.gif"
-            : "/shell-gradient.png"
-          : "/tests/fixtures/message-gallery/assets/sample.mp4",
+      url === portraitUrl
+        ? "/shell-gradient.png"
+        : url === secondPhoto.url
+          ? "/bestie.png"
+          : url === photo.url || url === thirdPhoto.url
+            ? gifPreview
+              ? "/tests/fixtures/attachment-media/animated.gif"
+              : "/shell-gradient.png"
+            : "/tests/fixtures/message-gallery/assets/sample.mp4",
     writer: {
       sign: async (template) => signed(viewer, template),
       publish: async (event) => {
         events.push(event);
       },
+    },
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      const typing = () =>
+        callbacks.receive([
+          signed(designer, {
+            kind: 20002,
+            content: "",
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["h", "video-preview"],
+              ["e", rootMessage.id, "", "reply"],
+            ],
+          }),
+        ]);
+      window.addEventListener("fixture-typing", typing);
+      return {
+        update() {},
+        retry() {},
+        dispose() {
+          window.removeEventListener("fixture-typing", typing);
+        },
+      };
     },
     async query(filters) {
       if (

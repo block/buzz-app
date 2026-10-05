@@ -36,9 +36,12 @@ export const test = base.extend({
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
+  threadUnreadJoined: [false, { option: true }],
+  threadUnreadOwnedRoot: [true, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -57,12 +60,18 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
+  inboxDm: [false, { option: true }],
+  inboxDmOldAnchor: [false, { option: true }],
+  inboxThreadWindow: [false, { option: true }],
+  inboxSessionAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -77,9 +86,12 @@ export const test = base.extend({
       threadUnread,
       presenceThreadAuthors,
       threadUnreadMentions,
+      threadUnreadJoined,
+      threadUnreadOwnedRoot,
       exactMessages,
       openSearch,
       sessionChannels,
+      sessionWriteKinds,
       sessionParents,
       sidebarUnread,
       savedSidebar,
@@ -98,8 +110,13 @@ export const test = base.extend({
       dmLabels,
       dmMembers,
       agentPeers,
+      inboxDm,
+      inboxDmOldAnchor,
+      inboxThreadWindow,
+      inboxSessionAgent,
       tallMessages,
       membershipActivity,
+      launchAnimation,
       historyCounts,
       channelIds: channels,
       pluginFixtures,
@@ -210,7 +227,9 @@ export const test = base.extend({
           )
         : dmLabels
           ? ["dm-peer", "dm-group"]
-          : [];
+          : inboxDm || inboxDmOldAnchor
+            ? ["dm-peer"]
+            : [];
     const personalChannel = "11111111-1111-4111-8111-111111111111";
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const renamedChannels = new Map();
@@ -459,6 +478,42 @@ export const test = base.extend({
         membershipEvent("member_joined", 1, 1700000741),
       );
     }
+    let inboxDmAnchor;
+    if (inboxDmOldAnchor) {
+      inboxDmAnchor = sign(
+        9,
+        [["h", "dm-peer"]],
+        "Inbox old DM anchor",
+        peerKey,
+        1700000800,
+      );
+      histories
+        .get("primary/dm-peer")
+        .push(
+          inboxDmAnchor,
+          ...Array.from({ length: 24 }, (_, index) =>
+            sign(
+              9,
+              [["h", "dm-peer"]],
+              `Recent DM ${index}`,
+              userKey,
+              1700000810 + index,
+            ),
+          ),
+        );
+    }
+    if (inboxDm)
+      histories
+        .get("primary/dm-peer")
+        .push(
+          sign(
+            9,
+            [["h", "dm-peer"]],
+            "Inbox DM fixture reply",
+            peerKey,
+            1700000900,
+          ),
+        );
     if (sidebarUnread) {
       for (const id of Object.keys(dmMembers).length
         ? Object.keys(dmMembers)
@@ -477,6 +532,9 @@ export const test = base.extend({
         searchTarget,
       ]);
     const threadSummaries = [];
+    // Viewer replies older than the unread sample: the thread view and the
+    // conversation lookup return them, but channel unread evidence never does.
+    const displacedReplies = new Map();
     if (threadUnread) {
       const history = histories.get("primary/alpha");
       for (const [index, event] of history.slice(-2).entries()) {
@@ -484,7 +542,11 @@ export const test = base.extend({
           9,
           [["h", "alpha"]],
           `Thread root ${index}`,
-          peerKey,
+          // The viewer owns the first thread, so its direct replies are the
+          // viewer's conversation. The second is a peer thread: it counts only
+          // when a mention names the viewer, or the viewer joined it with an
+          // older reply that only the membership lookup returns.
+          index === 0 && threadUnreadOwnedRoot ? userKey : peerKey,
           event.created_at,
         );
         history[history.length - 2 + index] = root;
@@ -501,6 +563,19 @@ export const test = base.extend({
             root.created_at + 10,
           ),
         ];
+        if (threadUnreadJoined && index === 1)
+          displacedReplies.set(root.id, [
+            sign(
+              9,
+              [
+                ["h", "alpha"],
+                ["e", root.id.toUpperCase(), "", "reply"],
+              ],
+              "Viewer reply",
+              userKey,
+              root.created_at + 5,
+            ),
+          ]);
         threadReplies.set(root.id, replies);
         threadSummaries.push(
           sign(
@@ -542,6 +617,8 @@ export const test = base.extend({
             ["h", "alpha"],
             ["e", root.id.toUpperCase(), "", "root"],
             ["e", broadcast.id.toUpperCase(), "", "reply"],
+            // Nested under the peer's reply, so only the mention makes it count.
+            ["p", viewer],
           ],
           "Broadcast descendant",
           peerKey,
@@ -562,6 +639,35 @@ export const test = base.extend({
           }),
         ),
       );
+    }
+    let inboxWindow;
+    if (inboxThreadWindow) {
+      const channelId = channels.find((id) => /^[0-9a-f-]{36}$/.test(id));
+      if (!channelId)
+        throw new Error("Inbox window needs a canonical fixture channel");
+      const root = sign(
+        9,
+        [["h", channelId]],
+        "Inbox strict root",
+        userKey,
+        1700000100,
+      );
+      const replies = Array.from({ length: 15 }, (_, index) =>
+        sign(
+          9,
+          [
+            ["h", channelId],
+            ["e", root.id, "", "reply"],
+            ["p", viewer],
+          ],
+          `Inbox strict reply ${index}`,
+          peerKey,
+          1700000200 + index,
+        ),
+      );
+      histories.set(`primary/${channelId}`, [root, ...replies]);
+      threadReplies.set(root.id, replies);
+      inboxWindow = { channelId, root, replies };
     }
     // Signed upstream-only stress data; production traversal and mounting stay real.
     let presenceThread;
@@ -966,7 +1072,9 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
-                  ...(agentPeers && key !== peerKey ? { is_agent: true } : {}),
+                  ...((agentPeers && key !== peerKey) || inboxSessionAgent
+                    ? { is_agent: true }
+                    : {}),
                   display_name: [
                     "Alice Fixture",
                     "Bob Fixture",
@@ -977,6 +1085,31 @@ export const test = base.extend({
               ),
             ),
         ];
+      if (filter["#p"] && !filter["#h"] && filter.kinds?.includes(9)) {
+        expect([...filter.kinds].sort((a, b) => a - b)).toEqual([9, 40002]);
+        expect(filter["#p"]).toEqual([viewer]);
+        expect(filter.limit).toBe(50);
+        const candidates = [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          );
+        return [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(([k, v]) => k === "p" && v === viewer),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (filter.search !== undefined)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -992,7 +1125,11 @@ export const test = base.extend({
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
-          .concat(community === "primary" ? targetEvents : [])
+          .concat(
+            community === "primary"
+              ? [...targetEvents, ...[...threadReplies.values()].flat()]
+              : [],
+          )
           .filter(
             (event) =>
               filter.ids.includes(event.id) &&
@@ -1025,10 +1162,82 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
+      if (filter.thread_window) {
+        const channelId = filter["#h"][0],
+          rootId = filter["#e"][0];
+        const candidates = [
+          ...(histories.get(`${community}/${channelId}`) ?? []),
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+        ];
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
+              ) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  event.id > filter.before_id)),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          );
+        const page = rows.slice(0, filter.limit),
+          last = page.at(-1);
+        const hasMore = rows.length > page.length;
+        const binding = createHash("sha256")
+          .update(
+            JSON.stringify([
+              "tw",
+              1,
+              "older",
+              `${community}.example`,
+              viewer,
+              channelId,
+              rootId,
+              filter.limit,
+              filter.depth_limit ?? 100,
+              [...new Set(filter.kinds)].sort((a, b) => a - b),
+              filter.until === undefined
+                ? null
+                : [filter.until, filter.before_id],
+              filter.include_aux ?? false,
+            ]),
+          )
+          .digest("hex");
+        return [
+          ...page,
+          sign(
+            39007,
+            [
+              ["d", `tw:1:${binding}`],
+              ["h", channelId],
+              ["e", rootId],
+            ],
+            JSON.stringify({
+              version: 1,
+              direction: "older",
+              has_more: hasMore,
+              next_cursor: hasMore
+                ? { created_at: last.created_at, id: last.id }
+                : null,
+            }),
+          ),
+        ];
+      }
       if (filter.depth_limit) {
         const rootId = filter["#e"]?.[0];
         const candidates = [
-          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(community === "primary"
+            ? [
+                ...(threadReplies.get(rootId) ?? []),
+                ...(displacedReplies.get(rootId) ?? []),
+              ]
+            : []),
           ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
         ].filter((event) => {
           const refs = event.tags.filter(([key]) => key === "e");
@@ -1070,6 +1279,39 @@ export const test = base.extend({
             }
         return [...rows, ...aux];
       }
+      // Unread conversation lookup: the viewer's replies to undecided parents.
+      if (
+        filter.kinds?.includes(9) &&
+        filter["#e"] &&
+        filter.authors?.length === 1 &&
+        filter.authors[0] === viewer
+      )
+        return (filter["#h"] ?? [])
+          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
+          .concat(
+            threadUnread && community === "primary"
+              ? [
+                  ...[...threadReplies.values()].flat(),
+                  ...[...displacedReplies.values()].flat(),
+                ]
+              : [],
+          )
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.pubkey === viewer &&
+              event.tags.some(
+                ([key, value]) => key === "h" && filter["#h"]?.includes(value),
+              ) &&
+              event.tags.some(
+                ([key, value]) =>
+                  key === "e" && filter["#e"].includes(value?.toLowerCase()),
+              ),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -1156,7 +1398,15 @@ export const test = base.extend({
       if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
         const id = event.tags.find(([key]) => key === "h")?.[1];
         expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
-        if (event.kind === 9002) archivedIds.add(id);
+        if (event.kind === 9002) {
+          if (
+            event.tags.some(
+              ([key, value]) => key === "archived" && value === "false",
+            )
+          )
+            archivedIds.delete(id);
+          else archivedIds.add(id);
+        }
         if (event.kind === 41012) hiddenDmIds.add(id);
         if (event.kind === 9008 || event.kind === 9022)
           rosterIds.splice(rosterIds.indexOf(id), 1);
@@ -1350,7 +1600,9 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: sessionChannels.length ? [9, 9007, 30315] : [9, 30315],
+            writeKinds:
+              sessionWriteKinds ??
+              (sessionChannels.length ? [9, 9007, 30315] : [9, 30315]),
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
@@ -1601,6 +1853,25 @@ export const test = base.extend({
           });
         }
       });
+      // General feature journeys can hold startup data indefinitely. Keep the
+      // launch view in dedicated startup journeys so those fixtures can still
+      // exercise the feature under test.
+      if (!launchAnimation)
+        await page.addInitScript(() => {
+          const observer = new MutationObserver(() => {
+            const launch = document.getElementById("buzz-launch");
+            if (!launch) return;
+            launch.remove();
+            const root = document.getElementById("root");
+            root?.removeAttribute("inert");
+            root?.removeAttribute("aria-hidden");
+            const toastRoot = document.getElementById("buzz-toast-root");
+            toastRoot?.removeAttribute("inert");
+            toastRoot?.removeAttribute("aria-hidden");
+            observer.disconnect();
+          });
+          observer.observe(document, { childList: true, subtree: true });
+        });
       await page.addInitScript(
         ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;
@@ -1678,6 +1949,22 @@ export const test = base.extend({
           };
         },
         presenceThread,
+        inboxWindow,
+        inboxDmAnchor,
+        deleteInboxAnchor(event) {
+          const deletion = sign(
+            5,
+            [
+              ["h", inboxWindow.channelId],
+              ["e", event.id],
+            ],
+            "",
+            peerKey,
+            event.created_at + 100,
+          );
+          targetEvents.push(deletion);
+          relay.publish("primary", deletion);
+        },
         exact,
         searchTarget,
         membership(
@@ -1822,10 +2109,12 @@ export const test = base.extend({
         reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
+          const channel = replies[0]?.tags.find(([key]) => key === "h")?.[1];
+          if (!channel) throw new Error("Missing fixture thread channel");
           const event = sign(
             9,
             [
-              ["h", "alpha"],
+              ["h", channel],
               ["e", rootId, "", "reply"],
             ],
             own ? "My reply" : "New peer reply",

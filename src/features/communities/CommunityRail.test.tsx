@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { SettingsCardsService } from "../settings/service";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -27,6 +28,10 @@ import {
 } from "./service";
 
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ToastProvider });
+const settingsCards = {
+  subscribe: () => () => {},
+  has: () => true,
+};
 const viewer = "a".repeat(64);
 const relayKey = "f".repeat(64);
 const primary = "https://primary.example";
@@ -228,7 +233,11 @@ it("switches using the shared membership owner without acquiring other sessions 
 it("offers the original's actions on the selected community and only reads its roster", async () => {
   const h = harness();
   render(
-    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+    <CommunityRail
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   const menu = await openMenu("Primary");
   await within(menu).findByRole("menuitem", { name: "Invite to community" });
@@ -282,7 +291,11 @@ it("offers the original's actions on the selected community and only reads its r
 it("offers no Invite and reads nothing while the session carries no relay authority", async () => {
   const h = harness({ relayAuthor: null });
   render(
-    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+    <CommunityRail
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   const menu = await openMenu("Primary");
   await act(async () => {});
@@ -306,6 +319,7 @@ it.each(["ContextMenu", "F10"])(
       <CommunityRail
         communities={h.communities}
         onOpenTarget={h.onOpenTarget}
+        settingsCards={settingsCards}
       />,
     );
     const target = button("Secondary");
@@ -329,7 +343,11 @@ it.each(["ContextMenu", "F10"])(
 it("keeps the keyboard anchor when a synthesised contextmenu event re-enters the open", async () => {
   const h = harness();
   render(
-    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+    <CommunityRail
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   await waitFor(() => expect(h.read).toHaveBeenCalledTimes(1));
   const target = button("Primary");
@@ -357,7 +375,11 @@ it("keeps the keyboard anchor when a synthesised contextmenu event re-enters the
 it("re-reads the roster for a keyboard open exactly as for a pointer open", async () => {
   const h = harness();
   render(
-    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+    <CommunityRail
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   // The selected community's roster is read once on mount.
   await waitFor(() => expect(h.read).toHaveBeenCalledTimes(1));
@@ -499,7 +521,11 @@ it("opens Invites and Community settings scoped to the community", async () => {
   const user = userEvent.setup();
   const h = harness();
   render(
-    <CommunityRail communities={h.communities} onOpenTarget={h.onOpenTarget} />,
+    <CommunityRail
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+      settingsCards={settingsCards}
+    />,
   );
   let menu = await openMenu("Primary");
   await user.click(
@@ -540,6 +566,7 @@ it.each([
       <CommunityRail
         communities={h.communities}
         onOpenTarget={h.onOpenTarget}
+        settingsCards={settingsCards}
       />,
     );
     await waitFor(() => expect(h.read).toHaveBeenCalled());
@@ -986,5 +1013,78 @@ it("does not discover saved community icons without a relay host", async () => {
   } finally {
     cleanup();
     await ctx.fiber.dispose();
+  }
+});
+
+it("removes the Invite shortcut with its Settings contribution and restores it on re-enable", async () => {
+  const h = harness();
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const cards = new SettingsCardsService(root);
+  const register = () =>
+    root
+      .extend({ pluginOwner: { id: "buzz.moderation", revision: "bundled" } })
+      .plugin((ctx) => {
+        ctx.settingsCards.register({
+          id: "membership",
+          title: "Membership",
+          component: () => null,
+          visibility: {
+            snapshot: () => false,
+            subscribe: () => () => {},
+            ensure: () => () => {},
+          },
+        });
+      });
+  try {
+    render(
+      <CommunityRail
+        communities={h.communities}
+        onOpenTarget={h.onOpenTarget}
+        settingsCards={cards}
+      />,
+    );
+    const menu = await openMenu("Primary");
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Invite to community" }),
+    ).toBeNull();
+    expect(h.read).not.toHaveBeenCalled();
+    let fiber: ReturnType<typeof register>;
+    await act(async () => {
+      fiber = register();
+      await fiber.await();
+    });
+    await within(menu).findByRole("menuitem", { name: "Invite to community" });
+    await act(async () => {
+      await fiber.dispose();
+    });
+    expect(
+      within(menu).queryByRole("menuitem", { name: "Invite to community" }),
+    ).toBeNull();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Community settings" }),
+    ).toBeInTheDocument();
+    expect(h.onOpenTarget).not.toHaveBeenCalled();
+    await act(async () => {
+      fiber = register();
+      await fiber.await();
+    });
+    fireEvent.click(
+      await within(menu).findByRole("menuitem", {
+        name: "Invite to community",
+      }),
+    );
+    expect(h.onOpenTarget).toHaveBeenCalledWith({
+      version: 1,
+      kind: "settings",
+      section: MEMBERSHIP_SECTION,
+      scope: { viewer, communityOrigin: primary },
+    });
+  } finally {
+    cleanup();
+    await root.fiber.dispose();
   }
 });

@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
@@ -42,23 +43,27 @@ async function visible(page) {
       .map((row) => row.dataset.messageId);
   });
 }
-async function options(page) {
-  const trigger = page.getByRole("button", {
+async function options(page, clockPaused = false) {
+  const panel = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
   });
-  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
-  await trigger.click();
+  const opening = !(await panel.isVisible());
+  if (opening) await openChannelDetails(page, { clockPaused });
+  else
+    await page
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
+      .click();
   if (opening) {
     // The details and lifecycle readers finish independently. Observe both before
     // checking diagnostics so a late details alert cannot escape the assertion.
     await expect(
-      page
-        .getByRole("region", { name: "Edit channel details", exact: true })
-        .getByText(
-          "Only current channel owners and admins can edit these details.",
-        ),
-    ).toBeVisible();
+      page.getByRole("complementary", {
+        name: "Channel settings",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toHaveAttribute("aria-busy", "false");
     await expect(
       page.getByRole("button", { name: "Leave channel", exact: true }),
     ).toBeVisible();
@@ -121,7 +126,6 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   page,
   app,
 }) => {
-  await page.clock.install();
   await open(page, app);
   await expect
     .poll(() =>
@@ -134,7 +138,11 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
     /^500 observed unread messages/,
   );
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // Install after startup and focus cancellation have settled on the real
+  // clock; pause at a fixed instant rather than the page's ticking clock.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect((await journal(page)).state.frontiers).toEqual({});
   expect(app.report.readPublications).toEqual([]);
@@ -177,7 +185,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   page,
   app,
 }) => {
-  await page.clock.install();
   let release;
   const gate = new Promise((resolve) => {
     release = resolve;
@@ -218,7 +225,11 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  // As above: install after startup and focus cancellation, then pause at
+  // fixed instants from one base.
+  const base = Date.now();
+  await page.clock.install({ time: base });
+  await page.clock.pauseAt(base + 20_000);
   await history(page).focus();
   const ids = await visible(page);
   expect(ids.length).toBeGreaterThan(0);
@@ -239,8 +250,9 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await page.clock.runFor(299);
   await park(page);
   await page.clock.runFor(900);
-  await page.clock.resume();
-  await options(page);
+  // Keep policy time paused through the durable action and UI round trips;
+  // runner delays must not overtake a later fixed pause target.
+  await options(page, true);
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
@@ -250,7 +262,7 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     .poll(async () => (await journal(page)).localUnread[alphaId])
     .toBeGreaterThan(0);
   expect((await journal(page)).state.frontiers).toEqual({});
-  await options(page);
+  await options(page, true);
   await expect(
     alpha(page).getByRole("img", {
       name: "Marked unread on this device only",
@@ -258,7 +270,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     }),
   ).toBeVisible();
   await park(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await history(page).focus();
   await page.clock.runFor(1000);
   expect((await journal(page)).localUnread[alphaId]).toBeGreaterThan(0);
@@ -300,7 +311,6 @@ test("a surviving window publishes a closed window's durable read intent", async
   context,
   app,
 }) => {
-  await page.clock.install();
   await holdReadingFocus(page);
   await open(page, app);
   await park(page);
@@ -323,7 +333,11 @@ test("a surviving window publishes a closed window's durable read intent", async
       await window.evaluate(() =>
         window.fixtureRelay.snapshot().session.unread.ensure(),
       );
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    // Both windows are parked and their durable owners are ready before the
+    // context-wide clock is installed. No ticking startup interval to overtake.
+    const base = Date.now();
+    await page.clock.install({ time: base });
+    await page.clock.pauseAt(base + 20_000);
     expect((await journal(page)).state.frontiers).toEqual({});
     await page.bringToFront();
     const ids = await visible(page);

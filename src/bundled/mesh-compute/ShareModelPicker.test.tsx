@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -41,9 +42,12 @@ it("selects the SDK-backed recommendation and discloses the download before shar
   invoke.mockResolvedValue(catalog);
   render(<Fixture />);
   await screen.findByText("Fixture GPU · 32 GB AI memory");
-  await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("recommended"),
+  await screen.findByText(
+    "Fixture model — automatically selected for this device.",
   );
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  expect(screen.getByRole("combobox")).toHaveTextContent("recommended");
   expect(
     screen.getByText("Downloads 6GB when you share. Memory fit: comfortable."),
   ).toBeInTheDocument();
@@ -55,6 +59,7 @@ it("keeps manual selection usable on catalog failure and retries the catalog", a
     .mockResolvedValue(catalog);
   render(<Fixture />);
   await screen.findByText("Catalog unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/local.gguf" } },
@@ -80,4 +85,42 @@ it("ignores a catalog response after unmount", async () => {
   resolve(catalog);
   await gate;
   expect(onChange).not.toHaveBeenCalled();
+});
+
+it("bounds loading and ignores a late response after timeout", async () => {
+  vi.useFakeTimers();
+  let release!: (value: typeof catalog) => void;
+  invoke.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  try {
+    render(<Fixture />);
+    expect(screen.getByText("Loading model choices…")).toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(30000);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("took too long");
+    await act(async () => {
+      release(catalog);
+    });
+    expect(
+      screen.queryByText("Fixture GPU · 32 GB AI memory"),
+    ).not.toBeInTheDocument();
+    invoke.mockResolvedValue(catalog);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Retry model catalog" }),
+      );
+    });
+    expect(
+      screen.getByText(
+        "Fixture model — automatically selected for this device.",
+      ),
+    ).toBeInTheDocument();
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
 });

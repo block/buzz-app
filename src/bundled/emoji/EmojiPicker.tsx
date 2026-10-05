@@ -11,7 +11,7 @@ import {
 } from "react";
 import {
   SmileyIcon,
-  SmileyStickerIcon,
+  SmileyPlusIcon,
 } from "../../shared/design-system/icons/index";
 import {
   PopoverRoot,
@@ -281,6 +281,7 @@ export function EmojiPicker({
   const button = (
     <IconButton
       size="toolbar"
+      shape={reaction ? "round" : "control"}
       ref={trigger}
       type="button"
       aria-label={reaction ? "Add reaction" : "Insert emoji"}
@@ -291,7 +292,7 @@ export function EmojiPicker({
       onFocus={() => setGifDiscoveryRequested(true)}
       icon={
         reaction ? (
-          <SmileyStickerIcon size={18} aria-hidden="true" />
+          <SmileyPlusIcon size={18} aria-hidden="true" />
         ) : (
           <SmileyIcon size={20} aria-hidden="true" />
         )

@@ -1,7 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { expectPhosphor } from "./phosphor.mjs";
+import { expectTabler } from "./tabler.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   largeSidebar: true,
@@ -218,7 +218,7 @@ sessionSidebar(
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(regular).toBeVisible();
-    await expectPhosphor(regular.locator("svg").first(), "hash");
+    await expectTabler(regular.locator("svg").first(), "hash");
     const regularIconX = await centerX(regular.locator("svg").first());
     const parentIconX = await centerX(disclosure.locator("svg:visible"));
     expect(parentIconX).toBeCloseTo(regularIconX, 0);
@@ -266,7 +266,7 @@ sessionSidebar(
     ).toBeVisible();
 
     await child.click();
-    await expectPhosphor(
+    await expectTabler(
       page
         .getByRole("article", { name: "Conversation" })
         .locator(".panel-header-title > svg"),
@@ -276,7 +276,7 @@ sessionSidebar(
 );
 
 sessionSidebar(
-  "session rows use pill hovers and Channels opens the shared creation dialog",
+  "session rows use rounded hovers and Channels opens the shared creation dialog",
   async ({ page, app }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -299,7 +299,7 @@ sessionSidebar(
     await expect(createContainer).toHaveCSS("opacity", "0");
     await summary.hover();
     await expect(createContainer).toHaveCSS("opacity", "1");
-    await expect(create).toHaveAttribute("data-icon-shape", "round");
+    await expect(create).toHaveAttribute("data-icon-shape", "control");
     const [summaryBox, createBox] = await Promise.all([
       summary.boundingBox(),
       create.boundingBox(),
@@ -319,13 +319,13 @@ sessionSidebar(
     ).not.toBeChecked();
     await expect(
       dialog.getByRole("textbox", { name: "Description" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Add a description" }),
     ).toHaveCount(0);
-    const addDescription = dialog.getByRole("button", {
-      name: "Add a description",
-    });
     const formTypography = await Promise.all(
       [
-        addDescription,
+        dialog.getByText("Description", { exact: true }),
         dialog.getByText("Name", { exact: true }),
         dialog.getByText("Private", { exact: true }),
         dialog.getByText("Ongoing", { exact: true }),
@@ -350,14 +350,7 @@ sessionSidebar(
     expect(formTypography[0].color).toBe(formTypography[1].color);
     expect(placeholderColor).toBe(tertiaryColor);
     expect(formTypography[2].fontSize).toBe(formTypography[3].fontSize);
-    await expect(addDescription).toHaveCSS("border-radius", "0px");
-    await addDescription.hover();
-    await expect(addDescription).toHaveCSS("text-decoration-line", "underline");
-    await expect(addDescription).toHaveCSS(
-      "background-color",
-      "rgba(0, 0, 0, 0)",
-    );
-    await addDescription.click();
+    await page.keyboard.press("Tab");
     await expect(
       dialog.getByRole("textbox", { name: "Description" }),
     ).toBeFocused();
@@ -366,12 +359,29 @@ sessionSidebar(
       dialog.getByRole("radio", { name: /Temporary/ }),
     ).toBeChecked();
     await dialog.getByRole("switch", { name: "Private" }).click();
+    await page
+      .getByRole("dialog", { name: "Make channel private?" })
+      .getByRole("button", { name: "Continue" })
+      .click();
     await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await page
+      .locator(".buzz-dialog-backdrop")
+      .click({ position: { x: 8, y: 8 } });
+    const discard = page.getByRole("dialog", { name: "Discard changes?" });
+    await expect(
+      discard.getByRole("button", { name: "Keep editing" }),
+    ).toBeFocused();
+    await discard.getByRole("button", { name: "Keep editing" }).click();
+    await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
+    await expect(
+      dialog.getByRole("radio", { name: /Temporary/ }),
+    ).toBeChecked();
     await dialog
       .getByRole("button", { name: "Close channel creation" })
       .click();
-    await expect(dialog).toHaveCount(0);
+    await discard.getByRole("button", { name: "Discard changes" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(create).toBeFocused();
     await expect(
       page.getByRole("heading", { name: "Projects", exact: true }),
@@ -432,7 +442,7 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   }
 });
 
-test("channel navigation preserves sidebar DOM, group state and scroll", async ({
+test("channel navigation preserves sidebar DOM and group state", async ({
   page,
   app,
 }) => {
@@ -452,31 +462,123 @@ test("channel navigation preserves sidebar DOM, group state and scroll", async (
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
-  const scroll = await sidebar.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    return element.scrollTop;
-  });
-  expect(scroll).toBeGreaterThan(100);
   await button(page, "Go back").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
   await expect(group).not.toHaveAttribute("open");
-  expect(await sidebar.evaluate((element) => element.scrollTop)).toBeCloseTo(
-    scroll,
-    0,
-  );
   await button(page, "Go forward").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
   await expect(group).not.toHaveAttribute("open");
-  expect(await sidebar.evaluate((element) => element.scrollTop)).toBeCloseTo(
-    scroll,
-    0,
+});
+
+test("navigation reveals the current sidebar entry without moving a visible one", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const scrollTop = () => sidebar.evaluate((element) => element.scrollTop);
+  const toBottom = () =>
+    sidebar.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+  const alpha = sidebar.locator('[data-channel-id="alpha"]');
+  const projects = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Projects", exact: true });
+  const group = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  expect(await toBottom()).toBeGreaterThan(100);
+  await expect(alpha).not.toBeInViewport();
+  // Search navigation reveals a page entry.
+  await openPage(page, "Projects");
+  await expect(projects).toHaveAttribute("aria-current", "page");
+  await expect(projects).toBeInViewport({ ratio: 1 });
+  // History navigation reveals a channel row.
+  await toBottom();
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(alpha).toBeInViewport({ ratio: 1 });
+  // An already visible entry keeps the user's scroll position.
+  const settled = await scrollTop();
+  await button(page, "Beta").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  expect(await scrollTop()).toBe(settled);
+  // A destination without its own entry leaves the list alone; leaving it
+  // still reveals the entry the user scrolled away from.
+  await sidebar
+    .locator("summary")
+    .filter({ hasText: /^Direct messages$/ })
+    .hover();
+  await sidebar
+    .getByRole("button", { name: "New message", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
+  const composing = await toBottom();
+  expect(await scrollTop()).toBe(composing);
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await expect(sidebar.locator('[data-channel-id="beta"]')).toBeInViewport({
+    ratio: 1,
+  });
+  // A collapsed section reveals its header and stays collapsed.
+  await group.locator("summary").click();
+  await expect(group).not.toHaveAttribute("open");
+  await toBottom();
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(group).not.toHaveAttribute("open");
+  await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
+});
+
+// The closed narrow drawer is display: none, and opening it does not
+// rerender the sidebar, so a reveal that waited for layout must retry then.
+test("a reveal while the narrow drawer is closed runs when the drawer opens", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.setViewportSize({ width: 600, height: 700 });
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  // Role queries skip the hidden drawer; this locator does not.
+  const alpha = page.locator(
+    'nav[aria-label="Subscribed channels"] [data-channel-id="alpha"]',
   );
+  await openPage(page, "Projects");
+  await button(page, "Show navigation").click();
+  await expect(sidebar).toBeVisible();
+  const bottom = await sidebar.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(bottom).toBeGreaterThan(100);
+  await button(page, "Hide navigation").click();
+  await expect(sidebar).toBeHidden();
+  await button(page, "Go back").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(alpha).toHaveAttribute("aria-current", "page");
+  await button(page, "Show navigation").click();
+  await expect(alpha).toBeInViewport({ ratio: 1 });
 });
 
 for (const destination of [
@@ -498,6 +600,15 @@ for (const destination of [
       .locator("details")
       .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
     const node = await sidebar.elementHandle();
+    const toBottom = () =>
+      sidebar.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        return element.scrollTop;
+      });
+    const pageEntry = (name) =>
+      page
+        .getByRole("navigation", { name: "Pages" })
+        .getByRole("button", { name, exact: true });
     const leave = async () => {
       if (destination === "Settings") {
         await button(page, "Your profile").click();
@@ -526,6 +637,10 @@ for (const destination of [
         expect(await node.evaluate((element) => element.isConnected)).toBe(
           true,
         );
+        await expect(
+          pageEntry(destination === "Back/Forward" ? "Projects" : destination),
+        ).toBeInViewport({ ratio: 1 });
+        await toBottom();
       }
       await expect(
         page.getByRole("region", { name: "Channel message history" }),
@@ -540,16 +655,18 @@ for (const destination of [
     };
     await group.locator("summary").click();
     await expect(group).not.toHaveAttribute("open");
-    const scroll = await sidebar.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-      return element.scrollTop;
-    });
+    const scroll = await toBottom();
     expect(scroll).toBeGreaterThan(100);
     await leave();
     await expect(group).not.toHaveAttribute("open");
-    await expect
-      .poll(() => sidebar.evaluate((element) => element.scrollTop))
-      .toBeCloseTo(scroll, 0);
+    if (destination === "Settings")
+      // Settings replaces the sidebar; returning to the same channel restores
+      // the saved position instead of revealing it again.
+      await expect
+        .poll(() => sidebar.evaluate((element) => element.scrollTop))
+        .toBeCloseTo(scroll, 0);
+    // The current channel is in the collapsed group; its header shows it.
+    else await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
     if (destination === "Back/Forward") {
       await button(page, "Go forward").click();
       await expect(sidebar).toBeVisible();
@@ -557,11 +674,11 @@ for (const destination of [
       await expect(
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
+      await expect(pageEntry("Projects")).toBeInViewport({ ratio: 1 });
+      await toBottom();
       await button(page, "Go back").click();
       await expect(group).not.toHaveAttribute("open");
-      await expect
-        .poll(() => sidebar.evaluate((element) => element.scrollTop))
-        .toBeCloseTo(scroll, 0);
+      await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
     }
   });
 }

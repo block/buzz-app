@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -570,16 +571,14 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
   await failMove();
   // Upstream roster omission, not direct client-state injection.
   app.omitChannel("beta");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh channels", exact: true })
     .click();
   await expect(beta).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await dismiss();
   await expect(
@@ -754,9 +753,7 @@ test("Create new retains its draft when preferences fail before submission and r
   await open(page, app);
   const beta = rowIn(page, "group:work");
   await beta.click();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   const held = gate(),
     started = gate();
@@ -847,7 +844,7 @@ test.use({
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
-test("Projects → Messages keeps saved groups, selected channel, and scroll on every visible frame without re-decoding", async ({
+test("Projects → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding", async ({
   page,
   app,
 }) => {
@@ -863,13 +860,18 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
+  await openPage(page, "Projects");
+  await expect(sidebar).toBeVisible();
+  // Navigation reveals the current entry; keep Beta in view at a nonzero
+  // offset so the warm return has no reason to move the list.
   const scroll = await sidebar.evaluate((element) => {
-    element.scrollTop = 1000;
+    element.scrollTop = 0;
+    const row = element.querySelector('button[data-channel-id="beta"]');
+    element.scrollTop =
+      row.getBoundingClientRect().top - element.getBoundingClientRect().top;
     return element.scrollTop;
   });
   expect(scroll).toBeGreaterThan(100);
-  await openPage(page, "Projects");
-  await expect(sidebar).toBeVisible();
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -1011,9 +1013,7 @@ test.describe("new personal schema", () => {
     await page.keyboard.press("Escape");
 
     await page.route("**/sidebar-preferences", failLegacy);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     await page
       .getByRole("button", { name: "Refresh groups and stars", exact: true })

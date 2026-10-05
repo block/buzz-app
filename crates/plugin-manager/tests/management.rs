@@ -469,7 +469,6 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         "buzz.terminal",
         "buzz.sessions",
         "buzz.inbox",
-        "buzz.bestie",
         "buzz.projects",
         "buzz.agents",
         "buzz.emoji",
@@ -592,6 +591,55 @@ fn channels_is_required_even_with_saved_disabled_settings() {
             .plugins
             .iter()
             .find(|p| p.manifest.id == "buzz.channels")
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
+fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
+    let (_root, manager, _source) = fixture();
+    let catalog = manager.catalog().unwrap();
+    assert_eq!(catalog.plugins.len(), 22);
+    for plugin in &catalog.plugins {
+        let id = plugin.manifest.id.as_str();
+        let default = !matches!(
+            id,
+            "buzz.bestie" | "buzz.todos" | "buzz.channel-templates" | "buzz.mesh-compute"
+        );
+        assert_eq!(plugin.enabled, default, "{id}");
+        if id == "buzz.channels" {
+            assert!(manager.change("disable", id).is_err());
+        } else {
+            for enabled in [true, false] {
+                manager
+                    .change(if enabled { "enable" } else { "disable" }, id)
+                    .unwrap();
+                assert_eq!(
+                    manager
+                        .catalog()
+                        .unwrap()
+                        .plugins
+                        .iter()
+                        .find(|p| p.manifest.id == id)
+                        .unwrap()
+                        .enabled,
+                    enabled,
+                    "{id}"
+                );
+            }
+        }
+    }
+    // Existing native profiles can keep Bestie on across process restarts.
+    manager.change("enable", "buzz.bestie").unwrap();
+    let reopened = Manager::open(Some(_root.path().to_path_buf()), "test", false).unwrap();
+    assert!(
+        reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "buzz.bestie")
             .unwrap()
             .enabled
     );

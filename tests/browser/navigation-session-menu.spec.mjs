@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -48,7 +49,7 @@ test("channel context menu opens and resumes a session draft without a row menu 
   await expect(menu.getByRole("separator")).toHaveCount(1);
   await expect(alpha).toHaveAttribute("aria-current", "page");
   // CSS geometry needs a real layout engine. The session item retains the shared
-  // full-round token in both themes, independent of viewport width or sibling actions.
+  // nested corners in both themes, independent of viewport width or sibling actions.
   for (const mode of ["light", "dark"]) {
     await page.evaluate((value) => {
       document.documentElement.dataset.colorMode = value;
@@ -56,14 +57,14 @@ test("channel context menu opens and resumes a session draft without a row menu 
     for (const width of [720, 1000, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       const radius = await start.evaluate((element) => {
-        // The shared pill token is rem-based; computed corner values are pixels.
-        const rem = Number.parseFloat(
-          getComputedStyle(element).getPropertyValue("--radius-pill"),
-        );
-        const rootSize = Number.parseFloat(
-          getComputedStyle(document.documentElement).fontSize,
-        );
-        return `${rem * rootSize}px`;
+        const popup = element.closest(".buzz-menu-popup");
+        const style = getComputedStyle(popup);
+        return `${Math.max(
+          0,
+          Number.parseFloat(style.borderTopLeftRadius) -
+            Number.parseFloat(style.paddingLeft) -
+            Number.parseFloat(style.borderLeftWidth),
+        )}px`;
       });
       for (const corner of [
         "top-left",
@@ -122,9 +123,7 @@ test.describe("menu placement lifetime", () => {
     const beta = sidebar.locator('[data-channel-id="beta"]');
     const menu = page.getByRole("menu", { name: "Actions for Beta" });
     await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).click();
     const refresh = page.getByRole("button", {
       name: "Refresh groups and stars",

@@ -1,6 +1,6 @@
 // Optional presentation only. The session owns accepted setup and delivery.
 import { Service, type Context } from "@deepseek-ai/cordis";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode, RefObject } from "react";
 import {
   createContributions,
   type Contribution,
@@ -29,6 +29,11 @@ export type GroupDefaultProps = {
   active(): boolean;
 };
 export type SaveTemplateProps = {
+  menu?: {
+    close(): void;
+    finalFocus: RefObject<HTMLButtonElement | null>;
+    render(items: ReactNode): ReactNode;
+  };
   session: RelaySession;
   channel: ChannelSummary;
   active(): boolean;

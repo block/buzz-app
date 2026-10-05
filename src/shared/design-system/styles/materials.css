@@ -66,8 +66,14 @@
    layout and behavior. Compact action surfaces override the default radius. */
 @utility floating-surface {
   @apply interaction-floating;
+  --floating-radius: var(--radius-container);
+  --floating-inset: var(--space-1);
+  --floating-inner-radius: max(
+    0px,
+    calc(var(--floating-radius) - var(--floating-inset) - 1px)
+  );
   border: 1px solid var(--border-standard);
-  border-radius: var(--radius-panel);
+  border-radius: var(--floating-radius);
   background: var(--surface-popover);
   box-shadow: var(--shadow-sm);
 }
@@ -209,4 +215,13 @@
    paint and shared NavigationItem in agreement. */
 @utility interaction-navigation {
   --interaction-selected: var(--affordance-selected);
+}
+
+/* The profile's compact availability badge retains the shared status colors. */
+@utility interaction-profile-availability {
+  @apply interaction-availability;
+  &[data-status="online"] .buzz-button {
+    min-height: var(--space-5);
+    padding: var(--space-half) var(--space-2);
+  }
 }

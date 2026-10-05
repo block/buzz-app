@@ -161,7 +161,7 @@ pub(crate) async fn relay_sign(
     if event.kind == 30078 {
         return Err("Channel recipe or Canvas rejected".into());
     }
-    let workflow_delete = if event.kind == 5 {
+    let coordinate_delete = if event.kind == 5 {
         event
             .tags
             .iter()
@@ -171,10 +171,10 @@ pub(crate) async fn relay_sign(
         None
     };
     let signed = host.sign(event).await?;
-    if workflow_delete
+    if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {
-        return Err("Only the workflow author can manage it".into());
+        return Err("Only the author can delete this event".into());
     }
     Ok(signed)
 }
@@ -206,7 +206,7 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
             return Err("Relay authentication does not match this community".into());
         }
     } else if event.kind == 5 {
-        if !valid_message_deletion(event) {
+        if !valid_message_deletion(event) && !valid_managed_agent_deletion(event) {
             validate_workflow_template(event)?;
         }
     } else if matches!(event.kind, 30620 | 46020) {
@@ -214,6 +214,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
     } else if event.kind == 9007 {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+    } else if event.kind == 40100 {
+        if !valid_canvas(event) {
+            return Err("Malformed Canvas save".into());
         }
     } else if event.kind == 28936 {
         // A NIP-43 leave request revokes the signer's own membership: empty
@@ -223,11 +227,77 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         }
     } else if !matches!(
         event.kind,
-        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30315 | 40003 | 40100 | 42000 | 45010
+        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
     ) {
         return Err("This event is not supported by the packaged relay connection".into());
     }
     Ok(())
+}
+
+// Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
+fn valid_canvas(event: &EventTemplate) -> bool {
+    event.content.len() <= 24 * 1024
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("h"))
+            .count()
+            == 1
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("expected-revision"))
+            .count()
+            <= 1
+        && event.tags.iter().all(|tag| {
+            if tag.len() != 2 {
+                return false;
+            }
+            match tag[0].as_str() {
+                "h" => channel_writes::uuid(&tag[1]),
+                "client-id" => tag[1].encode_utf16().count() <= 128,
+                "expected-revision" => {
+                    tag[1] == "none"
+                        || (tag[1].len() == 64
+                            && tag[1]
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                }
+                _ => false,
+            }
+        })
+}
+
+/** Only the owner's managed-agent coordinate may use this global kind-5 shape. */
+fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
+    if !event.content.is_empty()
+        // Signed events return to JavaScript; timestamps must fit Number.MAX_SAFE_INTEGER.
+        || event.created_at > 9_007_199_254_740_991
+        || event.tags.iter().any(|tag| {
+            tag.len() != 2
+                || tag[1].len() > 256
+                || !matches!(tag[0].as_str(), "a" | "k" | "client-id")
+        })
+        || event
+            .tags
+            .iter()
+            .enumerate()
+            .any(|(i, tag)| event.tags[..i].iter().any(|prior| prior[0] == tag[0]))
+        || event
+            .tags
+            .iter()
+            .any(|tag| tag[0] == "k" && tag[1] != "30177")
+    {
+        return false;
+    }
+    let Some(coordinate) = event.tags.iter().find(|tag| tag[0] == "a") else {
+        return false;
+    };
+    let mut parts = coordinate[1].split(':');
+    parts.next() == Some("30177")
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_none()
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */

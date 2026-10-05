@@ -252,6 +252,11 @@ pub struct Manager {
     safe_mode: bool,
 }
 impl Manager {
+    /// Host control-plane location that protected workers must not modify.
+    pub fn storage_root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
         let home = home
@@ -356,9 +361,27 @@ impl Manager {
                         .bundled_overrides
                         .get(&manifest.id)
                         .copied()
-                        .unwrap_or(!matches!(
+                        // New bundles must opt in to the default-on policy.
+                        .unwrap_or(matches!(
                             manifest.id.as_str(),
-                            "buzz.channel-templates" | "buzz.todos" | "buzz.mesh-compute"
+                            "buzz.channels"
+                                | "buzz.feedback"
+                                | "buzz.diffs"
+                                | "buzz.identity-naming"
+                                | "buzz.agent-activity"
+                                | "buzz.terminal"
+                                | "buzz.profiles"
+                                | "buzz.links"
+                                | "buzz.mentions"
+                                | "buzz.emoji"
+                                | "buzz.github"
+                                | "buzz.inbox"
+                                | "buzz.projects"
+                                | "buzz.agents"
+                                | "buzz.workflows"
+                                | "buzz.sessions"
+                                | "block.hosted-communities"
+                                | "buzz.moderation"
                         ));
                 PluginInfo {
                     manifest,

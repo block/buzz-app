@@ -3,6 +3,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { run } from "./run-command.mjs";
+import { nativeFixture } from "./native-fixture.mjs";
 import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -51,22 +52,7 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["build"], source);
     const code = await readFile(join(source, "dist/plugin.js"), "utf8");
     expect(code).not.toMatch(/^import\s|^export.*from\s/m);
-    // CI supplies the Ubuntu-built bridge; local runs retain the Cargo build.
-    let binary = process.env.BUZZ_BROWSER_FIXTURE;
-    if (!binary) {
-      run("cargo", [
-        "build",
-        "--locked",
-        "-p",
-        "buzzodz-plugins",
-        "--example",
-        "fixture-bridge",
-      ]);
-      const metadata = JSON.parse(
-        run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
-      );
-      binary = join(metadata.target_directory, "debug/examples/fixture-bridge");
-    }
+    const binary = nativeFixture();
     const home = join(temp, "home");
     const native = (op, ...args) =>
       JSON.parse(run(binary, [home, op, ...args]));
@@ -206,7 +192,11 @@ test("independent packed author consumer and native-installed contribution survi
     await expect
       .poll(() => draft.evaluate((element) => element.value))
       .toMatch(/T.*Z/);
-    await draft.fill("base");
+    // Select through the editor after plugin insertion; WebKit fill can retain
+    // the inserted content when its DOM selection has been lost.
+    await draft.press("ControlOrMeta+A");
+    await draft.pressSequentially("base");
+    await expect(draft).toHaveJSProperty("value", "base");
     await draft.evaluate((el) => el.setSelectionRange(1, 3));
     await page
       .getByRole("button", { name: "Insert twice", exact: true })
@@ -277,6 +267,12 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
+    // The independently built page uses the host's date labels.
+    await expect(
+      page.getByText("Consumer dates Today, Yesterday, 5 minutes ago", {
+        exact: true,
+      }),
+    ).toBeVisible();
     // The independently built page consumes the host's registered Mentions tool.
     await page
       .getByRole("button", { name: "Mention a member", exact: true })

@@ -134,7 +134,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect(
     menu.getByRole("menuitemradio", { name: "Recent" }),
   ).toHaveAttribute("aria-checked", "true");
-  // Real layout verifies that the shared pill recipe reaches both the lone
+  // Real layout verifies that the shared nested-radius recipe reaches both the lone
   // submenu trigger and grouped radio choices, without feature-local corners.
   const sort = page
     .getByRole("menu", { name: "More actions for Channels", exact: true })
@@ -146,13 +146,14 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     for (const width of [720, 1000, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       const radius = await sort.evaluate((element) => {
-        const rem = Number.parseFloat(
-          getComputedStyle(element).getPropertyValue("--radius-pill"),
-        );
-        const rootSize = Number.parseFloat(
-          getComputedStyle(document.documentElement).fontSize,
-        );
-        return `${rem * rootSize}px`;
+        const popup = element.closest(".buzz-menu-popup");
+        const style = getComputedStyle(popup);
+        return `${Math.max(
+          0,
+          Number.parseFloat(style.borderTopLeftRadius) -
+            Number.parseFloat(style.paddingLeft) -
+            Number.parseFloat(style.borderLeftWidth),
+        )}px`;
       });
       for (const item of [
         sort,
@@ -365,8 +366,12 @@ test.describe("cold sidebar presentation", () => {
     const ordering = new Promise((resolve) => {
       activityStarted = resolve;
     });
-    await page.clock.install();
-    await page.clock.pauseAt(new Date());
+    // The installed clock ticks from injection, so pausing at runner "now"
+    // races its first sync. Pause at a fixed instant from the install base;
+    // nothing is pending in about:blank for the jump to fire.
+    const base = Date.now();
+    await page.clock.install({ time: base });
+    await page.clock.pauseAt(base + 20_000);
     await page.addInitScript(() =>
       localStorage.setItem("buzz-appearance.v1", "dark"),
     );
@@ -522,12 +527,12 @@ test.describe("sorting with lifecycle visibility", () => {
     await expect.poll(ids).toEqual(["willow", "maple", "cedar", archivedId]);
     const channel = channels.locator(`[data-channel-id="${archivedId}"]`);
     await channel.click();
-    await expect(
-      page.getByRole("textbox", {
-        name: "Message #Lifecycle channel",
-        exact: true,
-      }),
-    ).toBeVisible();
+    const composer = page.getByRole("textbox", {
+      name: "Message #Lifecycle channel",
+      exact: true,
+    });
+    await expect(composer).toBeVisible();
+    const conversationUrl = page.url();
     await channel.click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -540,12 +545,10 @@ test.describe("sorting with lifecycle visibility", () => {
       .click();
     await expect(archive).toHaveCount(0);
     await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
-    await expect(
-      page.getByRole("textbox", {
-        name: "Message #Alpha",
-        exact: true,
-      }),
-    ).toBeVisible();
+    // Archive removes the sidebar row, not the selected conversation.
+    await expect(page).toHaveURL(conversationUrl);
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeDisabled();
 
     const dm = sidebar.locator(`[data-channel-id="${hiddenId}"]`);
     await dm.click({ button: "right" });
@@ -561,6 +564,9 @@ test.describe("sorting with lifecycle visibility", () => {
     await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
     await page.reload();
     await expect.poll(ids).toEqual(["willow", "maple", "cedar"]);
+    await expect(page).toHaveURL(conversationUrl);
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeDisabled();
     // Opening Sort proves saved preference decoding and sidebar startup settled.
     await channels
       .getByRole("button", { name: "More actions for Channels" })

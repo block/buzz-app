@@ -34,6 +34,22 @@ impl Prepared {
     }
 }
 
+#[cfg(feature = "mesh")]
+pub(crate) fn community_origin(raw: &str) -> Result<String, String> {
+    let mut url = url::Url::parse(raw).map_err(|_| "Invalid agent community")?;
+    if url.scheme() == "wss" {
+        url.set_scheme("https")
+            .map_err(|_| "Invalid agent community")?;
+    }
+    crate::relay::mesh_origin(url.as_str())?;
+    if let Some(host) = url.host_str().filter(|host| host.ends_with('.')) {
+        let host = host.trim_end_matches('.').to_owned();
+        url.set_host(Some(&host))
+            .map_err(|_| "Invalid agent community")?;
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
 pub(crate) async fn prepare_agent(
     app: &tauri::AppHandle,
     request: MeshRequest,
@@ -48,19 +64,8 @@ pub(crate) async fn prepare_agent(
         use buzz_mesh_compute::lifecycle::Phase;
         let host = app.state::<super::MeshHost>();
         let identity = app.state::<crate::identity::IdentityHost>();
-        let mut community =
-            url::Url::parse(&request.relay).map_err(|_| "Invalid agent community")?;
-        let scheme = match community.scheme() {
-            "wss" => "https",
-            "ws" => "http",
-            other => other,
-        }
-        .to_owned();
-        community
-            .set_scheme(&scheme)
-            .map_err(|_| "Invalid agent community")?;
-        let community = community.as_str().trim_end_matches('/');
-        let lease = host.lease.for_community(community)?;
+        let community = community_origin(&request.relay)?;
+        let lease = host.lease.for_community(&community)?;
         if host.lifecycle.phase() == Phase::Stopped {
             super::start(app, &host, &identity, &lease).await?;
         }
@@ -193,6 +198,32 @@ mod tests {
                 assert!(result.unwrap_err().contains("503"));
             }
             server.await.unwrap();
+        }
+    }
+}
+
+#[cfg(all(test, feature = "mesh"))]
+mod community_tests {
+    use super::community_origin;
+    #[test]
+    fn saved_agent_and_ui_share_one_origin_without_accepting_paths_or_credentials() {
+        for raw in [
+            "wss://meshllm.communities.buzz.xyz",
+            "https://MESHLLM.communities.buzz.xyz:443/",
+            "wss://meshllm.communities.buzz.xyz./",
+        ] {
+            assert_eq!(
+                community_origin(raw).unwrap(),
+                "https://meshllm.communities.buzz.xyz"
+            );
+        }
+        for raw in [
+            "wss://relay.example/path",
+            "https://user:pass@relay.example",
+            "https://relay.example?x",
+            "http://relay.example",
+        ] {
+            assert!(community_origin(raw).is_err());
         }
     }
 }

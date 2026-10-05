@@ -303,6 +303,7 @@ it("starts sharing the selected model through the existing community lease", asy
   apply(ctx);
   render(<Component />);
   const button = await screen.findByRole("button", { name: "Share compute" });
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(button).toBeDisabled();
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
@@ -359,6 +360,7 @@ it.each([
     expect(
       await screen.findByText((text) => text.startsWith(label)),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     expect(
       screen.getByLabelText("Model reference or local GGUF path"),
     ).toBeDisabled();
@@ -423,6 +425,7 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
   render(<Component />);
   fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
   await screen.findByText("Shutdown not confirmed");
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() =>
     expect(
       screen.getByLabelText("Model reference or local GGUF path"),
@@ -464,6 +467,7 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
   apply(ctx);
   render(<Component />);
   const resume = await screen.findByRole("button", { name: "Resume sharing" });
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
     screen.getByLabelText("Model reference or local GGUF path"),
   ).toHaveValue("/models/local.gguf");

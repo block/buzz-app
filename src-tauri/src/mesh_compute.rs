@@ -1,9 +1,21 @@
 //! App-owned Mesh lifetime. Plugins cannot supply keystore paths or admission policy.
 
+#[cfg(feature = "mesh")]
+use tauri::Manager;
+
 mod agent;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
+#[cfg(feature = "mesh")]
+pub(crate) use agent::community_origin as agent_community;
 pub(crate) use agent::prepare_agent;
+#[cfg(feature = "mesh")]
+pub(crate) fn selected_for_agent(app: &tauri::AppHandle, relay: &str) -> Result<String, String> {
+    use tauri::Manager;
+    app.state::<MeshHost>()
+        .lease
+        .for_community(&agent_community(relay)?)
+}
 #[cfg(feature = "mesh")]
 mod coordinator;
 #[cfg(feature = "mesh")]
@@ -262,7 +274,7 @@ pub async fn mesh_compute_select(
     community: String,
     restore_sharing: Option<bool>,
 ) -> Result<String, String> {
-    crate::relay::mesh_origin(&community)?;
+    let community = agent::community_origin(&community)?;
     let viewer = identity.viewer().await?;
     let _guard = host.preparing.lock().await;
     let viewer_changed = host
@@ -318,9 +330,13 @@ pub async fn mesh_compute_select(
     drop(_guard);
     if let Some(config) = restore {
         // Mesh owns acquisition; discovery re-verifies membership before start.
-        if let Err(error) =
-            sharing::mesh_compute_share(app, lease.clone(), Some(config.model), config.max_vram_gb)
-                .await
+        if let Err(error) = sharing::mesh_compute_share(
+            app.clone(),
+            lease.clone(),
+            Some(config.model),
+            config.max_vram_gb,
+        )
+        .await
         {
             host.preferences
                 .lock()
@@ -328,6 +344,11 @@ pub async fn mesh_compute_select(
                 .set_error(error);
         }
     }
+    let agents = app.state::<crate::agents::AgentHost>().inner().clone();
+    let selected = host.lease.community(&lease)?;
+    tauri::async_runtime::spawn(async move {
+        agents.restore_mesh(selected).await;
+    });
     Ok(lease)
 }
 #[cfg(feature = "mesh")]

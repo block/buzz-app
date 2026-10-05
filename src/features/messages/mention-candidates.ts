@@ -2,16 +2,11 @@ import type { RelaySession } from "../relay/session";
 import type { MentionRecipient } from "./mention-draft";
 import { availableMentionAgents } from "../agents/mention-choices";
 import { knownAgentPubkeys } from "../agents/known";
+import { archiveHides } from "../relay/identity-archives";
 
-/**
- * Base Buzz discovery rule: known-archived identities leave forward-looking
- * choices, fail-open while archive state is unknown, and never hide the viewer
- * from themself (NIP-IA archival stays visible to its subject).
- */
+/** The shared archive discovery rule applied to mention recipients. */
 export function archivedMention(session: RelaySession, pubkey: string) {
-  return (
-    pubkey !== session.viewer && session.archives?.state(pubkey) === "archived"
-  );
+  return archiveHides(session.archives, pubkey, session.viewer);
 }
 
 /** Recipient eligibility, shared by menus, draft naming and insertion. No reads or writes. */

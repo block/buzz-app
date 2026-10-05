@@ -4,6 +4,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { memo } from "react";
 import type { Profile } from "../relay/contracts";
 import { membershipDescription, type TimelineRow } from "./membership-rows";
+import { DayDivider } from "./MessageTimestamp";
 import styles from "./Messages.module.css";
 
 /** Quiet, non-conversational activity. Avatars are decorative; prose owns the label. */
@@ -36,18 +37,7 @@ export const MembershipRow = memo(function MembershipRow({
   );
   return (
     <div data-message-id={row.id} data-membership-row="">
-      {day && (
-        <div className={styles.day}>
-          <span>
-            {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
-              year: "numeric",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-      )}
+      {day && <DayDivider createdAt={row.createdAt} />}
       <div className={styles.membership}>
         <span className={styles.membershipAvatars} aria-hidden="true">
           {targets.slice(0, 3).map((id) => {

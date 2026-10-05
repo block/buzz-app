@@ -19,12 +19,37 @@
     width: min(31rem, calc(100vw - 2rem));
     max-height: calc(100dvh - 3rem);
     overflow: auto;
+  }
+  .buzz-dialog,
+  .buzz-dialog-step {
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-panel);
     padding: var(--dialog-padding);
     background: var(--surface-popover);
     color: var(--text-standard);
     box-shadow: var(--shadow-sm);
+  }
+  /* Steps share one centered popup/backdrop; overlap only for the crossfade. */
+  .buzz-dialog[data-stepped] {
+    display: grid;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: none;
+    box-shadow: none;
+  }
+  .buzz-dialog-step {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    align-self: center;
+    min-width: 0;
+    max-height: inherit;
+    overflow: auto;
+  }
+  .buzz-dialog-step[inert] {
+    pointer-events: none;
   }
   .buzz-dialog[data-size="expanded"] {
     width: calc(100vw - 3rem);
@@ -82,9 +107,10 @@
       transform: translate(-50%, -50%);
     }
   }
-  /* A nested sheet needs a backdrop above its parent popup, not below it.
-     Matching the popup layer preserves DOM ordering: parent, backdrop, sheet. */
-  .buzz-dialog-backdrop[data-placement="right"] {
+  /* Nested sheets and pointer-dismissible dialogs need a backdrop above the
+     parent popup. Matching its layer preserves parent, backdrop, child order. */
+  .buzz-dialog-backdrop[data-placement="right"],
+  .buzz-dialog-backdrop[data-outside-dismissal] {
     z-index: var(--layer-dialog);
   }
   .buzz-dialog[data-placement="right"] {
@@ -132,6 +158,12 @@
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
   }
+  .buzz-dialog-content[data-header-gap="compact"] {
+    padding-block-start: var(--space-3);
+  }
+  .buzz-dialog-content[data-footer-gap="compact"] {
+    padding-block-end: var(--space-2);
+  }
   .buzz-dialog-actions {
     min-width: 0;
     flex-shrink: 0;
@@ -142,15 +174,32 @@
     gap: var(--space-3);
     overflow-x: auto;
   }
+  /* Each step retains its own sizing while it exits, including when the next
+     step is content-sized. The transparent popup only owns their shared grid. */
   /* Opt in for searches and switching views, not content-sized forms. */
-  :where(.buzz-dialog[data-height="stable"]) {
+  :where(
+    .buzz-dialog:not([data-stepped])[data-height="stable"],
+    .buzz-dialog-step[data-height="stable"]
+  ) {
     height: min(36rem, calc(100dvh - 2 * var(--space-6)));
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-header,
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-actions {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-header,
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-actions {
     flex-shrink: 0;
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-body {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-body {
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -163,6 +212,19 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+  }
+  /* Opt in when fixed controls and one inner scrollport share the body. */
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Without footer actions, the popup already supplies the bottom gutter. */
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body:last-child {
+    padding-bottom: 0;
   }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
@@ -251,12 +313,8 @@
 @utility popover-surface {
   /* Selection must remain visible on the raised dark surface. */
   --affordance-selected: var(--affordance-popover-selected);
-  @apply interaction-floating;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  background: var(--surface-popover);
+  @apply floating-surface;
   color: var(--text-standard);
-  box-shadow: var(--shadow-sm);
   z-index: var(--layer-popover);
 }
 

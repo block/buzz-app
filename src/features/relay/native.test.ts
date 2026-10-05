@@ -1,6 +1,11 @@
+import memberContract from "../channel-members/administration-contract.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import {
+  type EventTemplate,
+  type VerifiedEvent,
+  verifyEvent,
+} from "nostr-tools";
 import {
   connectNativeTransport,
   nativeRelayRequest,
@@ -10,6 +15,7 @@ import {
 import { keypair, message, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
+import { createRelaySession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -199,6 +205,129 @@ it("discovers the relay, verifies reads and publishes through the same native id
   );
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "publishes owner-signed managed-agent registrations through the session outbox (accepted: %s)",
+  async (accepted) => {
+    const transport = await connectNativeTransport(community);
+    const owner = createRelaySession(transport, {
+      outboxStorage: { load: () => [], save: () => {} },
+    });
+    try {
+      const outbox = owner.session.outbox;
+      assert.exists(outbox);
+      await outbox.ready();
+      const agent = keypair().pubkey;
+      const content = JSON.stringify({
+        name: "Remote agent",
+        parallelism: 1,
+        respond_to: "owner-only",
+      });
+      respond = (request) => ({
+        status: accepted ? 200 : 403,
+        body: accepted
+          ? { accepted: true, event_id: JSON.parse(request.body ?? "{}").id }
+          : { error: "Registration denied" },
+      });
+      expect(outbox.supports(30177)).toBe(true);
+      const id = outbox.send({ kind: 30177, tags: [["d", agent]], content });
+      await vi.waitFor(() =>
+        expect(
+          outbox.snapshot().find((item) => item.event.id === id),
+        ).toMatchObject({
+          delivery: accepted ? "accepted" : "failed",
+          ...(accepted ? {} : { error: "Relay rejected the message (403)" }),
+        }),
+      );
+      const publishes = requests.filter(
+        (request) => request.path === "/events",
+      );
+      expect(publishes).toHaveLength(1);
+      expect(publishes[0]).toMatchObject({ community, method: "POST" });
+      const event = JSON.parse(publishes[0]?.body ?? "null");
+      expect(event).toMatchObject({
+        id,
+        kind: 30177,
+        pubkey: viewer.pubkey,
+        content,
+      });
+      expect(event.tags).toEqual([
+        ["d", agent],
+        ["client-id", expect.any(String)],
+      ]);
+      expect(verifyEvent(event)).toBe(true);
+      expect(invoke).toHaveBeenCalledWith("relay_sign", {
+        community,
+        event: {
+          kind: 30177,
+          created_at: event.created_at,
+          tags: event.tags,
+          content,
+        },
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it.each([true, false])(
+  "delivers managed-agent unregister through the native outbox (accepted: %s)",
+  async (accepted) => {
+    const transport = await connectNativeTransport(community);
+    assert.exists(transport.writer);
+    const owner = createOutbox(viewer.pubkey, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    owners.push(owner);
+    await owner.outbox.ready();
+    respond = (request) => ({
+      body: {
+        accepted,
+        event_id: JSON.parse(request.body ?? "{}").id,
+        message: accepted ? "" : "denied",
+      },
+    });
+    const coordinate = `30177:${viewer.pubkey}:${"02".repeat(32)}`;
+    const id = owner.outbox.send({
+      kind: 5,
+      content: "",
+      tags: [["a", coordinate]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe(accepted ? "accepted" : "failed"),
+    );
+    const event = JSON.parse(
+      requests.find((request) => request.path === "/events")?.body ?? "null",
+    );
+    expect(event).toMatchObject({
+      id,
+      kind: 5,
+      pubkey: viewer.pubkey,
+      content: "",
+    });
+    expect(event.tags).toEqual([
+      ["a", coordinate],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(vi.mocked(invoke).mock.calls).toContainEqual([
+      "relay_sign",
+      {
+        community,
+        event: {
+          kind: 5,
+          created_at: event.created_at,
+          content: "",
+          tags: event.tags,
+        },
+      },
+    ]);
+  },
+);
 
 it("rejects tampered reads and keeps refusals distinct from uncertain receipts", async () => {
   const transport = await connectNativeTransport(community);
@@ -1529,4 +1658,66 @@ it("refuses native preparation failures and does not accept a mismatched prepare
   await expect(
     transport.uploadAttachment(heic, new AbortController().signal),
   ).rejects.toMatchObject({ code: "invalid" });
+});
+
+it("routes member administration through the native purpose-bound writer, never the generic signer", async () => {
+  const transport = await connectNativeTransport(community);
+  const writer = transport.memberAdministration;
+  assert.exists(writer);
+  const signal = new AbortController().signal;
+  for (const { event: template } of memberContract.accepted) {
+    const event = signed(viewer, template);
+    vi.mocked(invoke).mockResolvedValueOnce(event);
+    expect(await writer.sign(template, signal)).toEqual(event);
+    expect(vi.mocked(invoke).mock.lastCall).toEqual([
+      "relay_channel_sign",
+      { community, route: "member-administration", event: template },
+    ]);
+    vi.mocked(invoke).mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        accepted: true,
+        event_id: event.id,
+        message: "confirmed",
+      }),
+    });
+    await writer.publish(event, signal);
+    expect(vi.mocked(invoke).mock.lastCall).toEqual([
+      "relay_channel_publish",
+      { community, route: "member-administration", event },
+    ]);
+  }
+  const calls = vi.mocked(invoke).mock.calls.length;
+  for (const { event } of memberContract.rejected)
+    await expect(writer.sign(event, signal)).rejects.toThrow();
+  const template = memberContract.accepted[0]?.event;
+  assert.exists(template);
+  const channelTag = template.tags[0];
+  assert.exists(channelTag);
+  await expect(
+    writer.sign(
+      { ...template, tags: [channelTag, ["p", viewer.pubkey]] },
+      signal,
+    ),
+  ).rejects.toThrow();
+  await expect(
+    writer.publish(signed(relay, template), signal),
+  ).rejects.toThrow();
+  const aborted = AbortSignal.abort();
+  await expect(writer.sign(template, aborted)).rejects.toThrow();
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(calls);
+  vi.mocked(invoke).mockResolvedValueOnce(signed(relay, template));
+  await expect(writer.sign(template, signal)).rejects.toThrow();
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: JSON.stringify({ error: "denied" }),
+  });
+  await expect(
+    writer.publish(signed(viewer, template), signal),
+  ).rejects.toBeInstanceOf(PublishRejected);
+  expect(
+    vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
+  ).toBe(false);
 });

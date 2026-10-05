@@ -15,6 +15,8 @@ import {
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
+import { matchesEvent } from "./projection";
+import type { ReadFilter } from "./events";
 const event = message(keypair(), "session", "Work", 1);
 
 it("keeps verified session roster reads available for sends without member-add capability", async () => {
@@ -76,9 +78,19 @@ it("keeps verified session roster reads available for sends without member-add c
   }
 });
 
-it.each([false, true])(
-  "retries the identical saved creation after it never reached the relay (channel kit: %s)",
-  async (kit) => {
+it.each([
+  [false, "Release notes"],
+  [true, "Release notes"],
+  [false, "\ufeffRelease notes\ufeff"],
+  [true, "\ufeffRelease notes\ufeff"],
+  [false, "\u0085# Release notes\u0085"],
+  [true, "\u0085# Release notes\u0085"],
+] as const)(
+  "retries the identical saved creation after it never reached the relay (channel kit: %s, signed name: %j)",
+  async (kit, signedName) => {
+    const canonicalName = signedName.includes("\ufeff")
+      ? signedName
+      : "Release notes";
     const viewer = keypair(),
       relay = keypair();
     const id = "11111111-1111-4111-8111-111111111111";
@@ -87,7 +99,7 @@ it.each([false, true])(
       content: "",
       tags: [
         ["h", id],
-        ["name", "Release notes"],
+        ["name", signedName],
         ["visibility", "private"],
         ["channel_type", "stream"],
         ["about", "Updates for the team"],
@@ -133,7 +145,7 @@ it.each([false, true])(
                 signed(relay, {
                   kind: 39000,
                   content: "",
-                  tags: [["d", id], ["name", "Release notes"], ["private"]],
+                  tags: [["d", id], ["name", canonicalName], ["private"]],
                 }),
               ]
             : [],
@@ -154,7 +166,7 @@ it.each([false, true])(
     try {
       await vi.waitFor(() =>
         expect(owner.session.channelCreation.snapshot()).toEqual({
-          name: "Release notes",
+          name: canonicalName,
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
@@ -168,7 +180,7 @@ it.each([false, true])(
       ).rejects.toThrow(/still awaiting confirmation/);
       await expect(
         owner.session.channelCreation.create({
-          name: "Release notes",
+          name: canonicalName,
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
@@ -185,7 +197,7 @@ it.each([false, true])(
       dropping = false;
       await expect(
         owner.session.channelCreation.create({
-          name: "Release notes",
+          name: canonicalName,
           description: "Updates for the team",
           visibility: "private",
           ttlSeconds: 604800,
@@ -578,18 +590,26 @@ it.each<["open" | "private", string[][]]>([
         request.filters.some((filter) => filter["#d"]),
       );
       expect(exact?.filters).toEqual([
-        { kinds: [39000], authors: [relay.pubkey], "#d": [id], limit: 2 },
+        {
+          kinds: [39000],
+          authors: [relay.pubkey],
+          "#d": [id],
+          limit: 2,
+          consistency: "strong",
+        },
         {
           kinds: [39002],
           authors: [relay.pubkey],
           "#d": [id],
           "#p": [viewer.pubkey],
           limit: 2,
+          consistency: "strong",
         },
       ]);
       for (const request of wire.pending.splice(0))
         request.respond(
-          request === exact
+          request === exact &&
+            request.filters.every((filter) => filter.consistency === "strong")
             ? [
                 metadata(relay, id, "Release notes", undefined, tags),
                 roster(relay, id, [viewer.pubkey]),
@@ -655,14 +675,16 @@ it("creates a channel during initial discovery without committing a list of only
       records
         .find(({ event }) => event.kind === 9007)
         ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
-    // Serve every pending read: the viewer roster page lists `joined`, and
-    // metadata answers whatever ids discovery asks for.
-    const serve = (joined: readonly string[]) => {
+    // Ordinary reads remain frozen before creation; only writer reads see it.
+    // Metadata answers the IDs requested by each discovery pass.
+    const serve = () => {
       for (const request of wire.pending.splice(0)) {
         const [filter] = request.filters;
         request.respond(
           filter?.kinds?.includes(39002) && filter["#p"]
-            ? joined.map((channel) => roster(relay, channel, [viewer.pubkey]))
+            ? (filter.consistency === "strong" ? [other, id] : [other]).map(
+                (channel) => roster(relay, channel, [viewer.pubkey]),
+              )
             : filter?.kinds?.includes(39000)
               ? (filter["#d"] ?? []).map((channel) =>
                   metadata(
@@ -687,7 +709,7 @@ it("creates a channel during initial discovery without committing a list of only
       ),
     ).toBe(false);
     // The in-flight page was served before the relay accepted the create.
-    serve([other]);
+    serve();
     await vi.waitFor(() =>
       expect(
         snapshots.find((snapshot) => snapshot.status === "ready")?.channels,
@@ -696,7 +718,7 @@ it("creates a channel during initial discovery without committing a list of only
     // The first pass finishes with its metadata read before the forced second
     // pass starts; that pass carries the new channel's roster.
     await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
-    serve([other]);
+    serve();
     await vi.waitFor(() =>
       expect(
         wire.pending.some((request) =>
@@ -704,7 +726,8 @@ it("creates a channel during initial discovery without committing a list of only
         ),
       ).toBe(true),
     );
-    serve([other, id]);
+    expect(wire.pending[0]?.filters[0]?.consistency).toBe("strong");
+    serve();
     await expect(creating).resolves.toBe(id);
     expect(owner.session.channels.list()).toMatchObject({
       status: "ready",
@@ -713,6 +736,16 @@ it("creates a channel during initial discovery without committing a list of only
         expect.objectContaining({ id, members: [viewer.pubkey] }),
       ]),
     });
+    // Finish metadata and prove the one-shot writer selection does not stick.
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    expect(wire.pending[0]?.filters[0]?.consistency).toBe("strong");
+    serve();
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    owner.session.channels.refreshList?.();
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+    expect(wire.pending[0]?.filters[0]).not.toHaveProperty("consistency");
     // Canonical check, cited from the store's `resolve` docstring: no ready
     // snapshot ever held only the new channel.
     expect(
@@ -723,6 +756,159 @@ it("creates a channel during initial discovery without committing a list of only
         ),
     ).toBe(true);
     unsubscribe();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("confirms an agent added to a session and its parent with two concurrent exact roster reads and no rediscovery", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const parent = "11111111-1111-4111-8111-111111111111",
+    child = "22222222-2222-4222-8222-222222222222";
+  let clock = 1_700_000_000;
+  const members = new Map([
+    [parent, [viewer.pubkey]],
+    [child, [viewer.pubkey]],
+  ]);
+  // The gate's confirmations are the viewer-scoped exact roster reads. The
+  // relay holds them so the test can see both in flight before answering one.
+  let holding = false;
+  const held: {
+    id: string;
+    filters: readonly ReadFilter[];
+    release: () => void;
+  }[] = [];
+  const query = vi.fn(async (filters: readonly ReadFilter[]) => {
+    const exact = filters.find(
+      (filter) => filter.kinds?.includes(39002) && filter["#d"] && filter["#p"],
+    );
+    if (holding && exact)
+      await new Promise<void>((release) =>
+        held.push({ id: exact["#d"]?.[0] ?? "", filters, release }),
+      );
+    const events = [
+      signed(relay, {
+        kind: 39000,
+        content: "",
+        tags: [
+          ["d", parent],
+          ["t", "stream"],
+          ["name", "Team"],
+        ],
+      }),
+      signed(relay, {
+        kind: 39000,
+        content: "",
+        tags: [
+          ["d", child],
+          ["t", "stream"],
+          ["private"],
+          ["about", `Buzz session (buzz.sessions/v1)\nparent:${parent}`],
+        ],
+      }),
+      roster(relay, parent, members.get(parent) ?? [], clock),
+      roster(relay, child, members.get(child) ?? [], clock),
+    ];
+    const replica = events.map((event) =>
+      event.kind === 39002
+        ? roster(
+            relay,
+            event.tags.find(([key]) => key === "d")?.[1] ?? "",
+            [viewer.pubkey],
+            1_700_000_000,
+          )
+        : event,
+    );
+    return (
+      filters.every((filter) => filter.consistency === "strong")
+        ? events
+        : replica
+    ).filter((event) => filters.some((filter) => matchesEvent(event, filter)));
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      readAgentLibrary: async () => ({
+        definitions: [],
+        identities: [{ pubkey: agent.pubkey, name: "Outside agent" }],
+      }),
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async (event) => {
+          const target = event.tags.find(([name]) => name === "h")?.[1] ?? "";
+          members.set(target, [viewer.pubkey, agent.pubkey]);
+          clock++;
+        },
+      },
+      query,
+    },
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
+    );
+    expect(
+      owner.session.channels
+        .list()
+        .channels.find((channel) => channel.id === child)?.parentChannelId,
+    ).toBe(parent);
+    await owner.session.agentLibrary.refresh();
+    const before = query.mock.calls.length;
+    holding = true;
+    const adding = owner.session.workSessions.addAgents(child, [agent.pubkey]);
+    // Both commands were acknowledged before either confirmation answered: the
+    // two targets' reads are in flight together, not one gate after the other.
+    await vi.waitFor(() =>
+      expect(held.map(({ id }) => id).sort()).toEqual([parent, child].sort()),
+    );
+    for (const { id, filters } of held)
+      expect(filters).toEqual([
+        {
+          kinds: [39002],
+          authors: [relay.pubkey],
+          "#d": [id],
+          "#p": [viewer.pubkey],
+          limit: 2,
+          consistency: "strong",
+        },
+      ]);
+    for (const { release } of held.splice(0)) release();
+    await expect(adding).resolves.toBeUndefined();
+    const list = owner.session.channels.list();
+    expect(list.status).toBe("ready");
+    for (const id of [parent, child])
+      expect(
+        list.channels.find((channel) => channel.id === id)?.members,
+      ).toContain(agent.pubkey);
+    await flush();
+    const rosterReads = query.mock.calls
+      .slice(before)
+      .map(([filters]) => filters)
+      .filter((filters) =>
+        filters.some((filter) => filter.kinds?.includes(39002)),
+      );
+    // No viewer-wide roster page followed the exact reads: the full pass was
+    // never needed. The awaited roster reads are the two pre-publish membership
+    // checks and the two confirmations, one event each.
+    expect(
+      rosterReads.filter((filters) =>
+        filters.some((filter) => filter["#p"] && !filter["#d"]),
+      ),
+    ).toHaveLength(0);
+    expect(
+      rosterReads.filter((filters) =>
+        filters.some((filter) => filter["#d"] && filter["#p"]),
+      ),
+    ).toHaveLength(2);
+    expect(rosterReads).toHaveLength(4);
+    expect(held).toHaveLength(0);
   } finally {
     owner.dispose();
   }
@@ -780,6 +966,7 @@ it.each([true, false])(
           [
             {
               kinds: [9007],
+              consistency: "strong",
               ids: [creation.id],
               authors: [viewer.pubkey],
               limit: 1,
@@ -846,6 +1033,13 @@ function setup(
   // store path is exercised by "admits a created ... through the store's exact
   // read without rediscovering the roster".
   const resolve = vi.fn<NonNullable<ChannelQueries["resolve"]>>(async () => {});
+  // An agent addition confirms through the store's re-read of one roster the
+  // list already carries. The real store path is exercised by "confirms an
+  // agent added to a session and its parent with two concurrent exact roster
+  // reads and no rediscovery".
+  const refreshRoster = vi.fn<NonNullable<ChannelQueries["refreshRoster"]>>(
+    async () => {},
+  );
   const refreshList = vi.fn();
   const channels = {
     list: () => channelList,
@@ -856,6 +1050,7 @@ function setup(
       };
     },
     resolve,
+    refreshRoster,
     refreshList,
   } as unknown as ChannelQueries;
   const reader = { read: vi.fn(async () => [event]) };
@@ -871,6 +1066,7 @@ function setup(
     outbox,
     channels,
     resolve,
+    refreshRoster,
     refreshList,
     reader,
     listeners,
@@ -886,8 +1082,13 @@ function setup(
   };
 }
 /** The signal `refresh` handed its exact lookup, released once the gate decides. */
-function lookupSignal(test: ReturnType<typeof setup>) {
-  const signal = test.resolve.mock.lastCall?.[1]?.signal;
+function lookupSignal(
+  test: ReturnType<typeof setup>,
+  lookup:
+    | ReturnType<typeof setup>["resolve"]
+    | ReturnType<typeof setup>["refreshRoster"] = test.resolve,
+) {
+  const signal = lookup.mock.lastCall?.[1]?.signal;
   expect(signal).toBeInstanceOf(AbortSignal);
   return signal as AbortSignal;
 }
@@ -928,6 +1129,7 @@ it("admits a new channel from its exact lookup without a full discovery", async 
   ).resolves.toBeUndefined();
   expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
     signal: expect.any(AbortSignal),
+    consistency: "strong",
   });
   expect(lookupSignal(test).aborted).toBe(true);
   expect(test.refreshList).not.toHaveBeenCalled();
@@ -1006,6 +1208,7 @@ it.each([
     await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
     expect(test.resolve).toHaveBeenCalledExactlyOnceWith([id], {
       signal: expect.any(AbortSignal),
+      consistency: "strong",
     });
     expect(test.resolve.mock.invocationCallOrder[0]).toBeLessThan(
       test.refreshList.mock.invocationCallOrder[0] ?? 0,
@@ -1016,6 +1219,122 @@ it.each([
       status: "ready",
       channels: [{ id, name: "Release notes", members: [member] }],
     });
+    await expect(refreshing).resolves.toBeUndefined();
+    expect(test.refreshList).toHaveBeenCalledOnce();
+    expect(test.listListeners.size).toBe(0);
+  },
+);
+/** A ready list already carrying the channel, before and after an agent joins. */
+function listedChannel() {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const viewer = "b".repeat(64);
+  const member = "a".repeat(64);
+  const before = {
+    status: "ready" as const,
+    channels: [{ id, name: "Release notes", members: [viewer] }],
+  };
+  const after = {
+    status: "ready" as const,
+    channels: [{ id, name: "Release notes", members: [member, viewer] }],
+  };
+  return { id, viewer, member, before, after };
+}
+it("confirms an agent added to a listed channel from one exact roster read without a full discovery", async () => {
+  const { id, member, before, after } = listedChannel();
+  const test = setup(true, before);
+  test.refreshRoster.mockImplementation(async (channelId) => {
+    expect(channelId).toBe(id);
+    test.setList(after);
+  });
+  await expect(
+    test.service.refresh(id, { member }, false),
+  ).resolves.toBeUndefined();
+  // The store's `resolve` skips an id it already authorizes, so the gate never
+  // asked it; the roster re-read carried the signed evidence instead.
+  expect(test.resolve).not.toHaveBeenCalled();
+  expect(test.refreshRoster).toHaveBeenCalledExactlyOnceWith(id, {
+    signal: expect.any(AbortSignal),
+    consistency: "strong",
+  });
+  expect(lookupSignal(test, test.refreshRoster).aborted).toBe(true);
+  expect(test.refreshList).not.toHaveBeenCalled();
+  expect(test.listListeners.size).toBe(0);
+});
+it("confirms an addition the live roster lists while its roster read is still in flight", async () => {
+  const { id, member, before, after } = listedChannel();
+  const test = setup(true, before);
+  test.refreshRoster.mockImplementation(() => new Promise<void>(() => {}));
+  const refreshing = test.service.refresh(id, { member }, false);
+  await vi.waitFor(() => expect(test.refreshRoster).toHaveBeenCalledOnce());
+  const lookup = lookupSignal(test, test.refreshRoster);
+  expect(lookup.aborted).toBe(false);
+  test.setList(after);
+  await expect(refreshing).resolves.toBeUndefined();
+  // The live roster decided, so the in-flight read releases its reader slot.
+  expect(lookup.aborted).toBe(true);
+  expect(test.controller.signal.aborted).toBe(false);
+  expect(test.resolve).not.toHaveBeenCalled();
+  expect(test.refreshList).not.toHaveBeenCalled();
+});
+it.each(["idle", "loading", "error"] as const)(
+  "waits for the full discovery instead of a roster read while the list carrying the channel is %s",
+  async (status) => {
+    const { id, member, before, after } = listedChannel();
+    const test = setup(true, {
+      ...before,
+      status,
+      ...(status === "error" ? { error: "offline" } : {}),
+    });
+    let settled = false;
+    const refreshing = test.service
+      .refresh(id, { member }, false)
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
+    // Either exact read would commit a ready list over a list that is not.
+    expect(test.refreshRoster).not.toHaveBeenCalled();
+    expect(test.resolve).not.toHaveBeenCalled();
+    await flush();
+    expect(settled).toBe(false);
+    test.setList(after);
+    await expect(refreshing).resolves.toBeUndefined();
+    expect(test.refreshRoster).not.toHaveBeenCalled();
+    expect(test.listListeners.size).toBe(0);
+  },
+);
+it.each([
+  ["without the member", async () => {}],
+  [
+    "as stale",
+    async () => {
+      throw new DOMException("Stale roster refresh", "AbortError");
+    },
+  ],
+])(
+  "falls back to the full discovery when the roster read returns %s",
+  async (_outcome, lookup) => {
+    const { id, member, before, after } = listedChannel();
+    const test = setup(true, before);
+    test.refreshRoster.mockImplementation(lookup);
+    let settled = false;
+    const refreshing = test.service
+      .refresh(id, { member }, false)
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(test.refreshList).toHaveBeenCalledOnce());
+    expect(test.refreshRoster).toHaveBeenCalledExactlyOnceWith(id, {
+      signal: expect.any(AbortSignal),
+      consistency: "strong",
+    });
+    expect(test.refreshRoster.mock.invocationCallOrder[0]).toBeLessThan(
+      test.refreshList.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(test.resolve).not.toHaveBeenCalled();
+    await flush();
+    expect(settled).toBe(false);
+    test.setList(after);
     await expect(refreshing).resolves.toBeUndefined();
     expect(test.refreshList).toHaveBeenCalledOnce();
     expect(test.listListeners.size).toBe(0);
@@ -1241,10 +1560,11 @@ it("recovers a lost normal-channel creation acknowledgment only with its exact v
     [
       {
         kinds: [39000, 39002],
+        consistency: "strong",
         "#d": ["11111111-1111-4111-8111-111111111111"],
         limit: 2,
       },
-      { ids: [creation.id], limit: 1 },
+      { ids: [creation.id], limit: 1, consistency: "strong" },
     ],
     expect.anything(),
   );

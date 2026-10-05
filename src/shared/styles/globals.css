@@ -184,6 +184,9 @@
   }
 
   .shell-header {
+    --interaction-hover: var(--affordance-backdrop-hover);
+    --interaction-pressed: var(--affordance-backdrop-pressed);
+    --interaction-selected: var(--affordance-backdrop-pressed);
     @apply flex shrink-0 items-center justify-between;
     min-height: 3rem;
     flex-wrap: wrap;
@@ -199,7 +202,7 @@
   }
   .shell-communities {
     @apply flex min-w-0 shrink-0 items-center justify-start;
-    gap: var(--space-1);
+    gap: 0;
     padding-left: var(--space-4);
   }
   .shell-communities > .navigation-item {
@@ -286,27 +289,22 @@
     gap: var(--space-2);
   }
   .shell-header .buzz-button[data-icon-variant] {
-    width: 1.75rem;
-    height: 1.75rem;
+    width: var(--size-control-sm);
+    height: var(--size-control-sm);
   }
-  .shell-header .buzz-button[data-shell-sidebar-toggle] {
-    background: var(--surface-panel);
+  .shell-header
+    .buzz-button[data-icon-variant="ghost"]:not(
+      :hover,
+      :focus-visible,
+      :active
+    ) {
+    background: transparent;
     box-shadow: none;
   }
   .shell-header .buzz-button[data-icon-variant] svg,
-  .shell-header .buzz-button[data-icon-variant="chrome"] img {
+  .shell-header .buzz-button[data-icon-variant="ghost"] img {
     width: 1rem;
     height: 1rem;
-  }
-  .shell-header
-    .buzz-button[data-icon-variant="chrome"]
-    img[src="/bestie.png"] {
-    width: 1.125rem;
-    height: 1.125rem;
-  }
-  .shell-header
-    .buzz-button[data-shell-sidebar-toggle]:hover:not([data-disabled]) {
-    background: var(--affordance-subtle-hover);
   }
   @media (max-width: 43.75rem) {
     .shell-header {
@@ -342,16 +340,7 @@
       display: none;
     }
   }
-  @media (max-width: 25rem) {
-    .shell-header,
-    .shell-actions,
-    .shell-communities > nav {
-      gap: 0;
-    }
-    .shell-communities > nav {
-      margin-inline-end: 0;
-    }
-  }
+
   .muted {
     @apply text-body-sm text-muted;
   }

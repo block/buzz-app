@@ -7,11 +7,17 @@ import type {
 } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
+import { communityMedia } from "../../features/profiles/avatar-upload";
 import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
-import { localHereGroup, type inventoryDecision } from "./inventory-decisions";
+import { RelayAgentRemove } from "./RelayAgentRemove";
+import {
+  localHereGroup,
+  relayGroup,
+  type inventoryDecision,
+} from "./inventory-decisions";
 import { type AgentInventoryIdentity, localSetups } from "./inventory-model";
 
 /** One complete inventory identity; source selection belongs to the enclosing inventory. */
@@ -24,9 +30,11 @@ export function InventoryIdentityCard({
   session,
   destination,
   publicProfiles,
+  sourceProfiles,
   edit,
   duplicate,
   remove,
+  removeRelay,
   importedId,
   onUseHere,
   onImport,
@@ -41,9 +49,14 @@ export function InventoryIdentityCard({
   session: RelaySession;
   destination: string;
   publicProfiles: ReadonlyMap<string, Profile>;
+  sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  /** Undefined when this connection cannot remove relay-only agents. */
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
   importedId: string | null;
   onUseHere(
     pubkey: string,
@@ -56,7 +69,15 @@ export function InventoryIdentityCard({
 }) {
   const data = state.data;
   if (!data) return null;
-  const avatar = row.avatar ?? publicProfiles.get(row.pubkey)?.picture;
+  const sourceProfile = sourceProfiles.get(row.pubkey);
+  const avatar =
+    row.avatar ??
+    publicProfiles.get(row.pubkey)?.picture ??
+    sourceProfile?.picture;
+  const imageCommunity =
+    sourceProfile && sourceProfile.picture === avatar
+      ? sourceProfile.community
+      : undefined;
   const tile = decision.group === localHereGroup;
   // The app runs every saved setup, so each keeps its controls whether or not
   // its community is the one currently selected or connected.
@@ -97,6 +118,7 @@ export function InventoryIdentityCard({
       headingLevel={community ? 4 : 3}
       name={row.displayName}
       avatar={avatar}
+      media={imageCommunity ? communityMedia(imageCommunity) : undefined}
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
       editable={setups}
@@ -175,7 +197,6 @@ export function InventoryIdentityCard({
                 state.busy ||
                 state.status !== "ready" ||
                 !!decision.blocked ||
-                !data.localInventoryActions ||
                 !control.configureHere
               }
               onClick={() => onUseHere(row.pubkey, "use")}
@@ -183,14 +204,22 @@ export function InventoryIdentityCard({
               Use here
             </Button>
             {decision.blocked && <p role="status">{decision.blocked}</p>}
-            {!data.localInventoryActions && (
-              <p>
-                Restart an updated desktop build to use local inventory actions.
-              </p>
-            )}
           </>
         )}
         {(tile || decision.action === "clone") && cloneAction}
+        {removeRelay &&
+          decision.group === relayGroup &&
+          // Removal writes to the connected community only.
+          (row.knownCommunities.has(destination) ? (
+            <RelayAgentRemove
+              name={row.displayName}
+              remove={(signal) => removeRelay(row.pubkey, signal)}
+            />
+          ) : (
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              Switch to this community to remove this agent.
+            </p>
+          ))}
       </div>
       {decision.action === "wait" && (
         <p role="status" className="m-0 text-body-sm text-secondary">

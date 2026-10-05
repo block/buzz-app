@@ -117,29 +117,32 @@ test("An edited navigation hash opens its destination and survives reload and Ba
   await expect(appearance).toBeVisible();
 });
 
-test("malformed navigation addresses fail explicitly on cold and warm entry", async ({
-  page,
-  app,
-}) => {
-  await page.goto(`${app.origin}/#buzz=%7B`);
-  const failed = page.getByRole("heading", {
-    name: "This destination couldn’t open",
-    exact: true,
-  });
-  await expect(failed).toBeVisible({ timeout: 1500 });
-  await openPage(page, "Projects");
-  await expect(failed).toBeHidden();
-  await button(page, "Agents").first().click();
-  await page.evaluate(() => {
-    location.hash = "#buzz=%7B";
-  });
-  await expect(failed).toBeVisible({ timeout: 1500 });
-  await page.reload();
-  await expect(failed).toBeVisible();
-  await button(page, "Go back").click();
-  await expect(
-    page.getByRole("heading", { name: "Agents", exact: true }),
-  ).toBeVisible();
-  await button(page, "Go forward").click();
-  await expect(failed).toBeVisible();
-});
+const launchTest = test.extend({ launchAnimation: true });
+launchTest(
+  "malformed navigation addresses fail explicitly on cold and warm entry",
+  async ({ page, app }) => {
+    await page.goto(`${app.origin}/#buzz=%7B`);
+    const failed = page.getByRole("heading", {
+      name: "This destination couldn’t open",
+      exact: true,
+    });
+    await expect(page.locator("#buzz-launch")).toHaveCount(0);
+    await expect(failed).toBeVisible();
+    await openPage(page, "Projects");
+    await expect(failed).toBeHidden();
+    await button(page, "Agents").first().click();
+    await page.evaluate(() => {
+      location.hash = "#buzz=%7B";
+    });
+    await expect(failed).toBeVisible({ timeout: 1500 });
+    await page.reload();
+    await expect(page.locator("#buzz-launch")).toHaveCount(0);
+    await expect(failed).toBeVisible();
+    await button(page, "Go back").click();
+    await expect(
+      page.getByRole("heading", { name: "Agents", exact: true }),
+    ).toBeVisible();
+    await button(page, "Go forward").click();
+    await expect(failed).toBeVisible();
+  },
+);

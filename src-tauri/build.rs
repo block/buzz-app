@@ -1,4 +1,12 @@
+#[path = "src/enterprise_adapter_url.rs"]
+mod enterprise_adapter_url;
+#[path = "src/enterprise_auth_build.rs"]
+mod enterprise_auth_build;
+#[path = "src/enterprise_relay_url.rs"]
+mod enterprise_relay_url;
+
 fn main() {
+    configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
@@ -29,6 +37,8 @@ fn main() {
             "identity_import",
             "identity_create",
             "identity_export",
+            "identity_prepare_remote_agent_authorization",
+            "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",
             "relay_sign_read_state",
@@ -70,8 +80,8 @@ fn main() {
             "agent_control_snapshot",
             "agent_control_log_challenge",
             "agent_control_read_log",
-            "goose_install",
             "pi_install",
+            "agent_security",
             "agent_control_save",
             "agent_control_save_defaults",
             "agent_control_start_on_app_launch",
@@ -117,4 +127,26 @@ fn main() {
         ])),
     )
     .expect("Could not build Tauri resources")
+}
+
+fn configure_enterprise_auth() {
+    const RELAYS: &str = "BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS";
+    const ADAPTER: &str = "BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL";
+    println!("cargo:rerun-if-env-changed={RELAYS}");
+    println!("cargo:rerun-if-env-changed={ADAPTER}");
+
+    let relays = std::env::var(RELAYS).ok();
+    let adapter = std::env::var(ADAPTER).ok();
+    let configured = enterprise_auth_build::validate_enterprise_auth_build_config(
+        relays.as_deref(),
+        adapter.as_deref(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    if let Some(relays) = configured.relays.as_deref() {
+        println!("cargo:rustc-env={RELAYS}={relays}");
+    }
+    if let Some(adapter) = configured.adapter.as_deref() {
+        println!("cargo:rustc-env={ADAPTER}={adapter}");
+    }
 }

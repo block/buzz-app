@@ -1,8 +1,8 @@
-import { selectSettingsSection } from "./navigation.mjs";
+import { selectSettingsSection, settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
-test.use({ historyCounts: { alpha: 20, beta: 1 } });
+test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
@@ -27,6 +27,7 @@ async function expectMode(page, mode, inSettings = false) {
     "background-image",
     /linear-gradient/,
   );
+  await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
@@ -285,8 +286,8 @@ test("saved dark document paints before the application module is allowed to exe
       "background-color",
       "rgb(0, 0, 0)",
     );
-    await expect(page.locator("#root > .buzz-launch")).toBeVisible();
-    await expect(page.locator(".buzz-launch img")).toBeVisible();
+    await expect(page.locator("#buzz-launch")).toBeVisible();
+    await expect(page.locator("#buzz-launch img")).toBeVisible();
     // Observe the painted document for two frames with the entire React bundle still withheld.
     await page.evaluate(
       () =>
@@ -351,7 +352,7 @@ test("compiled host preserves compatibility utility meanings", async ({
     await page.getByRole("radio", { name: mode, exact: true }).check();
     await expect(page.locator("#primary-text")).toHaveCSS(
       "color",
-      mode === "Light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+      mode === "Light" ? "rgb(15, 15, 15)" : "rgb(255, 255, 255)",
     );
     await expect(page.locator("#primary-border")).toHaveCSS(
       "border-top-color",

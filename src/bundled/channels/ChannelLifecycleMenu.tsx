@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ArchiveIcon,
+  ArrowClockwiseIcon,
   EyeSlashIcon,
   SignOutIcon,
   TrashIcon,
+  WarningCircleIcon,
 } from "../../shared/design-system/icons";
 import {
   MenuIcon,
@@ -16,26 +18,30 @@ import type {
   ChannelLifecycleSettings,
 } from "../../features/relay/channel-lifecycle-protocol";
 
-/** Mounted only while a menu is open: no per-row/background capability reads. */
+/** Read permissions only while open; the header keeps its popup owner mounted. */
 export function ChannelLifecycleMenu({
   channelId,
   lifecycle,
   choose,
   disabled,
   separator,
+  open = true,
+  render = (items) => items,
 }: {
   channelId: string;
   lifecycle: ChannelLifecycleCapability;
   choose(action: ChannelLifecycleAction): void;
   disabled: boolean;
   separator: boolean;
+  open?: boolean;
+  render?(items: ReactNode): ReactNode;
 }) {
   const [state, setState] = useState<ChannelLifecycleSettings>();
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit retry starts a fresh permission lookup.
   useEffect(() => {
-    if (!lifecycle.available) return;
+    if (!open || !lifecycle.available) return;
     const controller = new AbortController();
     setState(undefined);
     setFailed(false);
@@ -48,18 +54,21 @@ export function ChannelLifecycleMenu({
       },
     );
     return () => controller.abort();
-  }, [channelId, lifecycle, retry]);
+  }, [channelId, lifecycle, retry, open]);
   if (!lifecycle.available)
-    return (
+    return render(
       <>
         {separator && <MenuSeparator />}
         <MenuItem disabled>
+          <MenuIcon>
+            <WarningCircleIcon size={14} />
+          </MenuIcon>
           Channel actions unavailable on this connection
         </MenuItem>
-      </>
+      </>,
     );
   if (failed)
-    return (
+    return render(
       <>
         {separator && <MenuSeparator />}
         <p role="alert">Channel actions unavailable</p>
@@ -68,22 +77,26 @@ export function ChannelLifecycleMenu({
           disabled={disabled}
           onClick={() => setRetry((value) => value + 1)}
         >
+          <MenuIcon>
+            <ArrowClockwiseIcon size={14} />
+          </MenuIcon>
           Retry channel permissions
         </MenuItem>
-      </>
+      </>,
     );
   if (
     !state ||
     !(
       state.canHide ||
       state.canArchive ||
+      state.canUnarchive ||
       state.canDelete ||
       state.canLeave ||
       state.deleteUnavailable
     )
   )
-    return null;
-  return (
+    return render(null);
+  return render(
     <>
       {separator && <MenuSeparator />}
       {state.canHide ? (
@@ -95,34 +108,6 @@ export function ChannelLifecycleMenu({
         </MenuItem>
       ) : (
         <>
-          {state.canArchive && (
-            <MenuItem disabled={disabled} onClick={() => choose("archive")}>
-              <MenuIcon>
-                <ArchiveIcon size={14} />
-              </MenuIcon>
-              Archive channel
-            </MenuItem>
-          )}
-          {state.deleteUnavailable && (
-            <>
-              <MenuItem disabled>Delete check unavailable</MenuItem>
-              <MenuItem
-                closeOnClick={false}
-                disabled={disabled}
-                onClick={() => setRetry((value) => value + 1)}
-              >
-                Retry Delete check
-              </MenuItem>
-            </>
-          )}
-          {state.canDelete && (
-            <MenuItem disabled={disabled} onClick={() => choose("delete")}>
-              <MenuIcon>
-                <TrashIcon size={14} />
-              </MenuIcon>
-              Delete channel
-            </MenuItem>
-          )}
           {state.canLeave && (
             <MenuItem disabled={disabled} onClick={() => choose("leave")}>
               <MenuIcon>
@@ -131,8 +116,53 @@ export function ChannelLifecycleMenu({
               Leave channel
             </MenuItem>
           )}
+          {(state.canArchive || state.canUnarchive) && (
+            <MenuItem
+              disabled={disabled}
+              onClick={() =>
+                choose(state.canUnarchive ? "unarchive" : "archive")
+              }
+            >
+              <MenuIcon>
+                <ArchiveIcon size={14} />
+              </MenuIcon>
+              {state.canUnarchive ? "Unarchive channel" : "Archive channel"}
+            </MenuItem>
+          )}
+          {state.deleteUnavailable && (
+            <>
+              <MenuItem disabled>
+                <MenuIcon>
+                  <WarningCircleIcon size={14} />
+                </MenuIcon>
+                Delete check unavailable
+              </MenuItem>
+              <MenuItem
+                closeOnClick={false}
+                disabled={disabled}
+                onClick={() => setRetry((value) => value + 1)}
+              >
+                <MenuIcon>
+                  <ArrowClockwiseIcon size={14} />
+                </MenuIcon>
+                Retry Delete check
+              </MenuItem>
+            </>
+          )}
+          {state.canDelete && (
+            <MenuItem
+              tone="danger"
+              disabled={disabled}
+              onClick={() => choose("delete")}
+            >
+              <MenuIcon>
+                <TrashIcon size={14} />
+              </MenuIcon>
+              Delete channel
+            </MenuItem>
+          )}
         </>
       )}
-    </>
+    </>,
   );
 }

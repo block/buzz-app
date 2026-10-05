@@ -31,22 +31,38 @@ export function ShareModelPicker({
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [custom, setCustom] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const id = useId();
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries the catalog read.
   useEffect(() => {
     let active = true;
     setError(null);
+    const deadline = setTimeout(() => {
+      if (active) {
+        active = false;
+        setError(
+          "Model choices took too long to load. Retry, or choose a model under Advanced.",
+        );
+      }
+    }, 30000);
     void invoke<Catalog>("mesh_compute_catalog")
       .then((result) => {
         if (!Array.isArray(result.entries))
           throw new Error("Invalid Mesh model catalog");
-        if (active) setCatalog(result);
+        if (active) {
+          clearTimeout(deadline);
+          setCatalog(result);
+        }
       })
       .catch((error) => {
-        if (active) setError(String(error));
+        if (active) {
+          clearTimeout(deadline);
+          setError(String(error));
+        }
       });
     return () => {
+      clearTimeout(deadline);
       active = false;
     };
   }, [attempt]);
@@ -72,7 +88,26 @@ export function ShareModelPicker({
       ) : (
         !catalog && <p role="status">Loading model choices…</p>
       )}
-      {catalog && (
+      {entry && !advanced && (
+        <p className="text-body">
+          {entry.name}
+          {model === catalog?.recommended
+            ? " — automatically selected for this device."
+            : " — selected model."}
+        </p>
+      )}
+      {catalog && !catalog.recommended && !model && (
+        <p>No recommended model is available. Choose a model under Advanced.</p>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setAdvanced(!advanced)}
+        aria-expanded={advanced}
+      >
+        Advanced
+      </Button>
+      {catalog && advanced && (
         <Select
           label="Model to share"
           variant="field"
@@ -115,20 +150,21 @@ export function ShareModelPicker({
           . Memory fit: {entry.fit.replaceAll("_", " ")}.
         </p>
       )}
-      {(custom ||
-        !catalog ||
-        catalog.entries.length === 0 ||
-        (model && !entry)) && (
-        <label htmlFor={id} className="text-body-sm">
-          Model reference or local GGUF path
-          <Input
-            id={id}
-            value={model}
-            onChange={(event) => onChange(event.target.value)}
-            disabled={disabled}
-          />
-        </label>
-      )}
+      {advanced &&
+        (custom ||
+          !catalog ||
+          catalog.entries.length === 0 ||
+          (model && !entry)) && (
+          <label htmlFor={id} className="text-body-sm">
+            Model reference or local GGUF path
+            <Input
+              id={id}
+              value={model}
+              onChange={(event) => onChange(event.target.value)}
+              disabled={disabled}
+            />
+          </label>
+        )}
     </div>
   );
 }

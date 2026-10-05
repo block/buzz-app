@@ -3,6 +3,10 @@ import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
 import { readReviewOrigin, useReviewEntrance } from "./use-review-entrance";
 import { VideoPlayer, videoTime } from "./VideoPlayer";
 import { seekVideoBy } from "./use-video-gestures";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -206,6 +210,8 @@ function ReviewShell({
   retry?: () => void | Promise<void>;
 }) {
   const source = session.media(attachment.url);
+  const mediaTitle =
+    attachment.kind === "video" ? (attachment.name ?? "Video") : "Image";
   const backdrop = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -366,40 +372,39 @@ function ReviewShell({
           attachment.kind === "video" ? "Video review" : "Image viewer"
         }
       >
-        <header
+        <div
           className={styles.mediaReviewHeading}
+          title={mediaTitle}
           data-review-chrome=""
           data-tauri-drag-region
         >
-          <span data-tauri-drag-region>
-            {attachment.kind === "video"
-              ? (attachment.name ?? "Video review")
-              : "Image"}
-          </span>
-          <IconButton
-            size="compact"
-            variant="subtle"
-            shape="control"
-            aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-            aria-pressed={commentsOpen}
-            onClick={(event) => {
-              prepareSidebarMotion(event.detail > 0);
-              setCommentsMotion(event.detail > 0);
-              setCommentsOpen(!commentsOpen);
-            }}
-            icon={<SidebarIcon size={20} />}
+          <PanelHeader
+            title={<PanelHeaderLabel title={mediaTitle} />}
+            actions={
+              <>
+                <IconButton
+                  size="compact"
+                  aria-label={commentsOpen ? "Hide comments" : "Show comments"}
+                  aria-pressed={commentsOpen}
+                  onClick={(event) => {
+                    prepareSidebarMotion(event.detail > 0);
+                    setCommentsMotion(event.detail > 0);
+                    setCommentsOpen(!commentsOpen);
+                  }}
+                  icon={<SidebarIcon size={20} />}
+                />
+                <IconButton
+                  size="compact"
+                  type="button"
+                  aria-label="Close fullscreen viewer"
+                  data-review-dismiss=""
+                  onClick={(event) => dismiss(event.detail > 0)}
+                  icon={<XIcon size={20} aria-hidden="true" />}
+                />
+              </>
+            }
           />
-          <IconButton
-            size="compact"
-            variant="subtle"
-            shape="control"
-            type="button"
-            aria-label="Close fullscreen viewer"
-            data-review-dismiss=""
-            onClick={(event) => dismiss(event.detail > 0)}
-            icon={<XIcon size={20} aria-hidden="true" />}
-          />
-        </header>
+        </div>
         <div className={styles.mediaReviewStage} data-review-stage="">
           {!source || unavailable || mediaFailed ? (
             <p
@@ -460,14 +465,29 @@ function ReviewShell({
           inert={!commentsOpen}
           aria-hidden={!commentsOpen || undefined}
           aria-label="Media comments"
-          onFocusCapture={() => {
-            if (attachment.kind === "video") video.current?.pause();
-          }}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
         >
           <div className={styles.mediaReviewConversationContent}>
+            <div className={styles.mediaReviewThreadHeading}>
+              <PanelHeader
+                variant="compact"
+                title={
+                  <PanelHeaderLabel
+                    title="Comments"
+                    icon={<ChatCircleIcon size={20} />}
+                  />
+                }
+                actions={
+                  rootId ? (
+                    <span className={styles.mediaReviewCommentCount}>
+                      {replies.length}
+                    </span>
+                  ) : undefined
+                }
+              />
+            </div>
             {rootId && source ? (
               <MessageEditScope>
                 <ReviewComments
@@ -492,19 +512,26 @@ function ReviewShell({
                     />
                   </div>
                 )}
-                <MessageComposer
-                  extensions={extensions}
-                  session={session}
-                  scope={scope}
-                  channelId={channelId}
-                  channelName={channelName}
-                  threadRootId={rootId}
-                  editMessages={editMessages}
-                  {...(attachment.kind === "video" && includeTime
-                    ? { mediaTimeSeconds: currentTime }
-                    : {})}
-                  hideMediaTimeIndicator
-                />
+                <div
+                  className={styles.mediaReviewComposer}
+                  onFocusCapture={() => {
+                    if (attachment.kind === "video") video.current?.pause();
+                  }}
+                >
+                  <MessageComposer
+                    extensions={extensions}
+                    session={session}
+                    scope={scope}
+                    channelId={channelId}
+                    channelName={channelName}
+                    threadRootId={rootId}
+                    editMessages={editMessages}
+                    {...(attachment.kind === "video" && includeTime
+                      ? { mediaTimeSeconds: currentTime }
+                      : {})}
+                    hideMediaTimeIndicator
+                  />
+                </div>
               </MessageEditScope>
             ) : (
               <p className={styles.empty} role={error ? "alert" : "status"}>
@@ -563,12 +590,6 @@ function ReviewComments({
       className={styles.mediaReviewThread}
       aria-label="Media comments"
     >
-      <div className={styles.mediaReviewThreadHeading}>
-        <strong>
-          <ChatCircleIcon size={18} /> Comments
-        </strong>
-        <span>{replies.length}</span>
-      </div>
       {replies.map((row, index) => (
         <div
           key={row.id}
@@ -599,7 +620,11 @@ function ReviewComments({
           />
         </div>
       ))}
-      {!replies.length && <p className={styles.threadNote}>No comments yet.</p>}
+      {!replies.length && (
+        <p className={styles.threadNote}>
+          No comments yet. Add the first below.
+        </p>
+      )}
       {limited && (
         <p className={styles.threadNote}>Thread history limit reached.</p>
       )}

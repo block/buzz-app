@@ -5,6 +5,7 @@ import type { PluginModule } from "../../plugins/api";
 import { Button } from "../../shared/design-system/ui/Button";
 import { CpuIcon } from "../../shared/design-system/icons";
 import { ShareModelPicker } from "./ShareModelPicker";
+import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
 
@@ -35,7 +36,7 @@ const phaseLabels = {
   failed: "Needs attention",
 };
 
-export const inject = ["relay", "settingsCards"];
+export const inject = ["relay", "settingsCards", "agentControl"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string> | undefined;
   let scope: string | undefined;
@@ -258,14 +259,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
           <section aria-label="Share compute">
             <h2 className="text-body">Share your compute</h2>
             <p className="text-body-sm text-secondary">
-              Community members’ prompts run on your hardware. Your selected
-              model is visible to this community. Stop sharing stops this node,
-              including agents using it; start an agent again to reconnect to
-              another member’s compute. Buzz remembers one sharing configuration
-              for its selected identity and community; sharing elsewhere
-              replaces it. Disconnect also stops this shared node for now; saved
-              sharing resumes when you reopen Buzz in this community. Use Stop
-              sharing to keep it off.
+              Let this community use a model on your machine. We choose a model
+              for your hardware; Advanced lets you change it. Sharing resumes
+              when you reopen Buzz. Stop sharing keeps it off and stops agents
+              currently using this node.
             </p>
             <ShareModelPicker
               model={model}
@@ -337,6 +334,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   : "Share compute"}
             </Button>
           </section>
+        )}
+        {community && snapshot.viewer && ctx.agentControl && (
+          <CommunityAgent
+            key={`${community.id}:${snapshot.viewer}`}
+            control={ctx.agentControl}
+            destination={community.id}
+            owner={snapshot.viewer}
+          />
         )}
         {community && (
           <CommunityMesh

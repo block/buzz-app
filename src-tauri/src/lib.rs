@@ -9,6 +9,14 @@ mod agent_models;
 mod agents;
 mod deep_links;
 mod dock;
+#[cfg(test)]
+#[path = "enterprise_adapter_url.rs"]
+mod enterprise_adapter_url;
+#[cfg(test)]
+#[path = "enterprise_auth_build.rs"]
+mod enterprise_auth_build;
+mod enterprise_login_gate;
+mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod mesh_compute;
@@ -18,7 +26,10 @@ mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
-use identity::{identity_create, identity_export, identity_import, identity_restore, IdentityHost};
+use identity::{
+    identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
+    identity_restore, IdentityHost,
+};
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
@@ -48,7 +59,8 @@ use buzzodz_plugins::{
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
-use harness_setup::{goose_install, pi_install, HarnessSetup};
+use enterprise_login_gate::enterprise_login_gate;
+use harness_setup::{pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -384,6 +396,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_import,
         identity_create,
         identity_export,
+        identity_prepare_remote_agent_authorization,
+        enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,
@@ -425,10 +439,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_snapshot,
         agent_control_log_challenge,
         agent_control_read_log,
-        goose_install,
         pi_install,
         agent_control_use_here,
         agent_control_local_clone_settings,
+        agents::agent_security,
         agent_control_save,
         agent_control_save_defaults,
         agent_control_delete,

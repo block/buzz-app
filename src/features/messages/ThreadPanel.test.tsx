@@ -1083,3 +1083,27 @@ it("observes a visible reply before its root resolves, then enables thread catch
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });
+
+it("inline Inbox reveal opts into exact reader and composes origin action without changing ordinary tab focus", () => {
+  const h = messagesHarness();
+  const headerAction = <button type="button">Open in channel</button>;
+  render(
+    <ThreadPanel
+      {...h.props}
+      navigation={undefined}
+      revealSelected
+      headerActions={headerAction}
+    />,
+  );
+  expect(h.thread).toHaveBeenCalledWith("channel", row.id, { exact: true });
+  const thread = screen.getByRole("complementary", { name: "Thread" });
+  expect(
+    within(thread).getByRole("button", { name: "Open in channel" }),
+  ).toBeInTheDocument();
+  expect(
+    within(thread).getByRole("button", { name: "Close thread" }),
+  ).toHaveFocus();
+  expect(
+    within(thread).getByRole("region", { name: "Thread messages" }),
+  ).not.toHaveAttribute("data-positioning");
+});

@@ -66,6 +66,41 @@ locally authored event is **not proof of relay acceptance**. Signature-verified
 membership, bounds and persistence. Domain folds can consume local payloads, but
 must not let them manufacture relay-authored authority.
 
+## Read-your-writes consistency
+
+`fresh: true` prevents sharing an older in-flight request; it does not select
+the writer. Channel creation/admission and recovery, DM opening, channel edits,
+member administration, lifecycle confirmations, and mention preflights request
+`consistency: "strong"` on their authoritative filters. Signed evidence remains
+required; an accepted command is not membership, and writer routing does not
+wait for asynchronous relay side effects. Existing cancellation and bounded
+confirmation retries are unchanged.
+
+Channel discovery accepts an explicit consistency option for post-write exact
+reads and the full-roster fallback. A queued writer-backed refresh survives an
+older in-flight pass or quota pause. If the writer-backed pass itself fails or
+is interrupted, including its metadata phase, its next pass retains writer routing and the
+existing cooldown; a successful pass returns later refreshes to ordinary routing.
+Signed membership hints use writer-backed exact reads or the existing full-roster
+fallback, including metadata. A replica pass superseding pending exact hint
+confirmations queues a writer-backed pass to settle those grants. If list failure,
+disconnect or cache clear retires queued or in-flight hint confirmations, the store
+retains their writer requirement for the next deliberate refresh, Retry or
+establishment, without starting an automatic recovery pass or bypassing cooldown.
+Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
+eligible. The details editor and member-administration capability use writer-backed
+state for their shared load/preflight/confirmation reads; the member dialog's
+separate display-roster load remains replica-eligible. Work-session membership
+preflights (including session sends and canvas saves) also use the writer, so a
+just-added member does not fail the next operation.
+Template setup also confirms exact Canvas/member events and selected Canvas heads
+against the writer without replaying accepted commands. Agent deletion discovers
+member channels and confirms each removal with writer-backed rosters; unreadable
+rosters still fail closed. Standalone recipe saves use writer-backed exact-ID
+confirmation; recipe head and catalog reads remain replica-eligible. For
+writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
+the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
@@ -681,7 +716,19 @@ including failures when no channel is selected. The store owns that obligation,
 the optional metadata read, and its learned retry time; live Retry and diagnostic
 Refresh channels share the same cooldown. Metadata failure never revokes successful
 membership authority. Hints during an active read coalesce into one follow-up;
-a refused read retains the obligation without draining queued work. Live Retry
+a member-added hint naming a channel the viewer does not yet hold confirms only
+that channel when the list is already ready, while removals, unnamed hints, held
+channels and CLOSED still schedule the full refresh. Named hints arriving
+together share one exact read, a channel already being confirmed is not read
+again, and a full refresh that starts afterwards retires pending confirmations
+in favour of its own result. A full refresh that fails while a confirmation is
+pending keeps its error for Retry rather than triggering another refresh, but a
+superseding refresh that a concurrent revocation interrupts before it settles
+reruns, because the grants it inherited still need a complete roster. A cache
+clear or disconnect drops queued and pending confirmations outright, before a
+queued hint can read into the new session state; the next establishment's
+refresh or Retry owns recovery there.
+A refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
 A new channel-route failure with Buzz's `restricted: channel access revoked`
 reason schedules this same coalesced refresh. CLOSED is a hint, not archive or

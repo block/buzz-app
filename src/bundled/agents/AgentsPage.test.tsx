@@ -437,7 +437,7 @@ it("duplicates editable settings into a new identity without copying write-only 
     name: "Fixture agent copy",
     systemPrompt: "Be concise",
     harness: { provider: "openai", model: "example-model" },
-    environment: {},
+    environment: { BUZZ_ACP_AGENTS: "10" },
   });
 });
 
@@ -465,6 +465,7 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
   const dialog = screen.getByRole("dialog", { name: "Delete Fixture agent?" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
   expect(
     within(dialog).getByText(/relay identity and past messages remain visible/),
   ).toBeVisible();
@@ -561,13 +562,14 @@ it("focuses the imported managed identity without starting it", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
-  const notice = await screen.findByText(
-    "Imported, not started. Start it when you are ready.",
-  );
+  const notice = await screen.findByText(/Imported, not started\./);
   const imported = notice.closest("article");
   if (!imported) throw Error("Imported card missing");
   expect(imported).toHaveTextContent("wss://third.example");
   expect(notice.parentElement).toHaveFocus();
+  expect(
+    within(imported).queryByRole("button", { name: "Use here" }),
+  ).toBeNull();
   expect(within(imported).getByRole("button", { name: "Start" })).toBeEnabled();
   expect(f.calls.some((call) => call.action === "start")).toBe(false);
 });
@@ -610,13 +612,13 @@ it("shows Harness, Provider and Model in that order when adding an agent", async
   expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
 });
 
-it("selects installed Goose with ACP arguments and saves its provider and model", async () => {
+it("selects bundled Goose without subcommand arguments and saves its provider and model", async () => {
   const { f } = setup("ready", (fixture) => {
     fixture.data.harnessOptions?.push({
-      command: "/Users/test/.local/bin/goose",
+      command: "goose",
       label: "Goose",
       available: true,
-      defaultArgs: ["acp"],
+      defaultArgs: [],
       providers: [
         { value: "anthropic", label: "Anthropic" },
         { value: "openrouter", label: "OpenRouter" },
@@ -664,8 +666,8 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
       edit: {
         sessionPolicy: "thread",
         harness: {
-          command: "/Users/test/.local/bin/goose",
-          args: ["acp"],
+          command: "goose",
+          args: [],
           provider: "openrouter",
           model: "anthropic/claude-sonnet-4",
         },
@@ -786,7 +788,7 @@ it("keeps Goose model browsing available after a draft provider override", async
   expect(within(dialog).getByRole("combobox", { name: "Model" })).toBeVisible();
 });
 
-it("creates and starts a Goose agent with the selected provider", async () => {
+it("creates and starts a bundled Goose agent with the selected provider", async () => {
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
   const commit = vi.fn();
   const start = vi.fn();
@@ -794,10 +796,10 @@ it("creates and starts a Goose agent with the selected provider", async () => {
     fixture.data.createAvailable = true;
     fixture.data.defaultWorkspace = "/fixture/workspace";
     fixture.data.harnessOptions?.push({
-      command: "/Users/test/.local/bin/goose",
+      command: "goose",
       label: "Goose",
       available: true,
-      defaultArgs: ["acp"],
+      defaultArgs: [],
       providers: [{ value: "openrouter", label: "OpenRouter" }],
     });
     fixture.host.prepareCreate = async () => ({
@@ -848,10 +850,13 @@ it("creates and starts a Goose agent with the selected provider", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   expect(commit.mock.calls[0]?.[1].harness).toMatchObject({
-    command: "/Users/test/.local/bin/goose",
-    args: ["acp"],
+    command: "goose",
+    args: [],
     provider: "openrouter",
     model: "anthropic/claude-sonnet-4",
+  });
+  expect(commit.mock.calls[0]?.[1].environment).toEqual({
+    BUZZ_ACP_AGENTS: "10",
   });
   expect(start).toHaveBeenCalledExactlyOnceWith("created-goose", "start");
   expect(
@@ -997,13 +1002,13 @@ it("checks an unconfirmed Start without repeating it", async () => {
   expect(profile).toHaveBeenCalledOnce();
 });
 
-it("shows an unavailable Goose harness without allowing selection", async () => {
+it("shows an unavailable Pi harness without allowing selection", async () => {
   setup("ready", (fixture) => {
     fixture.data.harnessOptions?.push({
-      command: "goose",
-      label: "Goose",
+      command: "buzz-pi-acp",
+      label: "Pi",
       available: false,
-      defaultArgs: ["acp"],
+      defaultArgs: [],
       providers: [{ value: "anthropic", label: "Anthropic" }],
     });
   });
@@ -1013,9 +1018,9 @@ it("shows an unavailable Goose harness without allowing selection", async () => 
     within(dialog).getByRole("combobox", { name: "Harness" }),
   );
   expect(
-    await screen.findByRole("option", { name: "Goose (install first)" }),
+    await screen.findByRole("option", { name: "Pi (install first)" }),
   ).toHaveAttribute("aria-disabled", "true");
-  expect(within(dialog).getByText(/Install the Goose CLI/)).toBeVisible();
+  expect(within(dialog).getByText(/Pi needs its CLI/)).toBeVisible();
 });
 
 it.each(["Create agent", "Edit agent"] as const)(
@@ -1026,8 +1031,8 @@ it.each(["Create agent", "Edit agent"] as const)(
       "ready",
       (fixture) => {
         fixture.data.harnessOptions?.push({
-          command: "goose",
-          label: "Goose",
+          command: "buzz-pi-acp",
+          label: "Pi",
           available: false,
           status: "cli-needed",
           providers: [],
@@ -1053,6 +1058,7 @@ it.each(["Create agent", "Edit agent"] as const)(
       );
     }
     const dialog = screen.getByRole("dialog", { name: dialogName });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
     fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Edited before setup" },
     });
@@ -1238,9 +1244,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
       await gate;
     });
     await waitFor(() => expect(control.snapshot().busy).toBe(false));
-    expect(
-      screen.queryByText("Imported, not started. Start it when you are ready."),
-    ).toBeNull();
+    expect(screen.queryByText(/Imported, not started\./)).toBeNull();
     await act(async () => control.refresh());
     const imported = control
       .snapshot()
@@ -1770,13 +1774,13 @@ for (const mode of ["edit", "create"] as const) {
           )?.edit;
     expect(edit).toMatchObject({
       name: "Name-only change",
-      environment: {},
+      environment: mode === "create" ? { BUZZ_ACP_AGENTS: "10" } : {},
       harness: { command: "buzz-agent", provider: "", model: "" },
     });
     expect(edit.harness.databricks).toBeUndefined();
   });
 }
-it("create copies only the default harness and shows inherited defaults", async () => {
+it("create seeds editable workers while inheriting model and context defaults", async () => {
   const user = userEvent.setup();
   const create = vi.fn();
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
@@ -1831,10 +1835,15 @@ it("create copies only the default harness and shows inherited defaults", async 
   await user.click(
     await screen.findByRole("option", { name: "Entire channel" }),
   );
+  await user.click(within(dialog).getByRole("button", { name: "Environment" }));
+  const workers = within(dialog).getByLabelText(
+    "Replacement for BUZZ_ACP_AGENTS",
+  );
+  expect(workers).toHaveValue("10");
+  fireEvent.change(workers, { target: { value: "3" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
   await waitFor(() => expect(create).toHaveBeenCalled());
-  // Only the harness is copied; provider, model, effort and env stay blank
-  // so they are looked up at each start.
+  // Harness and worker count are explicit; other defaults stay inherited.
   expect(create.mock.calls[0]?.[1]).toMatchObject({
     harness: {
       command: "/opt/tools/goose",
@@ -1842,7 +1851,7 @@ it("create copies only the default harness and shows inherited defaults", async 
       provider: "",
       model: "",
     },
-    environment: {},
+    environment: { BUZZ_ACP_AGENTS: "3" },
     sessionPolicy: "channel",
   });
 });
@@ -2672,9 +2681,7 @@ it("uses snapshot capabilities rather than JS wrappers and retains older-host im
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
-  const notice = await screen.findByText(
-    "Imported, not started. Start it when you are ready.",
-  );
+  const notice = await screen.findByText(/Imported, not started\./);
   const card = notice.closest("article");
   if (!card) throw Error("Imported card missing");
   expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
@@ -2799,4 +2806,150 @@ it("card Import without a selected community asks for a destination before impor
   expect(
     f.calls.find((call) => call.action === "import")?.payload,
   ).toMatchObject({ token: "fixture-preview" });
+});
+
+it.each(["installed", "development"] as const)(
+  "imports the explicitly selected %s installation for a shared identity",
+  async (source) => {
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+      identities: [],
+    });
+    const { f } = setup("connected", (fixture) => {
+      fixture.data.parked = [
+        {
+          pubkey: "cd".repeat(32),
+          name: "Not imported",
+          sources: ["installed", "development"],
+        },
+      ];
+      const preview = fixture.host.previewImport;
+      fixture.host.previewImport = vi.fn(async (from, destination) => ({
+        ...(await preview(from, destination)),
+        token: `preview-${from}`,
+        candidates: [
+          {
+            id: "second-fixture",
+            pubkey: "cd".repeat(32),
+            name: `${from} settings`,
+            relayUrl: destination,
+          },
+        ],
+      }));
+    });
+    const card = await screen.findByRole("article", {
+      name: "Agent Not imported",
+    });
+    expect(within(card).getByRole("button", { name: "Import" })).toBeDisabled();
+    fireEvent.click(within(card).getByLabelText(/^Details for /));
+    expect(within(card).getByRole("button", { name: "Clone" })).toBeDisabled();
+    expect(f.calls.some((call) => call.action === "preview")).toBe(false);
+    fireEvent.change(within(card).getByLabelText("Old Buzz installation"), {
+      target: { value: source },
+    });
+    fireEvent.click(within(card).getByRole("button", { name: "Import" }));
+    const form = await screen.findByRole("dialog", {
+      name: "Import Not imported?",
+    });
+    expect(
+      within(form).getByText(
+        source === "installed" ? "Installed Buzz" : "Development Buzz",
+      ),
+    ).toBeVisible();
+    const submit = within(form).getByRole("button", { name: "Import agent" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(f.calls.filter((call) => call.action === "import")).toEqual([
+        {
+          action: "import",
+          payload: { token: `preview-${source}`, ids: ["second-fixture"] },
+        },
+      ]),
+    );
+    expect(f.calls.filter((call) => call.action === "preview")).toEqual([
+      {
+        action: "preview",
+        payload: { source, destination: "https://relay.example.test" },
+      },
+    ]);
+    expect(
+      f.calls.some((call) => ["start", "configure"].includes(call.action)),
+    ).toBe(false);
+  },
+);
+
+it("keeps the chosen source authoritative when an earlier preview finishes late", async () => {
+  let finishInstalled!: () => void;
+  const held = new Promise<void>((resolve) => {
+    finishInstalled = resolve;
+  });
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+    identities: [],
+  });
+  const previewStarted = vi.fn();
+  const { f } = setup("connected", (fixture) => {
+    const preview = fixture.host.previewImport;
+    fixture.host.previewImport = vi.fn(async (source, destination) => {
+      await preview(source, destination);
+      previewStarted(source);
+      if (source === "installed") await held;
+      return {
+        token: `preview-${source}`,
+        sourcePath: `/fixture/${source}`,
+        warnings: [],
+        candidates: [
+          {
+            id: "second-fixture",
+            pubkey: "cd".repeat(32),
+            name: `${source} settings`,
+            relayUrl: destination,
+          },
+        ],
+      };
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  const form = await screen.findByRole("region", {
+    name: "Import from old Buzz",
+  });
+  try {
+    await waitFor(() =>
+      expect(previewStarted).toHaveBeenCalledWith("installed"),
+    );
+    await userEvent.click(within(form).getByLabelText("Source library"));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Development Buzz" }),
+    );
+    expect(
+      within(form).queryByRole("button", { name: /Import .* settings/ }),
+    ).toBeNull();
+  } finally {
+    await act(async () => {
+      finishInstalled();
+      await held;
+    });
+  }
+  expect(
+    within(form).queryByRole("button", { name: "Import installed settings" }),
+  ).toBeNull();
+  // Native preview calls are serialized. Changing the selection invalidates the
+  // old result; Load agents starts the chosen preview once the first read finishes.
+  fireEvent.click(within(form).getByRole("button", { name: "Load agents" }));
+  fireEvent.click(
+    await within(form).findByRole("button", {
+      name: "Import development settings",
+    }),
+  );
+  await waitFor(() =>
+    expect(f.calls.filter((call) => call.action === "import")).toEqual([
+      {
+        action: "import",
+        payload: { token: "preview-development", ids: ["second-fixture"] },
+      },
+    ]),
+  );
 });

@@ -1,6 +1,11 @@
 @import "./composer.css" layer(components);
 
 @layer components {
+  /* Optical alignment: lift Robot face artwork without moving its layout box. */
+  .tabler-icon-robot-face {
+    translate: 0 -1px;
+  }
+
   .buzz-button {
     position: relative;
     display: inline-flex;
@@ -22,6 +27,12 @@
     transition:
       background-color var(--duration-state) var(--easing-state),
       color var(--duration-state) var(--easing-state);
+  }
+  .buzz-button[data-button-shape="control"] {
+    border-radius: var(--radius-control);
+  }
+  .buzz-button[data-thread-summary] {
+    border-radius: var(--radius-icon-button);
   }
   .buzz-button-label {
     display: inline-flex;
@@ -167,7 +178,7 @@
     min-height: 0;
     width: var(--size-control);
     height: var(--size-control);
-    border-radius: var(--radius-control);
+    border-radius: var(--radius-icon-button);
     flex: 0 0 auto;
     padding: 0;
   }
@@ -198,6 +209,43 @@
   }
   .buzz-button[data-icon-shape="round"] {
     border-radius: var(--radius-pill);
+  }
+
+  /* Trailing row actions keep their size-selected width and fill the row height. */
+  .buzz-button[data-icon-variant][data-icon-shape="row-end"] {
+    --interaction-hover: var(--interaction-row-hover);
+    align-self: stretch;
+    height: auto;
+    border-radius: 0 var(--radius-row) var(--radius-row) 0;
+  }
+
+  /* Extend the state fill around the preceding row's right-hand corners.
+     These inverse corners are decorative; the adjacent profile keeps its hit area. */
+  .buzz-button[data-icon-shape="row-end"]::before,
+  .buzz-button[data-icon-shape="row-end"]::after {
+    content: "";
+    position: absolute;
+    right: 100%;
+    width: var(--radius-row);
+    height: var(--radius-row);
+    background: inherit;
+    pointer-events: none;
+  }
+  .buzz-button[data-icon-shape="row-end"]::before {
+    top: 0;
+    mask: radial-gradient(
+      circle at bottom left,
+      transparent var(--radius-row),
+      black var(--radius-row)
+    );
+  }
+  .buzz-button[data-icon-shape="row-end"]::after {
+    bottom: 0;
+    mask: radial-gradient(
+      circle at top left,
+      transparent var(--radius-row),
+      black var(--radius-row)
+    );
   }
 
   .buzz-button[data-icon-variant="ghost"][data-selected],
@@ -475,11 +523,23 @@
   .buzz-tabs-item {
     display: contents;
   }
+  /* Match header artwork without changing compact tab-close hit areas. */
+  .buzz-tabs-item > .buzz-button[data-icon-size="xs"] .buzz-button-label svg {
+    width: var(--space-4);
+    height: var(--space-4);
+  }
   .buzz-tabs-item[data-closable] {
     display: inline-flex;
     gap: var(--space-1);
     align-items: center;
     flex-shrink: 0;
+  }
+  @media (hover: hover) {
+    .buzz-tabs-item:not(:hover, :focus-within)
+      > [role="tab"][aria-selected="false"]
+      + .buzz-button {
+      opacity: 0;
+    }
   }
   .buzz-tabs-list {
     position: relative;
@@ -874,11 +934,13 @@
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
     min-width: 0;
+    height: var(--size-panel-header);
+    align-items: flex-start;
     overflow-x: auto;
+    overflow-y: hidden;
     gap: var(--space-1);
-    padding-block: 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
+    /* The scrollbar uses the bottom inset without moving the tab row. */
+    padding-block: var(--space-1) 0;
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     display: flex;
@@ -888,6 +950,7 @@
     max-width: 100%;
   }
   .buzz-tabs[data-variant="navigation"] .navigation-item {
+    border-radius: var(--radius-icon-button);
     padding-inline-start: var(--space-2);
     padding-inline-end: var(--space-2);
   }
@@ -910,6 +973,21 @@
     top: 50%;
     translate: 0 -50%;
   }
+  .panel-header-label {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    padding-inline: var(--space-2);
+    @apply text-body-sm;
+  }
+  .panel-header-label > h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: inherit;
+  }
+  .panel-header-label-icon,
   .buzz-tabs-icon {
     display: inline-flex;
     flex: 0 0 1rem;
@@ -960,7 +1038,7 @@
     min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
-    border-radius: var(--radius-pill);
+    border-radius: var(--floating-inner-radius);
     padding: var(--space-1) var(--space-2);
     color: var(--text-standard);
     cursor: default;
@@ -1030,6 +1108,7 @@
   }
   .buzz-popover-popup {
     @apply floating-surface;
+    --floating-inset: var(--space-4);
     width: 20rem;
     max-width: min(var(--available-width), calc(100vw - var(--space-4)));
     max-height: var(--available-height);
@@ -1040,17 +1119,17 @@
   .buzz-popover-popup[data-size="compact"] {
     width: 14rem;
   }
-  /* Short action surfaces pair 10px outer corners with 8px inner rows.
-     Content surfaces keep the panel recipe, regardless of viewport width. */
+  /* Short action surfaces use 8px corners and concentric inner fills.
+     Content surfaces keep 16px corners, regardless of viewport width. */
   .buzz-menu-popup[data-size="compact"],
   .buzz-popover-popup[data-size="compact"] {
     --interaction-row-hover: var(--affordance-subtle-hover);
     --interaction-selected: var(--affordance-subtle-pressed);
-    border-radius: var(--radius-row);
+    --floating-radius: var(--radius-row);
   }
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
   .buzz-popover-popup[data-size="compact"] .navigation-item {
-    border-radius: calc(var(--radius-row) * 0.8);
+    border-radius: var(--floating-inner-radius);
     transition: none;
   }
   .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
@@ -1061,9 +1140,14 @@
     width: 24rem;
   }
   .buzz-popover-popup[data-padding="list"] {
+    --floating-inset: var(--space-1);
     padding: var(--space-1);
   }
+  .buzz-popover-popup[data-padding="list"] .navigation-item {
+    border-radius: var(--floating-inner-radius);
+  }
   .buzz-popover-popup[data-padding="none"] {
+    --floating-inset: 0px;
     padding: 0;
   }
   .buzz-popover-title {
@@ -1200,6 +1284,7 @@
     max-height: var(--available-height);
     overflow-y: auto;
     @apply floating-surface;
+    --floating-inset: var(--space-2);
     padding: var(--space-2);
     color: var(--text-standard);
     z-index: var(--layer-popover);
@@ -1248,7 +1333,7 @@
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-control);
+    border-radius: var(--floating-inner-radius);
     cursor: default;
   }
   .buzz-select-option[data-highlighted] {

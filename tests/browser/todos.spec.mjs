@@ -1,7 +1,27 @@
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import {
+  openPage,
+  selectSettingsSection,
+  settleShellToggle,
+} from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
+
+// These layout/navigation journeys exercise the opt-in Bestie surface.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const key = "buzzodz.plugins.v1";
+    if (localStorage.getItem(key) === null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
+      );
+  });
+});
+
+// Configure the modeled session at its HTTP owner instead of proxying it through
+// route.fetch(), so session setup needs only the browser's original request.
+test.use({ sessionWriteKinds: [9, 9007, 40100] });
 
 // Browser-only boundary: real plugin Settings/launcher/panel wiring, Canvas
 // outbox -> signed HTTP receipt -> readback, native focus and drawer geometry.
@@ -19,12 +39,6 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     created_at: 1700000000,
   });
   const writes = [];
-  await page.route("**/api/relay/primary/session", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({
-      json: { ...(await response.json()), writeKinds: [9, 9007, 40100] },
-    });
-  });
   await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
@@ -55,6 +69,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await selectSettingsSection(page, "Plugins");
   };
   const messages = async () => {
+    await settleShellToggle(page);
     const disclosure = button("Show navigation");
     if (await disclosure.isVisible()) await disclosure.click();
     await openPage(page, "Messages");
@@ -217,9 +232,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const picker = workspace.getByRole("region", { name: "Choose a tab" });
-  await picker
-    .getByRole("button", { name: "Channel tools", exact: true })
-    .click();
+  await picker.getByRole("tab", { name: "Tools", exact: true }).click();
   await expect(
     picker.getByRole("button", { name: "Terminal", exact: true }),
   ).toHaveCount(0);
@@ -287,8 +300,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);
-  await button("Channel settings").click();
-  await button("Canvas").click();
+  await button("Channel actions").click();
+  await page
+    .getByRole("menuitem", { name: "View canvas", exact: true })
+    .click();
   const canvas = page.getByRole("textbox", {
     name: "Canvas Markdown",
     exact: true,

@@ -17,7 +17,9 @@ import type { SidebarPreferences } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
 import type { Navigation } from "../navigation/controller";
-import type { ReactNode } from "react";
+import { createRef, type ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
+import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { ChannelSidebar } from "./ChannelSidebar";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 import styles from "../../bundled/channels/Channels.module.css";
@@ -91,7 +93,7 @@ function fixture(
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
-  const list: ChannelList = {
+  let list: ChannelList = {
     status: "ready",
     channels: ["alpha", "beta", "gamma"].map((id) => ({
       id,
@@ -99,6 +101,7 @@ function fixture(
       channelType: "stream",
     })),
   };
+  const listeners = new Set<() => void>();
   const live = {
     ...owner.session.live.snapshot(),
     roster: { state: "verified" as const },
@@ -107,8 +110,30 @@ function fixture(
     ...owner.session,
     ...(sidebarPreferences ? { sidebarPreferences } : {}),
     live: { ...owner.session.live, snapshot: () => live },
-    channels: { ...owner.session.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...owner.session.channels,
+      list: () => list,
+      ensureList() {},
+      subscribeList(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
   };
+  // Like the store: changed summaries are replaced, the rest keep identity.
+  const publish = (
+    id: string,
+    change: Partial<ChannelList["channels"][number]>,
+  ) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === id ? { ...channel, ...change } : channel,
+        ),
+      };
+      for (const listener of listeners) listener();
+    });
   const snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
@@ -124,7 +149,9 @@ function fixture(
     disconnect() {},
     async clearCache() {},
   } satisfies RelayData;
-  const navigator = { open: vi.fn() } as unknown as Navigation;
+  const navigator = {
+    open: vi.fn().mockResolvedValue({ status: "opened" }),
+  } as unknown as Navigation;
   const view = (
     id: string,
     sessionsEnabled = true,
@@ -151,7 +178,7 @@ function fixture(
       </ChannelSidebar>
     </ChannelNavigationProvider>
   );
-  return { view, navigator, snapshot, list, session };
+  return { view, navigator, snapshot, list, session, publish };
 }
 
 it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
@@ -197,6 +224,31 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   fireEvent.click(screen.getByRole("button", { name: "gamma" }));
   expect(h.navigator.open).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+});
+
+it("rebuilds only the changed row on a list publish and keeps session actions current", async () => {
+  const h = fixture();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  const alpha = rowRender.mock.calls
+    .filter(([props]) => props.channel.id === "alpha")
+    .pop()?.[0];
+  rowRender.mockClear();
+  h.publish("beta", { preview: "hello" });
+  expect(rowRender.mock.calls.map(([props]) => props.channel.id)).toEqual([
+    "beta",
+  ]);
+  // The callbacks alpha kept must still see the published list.
+  h.publish("gamma", { readOnly: true });
+  alpha.onNewSession("gamma");
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  alpha.onNewSession("beta");
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "page",
+      route: { version: 1, params: { kind: "new-session", parentId: "beta" } },
+    }),
   );
 });
 
@@ -304,70 +356,146 @@ it.each(["ready", "connecting", "error"] as const)(
   },
 );
 
-it("opens creation from a legacy subgroup + with that destination selected and retained in the create input", async () => {
+it.each([true, false])(
+  "uses only the invoking section for placement (group: %s)",
+  async (fromGroup) => {
+    const preferences = createSidebarPreferencesStore(
+      async () => ({
+        sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+        assignments: { beta: "laptop" },
+        starred: [],
+        muted: [],
+      }),
+      true,
+      async () => ({
+        sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+        assignments: {},
+      }),
+      async () => [],
+    );
+    await preferences.queries.ensure();
+    const h = fixture(preferences.queries);
+    const create = vi.fn(async () => "new-channel");
+    h.session.channelKit = {
+      ...h.session.channelKit,
+      available: true,
+      ensure() {},
+    };
+    h.session.channelCreation = {
+      ...h.session.channelCreation,
+      available: true,
+      create,
+    };
+    try {
+      render(h.view("beta"));
+      await screen.findByRole("button", { name: /Laptop/ });
+      // An active grouped channel must not make the general Channels + inherit it.
+      const header = screen.getByRole("button", {
+        name: fromGroup ? /Laptop/ : "More actions for Channels",
+      }).parentElement;
+      assert.exists(header);
+      fireEvent.click(
+        within(header).getByRole("button", { name: "Create channel" }),
+      );
+      expect(
+        screen.queryByRole("combobox", { name: "Destination group" }),
+      ).not.toBeInTheDocument();
+      const title = fromGroup
+        ? "Create a channel in Laptop"
+        : "Create a channel";
+      expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
+      if (fromGroup)
+        expect(
+          screen
+            .getByRole("dialog")
+            .querySelector(".buzz-dialog-step [data-sidebar-group-icon]"),
+        ).toHaveTextContent("💻");
+      fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+        target: { value: "New laptop channel" },
+      });
+      fireEvent.click(
+        within(screen.getByRole("dialog", { name: title })).getByRole(
+          "button",
+          {
+            name: "Create channel",
+          },
+        ),
+      );
+      await waitFor(() =>
+        expect(create).toHaveBeenCalledWith({
+          name: "New laptop channel",
+          visibility: "open",
+          ...(fromGroup
+            ? {
+                setup: {
+                  agents: [],
+                  canvas: "",
+                  templateId: "",
+                  groupId: "laptop",
+                  groupSource: "legacy",
+                },
+              }
+            : {}),
+        }),
+      );
+    } finally {
+      preferences.dispose();
+    }
+  },
+);
+
+it("rejects a deferred header Create section after its navigation origin retires", async () => {
   const preferences = createSidebarPreferencesStore(
     async () => ({
-      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
-      assignments: { beta: "laptop" },
+      sections: [],
+      assignments: {},
       starred: [],
       muted: [],
     }),
     true,
-    async () => ({
-      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
-      assignments: {},
-    }),
-    async () => [],
+    vi.fn(async () => ({ sections: [], assignments: {} })),
+    vi.fn(async () => []),
   );
   await preferences.queries.ensure();
   const h = fixture(preferences.queries);
-  const create = vi.fn(async () => "new-channel");
-  h.session.channelKit = {
-    ...h.session.channelKit,
-    available: true,
-    ensure() {},
-  };
-  h.session.channelCreation = {
-    ...h.session.channelCreation,
-    available: true,
-    create,
-  };
-  try {
-    render(h.view("alpha"));
-    await screen.findByRole("button", { name: /Laptop/ });
-    // Scope to the section header rather than the Channels +.
-    const header = screen.getByRole("button", { name: /Laptop/ }).parentElement;
-    assert.exists(header);
-    fireEvent.click(
-      within(header).getByRole("button", { name: "Create channel" }),
-    );
-    expect(
-      screen.getByRole("combobox", { name: "Destination group" }),
-    ).toHaveTextContent("Laptop");
-    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
-      target: { value: "New laptop channel" },
-    });
-    fireEvent.click(
-      within(
-        screen.getByRole("dialog", { name: "Create a channel" }),
-      ).getByRole("button", {
-        name: "Create channel",
-      }),
-    );
-    await waitFor(() =>
-      expect(create).toHaveBeenCalledWith({
-        name: "New laptop channel",
-        visibility: "open",
-        setup: {
-          agents: [],
-          canvas: "",
-          templateId: "",
-          groupId: "laptop",
-          groupSource: "legacy",
-        },
-      }),
-    );
-  } finally {
-    preferences.dispose();
-  }
+  const origin = new AbortController();
+  const user = userEvent.setup();
+  render(
+    h.view(
+      "alpha",
+      true,
+      <ChannelHeaderMenu
+        channel={h.list.channels[0]}
+        session={h.session}
+        origin={origin.signal}
+        providers={providers}
+        templateProvider={undefined}
+        trigger={createRef<HTMLButtonElement>()}
+        openDetails={() => {}}
+        openCanvas={() => {}}
+      />,
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.hover(
+    await screen.findByRole("menuitem", { name: "Move channel" }),
+  );
+  const create = await screen.findByRole("menuitem", { name: "Create new…" });
+  // Hold only the deferred handoff after the menu is ready, not a timing delay.
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  fireEvent.click(create);
+  expect(frames.length).toBeGreaterThan(0);
+  act(() => {
+    origin.abort();
+    for (const frame of frames.splice(0)) frame(0);
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Create new section" }),
+  ).not.toBeInTheDocument();
+  expect(preferences.queries.snapshot().data?.sections).toEqual([]);
+  preferences.dispose();
 });

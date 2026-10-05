@@ -33,6 +33,8 @@ export type SettingsCards = {
   register(card: SettingsCard): void;
   retainVisibility(): () => void;
   visibility(key: string): boolean | "pending" | "error";
+  /** Active registration, independent of cached authorization visibility. */
+  has(key: string): boolean;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -62,6 +64,8 @@ export class SettingsCardsService extends Service implements SettingsCards {
     for (const listener of this.listeners) listener();
   };
   snapshot = () => this.visible;
+  has = (key: string) =>
+    this.entries.snapshot().some((entry) => entry.key === key);
   visibility = (key: string) => {
     const entry = this.entries.snapshot().find((entry) => entry.key === key);
     return entry ? (entry.visibility?.snapshot() ?? true) : false;

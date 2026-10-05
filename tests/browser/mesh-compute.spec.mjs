@@ -9,7 +9,7 @@ test("enabling Mesh compute opens Settings Compute", async ({ page, app }) => {
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Plugins");
   const enabled = page.getByRole("switch", {
-    name: "Enable Mesh compute",
+    name: "Enable Shared compute",
     exact: true,
   });
   await enabled.click();

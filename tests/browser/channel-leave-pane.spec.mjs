@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -20,9 +21,7 @@ async function openSettings(page, app) {
       exact: true,
     }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(panelFor(page)).toBeVisible();
   return sidebar;
 }
@@ -107,7 +106,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
     await page.keyboard.press("Escape");
     await expect(dialog).toBeVisible();
     await expect(
-      sidebar.locator(`[data-channel-id="${channelId}"]`),
+      page.locator(`[data-channel-id="${channelId}"]`),
     ).toBeVisible();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   } finally {

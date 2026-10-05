@@ -43,7 +43,17 @@ fn fixture(script: &str) -> (tempfile::TempDir, PiContext) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let command = dir.path().join("pi");
-    std::fs::write(&command, format!("#!/bin/sh\n{script}")).unwrap();
+    // Parallel tests fork. A fork that copies this process's write fd for the
+    // script makes executing it fail with ETXTBSY on Linux, so a
+    // single-threaded `cp` creates the executable instead.
+    let source = dir.path().join("pi.sh");
+    std::fs::write(&source, format!("#!/bin/sh\n{script}")).unwrap();
+    assert!(std::process::Command::new("/bin/cp")
+        .arg(&source)
+        .arg(&command)
+        .status()
+        .unwrap()
+        .success());
     std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
     let context = PiContext {
         command,
@@ -141,30 +151,125 @@ fn test_errors_map_to_fixed_text_without_echoing_keys() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_prompts_the_selected_model_and_reports_its_reply() {
-    let reply = |stop: &str, error: &str| {
-        format!("printf '%s\\n' \"$*\" > args\nread request\nprintf '%s\\n' '{{\"type\":\"extension_ui_request\"}}' 'not json' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"user\"}}}}' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"stopReason\":\"{stop}\",\"errorMessage\":\"{error}\"}}}}'\n")
+    let reply = |model: &str, stop: &str, error: &str| {
+        format!(
+            r#"printf '%s\n' "$*" > args
+read request
+printf '%s\n' '{{"id":"selection","type":"response","command":"get_state","success":true,"data":{{"model":{{"provider":"openai","id":"{model}"}}}}}}'
+read request
+printf '%s\n' '{{"type":"extension_ui_request"}}' 'not json' '{{"type":"message_end","message":{{"role":"user"}}}}' '{{"type":"message_end","message":{{"role":"assistant","provider":"openai","model":"{model}","stopReason":"{stop}","errorMessage":"{error}","content":[{{"type":"text","text":"OK"}}]}}}}'
+"#
+        )
     };
-    let (dir, context) = fixture(&reply("stop", ""));
-    test(context, "openai", "ns/gpt").await.unwrap();
+    let (dir, context) = fixture(&reply("ns/gpt", "stop", ""));
+    assert_eq!(
+        test(context, "openai", "ns/gpt").await.unwrap(),
+        "openai/ns/gpt"
+    );
     let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
     assert!(args.contains("--no-session"), "{args}");
     assert!(args.contains("--no-tools"), "{args}");
     assert!(!args.contains("--thinking off"), "{args}");
-    assert!(
-        args.ends_with("--provider openai --model ns/gpt\n"),
-        "{args}"
-    );
-    let (_dir, context) = fixture(&reply("error", "401 Incorrect API key provided: sk-secret"));
+    assert!(args.ends_with("--model openai/ns/gpt\n"), "{args}");
+    let (_dir, context) = fixture(&reply(
+        "gpt",
+        "error",
+        "401 Incorrect API key provided: sk-secret",
+    ));
     let error = test(context, "openai", "gpt").await.unwrap_err();
     assert!(error.contains("rejected the API key"), "{error}");
     assert!(!error.contains("secret"));
-    let (_dir, context) = fixture("read request\nprintf '%s\\n' '{\"id\":\"test\",\"type\":\"response\",\"command\":\"prompt\",\"success\":false,\"error\":\"No API key found for openai.\"}'\n");
+    let (_dir, context) = fixture(
+        r#"read request
+printf '%s\n' '{"id":"selection","type":"response","command":"get_state","success":true,"data":{"model":{"provider":"openai","id":"gpt"}}}'
+read request
+printf '%s\n' '{"id":"test","type":"response","command":"prompt","success":false,"error":"No API key found for openai."}'
+"#,
+    );
     let error = test(context, "openai", "gpt").await.unwrap_err();
     assert!(error.contains("No API key found"), "{error}");
     let (_dir, context) = fixture("exit 1\n");
     assert!(test(context, "openai", "gpt").await.is_err());
     let (_dir, context) = fixture("exit 1\n");
     assert!(test(context, "openai", "").await.is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_test_verifies_pi_selection_before_sending_a_prompt() {
+    for (selected, requested, expected) in [
+        (json!({"provider":"openai","id":"gpt"}), "", None),
+        (
+            json!({"provider":"databricks","id":"saved-default"}),
+            "",
+            Some("No test model"),
+        ),
+        (Value::Null, "", Some("No test model")),
+        (
+            json!({"provider":"openai","id":"gpt"}),
+            "other",
+            Some("different model"),
+        ),
+    ] {
+        let script = format!(
+            r#"printf '%s\n' "$@" > args
+read request
+printf '%s\n' "$request" > requests
+printf '%s\n' '{{"id":"selection","type":"response","command":"get_state","success":true,"data":{{"model":{selected}}}}}'
+if read request; then
+  printf '%s\n' "$request" >> requests
+  printf '%s\n' '{{"type":"message_end","message":{{"role":"assistant","provider":"openai","model":"gpt","stopReason":"stop","content":[{{"type":"text","text":"OK"}}]}}}}'
+fi
+"#
+        );
+        let (dir, context) = fixture(&script);
+        let result = test(context, "openai", requested).await;
+        if requested.is_empty() {
+            let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
+            assert!(args.ends_with("--models\nopenai/*\n"), "{args}");
+        }
+        let commands: Vec<String> = std::fs::read_to_string(dir.path().join("requests"))
+            .unwrap()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<Value>(line).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        if let Some(expected) = expected {
+            assert!(result.unwrap_err().contains(expected));
+            assert_eq!(commands, ["get_state"]);
+        } else {
+            assert_eq!(result.unwrap(), "openai/gpt");
+            assert_eq!(commands, ["get_state", "prompt"]);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_requires_text_from_the_verified_model() {
+    for (provider, model, text, success) in [
+        ("openai", "gpt", "OK", true),
+        ("databricks", "gpt", "OK", false),
+        ("openai", "other", "OK", false),
+        ("openai", "gpt", " ", false),
+    ] {
+        let reply = json!({"type":"message_end","message":{"role":"assistant",
+            "provider":provider,"model":model,"stopReason":"stop","content":[{"type":"text","text":text}]}});
+        let script = format!(
+            r#"read request
+printf '%s\n' '{{"id":"selection","type":"response","command":"get_state","success":true,"data":{{"model":{{"provider":"openai","id":"gpt"}}}}}}'
+read request
+printf '%s\n' '{reply}'
+"#
+        );
+        let (_dir, context) = fixture(&script);
+        let result = test(context, "openai", "").await;
+        assert_eq!(result.is_ok(), success, "{reply}: {result:?}");
+    }
 }
 
 #[tokio::test]
@@ -187,10 +292,12 @@ async fn installed_pi_catalog_uses_production_context() {
             provider: String::new(),
             databricks: None,
         },
-        environment: BTreeMap::new(),
+        environment: BTreeMap::from([("BUZZ_ACP_AGENTS".into(), Some("10".into()))]),
     })
     .unwrap();
-    let models = fetch(context).await.unwrap();
+    let models = fetch(verify(context).await.unwrap().into_context())
+        .await
+        .unwrap();
     assert!(!models.is_empty());
     println!(
         "Production Pi catalog: {} models, {} providers",
@@ -204,14 +311,15 @@ async fn installed_pi_catalog_uses_production_context() {
 }
 
 #[tokio::test]
-#[ignore = "requires installed Pi/ACP and a signed-in BUZZ_TEST_PI_PROVIDER; sends two tiny prompts"]
+#[ignore = "requires installed Pi/ACP and a signed-in BUZZ_TEST_PI_PROVIDER; sends three tiny prompts"]
 async fn installed_pi_connection_test_uses_production_context() {
     use buzz_agent_controller::{AgentEdit, Controller, HarnessEdit};
     let adapter = std::env::var("BUZZ_TEST_PI_ADAPTER").expect("set BUZZ_TEST_PI_ADAPTER");
     let provider = std::env::var("BUZZ_TEST_PI_PROVIDER").expect("set BUZZ_TEST_PI_PROVIDER");
     let model = std::env::var("BUZZ_TEST_PI_MODEL").expect("set BUZZ_TEST_PI_MODEL");
     let dir = tempfile::tempdir().unwrap();
-    let context = |environment| {
+    let context = |mut environment: std::collections::BTreeMap<String, Option<String>>| {
+        environment.insert("BUZZ_ACP_AGENTS".into(), Some("10".into()));
         Controller::draft_pi_model_context(AgentEdit {
             name: "Probe".into(),
             picture: None,
@@ -229,16 +337,30 @@ async fn installed_pi_connection_test_uses_production_context() {
         })
         .unwrap()
     };
-    test(context(Default::default()), &provider, &model)
+    let selected = test(context(Default::default()), &provider, &model)
         .await
         .unwrap();
-    let bad_key = [(
-        "OPENAI_API_KEY".to_owned(),
-        Some("sk-buzz-invalid".to_owned()),
-    )]
-    .into();
-    let error = test(context(bad_key), "openai", "gpt-4o-mini")
+    assert_eq!(selected, format!("{provider}/{model}"));
+    let automatic = test(context(Default::default()), &provider, "")
+        .await
+        .unwrap();
+    assert!(automatic.starts_with(&format!("{provider}/")));
+    println!("Selected model: {selected}; provider-only test: {automatic}");
+    // Isolate saved credentials so the missing/invalid-key cases cannot use
+    // an existing OpenAI login in the developer's Pi configuration.
+    let pi_dir = tempfile::tempdir().unwrap();
+    let mut environment = std::collections::BTreeMap::from([(
+        "PI_CODING_AGENT_DIR".to_owned(),
+        Some(pi_dir.path().display().to_string()),
+    )]);
+    let error = test(context(environment.clone()), "openai", "")
         .await
         .unwrap_err();
+    assert!(error.contains("No test model"), "{error}");
+    environment.extend([(
+        "OPENAI_API_KEY".to_owned(),
+        Some("sk-buzz-invalid".to_owned()),
+    )]);
+    let error = test(context(environment), "openai", "").await.unwrap_err();
     assert!(error.contains("rejected the API key"), "{error}");
 }

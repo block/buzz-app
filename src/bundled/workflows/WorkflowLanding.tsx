@@ -22,6 +22,10 @@ import {
   ChatCircleIcon,
   GitPullRequestIcon,
   LightningIcon,
+  EyeIcon,
+  PencilSimpleIcon,
+  PlayIcon,
+  TrashIcon,
   PlusIcon,
   SmileyIcon,
   TimerIcon,
@@ -34,6 +38,7 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { WorkflowDeletionNotices } from "./WorkflowDeletionNotices";
@@ -376,7 +381,7 @@ function useLandingDefinitions(
 
 function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
   const Icon = ICONS[kind];
-  return <Icon size={20} weight="bold" aria-hidden="true" />;
+  return <Icon size={20} strokeWidth={2.5} aria-hidden="true" />;
 }
 
 function WorkflowCard({
@@ -539,6 +544,13 @@ function WorkflowCard({
                     disabled={!!deletion}
                     onClick={() => onOpen(definition, channel)}
                   >
+                    <MenuIcon>
+                      {readonly ? (
+                        <EyeIcon size={14} />
+                      ) : (
+                        <PencilSimpleIcon size={14} />
+                      )}
+                    </MenuIcon>
                     {readonly ? "View workflow" : "Edit workflow"}
                   </MenuItem>
                   <MenuItem
@@ -550,6 +562,9 @@ function WorkflowCard({
                     }
                     onClick={() => onOpen(definition, channel, "run")}
                   >
+                    <MenuIcon>
+                      <PlayIcon size={14} />
+                    </MenuIcon>
                     Run now
                   </MenuItem>
                   <MenuItem
@@ -562,6 +577,9 @@ function WorkflowCard({
                     }
                     onClick={() => setConfirmDelete(true)}
                   >
+                    <MenuIcon>
+                      <TrashIcon size={14} />
+                    </MenuIcon>
                     Delete workflow
                   </MenuItem>
                 </MenuPopup>
@@ -794,7 +812,7 @@ export function WorkflowLanding({
           onClick={onCreate}
           variant="ghost"
         >
-          <PlusIcon size={28} weight="bold" aria-hidden="true" />
+          <PlusIcon size={28} strokeWidth={2.5} aria-hidden="true" />
         </Button>
         {channels.map((channel) => (
           <WorkflowChannelCards

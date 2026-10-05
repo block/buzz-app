@@ -19,6 +19,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { RelayData } from "../../features/relay/service";
+import { matchesEvent } from "../../features/relay/projection";
 import {
   archiveRelay,
   keypair,
@@ -29,7 +30,7 @@ import { profileTarget } from "../../features/profiles/target";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { PublishRejected } from "../../features/relay/outbox";
-import { removeAgentFromChannels } from "./ProfileAgentDelete";
+import { removeAgentFromChannels } from "../../features/agents/relay-removal";
 import { ProfilePanel } from "./ProfilePanel";
 
 const viewer = keypair(),
@@ -418,6 +419,49 @@ it("verified owner deletes through the base confirmation: confirmed channel remo
     expect(fixture.instance.session.outbox?.snapshot()).toEqual([]),
   );
 });
+it("deletes using writer rosters when replicas miss a recent channel and retain removed members", async () => {
+  const fixture = mountManaged(viewer, true, {
+    [room]: [viewer.pubkey, agent.pubkey],
+  });
+  const query = fixture.transport.query;
+  const replica = await query(
+    [
+      {
+        kinds: [39002],
+        authors: [relay.pubkey],
+        "#p": [agent.pubkey],
+        limit: 500,
+      },
+    ],
+    new AbortController().signal,
+  );
+  // A recent addition exists only on the writer and is not in the loaded list.
+  fixture.channels[hidden] = [agent.pubkey];
+  expect(fixture.instance.session.channels.list().channels).not.toContainEqual(
+    expect.objectContaining({ id: hidden }),
+  );
+  fixture.transport.query = async (filters, ...rest) =>
+    (
+      await Promise.all(
+        filters.map((filter) =>
+          filter.kinds?.includes(39002) && filter.consistency !== "strong"
+            ? replica.filter((event) => matchesEvent(event, filter))
+            : query([filter], ...rest),
+        ),
+      )
+    ).flat();
+  await confirmDelete(userEvent.setup());
+  await vi.waitFor(() => expect(fixture.close).toHaveBeenCalledOnce());
+  expect(fixture.published.map((event) => event.kind)).toEqual([
+    9001, 9001, 9035,
+  ]);
+  expect(fixture.channels).toEqual({ [room]: [viewer.pubkey], [hidden]: [] });
+  expect(deletes(fixture)).toHaveLength(1);
+  await vi.waitFor(() =>
+    expect(fixture.instance.session.outbox?.snapshot()).toEqual([]),
+  );
+});
+
 it("cancel leaves the agent untouched", async () => {
   const fixture = mountManaged();
   const user = userEvent.setup();

@@ -1,3 +1,4 @@
+import { canonicalDetailsName } from "./channel-details-protocol";
 import { sessionDescription } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
@@ -15,7 +16,11 @@ export function createWorkSessions(
   signal: AbortSignal,
   receipts?: Pick<Outbox, "snapshot" | "subscribe">,
   confirmCreation?: (id: string) => Promise<boolean>,
-  agentKeys?: () => readonly string[],
+  /** Forward-looking agent choices plus the base archive rule for admissions. */
+  agents?: {
+    selectable: () => readonly string[];
+    archived: (pubkey: string) => boolean;
+  },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
@@ -57,7 +62,10 @@ export function createWorkSessions(
         check();
         return;
       }
-      const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+      const events = await reader.read(
+        [{ ids: [id], limit: 1, consistency: "strong" }],
+        { signal },
+      );
       if (events.some((event) => event.id === id)) {
         check();
         return;
@@ -83,8 +91,13 @@ export function createWorkSessions(
         // by a stale roster. The verified reader applies signed discovery first.
         const events = await reader.read(
           [
-            { kinds: [39000, 39002], "#d": [channelId], limit: 2 },
-            { ids: [id], limit: 1 },
+            {
+              kinds: [39000, 39002],
+              "#d": [channelId],
+              limit: 2,
+              consistency: "strong",
+            },
+            { ids: [id], limit: 1, consistency: "strong" },
           ],
           { signal },
         );
@@ -100,7 +113,10 @@ export function createWorkSessions(
       }
       check();
       if (!retry) {
-        const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+        const events = await reader.read(
+          [{ ids: [id], limit: 1, consistency: "strong" }],
+          { signal },
+        );
         if (events.some((event) => event.id === id)) return;
         throw new Error(
           existing.error ?? "The operation could not be confirmed.",
@@ -160,9 +176,12 @@ export function createWorkSessions(
   /** Resolves once the channel list shows `id` with the expected membership.
    * Admission never comes from the command's acknowledgment: the list must
    * carry a relay-signed roster. When discovery has already made the list
-   * ready, that evidence arrives by an exact one-channel read first; otherwise,
-   * or when that read leaves the gate unsatisfied, the full viewer-roster
-   * discovery runs. Both apply through the same discovery path. */
+   * ready, that evidence arrives by an exact one-channel read first: the
+   * store's `resolve` (metadata and roster) for a channel the list lacks, or
+   * its `refreshRoster` (roster only) for a channel it already carries, such
+   * as one an agent was just added to. Otherwise, or when that read leaves the
+   * gate unsatisfied, the full viewer-roster discovery runs. All three apply
+   * through the same discovery path. */
   async function refresh(
     id: string,
     expected: {
@@ -230,25 +249,36 @@ export function createWorkSessions(
     const gate = wait.catch(() => {});
     // The exact read extends a list discovery has already made ready. Any other
     // status (idle, loading, error) needs the full pass to become ready at all,
-    // and that pass carries the new channel; the store's resolve would otherwise
-    // commit a ready list holding only this channel and, after a failed initial
-    // discovery, hide the error the user still needs to retry. The store also
-    // skips ids it already authorizes, so agent additions to a joined channel
-    // go straight to the full discovery below.
-    if (!settled && channels.list().status === "ready")
+    // and that pass carries the new channel; the store's exact reads would
+    // otherwise commit a ready list holding only this channel and, after a
+    // failed initial discovery, hide the error the user still needs to retry.
+    if (!settled && channels.list().status === "ready") {
+      // A channel the ready list carries is one the store authorizes. Its
+      // `resolve` skips such ids (they carry cached-denial semantics), so a
+      // member addition re-reads that one roster through `refreshRoster`; a
+      // channel the list lacks (just created) is admitted by `resolve`'s exact
+      // metadata-and-roster read.
+      const listed = channels
+        .list()
+        .channels.some((channel) => channel.id === id);
       await Promise.race([
         gate,
         (async () => {
           try {
-            await channels.resolve?.([id], {
+            const options = {
               signal: AbortSignal.any([signal, exact.signal]),
-            });
+              consistency: "strong" as const,
+            };
+            await (listed
+              ? channels.refreshRoster?.(id, options)
+              : channels.resolve?.([id], options));
           } catch {
             // A failed or stale exact read leaves the decision to discovery.
           }
         })(),
       ]);
-    if (!settled) channels.refreshList?.();
+    }
+    if (!settled) channels.refreshList?.({ consistency: "strong" });
     await wait;
   }
   async function refreshMembership(id: string) {
@@ -256,7 +286,15 @@ export function createWorkSessions(
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       { signal, fresh: true, priority: "foreground" },
     );
     const channel =
@@ -283,7 +321,15 @@ export function createWorkSessions(
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#p": [pubkey], limit }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#p": [pubkey],
+          limit,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,
@@ -310,7 +356,15 @@ export function createWorkSessions(
   async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await discovery.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       {
         signal: AbortSignal.any([signal, caller]),
         fresh: true,
@@ -357,12 +411,21 @@ export function createWorkSessions(
       !["stream", "forum", "session"].includes(parent.channelType ?? "")
     )
       throw new Error("Refresh the parent channel before adding agents.");
-    const known = new Set(agentKeys?.() ?? []);
+    // Archive state applies to every new admission, even for parent members;
+    // unknown archive state fails open to the library/parent-member rule.
+    if (unique.some((key) => agents?.archived(key)))
+      throw new Error("This agent is archived. Choose another agent.");
+    const known = new Set(agents?.selectable() ?? []);
     if (unique.some((key) => !parent.members?.includes(key) && !known.has(key)))
       throw new Error("Choose an agent from your agent library.");
     // Parent metadata organizes the UI; both channels keep their own rosters.
     const targets = parentId !== id ? [parentId, id] : [parentId];
+    // Each target's additions are published and acknowledged in turn, parent
+    // first. Their roster confirmations then run together: one exact read per
+    // target, concurrently, rather than a serial gate after every command.
+    const confirmations: [string, string[]][] = [];
     for (const targetId of targets) {
+      const added: string[] = [];
       for (const key of unique) {
         if (active?.() === false)
           throw new DOMException("Channel addition cancelled", "AbortError");
@@ -414,9 +477,15 @@ export function createWorkSessions(
         await delivered(operation, active, true);
         if (active?.() === false)
           throw new DOMException("Channel addition cancelled", "AbortError");
-        await refresh(targetId, { member: key }, false);
+        added.push(key);
       }
+      if (added.length) confirmations.push([targetId, added]);
     }
+    await Promise.all(
+      confirmations.map(([targetId, members]) =>
+        refresh(targetId, { members }, false),
+      ),
+    );
     if (original?.channelType === "session")
       await refresh(id, {
         members: unique,
@@ -439,7 +508,7 @@ export function createWorkSessions(
     ) {
       writer();
       identifier(id);
-      const name = title.trim();
+      const name = canonicalDetailsName(title);
       const about = description?.trim();
       if (!name || [...name].length > 120)
         throw new Error("Use a channel name between 1 and 120 characters.");
@@ -502,7 +571,7 @@ export function createWorkSessions(
         );
       if (!/^[0-9a-f]{64}$/.test(pubkey))
         throw new Error("Choose a valid participant.");
-      if (!new Set(agentKeys?.() ?? []).has(pubkey))
+      if (!new Set(agents?.selectable() ?? []).has(pubkey))
         throw new Error("Choose an agent from your agent library.");
       return writer().send({
         kind: 9000,

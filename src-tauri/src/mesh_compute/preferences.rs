@@ -23,6 +23,15 @@ impl Config {
     }
 }
 
+// Preserve older/unparseable checkpoints; only the bound schema can restore consent.
+fn checkpoint_path(path: PathBuf) -> Result<PathBuf, String> {
+    match std::fs::read(&path) {
+        Ok(bytes) if serde_json::from_slice::<Config>(&bytes).is_ok() => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        _ => Ok(path.with_file_name("mesh-sharing-viewer.json")),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Preferences {
     path: Option<PathBuf>,
@@ -32,7 +41,7 @@ pub(super) struct Preferences {
 }
 impl Preferences {
     pub fn initialize(&mut self, path: Result<PathBuf, String>) {
-        match path.and_then(|path| {
+        match path.and_then(checkpoint_path).and_then(|path| {
             let config = match std::fs::read(&path) {
                 Ok(bytes) => {
                     let mut config: Config = serde_json::from_slice(&bytes)
@@ -236,14 +245,52 @@ mod tests {
         assert!(!store(path).hint().unwrap().enabled);
     }
     #[test]
+    fn donor_settings_are_preserved_and_never_bind_or_resume_without_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mesh-sharing.json");
+        let legacy = br#"{"enabled":true,"startOnNextLaunch":true,"modelId":"old","maxVramGb":null,"relayUrl":"wss://fixture.example"}"#;
+        std::fs::write(&path, legacy).unwrap();
+        let mut prefs = store(path.clone());
+        assert!(prefs.error().is_none());
+        assert!(prefs.hint().is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), legacy);
+        assert!(!dir.path().join("mesh-sharing-viewer.json").exists());
+        prefs.checkpoint(config()).unwrap();
+        prefs.phase(&config(), &Phase::Ready, false).unwrap();
+        assert!(store(path.clone()).hint().unwrap().enabled);
+        assert_eq!(std::fs::read(&path).unwrap(), legacy);
+        let mut other = store(path);
+        other.select("someone-else".into(), "https://fixture.example".into());
+        assert!(other.hint().is_none());
+    }
+
+    #[test]
+    fn empty_legacy_and_older_shapes_allow_explicit_sharing_without_modifying_source() {
+        for bytes in [
+            r#"{"enabled":false,"startOnNextLaunch":false,"modelId":"","maxVramGb":null,"relayUrl":null}"#,
+            r#"{"enabled":false,"modelId":"old","maxVramGb":null}"#,
+            "{invalid",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mesh-sharing.json");
+            std::fs::write(&path, bytes).unwrap();
+            let mut prefs = store(path.clone());
+            assert!(prefs.hint().is_none());
+            assert!(prefs.error().is_none());
+            prefs.checkpoint(config()).unwrap();
+            assert_eq!(std::fs::read_to_string(path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
     fn invalid_settings_and_failed_write_do_not_silently_arm() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mesh-sharing.json");
         std::fs::write(&path, b"{invalid").unwrap();
         let mut prefs = store(path);
-        assert!(prefs.error().is_some());
+        assert!(prefs.error().is_none());
         assert!(prefs.hint().is_none());
-        assert!(prefs.checkpoint(config()).is_err());
+        prefs.checkpoint(config()).unwrap();
         let blocked = dir.path().join("blocked");
         std::fs::write(&blocked, b"not a directory").unwrap();
         let mut prefs = store(blocked.join("mesh-sharing.json"));

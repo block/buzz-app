@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl, AgentView } from "../../features/agents/control";
 import { useAgentControl } from "../../features/agents/control-react";
-import type { LocalEvents } from "../../features/relay/outbox";
+import { removeAgentFromChannels } from "../../features/agents/relay-removal";
 import type { RelaySession } from "../../features/relay/session";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -147,99 +147,4 @@ export function ProfileAgentDelete({
       )}
     </>
   );
-}
-
-/** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this
- * agent plus the viewer's loaded channels. Resolves only once a fresh relay
- * read lists the agent in none of them; any refusal or unknown outcome throws. */
-export async function removeAgentFromChannels(
-  session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
-  pubkey: string,
-  signal: AbortSignal,
-) {
-  const pending = new Set([
-    ...(await session.workSessions.memberChannels(pubkey, signal)),
-    ...session.channels
-      .list()
-      .channels.filter((channel) => channel.members?.includes(pubkey))
-      .map((channel) => channel.id),
-  ]);
-  if (!pending.size) return;
-  const outbox = session.outbox;
-  if (!outbox?.supports(9001))
-    throw new Error("This community cannot remove agents from channels.");
-  await outbox.ready();
-  signal.throwIfAborted();
-  // Nothing new is signed or published for a cancelled Delete.
-  const active = () => !signal.aborted;
-  const operations = [...pending].map((id) => {
-    const previous = outbox
-      .snapshot()
-      .find(
-        ({ event, delivery }) =>
-          delivery !== "accepted" &&
-          delivery !== "seen" &&
-          event.kind === 9001 &&
-          event.tags.some(([name, value]) => name === "h" && value === id) &&
-          event.tags.some(([name, value]) => name === "p" && value === pubkey),
-      );
-    // Retry reuses the outbox's own operation, including an unknown result.
-    if (previous) outbox.retry(previous.event.id, active);
-    const operation =
-      previous?.event.id ??
-      outbox.send(
-        {
-          kind: 9001,
-          content: "",
-          tags: [
-            ["h", id],
-            ["p", pubkey],
-          ],
-        },
-        undefined,
-        active,
-      );
-    return operation;
-  });
-  await Promise.all(operations.map((id) => delivered(outbox, id, signal)));
-  // Confirm each channel against its own fresh roster: a cached loaded roster
-  // may still list the agent after the relay removed it.
-  const listed = await Promise.all(
-    [...pending].map((id) =>
-      session.workSessions.listsMember(id, pubkey, signal),
-    ),
-  );
-  const remaining = listed.filter(Boolean);
-  if (remaining.length)
-    throw new Error(
-      `The relay did not confirm removal from ${remaining.length} channel${remaining.length === 1 ? "" : "s"}. Retry.`,
-    );
-  // The rosters confirm the outcome; nothing is left for the outbox to retry.
-  await Promise.all(operations.map((id) => outbox.dismiss(id)));
-}
-
-function delivered(outbox: LocalEvents, id: string, signal: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    let stop = () => {};
-    const finish = (error?: unknown) => {
-      stop();
-      signal.removeEventListener("abort", cancelled);
-      error ? reject(error) : resolve();
-    };
-    const cancelled = () => finish(signal.reason);
-    const inspect = () => {
-      const item = outbox.snapshot().find((entry) => entry.event.id === id);
-      // Delivery alone is not removal; the caller re-reads the rosters next.
-      if (!item || item.delivery === "accepted" || item.delivery === "seen")
-        finish();
-      else if (item.delivery !== "sending")
-        finish(
-          new Error(item.error ?? "Channel removal is not confirmed. Retry."),
-        );
-    };
-    stop = outbox.subscribe(inspect);
-    signal.addEventListener("abort", cancelled, { once: true });
-    if (signal.aborted) cancelled();
-    else inspect();
-  });
 }

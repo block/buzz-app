@@ -19,7 +19,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=4).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=5).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -29,6 +29,23 @@ fn details(event: &EventTemplate) -> bool {
     ) else {
         return false;
     };
+    let mut index = 3;
+    if let Some(visibility) = tag(event, index, "visibility") {
+        if !matches!(visibility, "private" | "open") {
+            return false;
+        }
+        index += 1;
+    }
+    if let Some(ttl) = tag(event, index, "ttl") {
+        if !ttl.is_empty()
+            && (ttl.starts_with('0')
+                || !ttl.bytes().all(|b| b.is_ascii_digit())
+                || !ttl.parse::<i32>().is_ok_and(|n| n > 0))
+        {
+            return false;
+        }
+        index += 1;
+    }
     uuid(id)
         && !name.is_empty()
         && name.chars().count() <= 120
@@ -38,7 +55,7 @@ fn details(event: &EventTemplate) -> bool {
             == name
         && about.chars().count() <= 1000
         && !about.contains("Buzz session (")
-        && (event.tags.len() == 3 || tag(event, 3, "visibility") == Some("private"))
+        && index == event.tags.len()
 }
 fn lifecycle(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9002 | 9008 | 9022 | 41012)
@@ -48,7 +65,7 @@ fn lifecycle(event: &EventTemplate) -> bool {
         return false;
     }
     tag(event, 0, "h").is_some_and(uuid)
-        && (event.kind != 9002 || tag(event, 1, "archived") == Some("true"))
+        && (event.kind != 9002 || matches!(tag(event, 1, "archived"), Some("true" | "false")))
 }
 fn archive(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9035 | 9036)
@@ -77,11 +94,22 @@ fn archive(event: &EventTemplate) -> bool {
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
+fn member_administration(event: &EventTemplate) -> bool {
+    matches!(event.kind, 9000 | 9001)
+        && event.content.is_empty()
+        && event.created_at <= 9_007_199_254_740_991
+        && event.tags.len() == if event.kind == 9000 { 3 } else { 2 }
+        && tag(event, 0, "h").is_some_and(uuid)
+        && tag(event, 1, "p").is_some_and(super::hex_key)
+        && (event.kind == 9001
+            || matches!(tag(event, 2, "role"), Some("admin" | "member" | "guest")))
+}
 fn valid(route: &str, event: &EventTemplate) -> bool {
     match route {
         "channel-details" => details(event),
         "channel-lifecycle" => lifecycle(event),
         "identity-archive" => archive(event),
+        "member-administration" => member_administration(event),
         _ => false,
     }
 }
@@ -92,6 +120,8 @@ fn validate(route: &str, event: &Value, viewer: Option<&str>) -> Result<EventTem
     let parsed = template(event)?;
     if !valid(route, &parsed)
         || viewer.is_some_and(|v| event.get("pubkey").and_then(Value::as_str) != Some(v))
+        || (route == "member-administration"
+            && viewer.is_some_and(|v| tag(&parsed, 1, "p") == Some(v)))
     {
         return Err("Invalid channel lifecycle command".into());
     }
@@ -110,6 +140,11 @@ pub(crate) async fn relay_channel_sign(
 ) -> Result<Value> {
     origin(&community)?;
     let parsed = validate(&route, &event, None)?;
+    if route == "member-administration"
+        && tag(&parsed, 1, "p") == Some(host.viewer().await?.as_str())
+    {
+        return Err("Invalid member administration command".into());
+    }
     host.sign(parsed).await
 }
 
@@ -342,25 +377,163 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
 mod boundary_tests {
     use super::*;
     #[test]
+    fn lifecycle_accepts_only_exact_archive_values() {
+        let event = serde_json::json!({
+            "kind": 9002,
+            "created_at": 1700000010,
+            "content": "",
+            "tags": [["h", uuid::Uuid::nil().to_string()], ["archived", "false"]]
+        });
+        for value in ["true", "false"] {
+            let mut command = event.clone();
+            command["tags"][1][1] = serde_json::json!(value);
+            assert!(validate("channel-lifecycle", &command, None).is_ok());
+            assert!(validate("channel-details", &command, None).is_err());
+        }
+        for value in [
+            serde_json::json!(""),
+            serde_json::json!("False"),
+            serde_json::json!("TRUE"),
+            serde_json::json!("false "),
+            serde_json::json!("0"),
+            serde_json::json!("anything"),
+            serde_json::json!(false),
+            serde_json::json!(0),
+            Value::Null,
+        ] {
+            let mut command = event.clone();
+            command["tags"][1][1] = value;
+            assert!(validate("channel-lifecycle", &command, None).is_err());
+        }
+        for tags in [
+            serde_json::json!([["h", uuid::Uuid::nil().to_string()]]),
+            serde_json::json!([["h", uuid::Uuid::nil().to_string()], ["archived"]]),
+            serde_json::json!([
+                ["h", uuid::Uuid::nil().to_string()],
+                ["archived", "false", "extra"]
+            ]),
+            serde_json::json!([
+                ["h", uuid::Uuid::nil().to_string()],
+                ["archived", "false"],
+                ["archived", "true"]
+            ]),
+            serde_json::json!([
+                ["h", uuid::Uuid::nil().to_string()],
+                ["archived", "false"],
+                ["name", "injected"]
+            ]),
+            serde_json::json!([["archived", "false"], ["h", uuid::Uuid::nil().to_string()]]),
+            serde_json::json!([["h", "not-a-channel"], ["archived", "false"]]),
+        ] {
+            let mut command = event.clone();
+            command["tags"] = tags;
+            assert!(validate("channel-lifecycle", &command, None).is_err());
+        }
+    }
+
+    #[test]
     fn commands_reject_cross_route_and_foreign_signatures() {
         let host = IdentityHost::fixture();
-        let template = EventTemplate {
+        for (value, tampered) in [("true", "false"), ("false", "true")] {
+            let template = EventTemplate {
+                kind: 9002,
+                created_at: 1700000010,
+                content: String::new(),
+                tags: vec![
+                    vec!["h".into(), uuid::Uuid::new_v4().to_string()],
+                    vec!["archived".into(), value.into()],
+                ],
+            };
+            let event = tauri::async_runtime::block_on(host.sign(template)).unwrap();
+            assert!(validate("channel-lifecycle", &event, event["pubkey"].as_str()).is_ok());
+            assert!(validate("channel-details", &event, event["pubkey"].as_str()).is_err());
+            assert!(validate("channel-lifecycle", &event, Some(&"f".repeat(64))).is_err());
+            let mut altered = event.clone();
+            altered["tags"][1][1] = Value::String(tampered.into());
+            assert!(validate("channel-lifecycle", &altered, event["pubkey"].as_str()).is_err());
+        }
+    }
+    fn details_event(extra: Vec<Vec<String>>) -> EventTemplate {
+        EventTemplate {
             kind: 9002,
             created_at: 1700000010,
             content: String::new(),
             tags: vec![
-                vec!["h".into(), uuid::Uuid::new_v4().to_string()],
-                vec!["archived".into(), "true".into()],
-            ],
-        };
-        let event = tauri::async_runtime::block_on(host.sign(template)).unwrap();
-        assert!(validate("channel-lifecycle", &event, event["pubkey"].as_str()).is_ok());
-        assert!(validate("channel-details", &event, event["pubkey"].as_str()).is_err());
-        assert!(validate("channel-lifecycle", &event, Some(&"f".repeat(64))).is_err());
-        let mut altered = event.clone();
-        altered["tags"][1][1] = Value::String("false".into());
-        assert!(validate("channel-lifecycle", &altered, event["pubkey"].as_str()).is_err());
+                vec!["h".into(), uuid::Uuid::nil().to_string()],
+                vec!["name".into(), "Team".into()],
+                vec!["about".into(), "Description".into()],
+            ]
+            .into_iter()
+            .chain(extra)
+            .collect(),
+        }
     }
+
+    #[test]
+    fn details_admit_visibility_and_duration_at_sign_and_publish_boundaries() {
+        let host = IdentityHost::fixture();
+        for visibility in [None, Some("private"), Some("open")] {
+            for ttl in [None, Some(""), Some("1"), Some("86400"), Some("2147483647")] {
+                let extra = [("visibility", visibility), ("ttl", ttl)]
+                    .into_iter()
+                    .filter_map(|(key, value)| value.map(|value| vec![key.into(), value.into()]))
+                    .collect();
+                let event = serde_json::to_value(details_event(extra)).unwrap();
+                let parsed = validate("channel-details", &event, None)
+                    .unwrap_or_else(|error| panic!("{visibility:?}/{ttl:?}: {error}"));
+                assert!(validate("channel-lifecycle", &event, None).is_err());
+                let signed = tauri::async_runtime::block_on(host.sign(parsed)).unwrap();
+                assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_ok());
+                assert!(validate("channel-details", &signed, Some(&"f".repeat(64))).is_err());
+                let mut altered = signed;
+                altered["tags"][1][1] = Value::String("Tampered".into());
+                assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn details_reject_malformed_optional_tags() {
+        for extra in [
+            vec![vec![]],
+            vec![vec!["ttl"]],
+            vec![vec!["ttl", "1", "extra"]],
+            vec![vec!["visibility"]],
+            vec![vec!["visibility", "open", "extra"]],
+            vec![vec!["visibility", "public"]],
+            vec![vec!["visibility", ""]],
+            vec![vec!["archived", "true"]],
+            vec![vec!["p", "injected"]],
+            vec![vec!["ttl", "0"]],
+            vec![vec!["ttl", "01"]],
+            vec![vec!["ttl", "-1"]],
+            vec![vec!["ttl", "+1"]],
+            vec![vec!["ttl", " 1"]],
+            vec![vec!["ttl", "1\n"]],
+            vec![vec!["ttl", "1.5"]],
+            vec![vec!["ttl", "1e3"]],
+            vec![vec!["ttl", "2147483648"]],
+            vec![vec!["ttl", "18446744073709551616"]],
+            vec![vec!["ttl", "86400"], vec!["visibility", "open"]],
+            vec![vec!["visibility", "private"], vec!["visibility", "open"]],
+            vec![vec!["ttl", "1"], vec!["ttl", ""]],
+            vec![vec!["visibility", "open"], vec!["ttl", "0"]],
+            vec![
+                vec!["visibility", "open"],
+                vec!["ttl", "1"],
+                vec!["ttl", ""],
+            ],
+        ] {
+            let event = details_event(
+                extra
+                    .iter()
+                    .map(|tag| tag.iter().map(|s| (*s).into()).collect())
+                    .collect(),
+            );
+            assert!(!valid("channel-details", &event), "{extra:?}");
+        }
+    }
+
     #[test]
     fn creation_requires_the_exact_stream_command() {
         let mut event = EventTemplate {
@@ -404,4 +577,83 @@ fn session_metadata(description: &str) -> bool {
         || description
             .strip_prefix(&format!("{PREFIX}\nparent:"))
             .is_some_and(uuid)
+}
+
+#[cfg(test)]
+mod member_administration_tests {
+    use super::*;
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+
+    #[test]
+    fn member_commands_match_js_and_sign_through_production_ipc_and_acl() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/channel-members/administration-contract.json"
+        ))
+        .unwrap();
+        let app = mock_builder()
+            .manage(IdentityHost::fixture())
+            .invoke_handler(crate::commands())
+            .build(crate::app_context())
+            .unwrap();
+        let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        let invoke = |command: &str, event: Value| {
+            get_ipc_response(
+                &view,
+                tauri::webview::InvokeRequest {
+                    cmd: command.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: view.url().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                        "community": "https://relay.test", "route": "member-administration", "event": event
+                    })),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.into(),
+                },
+            )
+        };
+        for case in cases["accepted"].as_array().unwrap() {
+            let template = case["event"].clone();
+            let event: Value = invoke("relay_channel_sign", template.clone())
+                .unwrap()
+                .deserialize()
+                .unwrap();
+            super::super::verify_signature(&event).unwrap();
+            assert_eq!(event["tags"], template["tags"]);
+            assert_eq!(event["kind"], template["kind"]);
+            assert_eq!(event["created_at"], template["created_at"]);
+            assert_eq!(event["content"], template["content"]);
+            let viewer = event["pubkey"].as_str().unwrap();
+            assert!(validate("member-administration", &event, Some(viewer)).is_ok());
+            for route in ["channel-details", "channel-lifecycle", "identity-archive"] {
+                assert!(validate(route, &event, Some(viewer)).is_err());
+            }
+            assert!(validate("member-administration", &event, Some(&"f".repeat(64))).is_err());
+            let mut tampered = event.clone();
+            tampered["tags"][1][1] = Value::String("d".repeat(64));
+            assert!(validate("member-administration", &tampered, Some(viewer)).is_err());
+            // Publish reaches the registered handler/ACL and rejects before networking.
+            let error = invoke("relay_channel_publish", tampered).unwrap_err();
+            assert!(error.to_string().contains("signature"), "{error}");
+            let mut self_target = template;
+            self_target["tags"][1][1] = Value::String(viewer.into());
+            let error = invoke("relay_channel_sign", self_target).unwrap_err();
+            assert!(
+                error.to_string().contains("Invalid member administration"),
+                "{error}"
+            );
+        }
+        for case in cases["rejected"].as_array().unwrap() {
+            let event = case["event"].clone();
+            assert!(
+                validate("member-administration", &event, None).is_err(),
+                "{}",
+                case["name"]
+            );
+            let error = invoke("relay_channel_sign", event).unwrap_err();
+            assert!(!error.to_string().contains("not allowed"), "{error}");
+        }
+    }
 }

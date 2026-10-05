@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRelaySession } from "../relay/session";
@@ -15,23 +15,25 @@ import {
   signed,
 } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 
 const viewer = keypair(),
   other = keypair(),
   relay = keypair();
 const root = message(other, "c", "Report me", 1);
 const owners: { dispose(): void }[] = [];
-afterEach(() => {
-  cleanup();
-  for (const owner of owners.splice(0)) owner.dispose();
-});
 
 let focusedAtRelease: Element | null = null;
 const release = vi.fn(() => {
   focusedAtRelease = document.activeElement;
 });
 const keepMounted = vi.fn((_id: string) => release);
-afterEach(() => {
+afterEach(async () => {
+  cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
+  await waitFor(() =>
+    expect(release).toHaveBeenCalledTimes(keepMounted.mock.calls.length),
+  );
   focusedAtRelease = null;
   release.mockClear();
   keepMounted.mockClear();
@@ -55,19 +57,24 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
   live?.receive([roster(relay, "c", [viewer.pubkey], 1), root]);
   const row = owner.session.channels.window("c").rows[0];
   if (!row) throw new Error("Missing row");
-  render(
-    <MessageRow
-      row={row}
-      session={owner.session}
-      profile={undefined}
-      media={() => undefined}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-      keepMounted={keepMounted}
-    />,
-    { wrapper: ToastProvider },
+  const tree = (active: boolean) => (
+    <ConversationPresentation value={active}>
+      <div hidden={!active} inert={!active}>
+        <MessageRow
+          row={row}
+          session={owner.session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+          keepMounted={keepMounted}
+        />
+      </div>
+    </ConversationPresentation>
   );
+  const view = render(tree(true), { wrapper: ToastProvider });
+  return { present: (active: boolean) => view.rerender(tree(active)) };
 }
 
 it("reports from the message menu, keeps input after failure and confirms success", async () => {
@@ -158,3 +165,132 @@ it("starts each report with an empty form", async () => {
     ).getAttribute("aria-checked"),
   ).toBe("false");
 });
+
+it.each([
+  "success",
+  "success while hidden",
+  "failure while hidden",
+  "failure after recovery",
+] as const)(
+  "retains a suspended report operation without reopening or duplicating it: %s",
+  async (outcome) => {
+    const user = userEvent.setup();
+    let settle!: (error?: Error) => void;
+    const publish = vi.fn(
+      (_event: RelayEvent) =>
+        new Promise<void>((resolve, reject) => {
+          settle = (error) => (error ? reject(error) : resolve());
+        }),
+    );
+    const h = mount(publish);
+    const openMenu = async () => {
+      await user.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      return screen.findByRole("menuitem", { name: "Report" });
+    };
+    await user.click(await openMenu());
+    await user.click(await screen.findByRole("radio", { name: "Spam" }));
+    await user.type(screen.getByRole("textbox"), "retained submitted note");
+    await user.click(screen.getByRole("button", { name: "Submit report" }));
+    await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    try {
+      h.present(false);
+      // Portal removal is synchronous, not the dialog's animated close.
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      expect(release).not.toHaveBeenCalled();
+      if (outcome.endsWith("while hidden")) {
+        await act(async () =>
+          settle(
+            outcome === "success while hidden"
+              ? undefined
+              : new PublishRejected("blocked"),
+          ),
+        );
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+        expect(
+          screen.queryByText("Report submitted to community moderators"),
+        ).toBeNull();
+      }
+      h.present(true);
+      expect(
+        screen.queryByRole("dialog", { name: "Report message", hidden: true }),
+      ).toBeNull();
+      if (outcome !== "success while hidden") {
+        const reportItem = await openMenu();
+        expect(reportItem.getAttribute("aria-disabled")).toBe("true");
+        await user.click(reportItem);
+        await user.keyboard("{Escape}");
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      }
+      expect(publish).toHaveBeenCalledOnce();
+      if (!outcome.endsWith("while hidden")) {
+        expect(screen.getByRole("status").textContent).toContain(
+          "Submitting report",
+        );
+        await act(async () =>
+          settle(
+            outcome === "success" ? undefined : new PublishRejected("blocked"),
+          ),
+        );
+      }
+      if (outcome.startsWith("failure")) {
+        expect((await screen.findByRole("alert")).textContent).toContain(
+          "Failed to submit report",
+        );
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+        expect(release).not.toHaveBeenCalled();
+        h.present(false);
+        expect(screen.queryByRole("alert")).toBeNull();
+        h.present(true);
+        expect((await screen.findByRole("alert")).textContent).toContain(
+          "Failed to submit report",
+        );
+        await user.click(screen.getByRole("button", { name: "Review report" }));
+        await screen.findByRole("dialog", { name: "Report message" });
+        expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+          "retained submitted note",
+        );
+        expect(
+          screen
+            .getByRole("radio", { name: "Spam" })
+            .getAttribute("aria-checked"),
+        ).toBe("true");
+        await user.click(screen.getByRole("button", { name: "Submit report" }));
+        await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+        expect(publish.mock.calls[1]?.[0]).toMatchObject({
+          kind: 1984,
+          content: "retained submitted note",
+          tags: [
+            ["p", other.pubkey],
+            ["e", root.id, "spam"],
+          ],
+        });
+        await act(async () => settle());
+      }
+      expect(
+        await screen.findByText("Report submitted to community moderators"),
+      ).toBeTruthy();
+      expect(
+        screen.getAllByText("Report submitted to community moderators"),
+      ).toHaveLength(1);
+      expect(keepMounted).toHaveBeenCalledOnce();
+      expect(release).not.toHaveBeenCalled();
+      await user.click(await openMenu());
+      await screen.findByRole("dialog", { name: "Report message" });
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+        "",
+      );
+      await user.type(screen.getByRole("textbox"), "new unsubmitted note");
+      await act(async () => {});
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+        "new unsubmitted note",
+      );
+      expect(publish).toHaveBeenCalledTimes(
+        outcome.startsWith("success") ? 1 : 2,
+      );
+    } finally {
+      await act(async () => settle());
+    }
+  },
+);

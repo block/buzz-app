@@ -5,7 +5,7 @@ use serde::Serialize;
 
 const CURATED_SMALL: &str = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const CURATED_MEDIUM: &str = "unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
-const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:Q4_K_M";
+const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL";
 
 /// Rated-capacity boundary for the balanced Qwen3.5 9B tier.
 const CURATED_MEDIUM_MIN_RATED_GB: u64 = 32;
@@ -18,7 +18,7 @@ pub fn canonical_curated_model_id(model: &str) -> &str {
     match model.trim() {
         "Gemma-4-E4B-it-Q4_K_M" => CURATED_SMALL,
         "Qwen3.5-9B-Vision-Q4_K_M" => CURATED_MEDIUM,
-        "Qwen3.8-27B-Q4_K_M" => CURATED_LARGE,
+        "Qwen3.8-27B-Q4_K_M" => "unsloth/Qwen3.8-27B-GGUF:Q4_K_M",
         "gemma-4-26B-A4B-it-UD-Q4_K_M" => "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M",
         other => other,
     }
@@ -63,6 +63,18 @@ pub fn catalog() -> anyhow::Result<Catalog> {
                 || models::find_model_path(model).is_file()
         },
     ))
+}
+
+fn exact_quant(file: &str, quant: &str) -> bool {
+    let file = file.to_ascii_uppercase();
+    let quant = quant.to_ascii_uppercase();
+    file.match_indices(&quant).any(|(offset, _)| {
+        let prefix = &file[..offset];
+        let suffix = &file[offset + quant.len()..];
+        (prefix.is_empty() || prefix.ends_with(['-', '.', '_']))
+            && !prefix.ends_with("UD-")
+            && (suffix.is_empty() || suffix.starts_with(['-', '.']))
+    })
 }
 
 fn fit(size: Option<&str>, memory: f64) -> &'static str {
@@ -113,7 +125,7 @@ fn build(
                 .into_iter()
                 .find(|reference| {
                     reference.split_once(':').is_some_and(|(repo, quant)| {
-                        model.repo == repo && model.source_file.contains(quant)
+                        model.repo == repo && exact_quant(&model.source_file, quant)
                     })
                 });
             let reference = curated
@@ -131,9 +143,11 @@ fn build(
         })
         .collect();
     // Do not recommend a missing catalog record or invent download metadata.
-    let recommended = entries
+    let ladder = [CURATED_LARGE, CURATED_MEDIUM, CURATED_SMALL];
+    let recommended = ladder
         .iter()
-        .find(|entry| entry.model == recommendation)
+        .skip_while(|candidate| **candidate != recommendation)
+        .find_map(|candidate| entries.iter().find(|entry| entry.model == *candidate))
         .map(|entry| entry.model.clone());
     entries.sort_by(|a, b| {
         (Some(&b.model) == recommended.as_ref())
@@ -168,6 +182,13 @@ pub async fn prepare(model: &str) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn quantization_matches_do_not_confuse_dynamic_and_standard_files() {
+        assert!(exact_quant("model-Q4_K_M.gguf", "Q4_K_M"));
+        assert!(!exact_quant("model-UD-Q4_K_M.gguf", "Q4_K_M"));
+        assert!(exact_quant("model-UD-Q4_K_XL.gguf", "UD-Q4_K_XL"));
+        assert!(!exact_quant("model-Q4_K_M_EXTRA.gguf", "Q4_K_M"));
+    }
+    #[test]
     fn aliases_keep_the_donor_ingress_contract() {
         assert_eq!(
             canonical_curated_model_id("Gemma-4-E4B-it-Q4_K_M"),
@@ -179,7 +200,7 @@ mod tests {
         );
         assert_eq!(
             canonical_curated_model_id("Qwen3.8-27B-Q4_K_M"),
-            CURATED_LARGE
+            "unsloth/Qwen3.8-27B-GGUF:Q4_K_M"
         );
         assert_eq!(
             canonical_curated_model_id("gemma-4-26B-A4B-it-UD-Q4_K_M"),
@@ -213,6 +234,8 @@ mod tests {
     #[test]
     fn ladder_is_catalog_backed_and_keeps_exact_ids_installation_and_draft_policy() {
         let mut large = model("unsloth/Qwen3.8-27B-GGUF", "large", "17GB");
+        large.source_file = "weights-UD-Q4_K_XL.gguf".into();
+        large.file = large.source_file.clone();
         large.draft = Some("draft".into());
         let models = vec![
             large,
@@ -240,6 +263,16 @@ mod tests {
             );
         }
         assert!(build(None, 0, vec![], |_| false).recommended.is_none());
+    }
+    #[test]
+    fn missing_top_tier_falls_back_to_an_available_smaller_curated_model() {
+        let catalog = build(
+            None,
+            128_000_000_000,
+            vec![model("unsloth/Qwen3.5-9B-GGUF", "medium", "6GB")],
+            |_| false,
+        );
+        assert_eq!(catalog.recommended.as_deref(), Some(CURATED_MEDIUM));
     }
     #[tokio::test]
     async fn missing_local_model_fails_without_network_download() {

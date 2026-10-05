@@ -112,8 +112,9 @@ test.describe("public search destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    // Open search once the conversation has rendered. While startup is still
-    // painting, WebKit can drop the text `fill` inserts into the fresh palette.
+    // Waiting for a rendered conversation is an ordering mitigation for the
+    // WebKit lost-fill failure. Its root cause is unknown, and the failing
+    // schedule has not been reproduced against this change.
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     for (const mode of ["cold", "warm"]) {
       await button(page, "Search Buzz").click();

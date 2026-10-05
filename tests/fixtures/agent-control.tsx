@@ -19,12 +19,19 @@ import type {
   RelaySnapshot,
 } from "../../src/features/relay/service";
 import { createAgentControl } from "../../src/features/agents/control";
+import type {
+  Panels,
+  RegisteredPanel,
+} from "../../src/features/panels/service";
 import { controlFixture } from "../../src/features/agents/control-testing";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import "../../src/shared/styles/globals.css";
 
 const avatarPreviewMode = new URLSearchParams(location.search).has("avatars");
+const profilePreviewMode = new URLSearchParams(location.search).has(
+  "profile-panel",
+);
 // Deliberately public test key, never an account credential.
 const profileKey = new Uint8Array(32).fill(7);
 const profileViewer = getPublicKey(profileKey);
@@ -179,6 +186,26 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
+const profilePanel = {
+  id: "profile",
+  title: "Profile",
+  matches: () => true,
+  component: ({ target }: { target: string }) => (
+    <button type="button" ref={(button) => button?.focus()}>
+      Profile for {target}
+    </button>
+  ),
+  key: "buzz.profiles/profile",
+  pluginId: "buzz.profiles",
+  revision: "fixture",
+} satisfies RegisteredPanel;
+const profilePanels = [profilePanel];
+const panels: Panels = {
+  snapshot: () => profilePanels,
+  subscribe: () => () => {},
+  resolve: () => profilePanel,
+  register: () => {},
+};
 const noActions: readonly [] = [];
 const accountActions = {
   subscribe: () => () => {},
@@ -416,6 +443,7 @@ function Fixture() {
             relay={relay}
             key={browser ? "browser" : "native"}
             control={browser ? unavailable : control}
+            panels={profilePreviewMode ? panels : undefined}
           />
         )
       )}

@@ -1,3 +1,4 @@
+import { useEffect, type ReactNode } from "react";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
@@ -24,6 +25,12 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import type {
+  PanelProps,
+  Panels,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import { profileTarget } from "../../features/profiles/target";
 
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
@@ -42,6 +49,9 @@ function setup(
     target: OpenTarget,
     options?: { replace?: boolean },
   ) => Promise<{ status: "opened" }>,
+  panels?: Panels,
+  companion?: ReactNode,
+  companionOpening?: object,
 ) {
   const f = controlFixture();
   configure?.(f);
@@ -91,14 +101,19 @@ function setup(
     status:
       mode === "disconnected"
         ? "disconnected"
-        : mode === "connecting"
-          ? "connecting"
-          : "ready",
+        : mode === "cached"
+          ? "error"
+          : mode === "connecting"
+            ? "connecting"
+            : "ready",
     scope:
-      mode === "connected"
-        ? `wss://relay.example.test:${"de".repeat(32)}`
+      mode === "connected" || mode === "cached"
+        ? `https://relay.example.test:${"de".repeat(32)}`
         : "A",
-    ...(mode === "connected" ? { viewer: "de".repeat(32) } : {}),
+    ...(mode === "connected" || mode === "cached"
+      ? { viewer: "de".repeat(32) }
+      : {}),
+    ...(mode === "cached" ? { cached: true as const } : {}),
     generation: 1,
     session,
   };
@@ -121,19 +136,27 @@ function setup(
   });
   snapshot = { ...snapshot, session: { ...session, names } };
   disposals.push(() => names.dispose());
-  render(
+  const page = (companionNode: ReactNode, opening?: object) => (
     <AgentsPage
       relay={relay}
       control={control}
       navigation={navigation}
       {...(open ? { open } : {})}
-    />,
-    { wrapper: ToastProvider },
+      {...(panels ? { panels } : {})}
+      companion={companionNode}
+      companionOpening={opening}
+    />
   );
+  const view = render(page(companion, companionOpening), {
+    wrapper: ToastProvider,
+  });
   return {
     f,
     read,
     control,
+    setCompanion(next: ReactNode, selection?: object) {
+      view.rerender(page(next, selection));
+    },
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
       for (const listener of listeners) listener();
@@ -141,7 +164,7 @@ function setup(
     connect() {
       snapshot = {
         status: "ready",
-        scope: `wss://relay.example.test:${"de".repeat(32)}`,
+        scope: `https://relay.example.test:${"de".repeat(32)}`,
         viewer: "de".repeat(32),
         generation: snapshot.generation,
         session: snapshot.session,
@@ -150,6 +173,421 @@ function setup(
     },
   };
 }
+it("opens the selected managed agent in the existing profile panel", async () => {
+  let profileTargetSeen = "";
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ target }: { target: string }) => {
+      profileTargetSeen = target;
+      return (
+        <button type="button" ref={(button) => button?.focus()}>
+          Existing profile panel
+        </button>
+      );
+    },
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f } = setup("connected", undefined, undefined, undefined, panels);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  const profileItem = await screen.findByRole("menuitem", {
+    name: "View profile",
+  });
+  fireEvent.click(profileItem);
+
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+  expect(screen.getByText("Existing profile panel")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Existing profile panel" }),
+  ).toHaveFocus();
+  expect(profileTargetSeen).toBe(
+    profileTarget(f.agent.pubkey, { agent: true }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    ).toHaveFocus(),
+  );
+});
+
+it("focuses the profile card when a cached profile cannot focus its content", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Connect to a community to view this profile.</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  setup("cached", undefined, undefined, undefined, panels);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing retained agent card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  const profile = await screen.findByRole("complementary", { name: "Profile" });
+  expect(
+    within(profile).getByText("Connect to a community to view this profile."),
+  ).toBeVisible();
+  expect(profile).toHaveFocus();
+});
+
+it("lets the hosted profile replace itself with another profile target", async () => {
+  const replacementTarget = "buzz:profile-instance:test";
+  const targets: string[] = [];
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ target, context }: PanelProps) => {
+      targets.push(target);
+      return (
+        <button
+          type="button"
+          disabled={!context?.canOpen(replacementTarget)}
+          onClick={() => context?.open(replacementTarget)}
+        >
+          Open exact instance
+        </button>
+      );
+    },
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f } = setup("connected", undefined, undefined, undefined, panels);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Open exact instance" }),
+  );
+
+  await waitFor(() => expect(targets.at(-1)).toBe(replacementTarget));
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    ).toHaveFocus(),
+  );
+  expect(targets).toContain(profileTarget(f.agent.pubkey, { agent: true }));
+});
+
+it("focuses the Agents surface when the profile trigger was removed", async () => {
+  let deleteViewedAgent = async () => {};
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: ({ close }: { close: () => void }) => (
+      <button
+        type="button"
+        onClick={() => {
+          void deleteViewedAgent().then(close);
+        }}
+      >
+        Delete viewed agent
+      </button>
+    ),
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const { f, control } = setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+  );
+  deleteViewedAgent = async () => {
+    await control.delete?.(f.agent.id, f.agent.revision);
+  };
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Delete viewed agent" }),
+  );
+
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Agents" })).toHaveFocus(),
+  );
+});
+
+it("offers View profile only for an identity in the selected community", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  setup("connected", undefined, undefined, undefined, panels);
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const here = cards.find((card) =>
+    card.textContent?.includes("wss://relay.example.test"),
+  );
+  const elsewhere = cards.find((card) =>
+    card.textContent?.includes("wss://second.example"),
+  );
+  if (!here || !elsewhere) throw Error("Expected both community setups");
+
+  fireEvent.click(
+    within(here).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  ).toBeVisible();
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+  fireEvent.click(
+    within(elsewhere).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
+});
+
+it("keeps the shell companion in the page-owned companion slot", async () => {
+  setup(
+    "ready",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    <aside aria-label="Shell companion">Shell companion</aside>,
+  );
+
+  expect(
+    await screen.findByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+});
+
+it("keeps the shell companion mounted while the profile is open", async () => {
+  let mounts = 0;
+  const ShellCompanion = () => {
+    useEffect(() => {
+      mounts += 1;
+    }, []);
+    return <aside aria-label="Shell companion">Shell companion</aside>;
+  };
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const companionOpening = {};
+  const { setCompanion } = setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+    <ShellCompanion />,
+    companionOpening,
+  );
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+
+  expect(
+    screen.getByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+  setCompanion(<ShellCompanion />, companionOpening);
+  expect(screen.getByRole("complementary", { name: "Profile" })).toBeVisible();
+  expect(
+    screen.getByRole("complementary", {
+      name: "Shell companion",
+      hidden: true,
+    }),
+  ).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  expect(
+    screen.getByRole("complementary", { name: "Shell companion" }),
+  ).toBeVisible();
+  expect(mounts).toBe(1);
+});
+
+it("shows a replacement shell companion without stealing launcher focus", async () => {
+  const panel = {
+    id: "profile",
+    title: "Profile",
+    matches: (_target: string) => true,
+    component: () => <p>Existing profile panel</p>,
+    key: "buzz.profiles/profile",
+    pluginId: "buzz.profiles",
+    revision: "test",
+  } satisfies RegisteredPanel;
+  const installed = [panel];
+  const panels: Panels = {
+    snapshot: () => installed,
+    subscribe: () => () => {},
+    resolve: (target) => (panel.matches(target) ? panel : undefined),
+    register: () => {},
+  };
+  const firstSelection = {};
+  const secondSelection = {};
+  const launcher = document.createElement("button");
+  launcher.textContent = "Second companion launcher";
+  document.body.append(launcher);
+  const { setCompanion } = setup(
+    "connected",
+    undefined,
+    undefined,
+    undefined,
+    panels,
+    <aside aria-label="First shell companion">First shell companion</aside>,
+    firstSelection,
+  );
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+  expect(
+    await screen.findByRole("complementary", { name: "Profile" }),
+  ).toBeVisible();
+
+  launcher.focus();
+  setCompanion(
+    <aside aria-label="Second shell companion">Second shell companion</aside>,
+    secondSelection,
+  );
+
+  expect(
+    await screen.findByRole("complementary", {
+      name: "Second shell companion",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("complementary", { name: "Profile" })).toBeNull();
+  expect(launcher).toHaveFocus();
+  launcher.remove();
+});
+
+it("omits View profile when the profile panel is unavailable", async () => {
+  setup();
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  expect(
+    cards.some((card) =>
+      within(card).queryByRole("button", { name: "View profile" }),
+    ),
+  ).toBe(false);
+  const [card] = cards;
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
+});
+
 it("shows native controls per exact destination and separate read-only discovered identities", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {

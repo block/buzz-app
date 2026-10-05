@@ -7,6 +7,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { matchName, matchRank, SearchChoices } from "./SearchChoices";
+import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
@@ -40,6 +41,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  usageScope,
 }: {
   session: RelaySession;
   pages: readonly SearchDestination[];
@@ -47,6 +49,8 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
+  /** View-state partition whose visits and search choices rank results. */
+  usageScope?: string | undefined;
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
@@ -97,41 +101,81 @@ export function SearchResults({
         .catch(() => {});
   }, [session, profileKey]);
   const needle = query.trim().toLowerCase().replace(/^#/, "");
+  // Read once per opening, so usage recorded while it is open cannot reorder it.
+  const usage = useMemo(
+    () => (usageScope ? readSearchUsage(usageScope) : noSearchUsage),
+    [usageScope],
+  );
+  const choose = (key: string, run: () => void) => () => {
+    if (usageScope) recordChoice(usageScope, needle, key);
+    run();
+  };
+  // What the viewer chose before for this typed text. Only candidates that
+  // match count, so a stale choice cannot add a row.
+  const picked = usage.pick(
+    needle,
+    new Set([
+      ...channels
+        .filter(
+          ({ id }) => matchRank(names.get(id) ?? "", needle) !== undefined,
+        )
+        .map(({ id }) => `channel:${id}`),
+      ...publicChannels.channels.map(({ id }) => `channel:${id}`),
+      ...pages.map(({ key }) => key),
+    ]),
+  );
   // Rank before the limit, so an exact name beyond the first eight still shows.
   // The relay matches public channels itself; keep its matches, ranked last.
-  // Archived channels follow live ones of the same rank.
-  const rankOf = (label: string, archived?: boolean) =>
-    (matchRank(label, needle) ?? 6) + (archived ? 0.5 : 0);
+  // Archived channels follow live ones of the same rank. An exact name leads,
+  // then the viewer's earlier choice for this text; otherwise usage lifts a
+  // match past a slightly better one, but never past a much better one.
+  const rankOf = (label: string, key: string, archived?: boolean) => {
+    const rank = matchRank(label, needle);
+    if (rank === 0) return archived ? -1.5 : -2;
+    if (key === picked) return -1;
+    return (rank ?? 6) + (archived ? 0.5 : 0) - usage.boost(key);
+  };
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows
       .map((row) => ({ row, rank: rank(row) }))
       .sort((a, b) => a.rank - b.rank)
       .map(({ row }) => row);
   const channelRank = (channel: ChannelSummary) =>
-    rankOf(names.get(channel.id) ?? channel.name, channel.archived);
-  const matchingChannels = byMatch(
+    rankOf(
+      names.get(channel.id) ?? channel.name,
+      `channel:${channel.id}`,
+      channel.archived,
+    );
+  const matchingAll = byMatch(
     channels.filter(
       (channel) => matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
-  ).slice(0, 8);
-  const joinedChannels = matchingChannels.filter(
+  );
+  const matchingChannels = matchingAll.slice(0, 8);
+  const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",
   );
-  // Joined matches lead; public channels the viewer has not joined fill the group.
-  const unjoinedChannels = byMatch(
-    publicChannels.channels.filter(
-      (channel) => !joinedChannels.some(({ id }) => id === channel.id),
-    ),
+  // Joined and public channels share one ranking before the limit, so the row
+  // that gives the group its best rank, such as a remembered public channel,
+  // is the row shown first. Joined channels win ties.
+  const channelResults = byMatch(
+    [
+      ...joinedAll,
+      ...publicChannels.channels.filter(
+        (channel) => !joinedAll.some(({ id }) => id === channel.id),
+      ),
+    ],
     channelRank,
-  ).slice(0, Math.max(0, 8 - joinedChannels.length));
+  ).slice(0, 8);
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => {
     const label = names.get(channel.id) ?? channel.name;
     const matches = needle ? matchName(label, needle)?.positions : undefined;
+    const key = `channel:${channel.id}`;
     return {
-      key: `channel:${channel.id}`,
+      key,
       label,
       ...(matches ? { matches } : {}),
       detail: channel.archived
@@ -144,7 +188,7 @@ export function SearchResults({
               ? "Session"
               : "Conversation",
       icon: ChatCircleIcon,
-      run: () => openConversation(channel.id),
+      run: choose(key, () => openConversation(channel.id)),
     };
   };
   const recent: SearchDestination[] = channels
@@ -240,7 +284,13 @@ export function SearchResults({
                       ? "Loading recent conversations…"
                       : "No recent activity yet.",
                 },
-                { label: "Actions", destinations: pages },
+                {
+                  label: "Actions",
+                  destinations: pages.map((page) => ({
+                    ...page,
+                    run: choose(page.key, page.run),
+                  })),
+                },
               ]
             : [
                 // Named destinations lead, so typed text selects one first.
@@ -249,14 +299,8 @@ export function SearchResults({
                 ...[
                   {
                     label: "Channels",
-                    destinations: [...joinedChannels, ...unjoinedChannels].map(
-                      conversationDestination,
-                    ),
-                    best: Math.min(
-                      ...[...joinedChannels, ...unjoinedChannels].map(
-                        channelRank,
-                      ),
-                    ),
+                    destinations: channelResults.map(conversationDestination),
+                    best: Math.min(...channelResults.map(channelRank)),
                   },
                   {
                     label: "Direct messages",
@@ -271,9 +315,17 @@ export function SearchResults({
                   },
                   {
                     label: "Pages",
-                    // PageSearch already ranked and underlined these.
-                    destinations: pages,
-                    best: Math.min(...pages.map((page) => rankOf(page.label))),
+                    // PageSearch already ranked these by text and underlined
+                    // them; here usage and earlier choices adjust the order.
+                    destinations: byMatch(pages, (page) =>
+                      rankOf(page.label, page.key),
+                    ).map((page) => ({
+                      ...page,
+                      run: choose(page.key, page.run),
+                    })),
+                    best: Math.min(
+                      ...pages.map((page) => rankOf(page.label, page.key)),
+                    ),
                   },
                 ]
                   .sort((a, b) => a.best - b.best)
@@ -286,7 +338,7 @@ export function SearchResults({
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
-                    unjoinedChannels.length ||
+                    channelResults.length ||
                     pages.length
                       ? undefined
                       : messageEmpty,

@@ -48,6 +48,8 @@ let libraryIncludesFirst = false;
 const admission = new URLSearchParams(location.search).has(
   "nonmember-admission",
 );
+// With nonmember-admission: make "General" a DM, which can never add members.
+const dm = new URLSearchParams(location.search).has("dm");
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
@@ -140,13 +142,13 @@ const owner = createRelaySession(
                 kind: 39000,
                 content: JSON.stringify({
                   name: "General",
-                  channel_type: "stream",
+                  channel_type: dm ? "dm" : "stream",
                 }),
                 created_at: time,
                 tags: [
                   ["d", "c"],
                   ["name", "General"],
-                  ["t", "stream"],
+                  ["t", dm ? "dm" : "stream"],
                 ],
               })
             : metadata(

@@ -3,12 +3,13 @@ import * as api from "./api";
 type Snapshot = Readonly<{
   status: "idle" | "loading" | "signing-in" | "signing-out";
   account: api.Account | null;
+  unverified: boolean;
   error?: string | undefined;
 }>;
 
 /** One plugin lifetime owns observation, never the persisted session. */
 export function createSession() {
-  let state: Snapshot = { status: "idle", account: null };
+  let state: Snapshot = { status: "idle", account: null, unverified: false };
   let disposed = false;
   let attempt: AbortController | undefined;
   const listeners = new Set<() => void>();
@@ -25,11 +26,12 @@ export function createSession() {
     publish({ ...state, status, error: undefined });
     try {
       const account = await action();
-      publish({ status: "idle", account });
+      publish({ status: "idle", account, unverified: false });
     } catch (error) {
       publish({
         status: "idle",
         account: state.account,
+        unverified: state.unverified || status === "loading",
         error: attempt?.signal.aborted
           ? undefined
           : error instanceof Error
@@ -58,7 +60,7 @@ export function createSession() {
       run("signing-out", async () => {
         await api.signOut();
         if (disposed) return null;
-        publish({ ...state, account: null });
+        publish({ ...state, account: null, unverified: true });
         // bl may have rotated the item during logout; show the stored truth.
         return api.getAuth();
       }),

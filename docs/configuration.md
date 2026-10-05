@@ -128,6 +128,12 @@ Builderlab session in Keychain and retry."; Sign in reads again. The store is
 first read when the card mounts, never at launch, and an unanswered prompt
 leaves the card at Checking your saved session… by design.
 
+If checking the saved session returns an error, the card keeps **Clear saved
+session** available alongside sign-in and refresh. This uses the same sign-out
+operation: it attempts server revocation, then removes the local session even
+when the service is unreachable. A local storage error stays visible and can be
+retried. Clearing a shared item also signs the matching `bl` CLI profile out.
+
 Only sign-in is native. Identity binding and community actions remain in the
 browser-only Hosted communities card and require the development broker. Desktop
 does not register that card, so signing in never triggers unsupported actions.

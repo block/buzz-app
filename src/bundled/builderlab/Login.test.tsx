@@ -229,6 +229,53 @@ it("a failed sign-out stays retryable without pretending the saved account disap
   );
 });
 
+it("can clear a saved session after initial verification fails, and retry a failed clear", async () => {
+  stored = account;
+  vi.mocked(invoke).mockRejectedValueOnce("Builderlab session check failed");
+  const { active } = card();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab session check failed",
+  );
+  const clear = screen.getByRole("button", { name: "Clear saved session" });
+  expect(clear).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Your saved session could not be verified.",
+  );
+  active.mockReturnValue(false);
+  fireEvent.click(clear);
+  expect(invoke).not.toHaveBeenCalledWith("plugin:builderlab|sign_out");
+  active.mockReturnValue(true);
+  vi.mocked(invoke).mockRejectedValueOnce(
+    "The Builderlab session store could not be updated.",
+  );
+  fireEvent.click(clear);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "could not be updated",
+  );
+  expect(stored).toEqual(account);
+  expect(clear).toBeEnabled();
+
+  signOutResult = deferred<void>();
+  fireEvent.click(clear);
+  try {
+    expect(clear).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Signing out…");
+  } finally {
+    signOutResult.resolve();
+  }
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Sign in to Builderlab.",
+    ),
+  );
+  expect(stored).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Clear saved session" }),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith("plugin:builderlab|login");
+});
+
 it("does not start a new store read after disabling during sign-out", async () => {
   stored = account;
   const { session } = card();
@@ -248,4 +295,18 @@ it("does not start a new store read after disabling during sign-out", async () =
     await finished;
   });
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("keeps clearing available after a canceled retry of an unverified session", async () => {
+  vi.mocked(invoke).mockRejectedValueOnce("Builderlab session check failed");
+  card();
+  await screen.findByRole("button", { name: "Clear saved session" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
+  );
+  const clear = screen.getByRole("button", { name: "Clear saved session" });
+  expect(clear).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  await waitFor(() => expect(clear).toBeEnabled());
+  expect(screen.queryByRole("alert")).toBeNull();
 });

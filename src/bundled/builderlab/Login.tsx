@@ -40,7 +40,9 @@ export function Login({
               ? "Signing out…"
               : state.account
                 ? `Signed in as ${state.account.email || state.account.name || "a Builderlab user"}.`
-                : "Sign in to Builderlab."}
+                : state.unverified
+                  ? "Your saved session could not be verified."
+                  : "Sign in to Builderlab."}
       </p>
       {state.account && (
         <p className="text-body-sm text-secondary">
@@ -69,6 +71,17 @@ export function Login({
               ? "Sign out"
               : "Sign in with Builderlab"}
         </Button>
+        {!state.account && state.unverified && (
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              if (active()) void session.signOut();
+            }}
+          >
+            Clear saved session
+          </Button>
+        )}
         <Button
           variant="outline"
           disabled={busy}

@@ -12,6 +12,7 @@ import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
+import { retainReadState } from "./read-state-retention";
 import {
   keypair,
   message,
@@ -2724,4 +2725,76 @@ it("a read reply stays read after a reload that does not load its root", async (
       unread: false,
     }),
   );
+});
+
+it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
+  const read = message(keypair(), "dm", "read", 12);
+  // Fill the journal directly: owner tests cover bulk pressure/publication/restart.
+  // This session test exercises eviction and DM policy, not 1,600 signed events
+  // and sequential saves. Replace one full-size key with the older DM receipt.
+  const h = setup({}, true, (journal) => {
+    const state = retainReadState(
+      [
+        {
+          frontiers: Object.fromEntries(
+            Array.from({ length: 1600 }, (_, n) => [
+              `msg:${n.toString(16).padStart(64, "0")}`,
+              100 + n,
+            ]),
+          ),
+          overrides: {},
+        },
+      ],
+      {},
+      journal.clientId,
+    );
+    const frontiers = { ...state.frontiers };
+    const [replaced] = Object.keys(frontiers);
+    assert(replaced);
+    delete frontiers[replaced];
+    frontiers[`msg:${read.id}`] = 12;
+    return { ...journal, state: { ...state, frontiers } };
+  });
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unseen = message(h.alice, "dm", "unseen", 13);
+  h.emit([read, unseen]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBe(12);
+  expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  h.grant("elsewhere");
+  const later = [
+    message(h.alice, "elsewhere", "later", 1700),
+    message(h.alice, "elsewhere", "latest", 1701),
+  ];
+  h.emit(later);
+  const reading = unread.reading("elsewhere");
+  await reading.observe(later.map((event) => event.id));
+  reading.dispose();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBe(12),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  const target = {
+    kind: "message" as const,
+    channelId: "dm",
+    messageId: read.id,
+  };
+  await unread.markUnreadLocal(target);
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  const dmReading = unread.reading("dm");
+  await dmReading.observe([read.id]);
+  dmReading.dispose();
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  await unread.markMessageRead("dm", read.id);
+  expect(unread.snapshot(target).manual).toBe("none");
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
 });

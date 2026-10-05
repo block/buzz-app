@@ -1,5 +1,11 @@
 import { expect, it } from "vitest";
-import { retainRead, retainReadState } from "./read-state-retention";
+import {
+  retainLocalRead,
+  READ_RESERVE_KEYS,
+  READ_RESERVE_BYTES,
+  retainRead,
+  retainReadState,
+} from "./read-state-retention";
 import {
   effectiveFrontier,
   overrideActive,
@@ -249,4 +255,149 @@ it("a cover that replaces a fresh read keeps its recency at the synced limit", (
   );
   expect(Object.keys(published.frontiers).length).toBeLessThan(10);
   expect(stillRead(published, marks)).toBe(true);
+});
+
+it("bounds the local reserve by entries and bytes, dropping oldest receipts deterministically", () => {
+  for (const width of [64, 240]) {
+    const frontiers = Object.fromEntries(
+      Array.from({ length: 8000 }, (_, n) => [
+        `msg:${n.toString(16).padStart(width, "0")}`,
+        n + 1,
+      ]),
+    );
+    const kept = retainLocalRead([{ frontiers, overrides: {} }], {}, "fixture");
+    expect(Object.keys(kept.reserve).length).toBeLessThanOrEqual(
+      READ_RESERVE_KEYS,
+    );
+    expect(
+      new TextEncoder().encode(JSON.stringify(kept.reserve)).length,
+    ).toBeLessThanOrEqual(READ_RESERVE_BYTES);
+    expect(Object.keys(kept.reserve).length).toBeGreaterThan(1900);
+    expect(Object.values(kept.reserve)).not.toContain(1);
+    for (const [key, value] of Object.entries(kept.reserve)) {
+      expect(frontiers[key]).toBe(value);
+      expect(kept.state.frontiers[key]).toBeUndefined();
+    }
+    expect(
+      retainLocalRead([kept.state], kept.recent, "fixture", kept.reserve),
+    ).toEqual(kept);
+  }
+});
+it("returning journal keys keep their highest archived frontier", () => {
+  const kept = retainLocalRead(
+    [{ frontiers: { "msg:old": 5 }, overrides: {} }],
+    { "msg:old": 1 },
+    "fixture",
+    { "msg:old": 20, "msg:other": 30 },
+  );
+  expect(kept.state.frontiers).toEqual({ "msg:old": 20 });
+  expect(kept.reserve).toEqual({ "msg:other": 30 });
+});
+it("promotes archived override floors before reserve pressure can reactivate them", () => {
+  const reserve = { "msg:direct": 20, room: 30, "thread:root": 40 };
+  const overrides = {
+    "msg:direct": { set: 1, clear: 0, baseline: 10 },
+    "msg:inherited": { set: 2, clear: 0, baseline: 10 },
+    "msg:cleared": { set: 1, clear: 2, baseline: 100 },
+  };
+  const kept = retainLocalRead(
+    [
+      {
+        frontiers: Object.fromEntries(
+          Array.from({ length: 8000 }, (_, n) => [`msg:${n}`, 100 + n]),
+        ),
+        overrides,
+      },
+    ],
+    {},
+    "fixture",
+    reserve,
+  );
+  expect({ ...kept.reserve, ...kept.state.frontiers }).toMatchObject(reserve);
+  expect(kept.state.overrides).toEqual(overrides);
+  for (const [key, value] of Object.entries(overrides))
+    expect(
+      overrideActive(
+        value,
+        effectiveFrontier(
+          {
+            ...kept.state,
+            frontiers: { ...kept.reserve, ...kept.state.frontiers },
+          },
+          key,
+          "room",
+          "root",
+        ),
+      ),
+    ).toBe(false);
+});
+
+it("keeps archived quiet-channel catch-up ahead of newer message churn", () => {
+  const frontiers = Object.fromEntries(
+    Array.from({ length: 8000 }, (_, n) => [
+      `msg:${n.toString(16).padStart(64, "0")}`,
+      100 + n,
+    ]),
+  );
+  const kept = retainLocalRead([{ frontiers, overrides: {} }], {}, "fixture", {
+    "activity:quiet": 1,
+  });
+  expect(kept.reserve["activity:quiet"]).toBe(1);
+  expect(kept.state.frontiers["activity:quiet"]).toBeUndefined();
+  expect(Object.keys(kept.reserve)).toHaveLength(READ_RESERVE_KEYS);
+});
+it("a large inherited reserve does not overflow the journal on remote override ingest", () => {
+  const reserve = Object.fromEntries(
+    Array.from({ length: 2000 }, (_, n) => [
+      `thread-activity:${n.toString(16).padStart(64, "0")}`,
+      1,
+    ]),
+  );
+  const kept = retainLocalRead(
+    [
+      {
+        frontiers: { room: 2 },
+        overrides: { "msg:child": { set: 1, clear: 0, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+    reserve,
+  );
+  expect(kept.reserve).toEqual(reserve);
+  expect(kept.state.frontiers).toEqual({ room: 2 });
+});
+
+it("retains every protected inherited floor at the exact serialized reserve cap", () => {
+  const reserve = Object.fromEntries(
+    Array.from({ length: 5000 }, (_, n) => [String(n).padStart(98, "x"), 1]),
+  );
+  const missing =
+    READ_RESERVE_BYTES -
+    new TextEncoder().encode(JSON.stringify(reserve)).length;
+  // Spread padding over keys without crossing the 256-byte context limit.
+  let extra = missing;
+  for (const key of Object.keys(reserve)) {
+    const padding = Math.min(extra, 256 - key.length);
+    if (!padding) break;
+    delete reserve[key];
+    reserve[key + "y".repeat(padding)] = 1;
+    extra -= padding;
+  }
+  expect(extra).toBe(0);
+  expect(new TextEncoder().encode(JSON.stringify(reserve)).length).toBe(
+    READ_RESERVE_BYTES,
+  );
+  const kept = retainLocalRead(
+    [
+      {
+        frontiers: {},
+        overrides: { child: { set: 1, clear: 0, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+    reserve,
+  );
+  expect(kept.reserve).toEqual(reserve);
 });

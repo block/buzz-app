@@ -2,24 +2,42 @@
 //! (`dev/project-git.mjs`). IdentityHost signs the NIP-98 header; system Git reads into
 //! an isolated bare repository that is removed after every outcome. No checkout, hooks,
 //! submodules, user Git configuration, arbitrary URL or write RPC.
-use super::{hex_key, origin, RelayResponse, Result};
+use super::{hex_key, origin, upload_id, RelayResponse, Result, Uploads};
 use crate::identity::{EventTemplate, IdentityHost};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as _;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
+    future::Future,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::OnceLock,
     time::Duration,
 };
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::AsyncReadExt,
+    process::Command,
+    sync::{oneshot, watch, Semaphore},
+    time::Instant,
+};
 
 const READ_BYTES: usize = 4 * 1024 * 1024;
 const TEXT_BYTES: u64 = 1024 * 1024;
+/// Fetched objects are bounded separately: rendering limits apply only after ingestion.
+const STORE_BYTES: u64 = 128 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(12);
-static READS: AtomicUsize = AtomicUsize::new(0);
+/// Status of a read the renderer abandoned; the renderer has stopped listening.
+const CANCELLED: u16 = 499;
+static READS: Semaphore = Semaphore::const_new(2);
+
+/// The upload registry's semantics: a cancel may overtake its read IPC.
+fn cancels() -> &'static Uploads {
+    static CANCELS: OnceLock<Uploads> = OnceLock::new();
+    CANCELS.get_or_init(Uploads::default)
+}
 
 #[derive(serde::Deserialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -63,23 +81,6 @@ fn parse_read(read: GitRead) -> Result<GitRead> {
     })
 }
 
-struct Slot;
-impl Slot {
-    fn take() -> Option<Self> {
-        READS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < 2).then_some(n + 1)
-            })
-            .ok()
-            .map(|_| Slot)
-    }
-}
-impl Drop for Slot {
-    fn drop(&mut self) {
-        READS.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 fn reply(status: u16, body: &Value) -> RelayResponse {
     RelayResponse {
         status,
@@ -88,22 +89,46 @@ fn reply(status: u16, body: &Value) -> RelayResponse {
     }
 }
 
+fn failure(status: u16) -> RelayResponse {
+    reply(
+        status,
+        &json!({ "error": "Repository content could not be read" }),
+    )
+}
+
 #[tauri::command]
 pub(crate) async fn relay_project_git(
     host: tauri::State<'_, IdentityHost>,
     community: String,
+    id: String,
     read: GitRead,
 ) -> Result<RelayResponse> {
     let read = parse_read(read)?;
+    let id = upload_id(Some(&id)).map_err(|_| "Invalid Git read")?;
     let url = format!(
         "{}git/{}/{}.git",
         origin(&community)?,
         read.owner,
         read.dtag
     );
-    let Some(_slot) = Slot::take() else {
-        return Ok(reply(429, &json!({ "error": "Repository reads are busy" })));
+    let Some(cancelled) = cancels()
+        .start(id)
+        .map_err(|_| "Repository reads are busy")?
+    else {
+        return Ok(failure(CANCELLED));
     };
+    let response = serve(&url, &read, cancelled, sign(host.inner(), &url)).await;
+    cancels().finish(id);
+    response
+}
+
+#[tauri::command]
+pub(crate) fn relay_project_git_cancel(id: String) -> Result<()> {
+    cancels().cancel(upload_id(Some(&id)).map_err(|_| "Invalid Git read")?);
+    Ok(())
+}
+
+async fn sign(host: &IdentityHost, url: &str) -> Result<String> {
     let auth = host
         .sign(EventTemplate {
             kind: 27235,
@@ -113,31 +138,74 @@ pub(crate) async fn relay_project_git(
                 .as_secs(),
             content: String::new(),
             tags: vec![
-                vec!["u".into(), url.clone()],
+                vec!["u".into(), url.into()],
                 vec!["method".into(), "GET".into()],
             ],
         })
         .await?;
-    let header = format!(
+    Ok(format!(
         "Authorization: Nostr {}",
         STANDARD.encode(
             serde_json::to_vec(&auth).map_err(|_| "Could not encode relay authentication")?
         )
-    );
-    let directory = tempfile::Builder::new()
-        .prefix("buzz-project-read-")
-        .tempdir()
-        .map_err(|_| "Repository read failed")?;
-    let git = Git::new(directory.path(), &header);
-    let status = match tokio::time::timeout(DEADLINE, fetch_snapshot(&git, &url, &read)).await {
-        Ok(Ok(snapshot)) => return Ok(reply(200, &snapshot)),
-        Ok(Err(status)) => status,
-        Err(_) => 503,
-    };
-    Ok(reply(
-        status,
-        &json!({ "error": "Repository content could not be read" }),
     ))
+}
+
+/// Cancellation and the deadline stop Git inside `Git::run`, which reaps its process tree,
+/// so the read slot and temporary repository are released only after Git is gone.
+async fn serve(
+    url: &str,
+    read: &GitRead,
+    mut cancelled: oneshot::Receiver<()>,
+    auth: impl Future<Output = Result<String>>,
+) -> Result<RelayResponse> {
+    let deadline = Instant::now() + DEADLINE;
+    let (cancel, stop) = watch::channel(false);
+    let work = async {
+        let _slot = tokio::select! {
+            slot = READS.acquire() => slot.map_err(|_| "Repository read failed")?,
+            status = stopped(deadline, stop.clone()) => return Ok(failure(status)),
+        };
+        let header = auth.await?;
+        let directory = tempfile::Builder::new()
+            .prefix("buzz-project-read-")
+            .tempdir()
+            .map_err(|_| "Repository read failed")?;
+        let git = Git::new(directory.path(), &header, deadline, stop);
+        Ok(match fetch_snapshot(&git, url, read).await {
+            Ok(snapshot) => reply(200, &snapshot),
+            Err(status) => failure(status),
+        })
+    };
+    tokio::pin!(work);
+    tokio::select! {
+        response = &mut work => response,
+        _ = &mut cancelled => {
+            let _ = cancel.send(true);
+            work.await
+        }
+    }
+}
+
+async fn stopped(deadline: Instant, mut stop: watch::Receiver<bool>) -> u16 {
+    tokio::select! {
+        _ = tokio::time::sleep_until(deadline) => 503,
+        _ = stop.wait_for(|stopped| *stopped) => CANCELLED,
+    }
+}
+
+/// Bytes stored under `path`, the read's temporary repository.
+fn stored(path: &Path) -> u64 {
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(meta) if meta.is_dir() => stored(&entry.path()),
+            Ok(meta) => meta.len(),
+            Err(_) => 0,
+        })
+        .sum()
 }
 
 /// Failures are HTTP-like statuses; Git's argv and stderr never leave this module.
@@ -147,10 +215,13 @@ struct Git {
     program: PathBuf,
     directory: PathBuf,
     env: Vec<(OsString, OsString)>,
+    deadline: Instant,
+    stop: watch::Receiver<bool>,
+    store_bytes: u64,
 }
 
 impl Git {
-    fn new(directory: &Path, header: &str) -> Self {
+    fn new(directory: &Path, header: &str, deadline: Instant, stop: watch::Receiver<bool>) -> Self {
         let path = crate::host_command::effective_path();
         let settings = [
             ("http.extraHeader", header),
@@ -183,10 +254,14 @@ impl Git {
             program: crate::host_command::resolve_program("git", &path),
             directory: directory.into(),
             env,
+            deadline,
+            stop,
+            store_bytes: STORE_BYTES,
         }
     }
 
-    /// Stdout is bounded like the broker's `maxBuffer`; dropping the future kills Git.
+    /// Stdout and stored objects are bounded. On failure, timeout or cancellation the whole
+    /// process tree (remote helpers, index-pack) is killed and Git is reaped before returning.
     async fn run(&self, args: &[&str]) -> Read<Vec<u8>> {
         let mut command = Command::new(&self.program);
         command
@@ -198,22 +273,62 @@ impl Git {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.as_std_mut().process_group(0);
         #[cfg(windows)]
-        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        let job = crate::host_command::windows_job::WindowsJob::new().ok_or(502u16)?;
+        #[cfg(windows)]
+        let mut child = job.spawn_hidden(&mut command).ok_or(502u16)?;
+        #[cfg(not(windows))]
         let mut child = command.spawn().map_err(|_| 502u16)?;
-        let mut output = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or(502u16)?
-            .take(READ_BYTES as u64 + 1)
-            .read_to_end(&mut output)
-            .await
-            .map_err(|_| 502u16)?;
-        if output.len() > READ_BYTES || !child.wait().await.map_err(|_| 502u16)?.success() {
-            return Err(502);
+        #[cfg(unix)]
+        let mut group = crate::host_command::ProcessGroupGuard {
+            process_id: child.id().ok_or(502u16)? as i32,
+            armed: true,
+        };
+        let stdout = child.stdout.take().ok_or(502u16)?;
+        let finished = async {
+            let mut output = Vec::new();
+            stdout
+                .take(READ_BYTES as u64 + 1)
+                .read_to_end(&mut output)
+                .await
+                .map_err(|_| 502u16)?;
+            if output.len() > READ_BYTES
+                || !child.wait().await.map_err(|_| 502u16)?.success()
+                || stored(&self.directory) > self.store_bytes
+            {
+                return Err(502);
+            }
+            Ok(output)
+        };
+        let outcome = tokio::select! {
+            outcome = finished => outcome,
+            status = stopped(self.deadline, self.stop.clone()) => Err(status),
+            status = self.over_budget() => Err(status),
+        };
+        if outcome.is_err() {
+            #[cfg(unix)]
+            group.kill();
+            #[cfg(windows)]
+            drop(job);
+            let _ = child.start_kill();
+            let _ = child.wait().await;
         }
-        Ok(output)
+        #[cfg(unix)]
+        {
+            group.armed = false;
+        }
+        outcome
+    }
+
+    async fn over_budget(&self) -> u16 {
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if stored(&self.directory) > self.store_bytes {
+                return 502;
+            }
+        }
     }
 }
 
@@ -248,11 +363,11 @@ async fn fetch_snapshot(git: &Git, url: &str, read: &GitRead) -> Read<Value> {
     ) {
         (Ok(_), _) => "FETCH_HEAD",
         // Relays refuse unadvertised commits; listed history comes from HEAD.
-        (Err(_), Some(commit)) => {
+        (Err(502), Some(commit)) => {
             git.run(&fetch("HEAD")).await?;
             commit
         }
-        (Err(status), None) => return Err(status),
+        (Err(status), _) => return Err(status),
     };
     snapshot(git, read, tip).await
 }
@@ -272,6 +387,11 @@ async fn snapshot(git: &Git, read: &GitRead, tip: &str) -> Read<Value> {
     .trim()
     .to_string();
     if read.commit.as_ref().is_some_and(|commit| *commit != head) {
+        return Err(502);
+    }
+    // HEAD's fetched history ends at shallow commits, which `git show` would render as roots.
+    let shallow = std::fs::read_to_string(git.directory.join("shallow")).unwrap_or_default();
+    if read.commit.is_some() && shallow.lines().any(|line| line == head) {
         return Err(502);
     }
     let tree = git.run(&["ls-tree", "-r", "-l", "-z", &head]).await?;

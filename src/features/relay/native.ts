@@ -381,15 +381,26 @@ export async function connectNativeTransport(
       const response = await admitSignedRequest(
         origin,
         transport.viewer,
-        async () =>
-          // IPC cannot abort Git; admission stays held until the bounded read settles.
-          nativeResponse(
-            await invoke<{
-              status: number;
-              headers: Record<string, string>;
-              body: string;
-            }>("relay_project_git", { community: origin, read }),
-          ),
+        async () => {
+          // Admission stays held until native code has stopped and reaped Git.
+          const id = crypto.randomUUID();
+          const cancel = () => {
+            invoke("relay_project_git_cancel", { id }).catch(() => {});
+          };
+          signal.addEventListener("abort", cancel, { once: true });
+          if (signal.aborted) cancel();
+          try {
+            return nativeResponse(
+              await invoke<{
+                status: number;
+                headers: Record<string, string>;
+                body: string;
+              }>("relay_project_git", { community: origin, id, read }),
+            );
+          } finally {
+            signal.removeEventListener("abort", cancel);
+          }
+        },
         signal,
       );
       signal.throwIfAborted();

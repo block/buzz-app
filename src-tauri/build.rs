@@ -46,6 +46,7 @@ fn main() {
             "relay_http",
             "relay_workflow_runs",
             "relay_project_git",
+            "relay_project_git_cancel",
             "relay_channel_sign",
             "relay_channel_publish",
             "relay_kit_sign",

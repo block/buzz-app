@@ -752,7 +752,11 @@ it("reads project Git through the signed native command and fences late results"
   };
   vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_project_git");
-    expect(args).toEqual({ community, read: { owner, dtag: "repo" } });
+    expect(args).toEqual({
+      community,
+      id: expect.any(String),
+      read: { owner, dtag: "repo" },
+    });
     return { status: 200, headers: {}, body: JSON.stringify(empty) };
   });
   expect(
@@ -791,7 +795,15 @@ it("reads project Git through the signed native command and fences late results"
     { owner, dtag: "repo" },
     controller.signal,
   );
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.at(-1)?.[0]).toBe("relay_project_git"),
+  );
+  const { id } = (vi.mocked(invoke).mock.lastCall ?? [])[1] as { id: string };
   controller.abort();
+  expect(vi.mocked(invoke)).toHaveBeenLastCalledWith(
+    "relay_project_git_cancel",
+    { id },
+  );
   pending.resolve({ status: 200, headers: {}, body: JSON.stringify(empty) });
   await expect(read).rejects.toThrow();
 });

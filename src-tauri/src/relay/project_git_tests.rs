@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Read as _;
 use std::process::Command as StdCommand;
 
 const OWNER: &str = "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB";
@@ -27,9 +28,20 @@ fn sh(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().into()
 }
 
+/// Production configuration; the shared sender is never signalled.
+fn production_git(directory: &Path) -> Git {
+    static STOP: OnceLock<watch::Sender<bool>> = OnceLock::new();
+    Git::new(
+        directory,
+        "Authorization: Nostr test",
+        Instant::now() + DEADLINE,
+        STOP.get_or_init(|| watch::channel(false).0).subscribe(),
+    )
+}
+
 /// Production configuration with only file transport re-enabled, so the full read runs offline.
 fn local_git(directory: &Path) -> Git {
-    let mut git = Git::new(directory, "Authorization: Nostr test");
+    let mut git = production_git(directory);
     let key = git
         .env
         .iter()
@@ -143,8 +155,18 @@ fn reads_history_tree_readme_files_and_diffs() {
 fn unadvertised_commits_are_read_from_head_history() {
     let (_source, url, first) = source();
     let work = tempfile::tempdir().unwrap();
-    let mut git = local_git(work.path());
-    // Protocol v0 refuses unadvertised wants, as the relay's smart HTTP does.
+    let commit = read(json!({ "owner": OWNER, "dtag": "repo", "commit": first })).unwrap();
+    let snapshot = go(&relay_like(work.path()), &url, &commit).unwrap();
+    assert_eq!(snapshot["head"], first);
+    assert!(snapshot["diff"].as_str().unwrap().contains("+fn main() {}"));
+    let work = tempfile::tempdir().unwrap();
+    let absent = read(json!({ "owner": OWNER, "dtag": "repo", "commit": "b".repeat(40) })).unwrap();
+    assert_eq!(go(&local_git(work.path()), &url, &absent), Err(502));
+}
+
+/// Protocol v0 refuses unadvertised wants, as the relay's smart HTTP does.
+fn relay_like(directory: &Path) -> Git {
+    let mut git = local_git(directory);
     let count = git
         .env
         .iter()
@@ -158,13 +180,59 @@ fn unadvertised_commits_are_read_from_head_history() {
     ));
     git.env
         .push((format!("GIT_CONFIG_VALUE_{index}").into(), "0".into()));
-    let commit = read(json!({ "owner": OWNER, "dtag": "repo", "commit": first })).unwrap();
-    let snapshot = go(&git, &url, &commit).unwrap();
-    assert_eq!(snapshot["head"], first);
-    assert!(snapshot["diff"].as_str().unwrap().contains("+fn main() {}"));
+    git
+}
+
+#[test]
+fn head_history_never_serves_its_shallow_boundary() {
+    let (source, url, _) = source();
+    let mut stream = String::from("reset refs/heads/main\nfrom refs/heads/main^0\n");
+    for n in 0..100 {
+        stream += &format!(
+            "commit refs/heads/main\ncommitter Ada <ada@example.test> 0 +0000\ndata 1\n.\nM 644 inline count.txt\ndata {}\n{n}\n",
+            n.to_string().len()
+        );
+    }
+    let mut import = StdCommand::new("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(source.path())
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut import.stdin.take().unwrap(), stream.as_bytes()).unwrap();
+    assert!(import.wait().unwrap().success());
+    for (rev, expected) in [("HEAD~100", Err(502)), ("HEAD~99", Ok(()))] {
+        let commit = sh(source.path(), &["rev-parse", rev]);
+        let work = tempfile::tempdir().unwrap();
+        let commit = read(json!({ "owner": OWNER, "dtag": "repo", "commit": commit })).unwrap();
+        let snapshot = go(&relay_like(work.path()), &url, &commit);
+        assert_eq!(snapshot.map(|_| ()), expected, "{rev}");
+    }
+}
+
+#[test]
+fn fetched_objects_are_bounded_during_ingestion() {
+    let (source, url, _) = source();
+    // Incompressible, so the pack stays above the budget.
+    let mut state = 0x9e3779b97f4a7c15u64;
+    let noise: Vec<u8> = (0..256 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    std::fs::write(source.path().join("noise.bin"), noise).unwrap();
+    sh(source.path(), &["add", "."]);
+    sh(source.path(), &["commit", "-qm", "noise"]);
+    let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
     let work = tempfile::tempdir().unwrap();
-    let absent = read(json!({ "owner": OWNER, "dtag": "repo", "commit": "b".repeat(40) })).unwrap();
-    assert_eq!(go(&local_git(work.path()), &url, &absent), Err(502));
+    assert!(go(&local_git(work.path()), &url, &base).is_ok());
+    let work = tempfile::tempdir().unwrap();
+    let mut git = local_git(work.path());
+    git.store_bytes = 128 * 1024;
+    assert_eq!(go(&git, &url, &base), Err(502));
 }
 
 #[test]
@@ -189,22 +257,73 @@ fn production_configuration_refuses_non_http_transport() {
     let (_source, url, _) = source();
     let work = tempfile::tempdir().unwrap();
     let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
-    assert_eq!(
-        go(
-            &Git::new(work.path(), "Authorization: Nostr test"),
-            &url,
-            &base
-        ),
-        Err(502)
-    );
+    assert_eq!(go(&production_git(work.path()), &url, &base), Err(502));
 }
 
-#[test]
-fn concurrent_reads_are_bounded() {
-    let first = Slot::take().unwrap();
-    let second = Slot::take().unwrap();
-    assert!(Slot::take().is_none());
-    drop(first);
-    assert!(Slot::take().is_some());
-    drop(second);
+/// A remote that accepts connections and never answers, so reads stay inside Git's helpers.
+fn silent_remote() -> (String, std::sync::mpsc::Receiver<std::net::TcpStream>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "http://{}/git/{OWNER}/repo.git",
+        listener.local_addr().unwrap()
+    );
+    let (connections, accepted) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            if connections.send(stream).is_err() {
+                break;
+            }
+        }
+    });
+    (url, accepted)
+}
+
+fn closes(mut stream: std::net::TcpStream) -> bool {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut buffer = [0; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return true,
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
+    let (url, accepted) = silent_remote();
+    let start = |url: String| {
+        let base = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+        let (cancel, cancelled) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            serve(&url, &base, cancelled, async {
+                Ok("Authorization: Nostr test".into())
+            })
+            .await
+        });
+        (cancel, task)
+    };
+    let connected = || accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+    let reads = [start(url.clone()), start(url.clone())];
+    let streams = [connected(), connected()];
+    for (cancel, task) in reads {
+        cancel.send(()).unwrap();
+        assert_eq!(task.await.unwrap().unwrap().status, CANCELLED);
+    }
+    // `git-remote-http`, not the direct child, holds each connection.
+    for stream in streams {
+        assert!(
+            closes(stream),
+            "a cancelled read left its remote helper running"
+        );
+    }
+    // Both slots are free: a third read reaches the remote instead of waiting.
+    let (cancel, task) = start(url);
+    let stream = connected();
+    cancel.send(()).unwrap();
+    assert_eq!(task.await.unwrap().unwrap().status, CANCELLED);
+    assert!(closes(stream));
 }

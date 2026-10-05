@@ -333,6 +333,10 @@ export function createAgentActivity(
     }
 
     const envelope = object(raw);
+    // Management requests belong only to live owner review, never the activity
+    // display. In particular, restoring ciphertext must not disclose their
+    // payload-scoped channel or replay a request after reconnect.
+    if (envelope?.kind === "agent_management_request") return;
     const children =
       envelope?.kind === "batch" ? object(envelope.payload)?.events : undefined;
     const items = Array.isArray(children) ? children : [raw];

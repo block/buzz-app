@@ -38,6 +38,19 @@ before implementing each layer.
   actionable error. A failed or cancelled test creates no agent. Retry must
   create at most one identity. If a later startup/profile step fails after
   persistence, retain the saved identity and reuse existing recovery controls.
+- **Edit validates before saving.** Test the connection when an edit changes
+  execution settings, including model, effort, or the Codex binding/context.
+  Name-only edits skip inference. Failed or cancelled validation keeps the edit
+  modal open with its draft and actionable feedback; the saved revision and
+  running agent remain unchanged. Save and any required restart happen only
+  after successful validation of that exact edit.
+- **Runtime fallback is prohibited.** If the selected model or effort cannot be
+  applied, or inference fails because the model is missing, inaccessible, or
+  limited by quota or tokens/context, fail the affected turn and expose the
+  specific known cause. Never switch to another model or effort to continue.
+  Default may resolve Codex defaults at session creation; it must not silently
+  substitute another model after that selection fails. Preserve the saved
+  agent and recovery controls. Do not describe every failure as model exhaustion.
 - **Keep full access.** Codex execution retains the full-access behavior approved
   for the previous implementation. Preserve current Buzz owner authorization,
   identity protection, and process containment; full access is not permission
@@ -54,9 +67,11 @@ Connection errors must retain their meaning:
 | Backend evidence | User feedback |
 | --- | --- |
 | Confirmed model access rejection | This model is not accessible. Choose another model. |
+| Model not found or removed | This model is no longer available. Refresh models and choose another. |
 | Rejected effort | This effort level is not available for the selected model. |
 | Missing authentication | Sign in with your Codex CLI, then try again. |
 | Quota or billing failure | Explain the reported limit; do not label the model inaccessible. |
+| Token or context limit | Explain the reported limit and the supported recovery action; do not imply account quota exhaustion without evidence. |
 | Timeout or network failure | Could not complete the connection test. Try again. |
 | Unknown or unconfirmed applied settings | Explain that validation could not confirm the requested settings; do not report success. |
 
@@ -126,7 +141,7 @@ main
   PR 1  Shared harness configuration policy
     PR 2  Codex binding and readiness
       PR 3  Model and effort discovery
-        PR 4  Persistence execution and Create validation
+        PR 4  Persistence execution and Create and Edit validation
           PR 5  Complete Create and Edit UI
             PR 6  Observed runtime settings
 ```
@@ -169,6 +184,14 @@ missing tools, incompatible versions, logout, configuration errors, and timeout.
 Expose setup status and manual recovery in Settings; keep creation unavailable
 until its complete execution path is ready. Preserve environment isolation.
 
+Native code owns a stable integration identity and resolved binding descriptor:
+canonical adapter, CLI and interpreter paths, workspace, effective configuration
+context, and compatibility evidence. Managed policy and full-access behavior
+must not be inferred solely from an editable executable basename. Every later
+operation consumes or revalidates this binding; changed context invalidates
+earlier validation. Verify the full-access mapping and supported platforms
+against the exact pinned runtime before enabling Codex on each platform.
+
 **Automated acceptance:** executable and interpreter resolution, context equality
 between probes and launch, all readiness failure categories, cancellation,
 output limits, and process cleanup. Reuse current containment infrastructure.
@@ -186,9 +209,13 @@ Preserve successful-empty, unknown, and failed discovery as distinct states.
 Reuse tickets, cancellation, and stale-result fencing. Refresh is headless and
 must not erase saved selections or automatically launch authentication.
 
-Evaluate the pinned `buzz-acp models` command first. Add direct adapter transport
-only for required metadata the existing command cannot supply. Avoid probing
-every model's effort options whenever an editor opens.
+This PR establishes one bounded ACP session transport shared by discovery and
+the later connection validator. Evaluate the pinned runtime's existing commands
+and transport first: `buzz-acp models` alone does not perform inference. Choose
+either a native Codex session owner or a focused upstream validation command;
+if upstream work is required, include its reviewed runtime-pin update as an
+explicit prerequisite. Do not build independent ACP clients for discovery and
+validation. Avoid probing every model's effort options whenever an editor opens.
 
 **Automated acceptance:** production parser/transport tests with a controlled ACP
 fixture; malformed/oversized responses, missing metadata, empty catalogs, changed
@@ -200,7 +227,7 @@ available, otherwise a native integration entry point. Record that distinction;
 opening the app alone is not evidence for a backend-only path. No inference
 prompt is required for catalog discovery.
 
-### PR 4 Persistence execution and Create validation
+### PR 4 Persistence execution and Create and Edit validation
 
 Persist Default/Advanced intent through the existing revision-checked store.
 Launch through bundled Buzz ACP, the Codex adapter, and the bound user CLI with
@@ -208,17 +235,45 @@ full access. Recheck readiness outside the controller lock, then fence launch by
 the current revision. Retain existing authorization, protection, lazy workers,
 mention replay, restart, and Stop behavior.
 
-Implement the minimal real connection test before identity creation. Bind its
-result to the submitted configuration and effective context; changes or
-cancellation invalidate it. Require confirmation of Advanced settings rather
-than accepting a silent fallback. Connection tests and discovery must not lend
-the agent's identity credentials to Codex unnecessarily.
+Compose PR 3's session transport into native Create/Edit validation. A proposed
+`validateCreate` admission accepts a request ID, normalized draft, destination,
+and resolved binding before the existing `prepareCreate` generates a key. It
+returns an opaque, single-use proof bound to that exact input. Only valid
+admission permits prepare, owner authorization, and commit. Cancellation,
+replacement, context changes, and consumption invalidate the proof. Edit uses
+the same validator, additionally bound to the expected saved revision.
+
+The validator passes no Buzz identity, relay, or authorization credentials,
+configures no MCP servers, and enforces rejection of tool execution, including
+built-in tools. It applies and confirms Advanced settings, runs one bounded
+inference prompt, and reaps the process tree on every exit. A prompt asking the
+model not to use tools is not enforcement. If the selected adapter cannot
+provide this behavior, resolve that compatibility prerequisite before enablement.
+
+Define recoverable creation phases keyed by request ID across the credential
+write and agent-record write. Reuse existing transaction/recovery ownership
+where possible; retry or startup reconciliation must recover the same identity
+rather than create another after a partial commit. Keep private keys in the
+existing credential boundary. Any required durable recovery record must not
+store plaintext credentials. This is a focused creation prerequisite, not a
+general storage rewrite.
+
+Enforce no-fallback behavior at actual session startup and inference, not only
+during validation. Verify the exact pinned engine; if it continues with default
+settings after a rejected selection, land a focused upstream fix and runtime
+pin before this PR is complete. Provide a bounded, sanitized failure result to
+the existing host UI; rejection must be visible when PR 5 enables Codex and
+cannot wait for the richer session reporting in PR 6.
 
 **Automated acceptance:** persistence round trips and legacy compatibility;
 Default emits no inherited model/effort override; Advanced requires explicit
 valid settings. Cover failed/cancelled tests with zero identity/store writes,
 duplicate Create requests, stale validation, exact launch context, full-access
-configuration, startup cancellation, Stop, and child cleanup.
+configuration, startup cancellation, Stop, and child cleanup. Inject failures
+and crash/recovery boundaries between credential and record writes. Prove failed
+Edit validation neither saves nor restarts; successful validation admits only
+the checked revision. Reject model/effort application and inference limits and
+assert no alternate model or effort is used and a failure reaches the host UI.
 
 **Local app acceptance:** use a native integration driver for the real Create
 path until PR 5 exposes it. Exercise Default and Advanced, inspect the agent in
@@ -226,6 +281,9 @@ the app, mention it, and verify one signed reply in the correct channel.
 Stop/start and relaunch the app; verify the same identity and saved behavior.
 Confirm failed validation leaves no newly created agent or listener. Report
 the driver-assisted scope honestly; this is not final UI acceptance.
+Change execution settings through the native Edit path and verify failure leaves
+the running agent untouched. Exercise a rejected runtime selection and confirm
+the turn fails visibly without a fallback model.
 
 ### PR 5 Complete Create and Edit UI
 
@@ -234,27 +292,36 @@ selection, CLI readiness, and model-specific effort choices. Omit provider,
 Databricks workspace, and app-owned API-key controls for Codex. Show Testing
 connection after Create, retain all draft values on failure, and allow correction
 and retry within the same modal. Include Edit, Duplicate, and relevant Agent
-defaults surfaces without introducing competing configuration ownership.
+defaults surfaces without introducing competing configuration ownership. Test
+execution-setting edits before Save; keep their warnings/errors and corrections
+inside the edit modal. Failed validation must not save or restart the agent.
+Name-only edits skip the connection test. Show runtime failures through existing
+agent status/error controls even before PR 6 adds session detail.
 
 **Automated acceptance:** mounted form tests for modes, required fields,
 capability loading, stale model/effort choices, double clicks, error categories,
-draft preservation, retry, and late results. A representative browser journey
-proves form/service wiring and keyboard behavior; use lower-layer tests for the
+draft preservation, retry, and late results. Test failed and cancelled Edit
+validation against an unchanged saved/running revision, and name-only edits
+without inference. A representative browser journey proves form/service wiring
+and keyboard behavior; use lower-layer tests for the
 full failure matrix. Audit accessible labels and focus behavior.
 
 **Local app acceptance:** complete Add agent > Codex > Default/Advanced > Create
 > connection test > saved agent > mention > reply. Exercise model, effort,
 authentication, and network failures; the modal stays open with its draft.
 Correct and retry to create exactly one agent. Verify edit, duplicate,
-save/reopen, and app restart. Exercise an existing provider flow as regression
+save/reopen, and app restart. Change model/effort in Edit, fail validation, correct
+the draft, and save successfully; verify only the successful save restarts the
+running agent. Confirm a runtime failure is visible and does not select a
+replacement model. Exercise an existing provider flow as regression
 coverage. This is the complete creation milestone, including effort controls.
 
 ### PR 6 Observed runtime settings
 
 Report requested settings separately from model/effort observed in real
 conversation sessions. Include session and observation time, rejected settings,
-and known fallback. Show not reported before evidence exists. Reuse existing
-activity/diagnostic ownership; discovery and a running PID are not runtime
+and failed turns without fallback. Show not reported before evidence exists.
+Reuse existing activity/diagnostic ownership; discovery and a running PID are not runtime
 configuration evidence.
 
 The previous branch used encrypted relay observation, which also publishes
@@ -262,14 +329,14 @@ broader prompt/tool activity. Choose that transport explicitly before enabling
 it; filtering the settings UI does not restrict what the observer publishes.
 
 **Automated acceptance:** production event projection for applied, missing,
-rejected, and fallback settings; multiple sessions, out-of-order events,
+rejected, and failed settings; multiple sessions, out-of-order events,
 eviction, restart/community boundaries, and safe field projection. Old evidence
 must not certify a newer launch or newly saved configuration.
 
 **Local app acceptance:** observe a fresh Default and Advanced conversation.
 Verify not reported before session evidence, then independently reported model
-and effort. Exercise rejection/fallback and restart. Check packaged-app behavior
-when its observation transport differs from development.
+and effort. Exercise rejection without fallback and restart. Check packaged-app
+behavior when its observation transport differs from development.
 
 ## Testing and review workflow
 
@@ -303,18 +370,15 @@ For the complete feature, explicitly prove:
 5. Restart preserves identity and explicit behavior while Default stays delegated.
 6. A confirmed mention produces a signed reply in the intended channel.
 7. Existing harness/provider creation and editing still work.
+8. Failed Edit validation preserves the saved/running revision and editable draft.
+9. Runtime model/effort rejection and inference limits surface a failure without
+   selecting a fallback model or effort.
 
 ## Remaining decisions and boundaries
 
-- **Edit validation:** Create testing is agreed. Confirm whether changing model,
-  effort, or other execution settings during Edit should also require a real
-  test before Save. Recommendation: test execution-setting changes, skip
-  name-only edits, and preserve the saved/running agent if validation fails.
-- **Later runtime rejection:** Create validates one point in time. Decide whether
-  a later rejected Advanced selection stops that turn or allows an explicitly
-  reported fallback. Inspect the pinned ACP runtime before promising either;
-  strict enforcement may require a focused upstream change and runtime pin.
 - **Observation transport:** confirm the PR 6 transport and its publication scope.
+  This decision does not defer the minimal runtime failure feedback required
+  by PRs 4 and 5.
 - **Compatibility and platforms:** establish the tested CLI/adapter combination
   and supported operating systems before enabling Codex there. Do not import
   the previous Unix-only discovery path while implying Windows support.

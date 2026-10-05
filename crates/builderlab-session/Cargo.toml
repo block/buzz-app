@@ -1,0 +1,18 @@
+[package]
+name = "buzz-builderlab-session"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+
+[dependencies]
+builderlab-auth = { git = "https://github.com/block/builderlab-cli.git", rev = "78f9ea0044f7265b5e72aacd822215f6621fad7b", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["sync", "rt"] }
+url = "2"
+zeroize = "1.9"
+
+[dev-dependencies]
+anyhow = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

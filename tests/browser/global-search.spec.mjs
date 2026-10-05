@@ -311,3 +311,31 @@ test("keyboard selection follows its action while recent conversations arrive ab
     for (const resolve of held.splice(0)) resolve();
   }
 });
+
+test("a resting pointer does not steal the typed selection when results move under it", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Search Buzz").click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+  const rows = dialog.getByRole("option");
+  await expect(rows.nth(2)).toBeVisible();
+  const box = await rows.nth(2).boundingBox();
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 20, y);
+  await page.mouse.move(box.x + 30, y);
+  await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
+  await input.fill("a");
+  const alpha = dialog
+    .getByRole("group", { name: "Channels" })
+    .getByRole("option", { name: /Alpha/ });
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
+  // WebKit replays the resting position when rows move; that is not a hover.
+  await page.mouse.move(box.x + 30, y);
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
+  await page.mouse.move(box.x + 40, y);
+  await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
+  await expect(alpha).toHaveAttribute("aria-selected", "false");
+});

@@ -1,7 +1,9 @@
 import {
   useEffect,
   useId,
+  useRef,
   useState,
+  type PointerEvent,
   type RefObject,
   type ReactNode,
 } from "react";
@@ -85,6 +87,14 @@ export function SearchChoices({
     setSelection({ query, key: fallback });
   const selected = valid ? selection.key : fallback;
   const optionId = (key: string) => `${id}-${key}`;
+  // WebKit replays a pointer event when rows move under a resting cursor.
+  // Only a real move may select a row, or new results would steal Enter.
+  const pointer = useRef<{ x: number; y: number }>(undefined);
+  const pointerMoved = (event: PointerEvent) => {
+    const last = pointer.current;
+    pointer.current = { x: event.screenX, y: event.screenY };
+    return !!last && (last.x !== event.screenX || last.y !== event.screenY);
+  };
   useEffect(() => {
     input.current?.focus();
   }, [input]);
@@ -95,7 +105,13 @@ export function SearchChoices({
         ?.scrollIntoView({ block: "nearest" });
   }, [selected, id]);
   return (
-    <div className="search-palette" data-search-palette="">
+    <div
+      className="search-palette"
+      data-search-palette=""
+      onPointerMove={(event) => {
+        pointer.current = { x: event.screenX, y: event.screenY };
+      }}
+    >
       {scope && (
         <button
           type="button"
@@ -228,8 +244,12 @@ export function SearchChoices({
                           </>
                         }
                         onClick={run}
-                        onPointerEnter={(event) => {
-                          if (event.pointerType !== "touch")
+                        onPointerMove={(event) => {
+                          if (
+                            event.pointerType !== "touch" &&
+                            pointerMoved(event) &&
+                            selected !== key
+                          )
                             setSelection({ query, key });
                         }}
                       />

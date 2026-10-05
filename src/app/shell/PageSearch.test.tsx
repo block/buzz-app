@@ -182,7 +182,17 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   expect(dialog.querySelector("kbd")).toBeNull();
   await user.keyboard("{ArrowDown}");
   expect(messages).toHaveAttribute("aria-selected", "true");
-  fireEvent.pointerEnter(settings, { pointerType: "mouse" });
+  // A replayed event at a resting position is not a hover.
+  const at = (screenX: number) =>
+    fireEvent.pointerMove(settings, {
+      pointerType: "mouse",
+      screenX,
+      screenY: 10,
+    });
+  at(10);
+  at(10);
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  at(12);
   expect(settings).toHaveAttribute("aria-selected", "true");
   expect(messages).toHaveAttribute("aria-selected", "false");
   expect(input).toHaveAttribute("aria-activedescendant", settings.id);

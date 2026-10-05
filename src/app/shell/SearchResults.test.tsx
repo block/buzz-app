@@ -217,6 +217,16 @@ it("fuzzy-matches channel names after substring matches, word starts first", asy
         expect.stringMatching(/^(big-grape|debug-pr)$/),
       ]),
     );
+    // The matched letters are underlined, and only those letters.
+    const marks = (name: string) =>
+      [
+        ...within(channels)
+          .getByRole("option", { name: new RegExp(`^${name}`) })
+          .querySelectorAll("mark"),
+      ].map((mark) => mark.textContent);
+    expect(marks("ops-bgp")).toEqual(["bgp"]);
+    expect(marks("buzz-github-prs")).toEqual(["b", "g", "p"]);
+    expect(marks("debug-pr")).toEqual(["b", "g", "p"]);
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(open).toHaveBeenCalledExactlyOnceWith("ops-bgp");

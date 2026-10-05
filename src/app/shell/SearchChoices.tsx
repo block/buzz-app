@@ -19,6 +19,8 @@ export type SearchDestination = {
   key: string;
   label: string;
   detail?: string;
+  /** Code points of `label` that match the typed text. */
+  matches?: readonly number[];
   icon: typeof ChatCircleIcon;
   image?: string | undefined;
   run: () => void;
@@ -31,45 +33,108 @@ const isWordChar = (char: string | undefined) =>
  * then any substring, then a fuzzy match whose letters each continue a run
  * that began at a word start ("bgp" in "buzz-github-prs"), then any fuzzy
  * match (the letters appear in order). Lower is better; undefined means no
- * match. Ranks are whole numbers, so callers can add fractional tie-breaks. */
-export function matchRank(label: string, needle: string) {
+ * match. Ranks are whole numbers, so callers can add fractional tie-breaks.
+ * `positions` are the matched code points of the label, for underlining. */
+export function matchName(
+  label: string,
+  needle: string,
+): { rank: number; positions: number[] } | undefined {
   const text = label.toLowerCase();
-  if (text === needle) return 0;
-  let rank: number | undefined;
+  const chars = [...text];
+  // Lowercasing can change a label's length (İ → i̇). Rank it, but do not
+  // underline positions that would land on the wrong letters.
+  const aligned = chars.length === [...label].length;
+  const found = (rank: number, positions: number[]) => ({
+    rank,
+    positions: aligned ? positions : [],
+  });
+  const run = (at: number) => {
+    const from = [...text.slice(0, at)].length;
+    return Array.from({ length: [...needle].length }, (_, n) => from + n);
+  };
+  if (text === needle) return found(0, run(0));
+  let substring: number | undefined;
   for (
     let at = text.indexOf(needle);
     at >= 0;
     at = text.indexOf(needle, at + 1)
   ) {
-    if (at === 0) return 1;
-    if (!isWordChar(text[at - 1])) return 2;
-    rank = 3;
+    if (at === 0) return found(1, run(0));
+    if (!isWordChar(text[at - 1])) return found(2, run(at));
+    substring ??= at;
   }
-  if (rank !== undefined) return rank;
+  if (substring !== undefined) return found(3, run(substring));
   // Spaces in typed text only separate words; they need not match.
   const letters = [...needle.replace(/\s+/g, "")];
-  const chars = [...text];
   if (!letters.length) return undefined;
   // Can letters[i..] match chars[j..] with every run starting at a word start?
   // `inRun` means the previous letter matched chars[j - 1].
   const memo = new Map<number, boolean>();
+  const takes = (i: number, j: number, inRun: boolean) =>
+    chars[j] === letters[i] &&
+    (inRun || !isWordChar(chars[j - 1])) &&
+    wordRuns(i + 1, j + 1, true);
   const wordRuns = (i: number, j: number, inRun: boolean): boolean => {
     if (i === letters.length) return true;
     if (j === chars.length) return false;
     const key = (i * (chars.length + 1) + j) * 2 + (inRun ? 1 : 0);
     const known = memo.get(key);
     if (known !== undefined) return known;
-    const startsRun = inRun || !isWordChar(chars[j - 1]);
-    const result =
-      (chars[j] === letters[i] && startsRun && wordRuns(i + 1, j + 1, true)) ||
-      wordRuns(i, j + 1, false);
+    const result = takes(i, j, inRun) || wordRuns(i, j + 1, false);
     memo.set(key, result);
     return result;
   };
-  if (wordRuns(0, 0, false)) return 4;
-  let i = 0;
-  for (const char of chars) if (char === letters[i]) i += 1;
-  return i === letters.length ? 5 : undefined;
+  if (wordRuns(0, 0, false)) {
+    // Replay the same choices the search made: take a letter when it leads
+    // to a full match, otherwise skip the character.
+    const positions: number[] = [];
+    for (let i = 0, j = 0, inRun = false; i < letters.length; j += 1) {
+      inRun = takes(i, j, inRun);
+      if (inRun) {
+        positions.push(j);
+        i += 1;
+      }
+    }
+    return found(4, positions);
+  }
+  const positions: number[] = [];
+  chars.forEach((char, j) => {
+    if (char === letters[positions.length]) positions.push(j);
+  });
+  return positions.length === letters.length ? found(5, positions) : undefined;
+}
+
+export const matchRank = (label: string, needle: string) =>
+  matchName(label, needle)?.rank;
+
+/** A label with its matched letters underlined. The text stays whole, so the
+ * row's accessible name does not change. */
+function MatchedLabel({
+  label,
+  positions,
+}: {
+  label: string;
+  positions: readonly number[] | undefined;
+}) {
+  if (!positions?.length) return label;
+  const marked = new Set(positions);
+  const runs: { text: string; match: boolean }[] = [];
+  [...label].forEach((char, index) => {
+    const match = marked.has(index);
+    const last = runs.at(-1);
+    if (last?.match === match) last.text += char;
+    else runs.push({ text: char, match });
+  });
+  return runs.map(({ text, match }, index) =>
+    match ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional.
+      <mark key={index} className="search-palette-match">
+        {text}
+      </mark>
+    ) : (
+      text
+    ),
+  );
 }
 
 export type SearchInputProps = {
@@ -241,7 +306,7 @@ export function SearchChoices({
               >
                 <NavigationSection label={label}>
                   {destinations.map(
-                    ({ key, label, detail, icon, image, run }) => (
+                    ({ key, label, detail, matches, icon, image, run }) => (
                       <NavigationItem
                         key={key}
                         id={optionId(key)}
@@ -264,7 +329,7 @@ export function SearchChoices({
                         label={
                           <>
                             <span className="block truncate text-body-sm">
-                              {label}
+                              <MatchedLabel label={label} positions={matches} />
                             </span>
                             {detail && (
                               <span className="block truncate text-caption text-subtle">

@@ -6,7 +6,7 @@ import { useChannelList } from "../../features/relay/react";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
-import { matchRank, SearchChoices } from "./SearchChoices";
+import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
@@ -127,21 +127,26 @@ export function SearchResults({
   ).slice(0, Math.max(0, 8 - joinedChannels.length));
   const conversationDestination = (
     channel: ChannelSummary,
-  ): SearchDestination => ({
-    key: `channel:${channel.id}`,
-    label: names.get(channel.id) ?? channel.name,
-    detail: channel.archived
-      ? "Archived channel"
-      : channel.readOnly && !channel.cached
-        ? "Public channel · not joined"
-        : channel.channelType === "dm"
-          ? "Direct message"
-          : channel.channelType === "session"
-            ? "Session"
-            : "Conversation",
-    icon: ChatCircleIcon,
-    run: () => openConversation(channel.id),
-  });
+  ): SearchDestination => {
+    const label = names.get(channel.id) ?? channel.name;
+    const matches = needle ? matchName(label, needle)?.positions : undefined;
+    return {
+      key: `channel:${channel.id}`,
+      label,
+      ...(matches ? { matches } : {}),
+      detail: channel.archived
+        ? "Archived channel"
+        : channel.readOnly && !channel.cached
+          ? "Public channel · not joined"
+          : channel.channelType === "dm"
+            ? "Direct message"
+            : channel.channelType === "session"
+              ? "Session"
+              : "Conversation",
+      icon: ChatCircleIcon,
+      run: () => openConversation(channel.id),
+    };
+  };
   const recent: SearchDestination[] = channels
     .filter((channel) => !channel.readOnly && !channel.archived)
     .sort(
@@ -266,7 +271,12 @@ export function SearchResults({
                   },
                   {
                     label: "Pages",
-                    destinations: byMatch(pages, (page) => rankOf(page.label)),
+                    destinations: byMatch(pages, (page) =>
+                      rankOf(page.label),
+                    ).map((page) => {
+                      const matches = matchName(page.label, needle)?.positions;
+                      return matches ? { ...page, matches } : page;
+                    }),
                     best: Math.min(...pages.map((page) => rankOf(page.label))),
                   },
                 ]

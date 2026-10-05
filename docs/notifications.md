@@ -77,9 +77,10 @@ checks, not that an OS banner was displayed or read.
 - Running-session dedup is bounded to 2,048 source identities/two minutes; pending
   candidates are capped at 128. Browser presentation retains at most 128 active
   alerts, closing the oldest before retiring its callback. Desktop retains at most
-  128 active callbacks/waits and rejects new presentations at capacity rather than
-  evicting an existing target or queuing unbounded workers. These are not durable
-  exactly-once or cross-window guarantees.
+  128 active callbacks/waits. On macOS the oldest registered card is withdrawn
+  and closed before admitting the next request at capacity; on other desktop
+  backends admission rejects at capacity. These are not durable exactly-once or
+  cross-window guarantees.
 - Browser and desktop clicks use the existing typed, account/community-scoped navigation path. It owns
   membership/provider checks and exact opening. Changing account invalidates old
   callbacks; changing community does not turn an old alert into a dead click.
@@ -143,9 +144,10 @@ interaction: acceptance is **not** proof that a visible banner appeared. No
 uniform withdrawal/receipt guarantee is promised.
 
 Callbacks stop navigating after account change or frontend disposal. Native
-click callbacks remain bounded until the OS resolves them; no artificial expiry
-strands an otherwise actionable alert. Reload/cold-start restoration remains out
-of scope.
+click callbacks are bounded by capacity: the oldest OS card is withdrawn and
+its callback closed before a new request is admitted. An individually dismissed
+card without a delivered response may retain a slot until that boundary.
+Reload/cold-start restoration remains out of scope.
 
 Real banners require OS permission, an available notification service and
 appropriate app packaging/installation. macOS development processes outside an

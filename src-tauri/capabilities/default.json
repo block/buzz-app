@@ -72,6 +72,8 @@
     "allow-agent-models-run",
     "allow-title-bar-double-click",
     "allow-notification-show",
+    "allow-notification-permission-state",
+    "allow-request-notification-access",
     "allow-dock-permission",
     "allow-unread-indicator-set",
     "allow-deep-link-take",

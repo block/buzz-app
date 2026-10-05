@@ -10,9 +10,12 @@ const callbacks = new Map<number, (message: WireMessage) => void>();
 let sequence = 0;
 const calls: { id: string; onEvent: string; title: string; body: string }[] =
   [];
-const invoke = vi.fn(async (_command: string, args: unknown) => {
-  calls.push(JSON.parse(JSON.stringify(args)));
-});
+const invoke = vi.fn(
+  async (_command: string, args: unknown): Promise<string | null> => {
+    calls.push(JSON.parse(JSON.stringify(args)));
+    return null;
+  },
+);
 beforeEach(() => {
   vi.stubGlobal("isTauri", true);
   vi.stubGlobal("window", {
@@ -104,6 +107,7 @@ it("accepts a native activation before the command promise resolves", async () =
     const { call, send } = callback();
     send({ message: { id: call.id, kind: "activated" }, index: 0 });
     send({ end: true, index: 1 });
+    return null;
   });
   await platform.show(item(), activate, vi.fn());
   expect(activate).toHaveBeenCalledOnce();
@@ -122,6 +126,7 @@ it("accepts a native failure before the command promise resolves", async () => {
       index: 0,
     });
     send({ end: true, index: 1 });
+    return null;
   });
   await platform.show(item(), vi.fn(), failed);
   expect(failed).toHaveBeenCalledExactlyOnceWith(new Error("backend failure"));
@@ -161,5 +166,37 @@ it("native admission rejection ends its channel without navigation or a send ret
   expect(callbacks.size).toBe(0);
   expect(activate).not.toHaveBeenCalled();
   expect(invoke).toHaveBeenCalledOnce();
+  platform.dispose();
+});
+
+it("macOS frees the oldest callback after 128 unanswered submissions and preserves newer clicks", async () => {
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  const platform = createNotifications();
+  const first = vi.fn(),
+    newest = vi.fn(),
+    failed = vi.fn();
+  invoke.mockImplementation(async (_command, args) => {
+    calls.push(JSON.parse(JSON.stringify(args)));
+    return calls.length === 129 ? (calls[0]?.id ?? null) : null;
+  });
+  for (let index = 0; index < 129; index++)
+    await platform.show(
+      item(),
+      index === 0 ? first : index === 128 ? newest : vi.fn(),
+      failed,
+    );
+  const retired = callback(0);
+  retired.send({ message: { id: retired.call.id, kind: "closed" }, index: 0 });
+  retired.send({ end: true, index: 1 });
+  expect(callbacks.size).toBe(128);
+  const retained = callback(128);
+  retained.send({
+    message: { id: retained.call.id, kind: "activated" },
+    index: 0,
+  });
+  retained.send({ end: true, index: 1 });
+  expect(newest).toHaveBeenCalledOnce();
+  expect(first).not.toHaveBeenCalled();
+  expect(failed).not.toHaveBeenCalled();
   platform.dispose();
 });

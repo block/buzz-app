@@ -102,6 +102,8 @@ fn main() {
             "agent_models_run",
             "title_bar_double_click",
             "notification_show",
+            "notification_permission_state",
+            "request_notification_access",
             "dock_permission",
             "unread_indicator_set",
             "deep_link_take",

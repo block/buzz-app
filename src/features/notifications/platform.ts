@@ -40,7 +40,7 @@ export function createNotifications(): NotificationPlatform {
   const macOS = /Mac/i.test(globalThis.navigator?.platform ?? "");
   return {
     label: "Desktop notifications",
-    systemManaged: true,
+    systemManaged: !macOS,
     // macOS uses Dock's UNUserNotificationCenter authorization source. Other
     // desktop backends have no permission query in this bridge.
     permission: () =>
@@ -53,8 +53,9 @@ export function createNotifications(): NotificationPlatform {
         : Promise.resolve("unknown"),
     async show(item, activate, failed) {
       if (disposed) throw new Error("Desktop notifications have stopped");
-      // Reject before sending instead of stranding an older alert's target.
-      if (active.size >= 128)
+      // Native admission explicitly returns the ID it withdrew. Match that ID,
+      // not local insertion order: a webview reload can leave older native cards.
+      if (!macOS && active.size >= 128)
         throw new Error("Too many active desktop notifications (maximum 128)");
       const channel = new Channel<DesktopResponse>((response) => {
         if (disposed || response.id !== item.id || !active.has(item.id)) return;
@@ -66,12 +67,16 @@ export function createNotifications(): NotificationPlatform {
       try {
         // Native code restores/focuses the main window before returning the click.
         // No destination or account data crosses this boundary.
-        await invoke("notification_show", {
+        const retired = await invoke<string | null>("notification_show", {
           id: item.id,
           title: item.title,
           body: item.body,
           onEvent: channel,
         });
+        if (retired) {
+          const oldChannel = active.get(retired);
+          if (oldChannel) release(retired, oldChannel);
+        }
       } catch (error) {
         release(item.id, channel);
         throw error;

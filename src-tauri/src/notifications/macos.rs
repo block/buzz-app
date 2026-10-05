@@ -1,7 +1,7 @@
 //! One process-lifetime notification delegate owns click routing. Submission
 //! completion only reports errors; it does not prove a notification was displayed.
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -12,7 +12,7 @@ use objc2::{
     runtime::{NSObjectProtocol, ProtocolObject},
     AnyThread, DefinedClass,
 };
-use objc2_foundation::{NSError, NSObject, NSString};
+use objc2_foundation::{NSArray, NSError, NSObject, NSString};
 use objc2_user_notifications::{
     UNAuthorizationStatus, UNMutableNotificationContent, UNNotificationDefaultActionIdentifier,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
@@ -22,28 +22,82 @@ use objc2_user_notifications::{
 use super::{Outcome, Pending};
 
 static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
+static ADMISSION: Mutex<()> = Mutex::new(());
+pub(super) fn admission_lock() -> &'static Mutex<()> {
+    &ADMISSION
+}
 
 #[derive(Default)]
-struct Registry(Mutex<HashMap<String, Arc<Pending>>>);
+struct Registry(Mutex<Entries>);
+#[derive(Default)]
+struct Entries {
+    active: HashMap<String, Arc<Pending>>,
+    order: VecDeque<String>,
+}
 
 impl Registry {
-    fn insert(&self, id: String, pending: Arc<Pending>) {
+    fn insert(&self, id: String, pending: Arc<Pending>) -> Result<(), String> {
         if let Ok(mut entries) = self.0.lock() {
-            entries.insert(id, pending);
+            if entries.active.contains_key(&id) {
+                return Err("Duplicate desktop notification".into());
+            }
+            entries.order.push_back(id.clone());
+            entries.active.insert(id, pending);
+            Ok(())
         } else {
-            pending.finish(Outcome::Failed("Notification state unavailable".into()));
+            Err("Notification state unavailable".into())
         }
     }
     fn finish(&self, id: &str, outcome: Outcome) {
-        let pending = self
-            .0
-            .lock()
-            .ok()
-            .and_then(|mut entries| entries.remove(id));
+        let pending = self.0.lock().ok().and_then(|mut entries| {
+            entries.order.retain(|current| current != id);
+            entries.active.remove(id)
+        });
         if let Some(pending) = pending {
             pending.finish(outcome);
         }
     }
+    fn contains(&self, id: &str) -> bool {
+        self.0
+            .lock()
+            .is_ok_and(|entries| entries.active.contains_key(id))
+    }
+    fn retire_oldest(&self, withdraw: impl FnOnce(&str)) -> Option<String> {
+        let retired = self.0.lock().ok().and_then(|mut entries| {
+            let id = entries.order.pop_front()?;
+            entries.active.remove(&id).map(|pending| (id, pending))
+        });
+        let (id, pending) = retired?;
+        withdraw(&id);
+        pending.finish(Outcome::Closed);
+        Some(id)
+    }
+}
+
+pub(super) fn contains(id: &str) -> bool {
+    REGISTRY.get().is_some_and(|registry| registry.contains(id))
+}
+
+pub(super) fn make_room(count: &super::Notifications) -> Option<String> {
+    if !crate::dock::bundled() {
+        return None;
+    }
+    let registry = REGISTRY.get()?;
+    if count
+        .0
+        .lock()
+        .is_ok_and(|count| *count >= super::MAX_ACTIVE)
+    {
+        // Some OS removals have no dismiss callback. Withdraw at capacity so
+        // both native and frontend can discard the oldest click target.
+        return registry.retire_oldest(|id| {
+            let identifiers = NSArray::from_retained_slice(&[NSString::from_str(id)]);
+            let center = UNUserNotificationCenter::currentNotificationCenter();
+            center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
+            center.removePendingNotificationRequestsWithIdentifiers(&identifiers);
+        });
+    }
+    None
 }
 
 struct DelegateIvars {
@@ -131,23 +185,27 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
         ));
         return;
     };
+    if let Err(error) = registry.insert(id.clone(), pending.clone()) {
+        pending.finish(Outcome::Failed(error));
+        return;
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        match crate::dock::notification_permission() {
-            Ok(
-                UNAuthorizationStatus::Authorized
-                | UNAuthorizationStatus::Provisional
-                | UNAuthorizationStatus::Ephemeral,
-            ) => {}
+        match notification_permission() {
+            Ok(Permission::Granted) => {}
             Ok(_) => {
-                pending.finish(Outcome::Failed(
-                    "macOS notification permission is not granted".into(),
-                ));
+                registry.finish(
+                    &id,
+                    Outcome::Failed("macOS notification permission is not granted".into()),
+                );
                 return;
             }
             Err(error) => {
-                pending.finish(Outcome::Failed(error));
+                registry.finish(&id, Outcome::Failed(error));
                 return;
             }
+        }
+        if !registry.contains(&id) {
+            return;
         }
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&title));
@@ -157,18 +215,28 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
             &content,
             None,
         );
-        registry.insert(id.clone(), pending);
+        let callback_registry = registry.clone();
+        let callback_id = id.clone();
         let completion = RcBlock::new(move |error: *mut NSError| {
             if let Some(error) = unsafe { error.as_ref() } {
-                registry.finish(
-                    &id,
+                callback_registry.finish(
+                    &callback_id,
                     Outcome::Failed(format!("failed to submit macOS notification: {error}")),
                 );
             }
             // A successful submission remains registered for a later click.
         });
-        UNUserNotificationCenter::currentNotificationCenter()
-            .addNotificationRequest_withCompletionHandler(&request, Some(&completion));
+        let Ok(_admission) = admission_lock().lock() else {
+            registry.finish(
+                &id,
+                Outcome::Failed("Notification state unavailable".into()),
+            );
+            return;
+        };
+        if registry.contains(&id) {
+            UNUserNotificationCenter::currentNotificationCenter()
+                .addNotificationRequest_withCompletionHandler(&request, Some(&completion));
+        }
     });
 }
 
@@ -187,14 +255,16 @@ mod tests {
         let notifications = super::super::Notifications::default();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let output = seen.clone();
-        registry.insert(
-            "failed".into(),
-            notifications
-                .reserve(Box::new(move |outcome| {
-                    output.lock().unwrap().push(outcome);
-                }))
-                .unwrap(),
-        );
+        registry
+            .insert(
+                "failed".into(),
+                notifications
+                    .reserve(Box::new(move |outcome| {
+                        output.lock().unwrap().push(outcome);
+                    }))
+                    .unwrap(),
+            )
+            .unwrap();
         registry.finish("failed", Outcome::Failed("native error".into()));
         registry.finish("failed", Outcome::Activated);
         assert_eq!(
@@ -204,20 +274,80 @@ mod tests {
         assert_eq!(*notifications.0.lock().unwrap(), 0);
     }
     #[test]
+    fn never_clicked_requests_retire_at_capacity_and_keep_newer_clicks() {
+        let registry = Registry::default();
+        let notifications = super::super::Notifications::default();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut withdrawn = Vec::new();
+        for index in 0..129 {
+            if *notifications.0.lock().unwrap() == super::super::MAX_ACTIVE {
+                assert_eq!(
+                    registry.retire_oldest(|id| withdrawn.push(id.to_owned())),
+                    Some((index - 128).to_string())
+                );
+            }
+            let seen = seen.clone();
+            registry
+                .insert(
+                    index.to_string(),
+                    notifications
+                        .reserve(Box::new(move |outcome| {
+                            seen.lock().unwrap().push((index, outcome));
+                        }))
+                        .unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(withdrawn, vec!["0"]);
+        registry.finish("0", Outcome::Activated);
+        registry.finish("128", Outcome::Activated);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![(0, Outcome::Closed), (128, Outcome::Activated)]
+        );
+        assert_eq!(*notifications.0.lock().unwrap(), 127);
+        for index in 1..128 {
+            registry.finish(&index.to_string(), Outcome::Closed);
+        }
+        assert_eq!(*notifications.0.lock().unwrap(), 0);
+    }
+    #[test]
+    fn repeated_unanswered_requests_never_exhaust_capacity() {
+        let registry = Registry::default();
+        let notifications = super::super::Notifications::default();
+        let retired = Arc::new(Mutex::new(0));
+        for index in 0..(super::super::MAX_ACTIVE * 3) {
+            if *notifications.0.lock().unwrap() == super::super::MAX_ACTIVE {
+                let retired_count = retired.clone();
+                registry.retire_oldest(|_| *retired_count.lock().unwrap() += 1);
+            }
+            registry
+                .insert(
+                    index.to_string(),
+                    notifications.reserve(Box::new(|_| {})).unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(*retired.lock().unwrap(), super::super::MAX_ACTIVE * 2);
+        assert_eq!(*notifications.0.lock().unwrap(), super::super::MAX_ACTIVE);
+    }
+    #[test]
     fn registry_routes_once_and_releases_capacity() {
         let registry = Registry::default();
         let notifications = super::super::Notifications::default();
         let seen = Arc::new(Mutex::new(Vec::new()));
         for id in ["first", "second"] {
             let seen = seen.clone();
-            registry.insert(
-                id.into(),
-                notifications
-                    .reserve(Box::new(move |outcome| {
-                        seen.lock().unwrap().push(outcome);
-                    }))
-                    .unwrap(),
-            );
+            registry
+                .insert(
+                    id.into(),
+                    notifications
+                        .reserve(Box::new(move |outcome| {
+                            seen.lock().unwrap().push(outcome);
+                        }))
+                        .unwrap(),
+                )
+                .unwrap();
         }
         registry.finish("second", Outcome::Activated);
         registry.finish("second", Outcome::Closed);
@@ -227,5 +357,105 @@ mod tests {
             vec![Outcome::Activated, Outcome::Closed]
         );
         assert_eq!(*notifications.0.lock().unwrap(), 0);
+    }
+}
+
+use serde::Serialize;
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Permission {
+    Default,
+    Denied,
+    Granted,
+}
+
+fn notification_error(error: String) -> String {
+    match error.as_str() {
+        "Dock permission requires a bundled macOS app" => {
+            "macOS notifications are unavailable when Buzz is not running from an app bundle".into()
+        }
+        "Dock settings request timed out" => "macOS notification settings request timed out".into(),
+        "Dock authorization request timed out" => {
+            "macOS notification authorization request timed out".into()
+        }
+        _ => error,
+    }
+}
+fn notification_permission() -> Result<Permission, String> {
+    crate::dock::notification_permission()
+        .map(project)
+        .map_err(notification_error)
+}
+fn notification_request() -> Result<Permission, String> {
+    crate::dock::notification_request()
+        .map(project)
+        .map_err(notification_error)
+}
+fn project(status: UNAuthorizationStatus) -> Permission {
+    match status {
+        UNAuthorizationStatus::Denied => Permission::Denied,
+        UNAuthorizationStatus::Authorized
+        | UNAuthorizationStatus::Provisional
+        | UNAuthorizationStatus::Ephemeral => Permission::Granted,
+        _ => Permission::Default,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn notification_permission_state<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+) -> Result<Permission, String> {
+    if window.label() != "main" {
+        return Err("Notifications belong to the main window".into());
+    }
+    tauri::async_runtime::spawn_blocking(notification_permission)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn request_notification_access<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+) -> Result<Permission, String> {
+    if window.label() != "main" {
+        return Err("Notifications belong to the main window".into());
+    }
+    tauri::async_runtime::spawn_blocking(notification_request)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+    #[test]
+    fn notification_copy_is_not_dock_copy() {
+        assert_eq!(
+            notification_error("Dock settings request timed out".into()),
+            "macOS notification settings request timed out"
+        );
+        assert_eq!(
+            notification_error("Dock permission requires a bundled macOS app".into()),
+            "macOS notifications are unavailable when Buzz is not running from an app bundle"
+        );
+    }
+    #[test]
+    fn authorization_projection() {
+        assert!(matches!(
+            project(UNAuthorizationStatus::NotDetermined),
+            Permission::Default
+        ));
+        assert!(matches!(
+            project(UNAuthorizationStatus::Denied),
+            Permission::Denied
+        ));
+        for status in [
+            UNAuthorizationStatus::Authorized,
+            UNAuthorizationStatus::Provisional,
+            UNAuthorizationStatus::Ephemeral,
+        ] {
+            assert!(matches!(project(status), Permission::Granted));
+        }
     }
 }

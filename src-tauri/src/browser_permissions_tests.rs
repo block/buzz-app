@@ -126,6 +126,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_models_run",
         "title_bar_double_click",
         "notification_show",
+        #[cfg(target_os = "macos")]
+        "notification_permission_state",
+        #[cfg(target_os = "macos")]
+        "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
         "deep_link_take",

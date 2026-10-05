@@ -138,20 +138,34 @@ pub(crate) async fn notification_show<R: tauri::Runtime>(
     title: String,
     body: String,
     on_event: Channel<Response>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     if window.label() != "main" {
         return Err("Desktop notifications belong to the main window".into());
     }
     validate(&id, &title, &body)?;
     let responder = app.clone();
     let request_id = id.clone();
+    #[cfg(target_os = "macos")]
+    let admission = macos::admission_lock()
+        .lock()
+        .map_err(|_| "Notification state unavailable")?;
+    #[cfg(target_os = "macos")]
+    if macos::contains(&request_id) {
+        return Err("Duplicate desktop notification".into());
+    }
+    #[cfg(target_os = "macos")]
+    let retired = macos::make_room(&state);
+    #[cfg(not(target_os = "macos"))]
+    let retired: Option<String> = None;
     let pending = state.reserve(Box::new(move |outcome| {
         respond(responder, on_event, id, outcome)
     }))?;
     // Admission returns promptly. Submission errors arrive on the pre-registered
     // channel; no platform's return value is claimed as proof of a visible banner.
     show(app, request_id, title, body, pending);
-    Ok(())
+    #[cfg(target_os = "macos")]
+    drop(admission);
+    Ok(retired)
 }
 
 #[cfg(target_os = "macos")]

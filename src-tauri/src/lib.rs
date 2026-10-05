@@ -26,77 +26,6 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
-#[cfg(target_os = "macos")]
-mod macos_notifications {
-    use objc2_user_notifications::UNAuthorizationStatus;
-    use serde::Serialize;
-    use tauri::WebviewWindow;
-
-    #[derive(Clone, Copy, Serialize)]
-    #[serde(rename_all = "lowercase")]
-    pub(crate) enum Permission {
-        Default,
-        Denied,
-        Granted,
-    }
-
-    fn project(status: UNAuthorizationStatus) -> Permission {
-        match status {
-            UNAuthorizationStatus::Denied => Permission::Denied,
-            UNAuthorizationStatus::Authorized
-            | UNAuthorizationStatus::Provisional
-            | UNAuthorizationStatus::Ephemeral => Permission::Granted,
-            _ => Permission::Default,
-        }
-    }
-
-    #[tauri::command]
-    pub(crate) async fn notification_permission_state<R: tauri::Runtime>(
-        window: WebviewWindow<R>,
-    ) -> Result<Permission, String> {
-        if window.label() != "main" {
-            return Err("Notifications belong to the main window".into());
-        }
-        tauri::async_runtime::spawn_blocking(|| crate::dock::notification_permission().map(project))
-            .await
-            .map_err(|error| error.to_string())?
-    }
-
-    #[tauri::command]
-    pub(crate) async fn request_notification_access<R: tauri::Runtime>(
-        window: WebviewWindow<R>,
-    ) -> Result<Permission, String> {
-        if window.label() != "main" {
-            return Err("Notifications belong to the main window".into());
-        }
-        tauri::async_runtime::spawn_blocking(|| crate::dock::notification_request().map(project))
-            .await
-            .map_err(|error| error.to_string())?
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        #[test]
-        fn authorization_projection() {
-            assert!(matches!(
-                project(UNAuthorizationStatus::NotDetermined),
-                Permission::Default
-            ));
-            assert!(matches!(
-                project(UNAuthorizationStatus::Denied),
-                Permission::Denied
-            ));
-            for status in [
-                UNAuthorizationStatus::Authorized,
-                UNAuthorizationStatus::Provisional,
-                UNAuthorizationStatus::Ephemeral,
-            ] {
-                assert!(matches!(project(status), Permission::Granted));
-            }
-        }
-    }
-}
 
 mod notifications;
 mod os_idle;
@@ -535,9 +464,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
-        macos_notifications::notification_permission_state,
+        notifications::macos::notification_permission_state,
         #[cfg(target_os = "macos")]
-        macos_notifications::request_notification_access,
+        notifications::macos::request_notification_access,
         deep_link_take,
         deep_link_watch,
         dock_permission,

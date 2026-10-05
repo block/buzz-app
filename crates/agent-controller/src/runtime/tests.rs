@@ -3406,3 +3406,57 @@ while :; do /bin/sleep 0.1; done
 
 #[cfg(target_os = "macos")]
 mod protection_integration;
+
+#[test]
+fn mesh_defaults_preserve_explicit_agent_choices_and_do_not_mutate_saved_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    for (context, expected) in [(131072, "4096"), (8192, "2048")] {
+        let grant = crate::MeshLaunch::new(
+            saved.id.clone(),
+            saved.revision,
+            saved.relay_url.clone(),
+            "shared-model".into(),
+            (19337, context),
+        )
+        .unwrap();
+        let runtime = grant.apply(&saved).unwrap();
+        assert_eq!(
+            runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"],
+            expected
+        );
+        assert_eq!(runtime.environment["BUZZ_AGENT_REQUIRE_REPLY"], "1");
+        assert_eq!(runtime.environment["BUZZ_AGENT_THINKING_EFFORT"], "none");
+        for key in [
+            "BUZZ_AGENT_MAX_OUTPUT_TOKENS",
+            "BUZZ_AGENT_REQUIRE_REPLY",
+            "BUZZ_AGENT_THINKING_EFFORT",
+        ] {
+            assert!(!saved.environment.contains_key(key));
+        }
+    }
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "shared-model".into(),
+        (19337, 131072),
+    )
+    .unwrap();
+    for (reply, effort) in [("0", "none"), ("1", "high")] {
+        saved
+            .environment
+            .insert("BUZZ_AGENT_REQUIRE_REPLY".into(), reply.into());
+        saved
+            .environment
+            .insert("BUZZ_AGENT_THINKING_EFFORT".into(), effort.into());
+        saved
+            .environment
+            .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "8192".into());
+        let runtime = grant.apply(&saved).unwrap();
+        assert_eq!(runtime.environment["BUZZ_AGENT_REQUIRE_REPLY"], reply);
+        assert_eq!(runtime.environment["BUZZ_AGENT_THINKING_EFFORT"], effort);
+        assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "8192");
+    }
+}

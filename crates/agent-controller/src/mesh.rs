@@ -85,7 +85,7 @@ impl MeshLaunch {
                     .map_err(|_| "Invalid agent output token budget")
             })
             .transpose()?
-            .unwrap_or(8192.min(self.context / 4));
+            .unwrap_or(4096.min(self.context / 4));
         if output == 0 || self.context <= output {
             return Err("Shared model context must exceed the agent output token budget".into());
         }
@@ -109,6 +109,16 @@ impl MeshLaunch {
         ] {
             runtime.environment.insert(name.into(), value);
         }
+        // Match classic Buzz without overriding an explicit opt-out.
+        runtime
+            .environment
+            .entry("BUZZ_AGENT_REQUIRE_REPLY".into())
+            .or_insert_with(|| "1".into());
+        // Mesh agents default to no reasoning; explicit user effort wins.
+        runtime
+            .environment
+            .entry("BUZZ_AGENT_THINKING_EFFORT".into())
+            .or_insert_with(|| "none".into());
         Ok(runtime)
     }
 }

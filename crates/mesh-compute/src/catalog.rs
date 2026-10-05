@@ -5,7 +5,7 @@ use serde::Serialize;
 
 const CURATED_SMALL: &str = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const CURATED_MEDIUM: &str = "unsloth/Qwen3.5-9B-GGUF:Q4_K_M";
-const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL";
+const CURATED_LARGE: &str = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M";
 
 /// Rated-capacity boundary for the balanced Qwen3.5 9B tier.
 const CURATED_MEDIUM_MIN_RATED_GB: u64 = 32;
@@ -49,13 +49,16 @@ pub struct Entry {
 
 /// Runs blocking hardware/cache/catalog I/O; callers must use a blocking task.
 pub fn catalog() -> anyhow::Result<Catalog> {
-    models::remote_catalog::ensure_catalog()?;
+    // The remote layer catalog enriches choices; it does not own Buzz's GGUF ladder.
+    if let Err(error) = models::remote_catalog::ensure_catalog() {
+        eprintln!("Mesh catalog metadata unavailable: {error}");
+    }
     let survey = hardware::survey();
     let installed = models::scan_installed_models();
     Ok(build(
         survey.gpu_name,
         survey.vram_bytes,
-        models::remote_catalog::loaded_models()?,
+        models::remote_catalog::loaded_models().unwrap_or_default(),
         |model| {
             installed
                 .iter()
@@ -142,13 +145,22 @@ fn build(
             }
         })
         .collect();
-    // Do not recommend a missing catalog record or invent download metadata.
-    let ladder = [CURATED_LARGE, CURATED_MEDIUM, CURATED_SMALL];
-    let recommended = ladder
-        .iter()
-        .skip_while(|candidate| **candidate != recommendation)
-        .find_map(|candidate| entries.iter().find(|entry| entry.model == *candidate))
-        .map(|entry| entry.model.clone());
+    // Curated GGUF refs are resolved by Mesh at serving time, independently of
+    // whether its remote layer-package catalog happens to list that quant.
+    for reference in [CURATED_LARGE, CURATED_MEDIUM, CURATED_SMALL] {
+        if !entries.iter().any(|entry| entry.model == reference) {
+            entries.push(Entry {
+                model: reference.into(),
+                name: reference.into(),
+                size: None,
+                description: None,
+                installed: installed(reference),
+                curated: true,
+                fit: "unknown",
+            });
+        }
+    }
+    let recommended = Some(recommendation.to_owned());
     entries.sort_by(|a, b| {
         (Some(&b.model) == recommended.as_ref())
             .cmp(&(Some(&a.model) == recommended.as_ref()))
@@ -220,7 +232,7 @@ mod tests {
     #[test]
     fn ladder_is_catalog_backed_and_keeps_exact_ids_installation_and_draft_policy() {
         let mut large = model("unsloth/Qwen3.8-27B-GGUF", "large", "17GB");
-        large.source_file = "weights-UD-Q4_K_XL.gguf".into();
+        large.source_file = "weights-UD-Q4_K_M.gguf".into();
         large.file = large.source_file.clone();
         large.draft = Some("draft".into());
         let models = vec![
@@ -248,16 +260,29 @@ mod tests {
                     .installed
             );
         }
-        assert!(build(None, 0, vec![], |_| false).recommended.is_none());
+        assert_eq!(
+            build(None, 0, vec![], |_| false).recommended.as_deref(),
+            Some(CURATED_SMALL)
+        );
     }
     #[test]
-    fn missing_top_tier_falls_back_to_an_available_smaller_curated_model() {
+    fn missing_layer_catalog_entry_does_not_change_the_gguf_ladder() {
         let catalog = build(
             None,
             128_000_000_000,
-            vec![model("unsloth/Qwen3.5-9B-GGUF", "medium", "6GB")],
-            |_| false,
+            vec![{
+                let mut xl = model("unsloth/Qwen3.8-27B-GGUF", "large XL", "17GB");
+                xl.source_file = "Qwen3.8-27B-UD-Q4_K_XL.gguf".into();
+                xl.file = xl.source_file.clone();
+                xl
+            }],
+            |reference| reference == CURATED_LARGE,
         );
-        assert_eq!(catalog.recommended.as_deref(), Some(CURATED_MEDIUM));
+        assert_eq!(catalog.recommended.as_deref(), Some(CURATED_LARGE));
+        let recommended = &catalog.entries[0];
+        assert_eq!(recommended.model, "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M");
+        assert!(recommended.installed);
+        assert!(recommended.size.is_none());
+        assert_eq!(recommended.fit, "unknown");
     }
 }

@@ -42,6 +42,15 @@ export function serializeNode(
   range?: Range,
 ): string {
   if (format === "markdown") return markdown(node, range);
+  return serialize(node, format, range);
+}
+
+function serialize(
+  node: Node,
+  format: CopyFormat,
+  range?: Range,
+  inList = false,
+): string {
   if (range && !range.intersectsNode(node)) return "";
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
@@ -102,6 +111,9 @@ export function serializeNode(
   if (
     format === "html" &&
     /^(UL|OL|LI|BLOCKQUOTE|TABLE|THEAD|TBODY|TFOOT|TR|TD|TH)$/.test(tag) &&
+    // An item copied without its list is prose, not an orphan <li> that the
+    // editor parser would wrap in a new bullet list.
+    (tag !== "LI" || inList) &&
     !node.querySelector("[data-message-id]")
   ) {
     const start =
@@ -248,7 +260,12 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
   let previous: Node | undefined;
   for (const child of node.childNodes) {
     if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
-    const value = serializeNode(child, format, range);
+    const value = serialize(
+      child,
+      format,
+      range,
+      /^(UL|OL)$/.test(node.nodeName),
+    );
     const separator =
       previous && format !== "html" ? siblingSeparator(previous, child) : "";
     if (separator === "\t") text += separator;

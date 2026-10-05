@@ -27,7 +27,7 @@ import {
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { profileMentionParts } from "./profile-mentions";
-import { serializeNode } from "./selection-copy";
+import { serializeNode, serializeSelection } from "./selection-copy";
 import { profileKey, profileTarget } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
 
@@ -2644,6 +2644,55 @@ it.each([
     const target = mount();
     paste(target.input, copied.text, copied.html);
     expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+  },
+);
+
+it.each(["-", "3."])(
+  "pastes a phrase selected across formatting in a %s list item as prose",
+  (marker) => {
+    const content = `${marker} ask **Morgan** about it`;
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    const item = view.getByRole("listitem");
+    const range = document.createRange();
+    range.setStart(item.firstChild as Text, 1);
+    range.setEnd(item.lastChild as Text, 3);
+    expect(range.commonAncestorContainer).toBe(item);
+    const selection = document.getSelection();
+    if (!selection) throw new Error("Missing selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const text = serializeSelection(selection, "text");
+    const html = `<div data-buzz-copy="timeline">${serializeSelection(selection, "html")}</div>`;
+    expect(text).toBe("sk Morgan ab");
+    expect(serializeSelection(selection, "markdown")).toBe("sk **Morgan** ab");
+    const target = mount();
+    paste(target.input, text, html);
+    expect(target.markdown()).toBe("sk **Morgan** ab");
+
+    // Selecting the enclosing list still keeps its marker and starting number.
+    range.selectNodeContents(view.getByRole("list"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(serializeSelection(selection, "markdown")).toBe(content);
+    expect(readBack(serializeSelection(selection, "html"))).toBe(content);
+    selection.removeAllRanges();
   },
 );
 

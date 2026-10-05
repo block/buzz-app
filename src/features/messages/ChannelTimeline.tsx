@@ -1,4 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { useLocalDay } from "../../shared/use-local-day";
+import { calendarDay } from "../../shared/date-environment";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -182,6 +184,7 @@ function Timeline({
   onOpenMediaReview,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
+  const { formats } = useLocalDay();
   const [initialPosition] = useState(() =>
     transient
       ? null
@@ -189,7 +192,10 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const rows = useMemo(
+    () => membershipRows(window.rows, formats.calendar),
+    [window.rows, formats.calendar],
+  );
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -782,10 +788,8 @@ function Timeline({
             const day =
               index === 0
                 ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+                : calendarDay((rows[index - 1]?.createdAt ?? 0) * 1000).key !==
+                  calendarDay(row.createdAt * 1000).key;
             return (
               <Fragment key={row.id}>
                 {row.membership ? (

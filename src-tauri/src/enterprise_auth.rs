@@ -581,8 +581,7 @@ impl EnterpriseAuthHost {
         let raw = encode_session(&session)?;
         let _commit = self.commit.lock().await;
         if !self.is_active(id)? {
-            self.delete_if_matches(scope, raw).await?;
-            return Err("Enterprise authentication was canceled".into());
+            return self.reject_canceled_commit(scope, raw).await;
         }
         self.replace(scope, raw.clone()).await?;
         let adopted = {
@@ -602,10 +601,25 @@ impl EnterpriseAuthHost {
             }
         };
         if !adopted {
-            self.delete_if_matches(scope, raw).await?;
-            return Err("Enterprise authentication was canceled".into());
+            return self.reject_canceled_commit(scope, raw).await;
         }
         Ok(info)
+    }
+
+    async fn reject_canceled_commit(
+        &self,
+        scope: &Scope,
+        raw: Zeroizing<Vec<u8>>,
+    ) -> Result<EnterpriseAuthInfo> {
+        // The caller holds commit. Fence even when cleanup fails, before a
+        // concurrent restore can acquire the owner and adopt stale state.
+        let deletion = self.delete_if_matches(scope, raw).await;
+        let fence = self.fence_generation();
+        match (deletion, fence) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Err("Enterprise authentication was canceled".into()),
+        }
     }
 
     fn remember(&self, scope: Scope, session: StoredSession) {
@@ -1080,6 +1094,8 @@ struct FixtureStore {
     values: Mutex<HashMap<(String, String), Vec<u8>>>,
     error: Mutex<Option<StoreError>>,
     replace_error: Mutex<Option<StoreError>>,
+    replace_started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    release_replace: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     delete_error: Mutex<Option<StoreError>>,
     delete_started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     release_delete: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
@@ -1110,6 +1126,16 @@ impl CredentialStore for FixtureStore {
         account: &str,
         value: &[u8],
     ) -> std::result::Result<(), StoreError> {
+        if let Some(started) = self.replace_started.lock().unwrap().take() {
+            started.send(()).unwrap();
+            self.release_replace
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .recv()
+                .unwrap();
+        }
         if let Some(error) = *self.replace_error.lock().unwrap() {
             return Err(error);
         }
@@ -1126,9 +1152,6 @@ impl CredentialStore for FixtureStore {
         account: &str,
         expected: &[u8],
     ) -> std::result::Result<(), StoreError> {
-        if let Some(error) = *self.delete_error.lock().unwrap() {
-            return Err(error);
-        }
         if let Some(started) = self.delete_started.lock().unwrap().take() {
             started.send(()).unwrap();
             self.release_delete
@@ -1138,6 +1161,9 @@ impl CredentialStore for FixtureStore {
                 .unwrap()
                 .recv()
                 .unwrap();
+        }
+        if let Some(error) = *self.delete_error.lock().unwrap() {
+            return Err(error);
         }
         let mut values = self.values.lock().unwrap();
         let key = (service.to_owned(), account.to_owned());
@@ -2868,6 +2894,148 @@ mod tests {
             store.read(scope.service, &scope.account),
             Err(StoreError::Absent)
         );
+    }
+
+    #[tokio::test]
+    async fn canceled_commit_cleanup_error_fences_an_inflight_restore() {
+        let server = HeldSessionServer::spawn().await;
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let session = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let raw = encode_session(&session).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store.replace(scope.service, &scope.account, &raw).unwrap();
+        let (delete_started, delete_started_receiver) = mpsc::channel();
+        let (release_delete, release_delete_receiver) = mpsc::channel();
+        *store.delete_started.lock().unwrap() = Some(delete_started);
+        *store.release_delete.lock().unwrap() = Some(release_delete_receiver);
+        *store.delete_error.lock().unwrap() = Some(StoreError::Denied);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("cancel-me".into(), cancel).unwrap());
+        host.cancel("cancel-me").await.unwrap();
+
+        let commit = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move {
+                host.commit_session(
+                    &scope,
+                    "cancel-me",
+                    session,
+                    EnterpriseAuthInfo {
+                        expires_at: "2030-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = test_http_client(Duration::from_secs(1));
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+        release_delete.send(()).unwrap();
+        assert_eq!(
+            commit.await.unwrap().unwrap_err(),
+            "Enterprise secure storage access was denied; unlock it and retry"
+        );
+        server.release_first.notify_one();
+
+        assert!(restore.await.unwrap().unwrap().is_none());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(store.read(scope.service, &scope.account).unwrap(), raw);
+    }
+
+    #[tokio::test]
+    async fn canceled_commit_cleanup_after_write_fences_an_inflight_restore() {
+        for delete_error in [None, Some(StoreError::Denied)] {
+            let server = HeldSessionServer::spawn().await;
+            let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            let scope = scope_for_adapter(&server.base, viewer).unwrap();
+            let session = StoredSession {
+                token: Zeroizing::new("new-session".into()),
+                expires_at: "2030-01-01T00:00:00Z".into(),
+            };
+            let raw = encode_session(&session).unwrap();
+            let store = Arc::new(FixtureStore::default());
+            let (replace_started, replace_started_receiver) = mpsc::channel();
+            let (release_replace, release_replace_receiver) = mpsc::channel();
+            *store.replace_started.lock().unwrap() = Some(replace_started);
+            *store.release_replace.lock().unwrap() = Some(release_replace_receiver);
+            let (delete_started, delete_started_receiver) = mpsc::channel();
+            let (release_delete, release_delete_receiver) = mpsc::channel();
+            *store.delete_started.lock().unwrap() = Some(delete_started);
+            *store.release_delete.lock().unwrap() = Some(release_delete_receiver);
+            *store.delete_error.lock().unwrap() = delete_error;
+            let host = EnterpriseAuthHost::with_store(store.clone());
+            let (cancel, _receiver) = oneshot::channel();
+            assert!(host.begin("cancel-me".into(), cancel).unwrap());
+
+            let commit = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                async move {
+                    host.commit_session(
+                        &scope,
+                        "cancel-me",
+                        session,
+                        EnterpriseAuthInfo {
+                            expires_at: "2030-01-01T00:00:00Z".into(),
+                        },
+                    )
+                    .await
+                }
+            });
+            tokio::task::spawn_blocking(move || replace_started_receiver.recv().unwrap())
+                .await
+                .unwrap();
+            host.cancel("cancel-me").await.unwrap();
+            release_replace.send(()).unwrap();
+            tokio::task::spawn_blocking(move || delete_started_receiver.recv().unwrap())
+                .await
+                .unwrap();
+
+            let restore = tokio::spawn({
+                let host = host.clone();
+                let scope = scope.clone();
+                let client = test_http_client(Duration::from_secs(1));
+                async move { host.get_scope_with_client(scope, &client).await }
+            });
+            server.first_started.notified().await;
+            release_delete.send(()).unwrap();
+
+            let commit_error = commit.await.unwrap().unwrap_err();
+            if delete_error.is_some() {
+                assert_eq!(
+                    commit_error,
+                    "Enterprise secure storage access was denied; unlock it and retry"
+                );
+            } else {
+                assert_eq!(commit_error, "Enterprise authentication was canceled");
+            }
+            server.release_first.notify_one();
+
+            assert!(restore.await.unwrap().unwrap().is_none());
+            assert!(host.cached(&scope).is_none());
+            if delete_error.is_some() {
+                assert_eq!(store.read(scope.service, &scope.account).unwrap(), raw);
+            } else {
+                assert_eq!(
+                    store.read(scope.service, &scope.account),
+                    Err(StoreError::Absent)
+                );
+            }
+        }
     }
 
     #[tokio::test]

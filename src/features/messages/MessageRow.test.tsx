@@ -1029,7 +1029,9 @@ it.each([
         false,
       );
       const dialog = screen.getByRole("dialog", { name: "Image attachment" });
-      expect(dialog.querySelector("img")).toHaveAttribute("src", source);
+      expect(
+        within(dialog).getByRole("img", { name: "Attachment preview" }),
+      ).toHaveAttribute("src", source);
       expect(external).toEqual([]);
       fireEvent.click(
         within(dialog).getByRole("button", { name: "Close fullscreen viewer" }),

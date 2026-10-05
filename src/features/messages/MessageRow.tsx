@@ -14,6 +14,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
@@ -249,6 +250,10 @@ export const MessageRow = memo(function MessageRow({
     // task later lets restored focus keep the row mounted instead.
     return release && (() => void setTimeout(release));
   }, [reportActive, keepMounted, row.id]);
+  const keepRowMounted = useMemo(
+    () => keepMounted && (() => keepMounted(row.id)),
+    [keepMounted, row.id],
+  );
   const report =
     !row.membership &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -571,6 +576,7 @@ export const MessageRow = memo(function MessageRow({
                     source={source}
                     cached={cached}
                     thumbnail
+                    keepMounted={keepRowMounted}
                     label={
                       group.length > 1
                         ? `Open image ${index + 1} of ${group.length}`

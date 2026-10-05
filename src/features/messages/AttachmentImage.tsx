@@ -14,6 +14,7 @@ export function AttachmentImage({
   source,
   cached = false,
   onOpenReview,
+  keepMounted,
   thumbnail = false,
   label = "Open image attachment",
 }: {
@@ -23,11 +24,20 @@ export function AttachmentImage({
   source: string | undefined;
   cached?: boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
+  /** Pins the owning row in a virtualized list; returns the release. */
+  keepMounted?: (() => () => void) | undefined;
 }) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
   const [viewerOpen, setViewerOpen] = useState(false);
   if (!active && viewerOpen) setViewerOpen(false);
+  // The viewer portal and its opener live in this row; eviction closes it.
+  useEffect(() => {
+    const release = viewerOpen ? keepMounted?.() : undefined;
+    // The modal boundary restores focus on the next frame; releasing after it
+    // lets the restored thumbnail keep the row mounted instead.
+    return release && (() => void requestAnimationFrame(release));
+  }, [viewerOpen, keepMounted]);
   const style =
     !thumbnail && attachment.dimensions
       ? {
@@ -104,7 +114,11 @@ export function AttachmentImage({
             title="Image attachment"
             close={() => setViewerOpen(false)}
           >
-            <img className={styles.mediaViewerImage} src={source} alt="" />
+            <img
+              className={styles.mediaViewerImage}
+              src={source}
+              alt="Attachment preview"
+            />
           </MediaViewer>,
           document.body,
         )}

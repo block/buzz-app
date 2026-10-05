@@ -64,7 +64,9 @@ vi.mock("virtua", async () => {
 const viewer = keypair(),
   other = keypair(),
   relay = keypair();
-const target = message(other, "c", "Report me", 1);
+const target = message(other, "c", "Report me", 1, [
+  ["imeta", "url https://relay.test/media/a.png", "m image/png"],
+]);
 const neighbor = message(other, "c", "Neighbor", 2);
 const owners: { dispose(): void }[] = [];
 beforeEach(() => {
@@ -214,4 +216,31 @@ it("releases on cancel, pins again on reopen, and unmounts cleanly while open", 
   await act(() => new Promise((resolve) => setTimeout(resolve)));
   expect(screen.queryByRole("dialog", { name: "Report message" })).toBeNull();
   expect(error).not.toHaveBeenCalled();
+});
+
+it("keeps an image row mounted while its fullscreen viewer is open, then releases it after restoring focus", async () => {
+  const user = userEvent.setup();
+  const h = mount(async () => {});
+  const row = h.row();
+  if (!row) throw new Error("Missing target row");
+  const thumbnail = within(row).getByRole("link", {
+    name: "Open image attachment",
+  });
+  await user.click(thumbnail);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Image attachment",
+  });
+  // Focus inside the portal leaves the timeline's focused row unset.
+  h.evict();
+  expect(h.row()).toBe(row);
+  expect(dialog.isConnected).toBe(true);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(thumbnail));
+  h.evict();
+  expect(h.row()).toBe(row);
+  // Restored focus keeps the row; once focus leaves, the pin must be gone.
+  act(() => thumbnail.blur());
+  h.evict();
+  await waitFor(() => expect(h.row()).toBeNull());
 });

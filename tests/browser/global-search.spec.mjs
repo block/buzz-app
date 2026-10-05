@@ -52,8 +52,7 @@ test("search arrows traverse the conversation action and recent activity, Enter 
     .getByRole("group", { name: "Channels" })
     .getByRole("option", { name: /Alpha/ });
   await expect(alpha).toBeVisible();
-  await input.press("ArrowDown");
-  await input.press("ArrowDown");
+  // Typed text selects its best match, so Enter needs no arrow keys.
   await expect(input).toBeFocused();
   await expect(alpha).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute(
@@ -96,7 +95,7 @@ test("changing search scope returns focus to the input without clearing the quer
   const input = global.getByRole("combobox", { name: "Search Buzz" });
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("hello");
-  await page.keyboard.press("ArrowDown");
+  // Typed text selects the first result; no conversation is named "hello".
   await expect(
     global
       .getByRole("group", { name: "This conversation" })

@@ -22,6 +22,24 @@ export type SearchDestination = {
   run: () => void;
 };
 
+/** How well a label matches typed text: exact, then prefix, then word start,
+ * then any substring. Lower is better; undefined means no match. */
+export function matchRank(label: string, needle: string) {
+  const text = label.toLowerCase();
+  if (text === needle) return 0;
+  let rank: number | undefined;
+  for (
+    let at = text.indexOf(needle);
+    at >= 0;
+    at = text.indexOf(needle, at + 1)
+  ) {
+    if (at === 0) return 1;
+    if (!/[\p{L}\p{N}]/u.test(text[at - 1] ?? "")) return 2;
+    rank = 3;
+  }
+  return rank;
+}
+
 export type SearchInputProps = {
   query: string;
   onQueryChange: (query: string) => void;
@@ -54,15 +72,18 @@ export function SearchChoices({
   const shortcutNumbers = new Map(
     destinations.slice(0, 9).map(({ key }, index) => [key, index + 1]),
   );
-  // Follow a destination's identity, not its index, as relay results arrive.
-  // Clear removed choices immediately so a later reappearance cannot reactivate one.
+  // Typed text selects its first result, so Enter opens it without a pointer.
+  // Follow a destination's identity, not its index, as relay results arrive:
+  // a later row inserted above cannot redirect Enter. When the selected row
+  // leaves, fall back to the first result rather than reviving the old one.
   const [selection, setSelection] = useState({ query, key: "" });
   const valid =
     selection.query === query &&
     destinations.some(({ key }) => key === selection.key);
-  if (selection.query !== query || (selection.key && !valid))
-    setSelection({ query, key: "" });
-  const selected = valid ? selection.key : "";
+  const fallback = query.trim() ? (destinations[0]?.key ?? "") : "";
+  if (!valid && (selection.query !== query || selection.key !== fallback))
+    setSelection({ query, key: fallback });
+  const selected = valid ? selection.key : fallback;
   const optionId = (key: string) => `${id}-${key}`;
   useEffect(() => {
     input.current?.focus();

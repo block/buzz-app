@@ -7,10 +7,11 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -24,6 +25,14 @@ import {
 import type { LiveCallbacks } from "../../features/relay/live";
 import { SearchResults } from "./SearchResults";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+
+// jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -76,6 +85,80 @@ it("opens with a conversation action and recent channels in activity order", asy
     expect(second).toHaveTextContent("older");
     fireEvent.click(action);
     expect(changeScope).toHaveBeenCalledExactlyOnceWith("older");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("ranks typed channel names and selects the best one for Enter", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  // Weak matches come first in list order and exceed the eight-row limit.
+  const names = [
+    ...Array.from({ length: 8 }, (_, index) => `xlar-${index}`),
+    "the-lar",
+    "lar-crew",
+    "lar",
+  ];
+  const discovery = names.flatMap((name, index) => [
+    metadata(relay, name, name, 1700000000 + index),
+    roster(relay, name, [viewer.pubkey]),
+  ]);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="lar"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        currentChannelId="xlar-0"
+        onScopeChange={() => {}}
+        openConversation={open}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    await waitFor(() =>
+      expect(within(channels).getAllByRole("option")).toHaveLength(8),
+    );
+    expect(
+      within(channels)
+        .getAllByRole("option")
+        .slice(0, 4)
+        .map((option) => option.textContent),
+    ).toEqual([
+      expect.stringMatching(/^lar/),
+      expect.stringMatching(/^lar-crew/),
+      expect.stringMatching(/^the-lar/),
+      expect.stringMatching(/^xlar-/),
+    ]);
+    // The scope action follows named results, so it is not selected first.
+    const groups = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(groups.indexOf("This conversation")).toBeGreaterThan(
+      groups.indexOf("Channels"),
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      within(channels).getAllByRole("option")[0]?.id,
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledExactlyOnceWith("lar");
   } finally {
     cleanup();
     owner.dispose();
@@ -146,7 +229,11 @@ it("shows the real read failure, retains conversation choices, and retries to an
     const hit = message(viewer, "crew", "wes-crew exact message", 1700000001);
     await act(async () => wire.next().respond([hit]));
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
-    fireEvent.keyDown(input, { key: "ArrowUp" });
+    // Typed text selects the first result; the late message sits below it.
+    expect(
+      screen.getByRole("option", { name: /^wes-crew(?! exact)/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(
       screen.getByRole("option", { name: /wes-crew exact message/ }),
     ).toHaveAttribute("aria-selected", "true");

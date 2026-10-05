@@ -6,7 +6,7 @@ import { useChannelList } from "../../features/relay/react";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
-import { SearchChoices } from "./SearchChoices";
+import { matchRank, SearchChoices } from "./SearchChoices";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
@@ -97,16 +97,29 @@ export function SearchResults({
         .catch(() => {});
   }, [session, profileKey]);
   const needle = query.trim().toLowerCase().replace(/^#/, "");
-  const matchingChannels = channels
-    .filter((channel) => names.get(channel.id)?.toLowerCase().includes(needle))
-    .slice(0, 8);
+  // Rank before the limit, so an exact name beyond the first eight still shows.
+  // The relay matches public channels itself; keep its matches, ranked last.
+  const byMatch = <T,>(rows: readonly T[], label: (row: T) => string) =>
+    rows
+      .map((row) => ({ row, rank: matchRank(label(row), needle) ?? 4 }))
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ row }) => row);
+  const matchingChannels = byMatch(
+    channels.filter((channel) =>
+      names.get(channel.id)?.toLowerCase().includes(needle),
+    ),
+    (channel) => names.get(channel.id) ?? "",
+  ).slice(0, 8);
   const joinedChannels = matchingChannels.filter(
     (channel) => channel.channelType !== "dm",
   );
   // Joined matches lead; public channels the viewer has not joined fill the group.
-  const unjoinedChannels = publicChannels.channels
-    .filter((channel) => !joinedChannels.some(({ id }) => id === channel.id))
-    .slice(0, Math.max(0, 8 - joinedChannels.length));
+  const unjoinedChannels = byMatch(
+    publicChannels.channels.filter(
+      (channel) => !joinedChannels.some(({ id }) => id === channel.id),
+    ),
+    (channel) => channel.name,
+  ).slice(0, Math.max(0, 8 - joinedChannels.length));
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => ({
@@ -220,9 +233,6 @@ export function SearchResults({
                 { label: "Actions", destinations: pages },
               ]
             : [
-                ...(scopeAction.length
-                  ? [{ label: "This conversation", destinations: scopeAction }]
-                  : []),
                 {
                   label: "Channels",
                   destinations: [...joinedChannels, ...unjoinedChannels].map(
@@ -236,6 +246,10 @@ export function SearchResults({
                     .map(conversationDestination),
                 },
                 { label: "Pages", destinations: pages },
+                // Named destinations lead, so typed text selects one first.
+                ...(scopeAction.length
+                  ? [{ label: "This conversation", destinations: scopeAction }]
+                  : []),
                 {
                   label: "Most relevant",
                   destinations: messages,

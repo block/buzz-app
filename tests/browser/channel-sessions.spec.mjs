@@ -716,7 +716,7 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
         await page
           .getByRole("button", { name: "Toggle fixture navigation" })
           .click();
-      const inset = width > 1000 ? 32 : width > 650 ? 24 : 16;
+      const inset = 16;
       expect(
         await detail.evaluate((element) => ({
           border: getComputedStyle(element).borderTopWidth,
@@ -784,7 +784,7 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       expect(root.y).toBeGreaterThanOrEqual(
         detailHeaderBox.y + detailHeaderBox.height + 16,
       );
-      expect(Math.abs(detailHeaderBox.x - root.x)).toBeLessThan(1);
+      expect(Math.abs(detailHeaderBox.x - box.x - 4)).toBeLessThan(1);
       expect(root.y - title.y - title.height).toBeGreaterThanOrEqual(28);
       expect(root.y - title.y - title.height).toBeLessThanOrEqual(44);
       expect(
@@ -930,9 +930,10 @@ test("header New session selects an agent explicitly, opens the shared thread an
   ).toHaveAttribute("aria-selected", "true");
   await draft.fill("@Fixture member just prose");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("alert")).toContainText(
-    "Select at least one current channel agent",
-  );
+  await expect(
+    page.getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  await expect(draft).toBeEditable();
   expect(
     await page.evaluate(() => window.sessionsFixture.report.published.length),
   ).toBe(0);
@@ -2218,4 +2219,78 @@ test("long Session titles reserve one row for both header actions, including a s
   expect(
     await page.evaluate(() => window.sessionsFixture.report.published),
   ).toEqual([]);
+});
+
+// Browser-only proof: actual header/inset geometry across names, widths and themes.
+// Eligibility permutations remain in the colocated React tests above the transport.
+test("channel identity stays close to its tabs and shared draft aligns to the header grid", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/tests/fixtures/channel-sessions.html");
+  const conversation = page.getByRole("article", { name: "Conversation" });
+  const identity = conversation.locator(".panel-header-label");
+  const channelTab = page.getByRole("tab", { name: "Channel", exact: true });
+  const newSession = conversation.getByRole("button", {
+    name: "New session",
+    exact: true,
+  });
+  for (const width of [390, 740, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      for (const name of [
+        "test",
+        "A deliberately long channel name for shared work",
+      ]) {
+        await page.evaluate(
+          (name) => window.sessionsFixture.renameChannel(name),
+          name,
+        );
+        await expect(identity.getByRole("heading")).toHaveText(name);
+        const [label, tab] = await Promise.all([
+          identity.boundingBox(),
+          channelTab.boundingBox(),
+        ]);
+        expect(tab.x - label.x - label.width).toBeGreaterThanOrEqual(0);
+        expect(tab.x - label.x - label.width).toBeLessThanOrEqual(24);
+        await newSession.click();
+        const draft = page.getByRole("region", { name: "New channel session" });
+        const back = draft.getByRole("button", { name: "Back to Sessions" });
+        const title = draft.getByRole("heading", { name: "New session" });
+        await expect(back).toBeFocused();
+        const [channelTitle, channelIcon, sessionTitle, backIcon] =
+          await Promise.all([
+            identity.getByRole("heading").boundingBox(),
+            identity.locator("svg").boundingBox(),
+            title.boundingBox(),
+            back.locator("svg").boundingBox(),
+          ]);
+        expect(Math.abs(channelTitle.x - sessionTitle.x)).toBeLessThan(1);
+        expect(
+          Math.abs(
+            channelIcon.x +
+              channelIcon.width / 2 -
+              backIcon.x -
+              backIcon.width / 2,
+          ),
+        ).toBeLessThan(1);
+        await expect(title).toHaveCSS("font-size", "16px");
+        await expect(
+          draft.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled();
+        await expect(
+          draft.getByRole("textbox", { name: "Message this session" }),
+        ).toBeEditable();
+        await page.screenshot({
+          path: testInfo.outputPath(
+            `header-grid-${width}-${mode}-${name === "test" ? "short" : "long"}.png`,
+          ),
+        });
+        await back.click();
+        await channelTab.click();
+      }
+    }
+  }
 });

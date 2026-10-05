@@ -1765,3 +1765,20 @@ publication-start failures (one per engine). No browser cases were added or remo
 the existing Share case now proves this combined native-focus handoff as well as
 its retained-draft, exact-recipient and explicit-send contracts. Native/human
 acceptance and broader validation remain separate; no live send or restart ran.
+
+### October 5 feedback checkpoint
+
+Channel identity uses the existing static PanelHeaderLabel instead of a fixed-width
+navigation tab, bringing Channel/Sessions controls closer to the name. Shared
+Session and New session headers align to the current channel-header grid.
+New shared Session Send stays disabled until the draft has an explicitly selected
+known channel agent and every selected recipient is a current member. Cached
+profile, shared agent-choice and roster changes update eligibility; submitting
+rechecks it before the durable claim. Private Sessions retain their existing rules.
+
+Checks for this increment: TypeScript, changed-file Biome, 244 composer/creation
+unit tests and six Chromium/WebKit creation/layout/header-grid cases passed.
+Independent source review found no eligibility blocker. This remains work in
+progress: `/session` accepted-command cleanup and reported unread-entry behavior
+are unresolved; broader browser/native/hosted validation is not established.
+No live messages were sent for these automated checks.

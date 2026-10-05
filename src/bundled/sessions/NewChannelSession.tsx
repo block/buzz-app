@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   ChannelThreadDraftProps,
@@ -58,6 +59,21 @@ function Draft({
   back,
   extensions,
 }: Props) {
+  // Observe existing evidence only; selection does not request another inventory.
+  useSyncExternalStore(session.profiles.subscribe, session.profiles.snapshot);
+  useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+  );
+  useSyncExternalStore(session.channels.subscribeList, session.channels.list);
+  const canSubmit = (draft: MentionDraft) => {
+    try {
+      channelSessionRecipients(session, channelId, draft);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const [initial] = useState(() => {
     try {
       const record = readChannelSessionDraft(scope, channelId);
@@ -429,6 +445,7 @@ function Draft({
         label="Message this session"
         submission={{
           draftKey: channelSessionDraftKey(channelId),
+          canSubmit,
           initialDraft: record?.draft,
           locked: busy || !!record || !!initial.error,
           disabled: !generationReady || busy || !!record || !!initial.error,

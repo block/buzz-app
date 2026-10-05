@@ -25,8 +25,10 @@ import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelSessionCommand } from "../sessions/useChannelSessionCommand";
@@ -1633,24 +1635,15 @@ function ChannelWorkspace({
                 <PanelHeader
                   title={
                     <div className={styles.channelViews}>
-                      <Tabs
-                        variant="navigation"
-                        label="Channel tabs"
-                        showSelection={false}
-                        value={current?.id ?? "channels"}
-                        onValueChange={() => {}}
-                        items={[
-                          {
-                            value: current?.id ?? "channels",
-                            label: current?.name ?? "Channels",
-                            icon:
-                              current?.channelType === "dm" ? (
-                                <ChatCircleIcon size="1rem" />
-                              ) : (
-                                <CurrentChannelIcon size="1rem" />
-                              ),
-                          },
-                        ]}
+                      <PanelHeaderLabel
+                        title={current?.name ?? "Channels"}
+                        icon={
+                          current?.channelType === "dm" ? (
+                            <ChatCircleIcon size="1rem" />
+                          ) : (
+                            <CurrentChannelIcon size="1rem" />
+                          )
+                        }
                       />
                       {directories.tabs}
                     </div>

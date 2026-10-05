@@ -1,3 +1,5 @@
+// Match main.tsx: establish host CSS layers before product styles.
+import "../../src/shared/styles/globals.css";
 import { AppShell } from "../../src/app/shell/AppShell";
 import { createCommunities } from "../../src/features/communities/service";
 import { AccountActionsService } from "../../src/features/account-actions/service";
@@ -27,7 +29,6 @@ import * as sessionsPlugin from "../../src/bundled/sessions/index";
 import { PagesService } from "../../src/features/pages/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { sessionsData } from "./channel-sessions-data";
-import "../../src/shared/styles/globals.css";
 
 const { fixtureSeeds: seeds, fixtureRowCount } = window as unknown as {
   fixtureSeeds?: number[][];

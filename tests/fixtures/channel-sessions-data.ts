@@ -505,6 +505,9 @@ export function sessionsData({
     failThread(value: boolean) {
       failThread = value;
     },
+    removeMember() {
+      receive([roster(authority, "general", [viewer.pubkey], ++revision)]);
+    },
     revoke() {
       denied = true;
       receive([roster(authority, "general", [], ++revision)]);

@@ -1161,7 +1161,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: var(--space-6);
+  gap: var(--space-2);
 }
 .channelViews h2 {
   min-width: 0;

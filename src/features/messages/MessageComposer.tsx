@@ -204,6 +204,7 @@ export type MessageComposerProps = {
     recoveredDraft?: MentionDraft | undefined;
     locked: boolean;
     disabled: boolean;
+    canSubmit?: (draft: MentionDraft) => boolean;
     submit: (draft: MentionDraft) => void;
   };
 };
@@ -964,6 +965,7 @@ function Composer({
       conflict ||
       admission.current ||
       submission?.disabled ||
+      submission?.canSubmit?.(valueRef.current) === false ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       (!draft.trim() && !attachments.items.length) ||
       attachments.blocked ||
@@ -1490,6 +1492,7 @@ function Composer({
               sending ||
               startCommand?.locked ||
               submission?.disabled ||
+              submission?.canSubmit?.(value) === false ||
               (!editing.target && attachments.blocked) ||
               (!draft.trim() &&
                 !attachments.items.length &&

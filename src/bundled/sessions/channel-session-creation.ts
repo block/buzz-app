@@ -15,7 +15,7 @@ export function channelSessionRecipients(
   const recipients = [...new Set(draft.recipients.map((item) => item.pubkey))];
   const known = knownAgentPubkeys(
     session.profiles.snapshot(),
-    session.agentLibrary.snapshot(),
+    session.agentChoices.snapshot(),
   );
   const members = session.channels
     .list()
@@ -23,6 +23,10 @@ export function channelSessionRecipients(
   if (!recipients.some((key) => known.has(key) && members?.includes(key)))
     throw new Error(
       "Select at least one current channel agent with @ before sending. Typed names alone do not notify anyone.",
+    );
+  if (recipients.some((key) => !members?.includes(key)))
+    throw new Error(
+      "Every selected recipient must be a current channel member.",
     );
   return recipients;
 }

@@ -30,7 +30,7 @@ export function SessionConversationHeader({
         ref={button}
         size="toolbar"
         aria-label="Back to Sessions"
-        icon={<ArrowLeftIcon size={24} aria-hidden="true" />}
+        icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
         onClick={back}
       />
       <h2 title={title}>{title}</h2>

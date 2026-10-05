@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -9,6 +9,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { createAgentChoices } from "../../features/agents/choices";
+import { createAgentControl } from "../../features/agents/control";
+import { controlFixture } from "../../features/agents/control-testing";
+import { createAgentLibrary } from "../../features/agents/library";
 import { sessionsData } from "../../../tests/fixtures/channel-sessions-data";
 import { NewChannelSession } from "./NewChannelSession";
 import {
@@ -107,8 +111,8 @@ it("blank or typed @prose stays local; the separate channel draft survives back/
   view.unmount();
   writeView(scope, channelSessionDraftKey("general"), "@Fixture member help");
   const next = h.mount();
-  await send();
-  await screen.findByRole("alert");
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(h.report.published).toHaveLength(0);
   expect(readChannelSessionDraft(scope, "general")).toBeUndefined();
   expect(readView(scope, "draft:general", "")).toBe("ordinary channel draft");
@@ -123,15 +127,15 @@ it("requires an explicit known current agent; selected human and removed agent n
   h.agentHint(false);
   writeView(scope, channelSessionDraftKey("general"), h.selected);
   const view = h.mount();
-  await send();
-  await screen.findByRole("alert");
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(h.report.published).toHaveLength(0);
   view.unmount();
   h.agentHint(true);
   h.revoke();
   h.mount();
-  await send();
-  await screen.findByRole("alert");
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(h.report.published).toHaveLength(0);
 });
 it("default production props record immutable intent, open only the exact accepted root and clear only the new draft", async () => {
@@ -657,7 +661,7 @@ it("generation initialization keeps local editing usable but Send disabled until
   } finally {
     await act(async () => lock.release());
   }
-  await ready();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(h.report.published).toHaveLength(0);
 });
 it("generation persistence failure stays visible and cannot send", async () => {
@@ -742,5 +746,100 @@ it("an opening cannot bind pre-cleanup editor input to a generation advanced whi
   expect(
     readChannelSessionEditorGeneration(scope, "general", h.session.viewer),
   ).toBe(1);
+  expect(h.report.published).toHaveLength(0);
+});
+
+it("tracks restored selection, cached profiles and membership without locking the editor", async () => {
+  const h = await setup();
+  h.agentHint(false);
+  writeView(scope, channelSessionDraftKey("general"), h.selected);
+  h.mount();
+  await act(async () => {});
+  const send = screen.getByRole("button", { name: "Send message" });
+  const editor = screen.getByRole("textbox", { name: "Message this session" });
+  expect(send).toBeDisabled();
+  expect(editor).not.toHaveAttribute("aria-disabled", "true");
+  act(() => h.agentHint(true));
+  expect(send).toBeEnabled();
+  act(() => h.removeMember());
+  expect(send).toBeDisabled();
+  act(() => h.regrant());
+  expect(send).toBeEnabled();
+  act(() => h.agentHint(false));
+  expect(send).toBeDisabled();
+  act(() => h.agentHint(true));
+  expect(send).toBeEnabled();
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `Remove mention Fixture member ${h.member}`,
+    }),
+  );
+  expect(send).toBeDisabled();
+  fireEvent.keyDown(editor, { key: "Enter" });
+  const form = editor.closest("form");
+  assert(form);
+  fireEvent.submit(form);
+  await act(async () => {});
+  expect(readChannelSessionDraft(scope, "general")).toBeUndefined();
+  expect(h.report.published).toHaveLength(0);
+});
+
+it("accepts a ready native-only identity without a public agent profile and reacts to source retirement", async () => {
+  const h = await setup();
+  h.agentHint(false);
+  h.missingAgentProfile(true);
+  const fixture = controlFixture();
+  fixture.agent.pubkey = h.member;
+  const native = createAgentControl(fixture.host);
+  const library = createAgentLibrary(undefined);
+  const lifetime = new AbortController();
+  const choices = createAgentChoices({
+    scope: `https://relay.example.test:${h.session.viewer}`,
+    library: library.queries,
+    native,
+    signal: lifetime.signal,
+  });
+  writeView(scope, channelSessionDraftKey("general"), h.selected);
+  try {
+    render(
+      <NewChannelSession
+        {...h.props}
+        session={{ ...h.session, agentChoices: choices }}
+      />,
+    );
+    await act(async () => {});
+    const send = screen.getByRole("button", { name: "Send message" });
+    await ready();
+    expect(send).toBeEnabled();
+    act(() => lifetime.abort());
+    expect(send).toBeDisabled();
+    expect(h.report.published).toHaveLength(0);
+  } finally {
+    lifetime.abort();
+    native.dispose();
+    library.dispose();
+  }
+});
+
+it("rejects a mixed member-agent and outside recipient before claiming durable intent, including form bypass", async () => {
+  const h = await setup();
+  const draft = mentionDraft({
+    text: "@Fixture member @Outside help",
+    recipients: [
+      ...h.selected.recipients,
+      { pubkey: "ab".repeat(32), name: "Outside", start: 16, end: 24 },
+    ],
+  });
+  writeView(scope, channelSessionDraftKey("general"), draft);
+  h.mount();
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  const editor = screen.getByRole("textbox", { name: "Message this session" });
+  const form = editor.closest("form");
+  assert(form);
+  fireEvent.submit(form);
+  fireEvent.keyDown(editor, { key: "Enter" });
+  await act(async () => {});
+  expect(readChannelSessionDraft(scope, "general")).toBeUndefined();
   expect(h.report.published).toHaveLength(0);
 });

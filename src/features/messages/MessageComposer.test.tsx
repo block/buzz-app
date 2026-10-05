@@ -2438,6 +2438,33 @@ it.each(["ready", "failed", "unmounted"])(
   },
 );
 
+it("checks the actual submission draft for button, Enter and form submission without disabling editing", () => {
+  const submit = vi.fn();
+  const canSubmit = vi.fn((draft) => draft.text === "ready");
+  const h = mount({
+    submission: {
+      draftKey: "validated-session",
+      initialDraft: "not ready",
+      locked: false,
+      disabled: false,
+      canSubmit,
+      submit,
+    },
+  });
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+  h.submit();
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(submit).not.toHaveBeenCalled();
+  h.fill("ready");
+  expect(send).toBeEnabled();
+  fireEvent.click(send);
+  expect(submit).toHaveBeenCalledWith(
+    expect.objectContaining({ text: "ready", recipients: [] }),
+  );
+});
+
 it("keeps retry submission available while a new-session draft is locked", () => {
   const submit = vi.fn();
   const h = mount({

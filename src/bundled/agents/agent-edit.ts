@@ -81,7 +81,8 @@ export function agentEdit(
 ): AgentEdit {
   if (!modelDiscovery && !draft.name.trim())
     throw new Error("Enter an agent name.");
-  // Native refuses harness settings on a plugin agent: it has no process.
+  // Native refuses harness settings on a plugin agent: it has no process. Its
+  // environment carries only the secrets its type declared.
   if (draft.plugin)
     return {
       name: draft.name,
@@ -90,7 +91,7 @@ export function agentEdit(
       sessionPolicy: null,
       workspace: "",
       harness: { command: "", args: [], model: "", provider: "" },
-      environment: {},
+      environment: { ...draft.environment },
       plugin: draft.plugin,
     };
   if (!draft.command.trim()) throw new Error("Enter a harness executable.");

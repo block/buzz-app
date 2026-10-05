@@ -1027,17 +1027,21 @@ owner has joined, plus the global routes. Replayed history, finite reads and loc
 unsent intent never run it.
 
 `run` receives the event, the route's channel when known, the config, a signal and
-`agent`: `{ id, pubkey, name, owner, publish }`. It receives no key, session or UI
-object.
+`agent`: `{ id, pubkey, name, owner, publish, secret }`. It receives no key, session
+or UI object.
 
 - The agent's own events are skipped. The owner's events and other agents' events
   are input.
-- Each agent sees an event id once (the last 512 ids), runs one event at a time,
-  queues at most 32, and runs at most 60 times per minute. Excess matches are
-  counted as skipped.
-- A run has 30 seconds (`timeoutMs` on the type overrides). `signal` aborts on
-  timeout, Stop, save, delete, plugin disable or replacement, and when the session is
-  replaced. `agent.publish` rejects after any of those except timeout.
+- Each agent sees an event id once (the last 512 ids), runs one event at a time
+  unless its type sets `concurrency` (1 to 16 runs in progress per agent, started in
+  arrival order), queues at most 32, and runs at most 60 times per minute. Excess
+  matches are counted as skipped. Agents never wait on each other.
+- A run has 30 seconds (`timeoutMs` on the type overrides). It ends when `run`
+  settles, on timeout, Stop, save, delete, plugin disable or replacement, and when
+  the session is replaced. `signal` aborts at that moment.
+- `agent` is made for one run. `agent.publish` and `agent.secret` reject once that
+  run has ended, so a function that ignores `signal` and outlives its deadline cannot
+  act while the next run is in progress.
 - A thrown error or rejection is logged and counted; it does not stop the agent or
   affect others. The agent's screen shows run, failure and skip counts, the last
   failure, and the subscription in force.
@@ -1047,15 +1051,31 @@ object.
 its key from the credential store, signs the event with the owner's `auth` tag
 attached, and posts it to the community's `/events` endpoint with NIP-98, the same
 route agent profiles use. Only kinds 9 (message), 40003 (edit), 7 (reaction) and 5
-(deletion) are signed. It resolves to the accepted event's `id` and `created_at`;
-edits are ordered by `created_at` in whole seconds, so a function that edits a
-message repeatedly spaces its edits at least a second apart. The key never enters the
-WebView. The owner's socket is not used, because the relay accepts an event only
-from the identity that authenticated the connection.
+(deletion) are signed. It resolves to the accepted event's `id` and `created_at`.
+The key never enters the WebView. The owner's socket is not used, because the relay
+accepts an event only from the identity that authenticated the connection.
+
+A run publishes whole messages. Do not publish a message and then edit it to show
+text as it is written: each edit is a relay event every reader receives.
 
 The community applies its normal rules to the agent as author: it must be a member
 of a private channel to post there. Creating an agent does not join it to any
 channel, so an agent can be delivered events from channels it cannot post to.
+
+**Secrets.** A type lists the write-only values it needs:
+`secrets: [{ name: "API_KEY", label: "Provider API key", optional?: true }]`. The
+host renders each under `Configure` as a password field that never shows a saved
+value, refuses to save while a required one is missing, and stores what was typed
+in the agent's environment, where a harness agent's API keys already live. A name
+has letters, digits and underscores and must be accepted by the native environment
+rules, which reserve names such as `BUZZ_PRIVATE_KEY`. Secrets are not part of
+`config`, so `Configure` and the control snapshot cannot read them.
+
+`agent.secret(name)` resolves to the saved value. It rejects for a name the type did
+not declare and when nothing is saved. The value then crosses into the WebView for
+the run, so this hides a key from forms and snapshots but not from other enabled
+plugins. The stronger design keeps the value in native, which adds it to the
+outgoing request; that is not built.
 
 Known limitations.
 

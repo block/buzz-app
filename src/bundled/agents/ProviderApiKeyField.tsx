@@ -8,19 +8,35 @@ import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 /** The same write-only provider key input for agent and default settings. */
 export function ProviderApiKeyField({
   apiKey,
+  ...props
+}: Omit<Parameters<typeof SecretField>[0], "label" | "noun"> & {
+  apiKey: { label: string; env: string };
+}) {
+  return (
+    <SecretField label={`${apiKey.label} API key`} noun="key" {...props} />
+  );
+}
+
+/** A write-only input: the saved value is never shown, only whether one exists. */
+export function SecretField({
+  label,
+  noun,
   value,
   saved,
   disabled,
   emptyPlaceholder,
   onChange,
 }: {
-  apiKey: { label: string; env: string };
+  label: string;
+  /** What the reveal button and placeholder call the value. */
+  noun: "key" | "value";
   value: string | null | undefined;
   saved: boolean;
   disabled: boolean;
   emptyPlaceholder: string;
   onChange(value: string): void;
 }) {
+  const shown = noun === "key" ? "API key" : label;
   const [revealed, setRevealed] = useState(false);
   const typed = !!value;
   // Saving, discarding, or removing an environment patch may clear the input
@@ -29,12 +45,12 @@ export function ProviderApiKeyField({
     if (!typed) setRevealed(false);
   }, [typed]);
   return (
-    <Field label={`${apiKey.label} API key`}>
+    <Field label={label}>
       <InputGroup
         trailing={
           typed ? (
             <IconButton
-              aria-label={revealed ? "Hide API key" : "Show API key"}
+              aria-label={revealed ? `Hide ${shown}` : `Show ${shown}`}
               icon={
                 revealed ? (
                   <EyeSlashIcon size={16} aria-hidden="true" />
@@ -59,7 +75,7 @@ export function ProviderApiKeyField({
             value === null
               ? "Will remove on save"
               : saved
-                ? "Saved key unchanged"
+                ? `Saved ${noun} unchanged`
                 : emptyPlaceholder
           }
           onChange={(event) => {

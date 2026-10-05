@@ -3310,5 +3310,47 @@ while :; do /bin/sleep 0.1; done
     );
 }
 
+#[test]
+fn plugin_secrets_are_saved_write_only_and_read_only_while_the_agent_is_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = agent(dir.path());
+    saved.workspace = String::new();
+    saved.harness.command = String::new();
+    saved.harness.model = String::new();
+    saved.harness.provider = String::new();
+    saved.plugin = Some(crate::PluginRuntime {
+        r#type: "example/assistant".into(),
+        config: json!({}),
+    });
+    saved.environment = BTreeMap::from([("apiKey".into(), "sk-test".into())]);
+    saved.validate().unwrap();
+    let mut reserved = saved.clone();
+    reserved
+        .environment
+        .insert("BUZZ_PRIVATE_KEY".into(), "x".into());
+    assert!(reserved.validate().is_err());
+
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    let view = controller.snapshot().unwrap().agents.remove(0);
+    assert_eq!(view.harness.environment_keys, ["apiKey"]);
+    assert!(!serde_json::to_string(&view).unwrap().contains("sk-test"));
+    // Off: the type's function is not running, so nothing may read the value.
+    assert!(controller.plugin_secret(&saved.id, "apiKey").is_err());
+    controller.action(&saved.id, Action::Start).unwrap();
+    assert_eq!(
+        controller.plugin_secret(&saved.id, "apiKey").unwrap(),
+        "sk-test"
+    );
+    assert!(controller.plugin_secret(&saved.id, "other").is_err());
+    assert!(controller.plugin_secret("missing", "apiKey").is_err());
+}
+
 #[cfg(target_os = "macos")]
 mod protection_integration;

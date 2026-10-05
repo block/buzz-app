@@ -13,6 +13,7 @@ import {
   AgentTypesService,
   parseSubscription,
   type AgentDelivery,
+  type AgentType,
 } from "./service";
 
 const viewer = "a".repeat(64);
@@ -90,6 +91,7 @@ function fakeControl(agents: AgentView[], status = "ready") {
   let state = { status, data: { agents }, busy: false };
   const refresh = vi.fn(async () => {});
   const publishAs = vi.fn(async () => ({ id: "f".repeat(64), created_at: 2 }));
+  const secret = vi.fn(async (_id: string, name: string) => `value of ${name}`);
   const control = {
     snapshot: () => state as unknown as AgentControlState,
     subscribe(listener: () => void) {
@@ -98,10 +100,12 @@ function fakeControl(agents: AgentView[], status = "ready") {
     },
     refresh,
     publishAs,
+    secret,
   } as unknown as AgentControl;
   return {
     control,
     publishAs,
+    secret,
     refresh,
     set(agents: AgentView[]) {
       state = { ...state, data: { agents } };
@@ -124,7 +128,7 @@ function setup(agents: AgentView[], status?: string) {
   });
   const run =
     vi.fn<(delivery: AgentDelivery<Config>) => void | Promise<void>>();
-  const register = () =>
+  const register = (extra: Partial<AgentType<Config>> = {}) =>
     plugin.agentTypes.register<Config>({
       id: "echo",
       title: "Echo",
@@ -136,6 +140,7 @@ function setup(agents: AgentView[], status?: string) {
         ...(config.channel ? { "#h": [config.channel] } : {}),
       }),
       run,
+      ...extra,
     });
   return { ctx, fake, native, service, run, register };
 }
@@ -170,6 +175,10 @@ it("runs each enabled agent of a type as its own identity, from its own config",
   ]);
   expect(Object.keys(service.activity()).sort()).toEqual(["bot-1", "bot-2"]);
   const message = event("m1");
+  // A run publishes while it is in progress.
+  run.mockImplementation(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "pong" });
+  });
   // The owner's messages are input; the agent's own are not.
   fake.emit({
     events: [message, event("m2", viewer), event("own", bot)],
@@ -191,8 +200,8 @@ it("runs each enabled agent of a type as its own identity, from its own config",
     "owner",
     "pubkey",
     "publish",
+    "secret",
   ]);
-  await delivery?.agent.publish({ kind: 9, content: "pong" });
   expect(native.publishAs).toHaveBeenCalledWith("bot-1", {
     kind: 9,
     content: "pong",
@@ -304,4 +313,91 @@ it("accepts a subscription as plain filter data only", () => {
     { when: () => true },
   ])
     expect(() => parseSubscription(subscription)).toThrow();
+});
+
+it("ends a run's hold on its agent when the run ends", async () => {
+  const { ctx, fake, native, service, run, register } = setup([
+    agent({ word: "x" }),
+  ]);
+  register({ timeoutMs: 20 });
+  const deliveries: AgentDelivery<Config>[] = [];
+  // The first run ignores its signal and outlives its deadline.
+  run.mockImplementation((delivery) => {
+    deliveries.push(delivery);
+    return deliveries.length === 1 ? new Promise<void>(() => {}) : undefined;
+  });
+  fake.emit({ events: [event("r1")], channelId: "c1" });
+  await vi.waitFor(() =>
+    expect(service.activity()["bot-1"]).toMatchObject({ errors: 1 }),
+  );
+  expect(deliveries[0]?.signal.aborted).toBe(true);
+  // The queue has moved on, so the timed-out function may not act beside the next run.
+  fake.emit({ events: [event("r2")], channelId: "c1" });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  for (const delivery of deliveries) {
+    await vi.waitFor(() => expect(delivery.signal.aborted).toBe(true));
+    await expect(
+      delivery.agent.publish({ kind: 9, content: "late" }),
+    ).rejects.toThrow("This run has ended");
+    await expect(delivery.agent.secret("API_KEY")).rejects.toThrow(
+      "This run has ended",
+    );
+  }
+  expect(native.publishAs).not.toHaveBeenCalled();
+  expect(native.secret).not.toHaveBeenCalled();
+  await ctx.fiber.dispose();
+});
+
+it("runs up to the type's concurrency at once and the rest in order", async () => {
+  const { ctx, fake, run, register } = setup([agent({ word: "x" })]);
+  register({ concurrency: 2 });
+  const ends: (() => void)[] = [];
+  run.mockImplementation(
+    () => new Promise<void>((resolve) => ends.push(resolve)),
+  );
+  fake.emit({ events: [event("p1"), event("p2"), event("p3")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await Promise.resolve();
+  expect(run).toHaveBeenCalledTimes(2);
+  ends[0]?.();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls[2]?.[0].event.id).toBe(event("p3").id);
+  await ctx.fiber.dispose();
+});
+
+it("hands a run only the secrets its type declares", async () => {
+  const { ctx, fake, native, run, register } = setup([agent({ word: "x" })]);
+  register({ secrets: [{ name: "apiKey", label: "API key" }] });
+  run.mockReturnValue(new Promise<void>(() => {}));
+  fake.emit({ events: [event("k1")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const identity = run.mock.calls[0]?.[0].agent;
+  await expect(identity?.secret("apiKey")).resolves.toBe("value of apiKey");
+  expect(native.secret).toHaveBeenCalledWith("bot-1", "apiKey");
+  await expect(identity?.secret("PATH")).rejects.toThrow("no secret named");
+  expect(native.secret).toHaveBeenCalledTimes(1);
+  // Stopped: the function is no longer the agent.
+  native.set([agent({ word: "x" }, { enabled: false, status: "stopped" })]);
+  await expect(identity?.secret("apiKey")).rejects.toThrow();
+  expect(native.secret).toHaveBeenCalledTimes(1);
+  await ctx.fiber.dispose();
+});
+
+it("rejects a type whose concurrency or secrets are malformed", async () => {
+  const { ctx, register } = setup([]);
+  for (const extra of [
+    { concurrency: 0 },
+    { concurrency: 1.5 },
+    { concurrency: 17 },
+    { secrets: [{ name: "api-key", label: "API key" }] },
+    { secrets: [{ name: "apiKey", label: "" }] },
+    {
+      secrets: [
+        { name: "apiKey", label: "One" },
+        { name: "apiKey", label: "Two" },
+      ],
+    },
+  ] as Partial<AgentType<Config>>[])
+    expect(() => register(extra)).toThrow();
+  await ctx.fiber.dispose();
 });

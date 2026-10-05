@@ -79,17 +79,52 @@ fn leave_requests_sign_only_the_protected_empty_shape() {
     ] {
         assert!(validate_event("https://relay.test", &rejected).is_err());
     }
-    // Member commands stay owner/admin-only on the broker; native signs none.
-    assert!(validate_event(
-        "https://relay.test",
-        &EventTemplate {
-            kind: 9031,
-            created_at: 1,
-            content: "".into(),
-            tags: vec![vec!["p".into(), "a".repeat(64)]],
-        }
-    )
-    .is_err());
+}
+
+#[test]
+fn member_commands_sign_only_the_broker_shape() {
+    let command = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
+        kind,
+        created_at: 1,
+        content: content.into(),
+        tags: tags
+            .iter()
+            .map(|tag| tag.iter().map(|value| value.to_string()).collect())
+            .collect(),
+    };
+    let key = "a".repeat(64);
+    let p: &[&str] = &["p", &key];
+    for accepted in [
+        command(9030, "", &[p, &["role", "member"]]),
+        command(9030, "", &[p, &["role", "admin"]]),
+        command(9031, "", &[p]),
+        command(9032, "", &[p, &["role", "admin"]]),
+        command(9032, "", &[p, &["role", "member"]]),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    let upper = "A".repeat(64);
+    for rejected in [
+        // Owner is never granted, and add/role must name a role.
+        command(9030, "", &[p, &["role", "owner"]]),
+        command(9032, "", &[p, &["role", "owner"]]),
+        command(9030, "", &[p]),
+        command(9032, "", &[p]),
+        // Remove carries the target only.
+        command(9031, "", &[p, &["role", "member"]]),
+        command(9030, "note", &[p, &["role", "member"]]),
+        command(9031, "", &[&["p", &upper]]),
+        command(9031, "", &[&["p", &key[1..]]]),
+        command(9031, "", &[&["p", &key, "wss://relay.test"]]),
+        command(9031, "", &[p, p]),
+        command(9031, "", &[&["role", "member"], p]),
+        command(9030, "", &[p, &["role", "member"], &["h", "channel"]]),
+        command(9031, "", &[]),
+        // Workspace profile edits stay outside this surface.
+        command(9033, "", &[]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
 }
 
 fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, String)>) {

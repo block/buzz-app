@@ -77,9 +77,13 @@ owns or administers the selected community and this build can mint invites,
 with the role read from the relay-signed roster through the selected
 community's existing session rather than a further session request. The
 Membership settings card applies the same role gate in both development and
-native builds. Native owners and admins can read the relay-signed member list
-and mint invite links, but direct additions and per-member actions remain absent:
-the packaged adapter does not carry the broker's `member` route. Copy,
+native builds. Owners and admins in both builds read the relay-signed member
+list, mint invite links, add members directly and change or remove members. Each
+change is one NIP-43 command (kind 9030 add, 9031 remove, 9032 role) signed by
+the viewer: the broker signs it in development, and the native host signs only
+that exact shape and posts it to the relay's `/events`. The relay alone decides
+authority; the client offers only the actions its matrix would allow, shows its
+listed refusals verbatim and re-reads the roster after an accepted change. Copy,
 Community settings and Leave work on inactive communities without opening their
 sessions. Leave asks for confirmation, then sends a signed NIP-43 leave request
 (kind 28936) to that community's relay before the device forgets it. Three

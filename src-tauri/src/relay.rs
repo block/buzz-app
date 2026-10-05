@@ -225,6 +225,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
             return Err("A leave request carries no content or other tags".into());
         }
+    } else if matches!(event.kind, 9030..=9032) {
+        if !valid_member_command(event) {
+            return Err("Invalid member change".into());
+        }
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
@@ -232,6 +236,19 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         return Err("This event is not supported by the packaged relay connection".into());
     }
     Ok(())
+}
+
+/** Match the broker's NIP-43 member command shape (`memberCommand` in
+ * `src/features/communities/admin-protocol.ts`); the relay decides authority. */
+fn valid_member_command(event: &EventTemplate) -> bool {
+    let target = |tag: &[String]| matches!(tag, [name, key] if name == "p" && hex_key(key));
+    let role = |tag: &[String]| matches!(tag, [name, role] if name == "role" && (role == "admin" || role == "member"));
+    event.content.is_empty()
+        && match (event.kind, event.tags.as_slice()) {
+            (9031, [p]) => target(p),
+            (9030 | 9032, [p, r]) => target(p) && role(r),
+            _ => false,
+        }
 }
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.

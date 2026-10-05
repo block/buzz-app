@@ -8,6 +8,7 @@ import {
   nativeRelaySigner,
 } from "../relay/native";
 import { leaveRefusal, leaveRequestTemplate } from "./leave-protocol";
+import { adminReason, memberCommand } from "./admin-protocol";
 import { readRelayLibrary } from "../agents/relay-library";
 import { eventDto } from "../relay/events";
 import { readApiFailure } from "../relay/http-admission";
@@ -234,6 +235,19 @@ export async function nativeCommunityRequest(
       pubkey: input.pubkey,
     });
     return { auth };
+  }
+  if (route === "member") {
+    // The relay decides each change; only its allowed refusals come back verbatim.
+    const event = await nativeRelaySigner(community).signEvent(
+      memberCommand(body),
+    );
+    const result = await readResponse(
+      await nativeRelayRequest(community, "/events", event, signal),
+      adminReason,
+    );
+    if (result.event_id !== event.id || typeof result.accepted !== "boolean")
+      throw new Error("Member change could not be confirmed");
+    return result;
   }
   if (route === "leave") {
     // The membership refusals come back verbatim so the caller can tell an

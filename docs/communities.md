@@ -121,19 +121,19 @@ communities opened until app disposal. This slice does not add background evicti
 or change in-flight delivery ownership. A failed session remains retryable without
 replacing the shell or its siblings.
 
-When a packaged build has a configured BuilderLab identity service, selected
-native startup first checks the trusted community's NIP-11 advertisement. A required community
+When a packaged build has a configured identity service, selected native startup
+checks the selected community's NIP-11 requirement. A required community
 pauses before relay connection and offers an explicit browser sign-in with
-cancel/retry actions; a saved, revalidated shared BuilderLab session resumes the
+cancel/retry actions; a saved, revalidated shared session resumes the
 connection.
 Transport or advertisement-check failures remain retryable checks and do not
 open the browser until the native gate confirms that sign-in is required.
 Switching communities or retiring a join attempt fences late browser results.
-Profile settings can clear that shared native enterprise session locally for the
-configured BuilderLab profile and service. This removes the credential shared
-with the CLI, so other clients using that profile and service may need to sign
-in again. It does not remove the Nostr identity or memberships or revoke remote
-access. Disconnecting a community does not clear this shared sign-in.
+Profile settings can clear that shared native enterprise session locally for
+the configured BuilderLab profile and service. This removes the credential
+shared with the CLI, so other clients using that profile and service may need to
+sign in again. It does not remove the Nostr identity or memberships or revoke
+remote access. Disconnecting a community does not clear this shared sign-in.
 Public relay discovery and ordinary relays retain their existing behavior.
 App disposal closes all owned contexts and their subscriptions.
 

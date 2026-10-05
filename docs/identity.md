@@ -94,13 +94,27 @@ Buzz relies on the validated expiry returned by the service. This extraction
 updates the native app owner only; the separate JavaScript path tracked by #581
 and broader loopback auth-server consolidation remain outside its scope.
 
+Each relay's NIP-11 limitation decides whether it requires federated identity;
+there is no build-time relay allowlist. NIP-11 issuer metadata describes the
+requirement and never chooses where Buzz sends session credentials. Only the
+configured identity service receives them. Ordinary relays continue without
+badge issuance. Required sign-in opens the configured identity service in the
+external browser, returns through a nonce-bound loopback
+callback, and exchanges the code with a SHA-256 handoff verifier. The native
+host validates the returned session with that service. Restore checks also use
+the configured service; transient network failures preserve the saved
+credential, while invalid or inconsistent checks invalidate only the matching
+BuilderLab item when its configured store permits. JavaScript receives status
+and expiry only, never the session secret.
+
 Profile settings can clear the shared saved enterprise sign-in for the
 configured BuilderLab profile and service. This deletes the credential shared
 with `bl`, so other clients using that profile and service may need to sign in
 again. It is local sign-out only: it does not revoke remote access or remove the
 Nostr identity or community memberships. Disconnecting a community does not
-clear this shared sign-in. The native session is shared across communities
-using that profile and service; it is not a per-community token store.
+clear this shared sign-in.
+The native session is shared across communities using that profile and service;
+it is not a per-community token store.
 
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
@@ -143,29 +157,16 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter.
-
-Each relay's NIP-11 limitation decides whether it requires federated identity;
-there is no build-time relay allowlist. NIP-11 issuer metadata describes the
-requirement and never chooses where Buzz sends session credentials. Only the
-configured identity service receives them. Ordinary relays continue without
-badge issuance. Required sign-in opens the configured identity service in the
-external browser, returns through a nonce-bound loopback callback, and exchanges
-the code with a SHA-256 handoff verifier. The native host validates the returned
-session with that service. Restore checks also use the configured service;
-transient network failures preserve the saved credential, while invalid or
-inconsistent checks invalidate only the matching BuilderLab item when its
-configured store permits. JavaScript receives status and expiry only, never the
-session secret.
-
-For relays whose NIP-11 requires federated identity, the native host obtains a
-NIP-FI assertion from the configured identity service (session in
-`Authorization: Bearer`, a host-signed NIP-98 proof in `Nostr-Authorization`)
+and other broker-only helpers are not claimed by this adapter. For relays whose
+NIP-11 requires federated identity, the
+native host obtains a NIP-FI assertion from the configured identity service
+(session in `Authorization: Bearer`, a host-signed NIP-98 proof in
+`Nostr-Authorization`)
 and sends it as `Nostr-Federated-Identity` on protected relay HTTP, upload and
 media requests. The live socket for those relays is a native WebSocket
 (`relay_socket.rs`) that fetches a fresh assertion and sends the same header
-itself, so neither the assertion nor the session token reaches JavaScript. A
-relay requiring federated identity always needs the assertion. With no usable
+itself, so neither the assertion nor the session token reaches JavaScript.
+A relay requiring federated identity always needs the assertion. With no usable
 session (never saved, or removed after an earlier refusal), socket setup and
 protected HTTP require sign-in instead of falling back to an unbadged request.
 A refusal during media fetch is mapped to a plain HTTP 401 by the native handler.
@@ -176,7 +177,8 @@ only while the refused token is still the current session: a refusal of a
 session already removed or replaced is retried, and never cancels or undoes a
 newer login, including one still in the browser. Native refuses the token in
 one short step with the login state (so a session check running at the same
-moment cannot adopt it again) before it asks secure storage to remove it.
+moment cannot adopt it again) before it asks the configured BuilderLab store to
+remove the credential.
 Every use of the token is admitted under the same lock as the refusal: a
 session-status request before it is sent, a badge request after identity access
 and signing but before it is sent, and a badge before it is reused, cached or
@@ -184,9 +186,10 @@ returned. Once the refusal returns, no new use is admitted and no badge of that
 session is accepted or returned. A request or badge admitted before the refusal
 may still go out and finish, since admission comes before the request reaches
 the wire. The refusal is recorded in
-`enterprise-refused-sessions` in the app data directory, one file per refused
-token digest under the keychain service's directory, before removal starts. A
-record is taken out only once removal succeeds or a new login replaces that
+`enterprise-refused-sessions` under app data, in a service-specific directory
+with one file per refused token's SHA-256 digest, before credential removal
+starts. These non-secret journals are separate from the BuilderLab credential
+store. A record is taken out only once removal succeeds or a new login replaces that
 session, so a restart while removal waits or after it fails keeps the stored
 session refused, and other scopes and Buzz processes sharing the directory
 keep their records. Updates are not atomic across processes: a prune already
@@ -196,8 +199,8 @@ or records cannot be read at startup, stored sessions are not used until a new
 login in that scope, which means signing in again after every restart while
 the records stay unreadable. Two cases are not covered after a restart: Buzz
 quits after the refusal arrives but before its record reaches disk (removal has
-not started), or both recording the refusal and removing the session from
-secure storage fail. In either case the stored session reads as saved again
+not started), or both recording the refusal and deleting the session from its
+configured BuilderLab store fail. In either case the stored session reads as saved again
 and can be sent to the adapter, which refuses it again. A removal that fails,
 a refusal that cannot be recorded, or an outdated record that cannot be
 removed is shown in the sign-in prompt when it settles, without delaying the
@@ -212,8 +215,8 @@ waiting for a sign-out already in progress, and a background community's
 prompt does not replace it. A login in progress is never canceled by it. 403 `authorization_denied` keeps the session and stops that relay with
 access denied. Every other refusal, and a malformed badge response, keeps the
 session, stops that relay and shows the error. Only 429, 503, network
-failures and a native connect that misses its 30 s bound (which covers secure
-storage, signing, the badge request and the handshake) use the bounded
+failures and a native connect that misses its 30 s bound (which covers BuilderLab
+credential access, signing, the badge request and the handshake) use the bounded
 reconnect backoff.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.

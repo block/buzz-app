@@ -634,6 +634,7 @@ mod member_administration_tests {
         .unwrap();
         let app = mock_builder()
             .manage(IdentityHost::fixture())
+            .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
             .invoke_handler(crate::commands())
             .build(crate::app_context())
             .unwrap();

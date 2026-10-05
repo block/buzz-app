@@ -60,10 +60,10 @@ const peerClose = (code: number) =>
   code >= 4900 && code <= 4999 ? 1006 : code;
 
 /**
- * A relay socket for the native app. Trusted enterprise relays connect through
- * the native socket, which sends the `Nostr-Federated-Identity` badge; every
- * other relay keeps the webview socket. Emulates the subset of `WebSocket`
- * that `subscribeRelayTraffic` uses.
+ * A relay socket for the native app. Relays requiring federated identity
+ * connect through the native socket, which sends the
+ * `Nostr-Federated-Identity` badge; every other relay keeps the webview socket.
+ * Emulates the subset of `WebSocket` that `subscribeRelayTraffic` uses.
  */
 export function nativeRelaySocket(
   url: string,

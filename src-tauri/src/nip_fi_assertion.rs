@@ -1,9 +1,9 @@
-//! Relay badges (NIP-FI assertions) for trusted enterprise relays.
+//! Relay badges (NIP-FI assertions) for relays requiring federated identity.
 //!
-//! The adapter issues a short-lived assertion for the person's own key, proved
-//! with a NIP-98 event signed through `IdentityHost`. Relay HTTP reuses a badge
-//! until shortly before expiry; each WebSocket connection asks for a fresh one
-//! so a revoked person is caught at the next reconnect.
+//! The configured identity service issues a short-lived assertion for the
+//! person's own key, proved with a NIP-98 event signed through `IdentityHost`.
+//! Relay HTTP reuses a badge until shortly before expiry; each WebSocket
+//! connection asks for a fresh one so a revoked person is caught at reconnect.
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
@@ -31,7 +31,7 @@ pub(crate) const ACCESS_DENIED: &str = "Enterprise access to this relay was deni
 pub(crate) const REFUSED: &str = "Relay badge was refused";
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
 const ASSERTION_PATH: &str = "/v1/identity/assertions";
-/// The enterprise adapter contract caps assertion lifetime at five minutes.
+/// The identity service contract caps assertion lifetime at five minutes.
 const MAX_LIFETIME: u64 = 300;
 /// Refresh this long before expiry so a request or handshake never carries a
 /// badge that lapses in flight.
@@ -331,7 +331,7 @@ impl RelayAssertions {
     }
 
     /// Adds the relay badge to a protected relay HTTP request when the relay
-    /// is a trusted enterprise relay and an enterprise session is saved.
+    /// requires federated identity and a shared session is saved.
     pub(crate) async fn attach(
         &self,
         identity: &IdentityHost,

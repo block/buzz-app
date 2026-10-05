@@ -1,6 +1,7 @@
-//! The live WebSocket for trusted enterprise relays. Rust fetches the relay
-//! badge, sends it in the upgrade request and owns the stream, so the badge
-//! never reaches JavaScript and every connection is released when it ends.
+//! The live WebSocket for relays whose NIP-11 requirement needs identity. Rust
+//! fetches the relay badge, sends it in the upgrade request and owns the stream,
+//! so the badge never reaches JavaScript and every connection is released when
+//! it ends.
 use std::{
     collections::HashMap,
     sync::{
@@ -235,8 +236,8 @@ pub(crate) struct OpenSocket {
     expires_at: u64,
 }
 
-/// Connects to a trusted enterprise relay with a fresh badge. `None` means the
-/// relay needs no badge and the webview socket should be used.
+/// Connects to a relay requiring federated identity with a fresh badge. `None`
+/// means the relay needs no badge and the webview socket should be used.
 #[tauri::command]
 pub(crate) async fn relay_socket_connect(
     identity: tauri::State<'_, IdentityHost>,

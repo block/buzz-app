@@ -26,6 +26,7 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+
 mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
@@ -464,6 +465,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_run,
         title_bar_double_click,
         notification_show,
+        #[cfg(target_os = "macos")]
+        notifications::macos::notification_permission_state,
+        #[cfg(target_os = "macos")]
+        notifications::macos::request_notification_access,
         deep_link_take,
         deep_link_watch,
         dock_permission,
@@ -498,6 +503,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            notifications::macos::init();
             deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.

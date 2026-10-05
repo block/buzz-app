@@ -1037,6 +1037,46 @@ it("puts the earlier choice for typed text first, unless another name is exact",
   }
 });
 
+it("puts a remembered public channel first, even past eight joined matches", async () => {
+  localStorage.clear();
+  recordChoice(usage, "wo", "channel:team-work");
+  const joined = Array.from({ length: 8 }, (_, n) => `work-${n + 1}`);
+  const owner = usageSession(joined, ["team-work"]);
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="wo"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[
+          {
+            key: "Workflows",
+            label: "Workflows",
+            icon: ChatCircleIcon,
+            run() {},
+          },
+        ]}
+        openConversation={() => {}}
+        usageScope={usage}
+      />,
+    );
+    // The group leads because of the remembered row, so that row leads it.
+    await waitFor(() => expect(optionNames("Channels")[0]).toBe("team-work"));
+    expect(optionNames("Channels")).toHaveLength(8);
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Channels", "Pages"]);
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});
+
 it("lets frequent visits lift a match past a slightly better one, not a much better one", async () => {
   localStorage.clear();
   for (let visit = 0; visit < 20; visit++) {

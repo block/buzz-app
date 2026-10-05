@@ -146,22 +146,28 @@ export function SearchResults({
       `channel:${channel.id}`,
       channel.archived,
     );
-  const matchingChannels = byMatch(
+  const matchingAll = byMatch(
     channels.filter(
       (channel) => matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
-  ).slice(0, 8);
-  const joinedChannels = matchingChannels.filter(
+  );
+  const matchingChannels = matchingAll.slice(0, 8);
+  const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",
   );
-  // Joined matches lead; public channels the viewer has not joined fill the group.
-  const unjoinedChannels = byMatch(
-    publicChannels.channels.filter(
-      (channel) => !joinedChannels.some(({ id }) => id === channel.id),
-    ),
+  // Joined and public channels share one ranking before the limit, so the row
+  // that gives the group its best rank, such as a remembered public channel,
+  // is the row shown first. Joined channels win ties.
+  const channelResults = byMatch(
+    [
+      ...joinedAll,
+      ...publicChannels.channels.filter(
+        (channel) => !joinedAll.some(({ id }) => id === channel.id),
+      ),
+    ],
     channelRank,
-  ).slice(0, Math.max(0, 8 - joinedChannels.length));
+  ).slice(0, 8);
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => {
@@ -293,14 +299,8 @@ export function SearchResults({
                 ...[
                   {
                     label: "Channels",
-                    destinations: [...joinedChannels, ...unjoinedChannels].map(
-                      conversationDestination,
-                    ),
-                    best: Math.min(
-                      ...[...joinedChannels, ...unjoinedChannels].map(
-                        channelRank,
-                      ),
-                    ),
+                    destinations: channelResults.map(conversationDestination),
+                    best: Math.min(...channelResults.map(channelRank)),
                   },
                   {
                     label: "Direct messages",
@@ -338,7 +338,7 @@ export function SearchResults({
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
-                    unjoinedChannels.length ||
+                    channelResults.length ||
                     pages.length
                       ? undefined
                       : messageEmpty,

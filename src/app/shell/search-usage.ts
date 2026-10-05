@@ -154,30 +154,39 @@ export function usageScope(scope: NavigationScope) {
   );
 }
 
-/** The search destination key that an opened target corresponds to. */
+/** The search destination key that an opened target corresponds to. An
+ * omitted scope leaves the selected community alone, so the open belongs to
+ * that community; an explicit null scope is Personal space, which has none. */
 function visited(
   target: OpenTarget,
+  selectedScope: () => NavigationScope | undefined,
 ): { scope: string; key: string } | undefined {
-  if (target.kind === "home" || !target.scope) return undefined;
+  if (target.kind === "home" || target.scope === null) return undefined;
+  const scope = target.scope ?? selectedScope();
+  if (!scope) return undefined;
   const key =
     target.kind === "conversation"
       ? `channel:${target.channelId}`
       : target.kind === "page"
         ? `${target.pluginId}/${target.pageId}`
         : "settings";
-  return { scope: usageScope(target.scope), key };
+  return { scope: usageScope(scope), key };
 }
 
 /** Counts every completed open as a visit: sidebar, links, notifications,
- * history and search alike. The destination already showing at startup is a
- * restore, not a visit. */
-export function bindSearchUsage(navigation: Navigation) {
+ * shortcuts, history and search alike. The destination already showing at
+ * startup is a restore, not a visit. `selectedScope` is the community selected
+ * when an open completes. */
+export function bindSearchUsage(
+  navigation: Navigation,
+  selectedScope: () => NavigationScope | undefined,
+) {
   let counted = navigation.snapshot().attempt.id;
   return navigation.subscribe(() => {
     const snapshot = navigation.snapshot();
     if (snapshot.status !== "opened" || snapshot.attempt.id === counted) return;
     counted = snapshot.attempt.id;
-    const visit = visited(snapshot.entry.target);
+    const visit = visited(snapshot.entry.target, selectedScope);
     if (visit) recordVisit(visit.scope, visit.key);
   });
 }

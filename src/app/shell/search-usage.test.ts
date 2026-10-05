@@ -106,7 +106,8 @@ it("counts every completed open once, but not the destination restored at startu
     100,
   );
   const host = createNavigationController(history);
-  const stop = bindSearchUsage(host.navigation);
+  let selected: typeof conversation.scope | undefined = conversation.scope;
+  const stop = bindSearchUsage(host.navigation, () => selected);
   try {
     host.complete(host.navigation.snapshot().attempt, { status: "opened" });
     const opened = host.navigation.open(conversation);
@@ -122,6 +123,21 @@ it("counts every completed open once, but not the destination restored at startu
     });
     host.complete(host.navigation.snapshot().attempt, { status: "opened" });
     await personal;
+    // Cmd/Ctrl+, opens Settings without a scope: it stays in the selected
+    // community, so the visit counts there.
+    const settings = host.navigation.open({ version: 1, kind: "settings" });
+    host.complete(host.navigation.snapshot().attempt, { status: "opened" });
+    await settings;
+    // With no community selected, an unscoped open belongs to none.
+    selected = undefined;
+    const unscoped = host.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.todos",
+      pageId: "todos",
+    });
+    host.complete(host.navigation.snapshot().attempt, { status: "opened" });
+    await unscoped;
     const failed = host.navigation.open({ ...conversation, channelId: "gone" });
     host.complete(host.navigation.snapshot().attempt, {
       status: "failed",
@@ -133,6 +149,7 @@ it("counts every completed open once, but not the destination restored at startu
     expect(usage.boost("channel:gone")).toBe(0);
     expect(usage.boost("channel:restored")).toBe(0);
     expect(usage.boost("buzz.todos/todos")).toBe(0);
+    expect(usage.boost("settings")).toBeCloseTo((MAX_BOOST * 1) / 5, 3);
   } finally {
     stop();
     host.dispose();

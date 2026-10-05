@@ -774,6 +774,7 @@ function attachByDrop(target: HTMLElement, file = attachmentFile()) {
 async function mountUploadComposer(
   options: {
     threadRootId?: string;
+    replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
   } = {},
 ) {
@@ -836,6 +837,9 @@ async function mountUploadComposer(
       channelId="channel"
       channelName="General"
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
+      {...(options.replyParentId
+        ? { replyParentId: options.replyParentId }
+        : {})}
     />,
     { reactStrictMode: true },
   );
@@ -1107,6 +1111,48 @@ it("cancels an in-flight attachment send when the composer destination changes",
     h.uploadCalls[0]?.result.resolve(uploadDescriptor());
   });
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("recovers a reply-target abort during attachment upload and sends the retained draft to the new target", async () => {
+  const root = "a".repeat(64);
+  const child = "b".repeat(64);
+  const h = await mountUploadComposer({
+    threadRootId: root,
+    replyParentId: child,
+  });
+  attachByPaste(h.input(), attachmentFile("reply.txt"));
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+
+  try {
+    h.rerender(
+      <MessageComposer
+        session={h.owner.session}
+        scope={`https://relay.example.test:${h.owner.session.viewer}`}
+        channelId="channel"
+        channelName="General"
+        threadRootId={root}
+      />,
+    );
+    expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+    expect(h.publish).not.toHaveBeenCalled();
+    await waitFor(() => expect(h.send()).toBeEnabled());
+  } finally {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
+    });
+  }
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("reply.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
+  expect(tags).not.toContainEqual(["e", child, "", "reply"]);
+  expect(tags).toContainEqual(["e", root, "", "reply"]);
 });
 
 it("retries publish-unknown attachment sends with the same signed event and no re-upload", async () => {

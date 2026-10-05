@@ -122,7 +122,10 @@ function attachmentDraft(
       replace(item.id, { status: "ready", uploaded });
       return uploaded;
     } catch (error) {
-      if (!combined.aborted)
+      if (combined.aborted) {
+        if (signal.aborted && !controller.signal.aborted)
+          replace(item.id, { status: "queued", error: undefined });
+      } else
         replace(item.id, {
           status: "error",
           error:

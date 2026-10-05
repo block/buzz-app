@@ -174,20 +174,10 @@ it("recovers a send abort that settles before cancellation without re-uploading 
   });
   expect(draft.result.current.items.map((item) => item.status)).toEqual([
     "ready",
-    "uploading",
+    "queued",
   ]);
-
-  act(() => draft.result.current.store.cancel());
-  expect(draft.result.current.items.map((item) => item.status)).toEqual([
-    "ready",
-    "error",
-  ]);
-  expect(draft.result.current.blocked).toBe(true);
-
-  act(() =>
-    draft.result.current.store.retry(draft.result.current.items[1]?.id ?? ""),
-  );
   expect(draft.result.current.blocked).toBe(false);
+
   const retry = new AbortController();
   let retryWork: Promise<readonly UploadedAttachment[]>;
   await act(async () => {
@@ -235,6 +225,9 @@ it("removal and cancellation abort in-flight send preparation", async () => {
   act(() => draft.result.current.store.cancel());
   expect(secondCall.signal.aborted).toBe(true);
   await expect(work).rejects.toThrow();
+  expect(draft.result.current.items.map((item) => item.status)).toEqual([
+    "error",
+  ]);
 });
 
 it("accepts the 500 MiB source and 1,000 MiB shared retention boundaries, not cap+1", () => {

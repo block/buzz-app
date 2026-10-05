@@ -1061,6 +1061,27 @@ export const test = base.extend({
         });
         return [];
       }
+      if (filter.search !== undefined)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.content
+                .toLowerCase()
+                .includes(filter.search.toLowerCase()) &&
+              (!filter["#h"] ||
+                event.tags.some(
+                  ([key, value]) => key === "h" && filter["#h"].includes(value),
+                )) &&
+              (!filter.authors || filter.authors.includes(event.pubkey)) &&
+              (filter.since === undefined ||
+                event.created_at >= filter.since) &&
+              (filter.until === undefined || event.created_at <= filter.until),
+          )
+          .slice(0, filter.limit);
       if (filter.kinds?.includes(0))
         return [
           ...[...servedProfiles.values()].filter((event) =>
@@ -1130,17 +1151,6 @@ export const test = base.extend({
           )
           .slice(0, filter.limit);
       }
-      if (filter.search !== undefined)
-        return [...histories.entries()]
-          .filter(([key]) => key.startsWith(`${community}/`))
-          .flatMap(([, events]) => events)
-          .concat(community === "primary" ? targetEvents : [])
-          .filter(
-            (event) =>
-              filter.kinds.includes(event.kind) &&
-              event.content.toLowerCase().includes(filter.search.toLowerCase()),
-          )
-          .slice(0, filter.limit);
       if (filter.ids)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -1773,7 +1783,11 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (filter.until !== undefined && filter["#h"]?.length) {
+        if (
+          filter.search === undefined &&
+          filter.until !== undefined &&
+          filter["#h"]?.length
+        ) {
           pending.push({
             community,
             channel: filter["#h"][0],

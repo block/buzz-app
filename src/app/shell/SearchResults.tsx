@@ -8,6 +8,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
+import { isChannelUuid, normalizeInChannel, parseSearchOperators } from "./parseSearchOperators";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
@@ -71,12 +72,43 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
-  const search = useSearchMessages(session, query.trim(), scopedChannelId);
-  const publicChannels = usePublicChannelSearch(
+  const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
+  const operatorChannel = parsed.in ? normalizeInChannel(parsed.in) : "";
+  const operatorPublicChannels = usePublicChannelSearch(
     session,
-    scopedChannelId ? "" : query.trim(),
+    !scopedChannelId && operatorChannel && !isChannelUuid(operatorChannel)
+      ? operatorChannel
+      : "",
     list.status === "ready",
   );
+  const channelMatch = operatorChannel
+    ? isChannelUuid(operatorChannel)
+      ? session.channels.get?.(operatorChannel)
+      : list.channels.find(
+          (channel) =>
+            channel.name.toLowerCase() === operatorChannel.toLowerCase(),
+        )
+    : undefined;
+  const resolvedOperatorChannel =
+    channelMatch ??
+    operatorPublicChannels.channels.find(
+      (channel) => channel.name.toLowerCase() === operatorChannel.toLowerCase(),
+    );
+  const operatorChannelId = isChannelUuid(operatorChannel)
+    ? operatorChannel
+    : (resolvedOperatorChannel?.id ?? undefined);
+  const search = useSearchMessages(
+    session,
+    query.trim(),
+    scopedChannelId,
+    operatorChannelId,
+  );
+  const publicChannels = usePublicChannelSearch(
+    session,
+    scopedChannelId ? "" : parsed.text,
+    list.status === "ready",
+  );
+
   const names = new Map(
     channels.map((channel) => [
       channel.id,
@@ -100,7 +132,7 @@ export function SearchResults({
         .ensure(profileKey.split(":"), "background")
         .catch(() => {});
   }, [session, profileKey]);
-  const needle = query.trim().toLowerCase().replace(/^#/, "");
+  const needle = parsed.text.toLowerCase().replace(/^#/, "");
   // Read once per opening, so usage recorded while it is open cannot reorder it.
   const usage = useMemo(
     () => (usageScope ? readSearchUsage(usageScope) : noSearchUsage),
@@ -117,7 +149,7 @@ export function SearchResults({
     new Set([
       ...channels
         .filter(
-          ({ id }) => matchRank(names.get(id) ?? "", needle) !== undefined,
+          ({ id }) => parsed.text && matchRank(names.get(id) ?? "", needle) !== undefined,
         )
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
@@ -148,7 +180,7 @@ export function SearchResults({
     );
   const matchingAll = byMatch(
     channels.filter(
-      (channel) => matchRank(names.get(channel.id) ?? "", needle) !== undefined,
+      (channel) => parsed.text && matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
   );

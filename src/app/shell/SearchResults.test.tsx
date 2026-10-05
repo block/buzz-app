@@ -1152,3 +1152,126 @@ it("keeps the remembered choice selected when a better match arrives late", asyn
     localStorage.clear();
   }
 });
+
+it("translates combined operators into a single server-ranked scoped read and opens the match", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        [
+          metadata(relay, "crew", "crew"),
+          roster(relay, "crew", [viewer.pubkey]),
+        ].filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:#crew from:@alice after:2024-01-15 before:2024-02-01"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={open}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    const users = wire.next();
+    expect(users.filters).toEqual([
+      { kinds: [0], search: "alice", search_mode: "prefix", limit: 40 },
+    ]);
+    await act(async () =>
+      users.respond([profile(alice, { display_name: "Alice" })]),
+    );
+    const request = wire.next();
+    expect(request.filters).toEqual([
+      {
+        kinds: [40002, 40008, 9],
+        search: "deploy",
+        search_mode: "prefix",
+        limit: 20,
+        "#h": ["crew"],
+        authors: [alice.pubkey],
+        since: Math.floor(new Date(2024, 0, 15).getTime() / 1000),
+        until: Math.floor(new Date(2024, 1, 1).getTime() / 1000) - 1,
+      },
+    ]);
+    const hit = message(alice, "crew", "deploy matched", 1700000001);
+    await act(async () => request.respond([hit]));
+    fireEvent.click(screen.getByRole("option", { name: /deploy matched/ }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("crew", hit.id);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("never widens a search when a name or channel operator is unresolved", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        [
+          metadata(relay, "crew", "crew"),
+          roster(relay, "crew", [viewer.pubkey]),
+        ].filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  try {
+    const { rerender } = render(
+      <SearchResults
+        session={owner.session}
+        query="deploy from:@missing"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        scopedChannelId="crew"
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    const users = wire.next();
+    expect(users.filters[0]?.kinds).toEqual([0]);
+    await act(async () => users.respond([]));
+    expect(wire.pending).toHaveLength(0);
+    rerender(
+      <SearchResults
+        session={owner.session}
+        query="deploy in:#missing"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    expect(
+      wire.pending.filter((request) =>
+        request.filters.some((filter) => filter.kinds?.includes(9)),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

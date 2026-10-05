@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadFilter } from "../../features/relay/events";
+import { foldProfiles } from "../../features/relay/profiles";
+import {
+  isHexPubkey,
+  normalizeFromHandle,
+  parseSearchOperators,
+} from "./parseSearchOperators";
 
 export type SearchMessage = Readonly<{
   id: string;
@@ -20,12 +27,16 @@ export function useSearchMessages(
   session: RelaySession,
   query: string,
   scopedChannelId?: string,
+  operatorChannelId?: string | null,
 ) {
+  const parsed = useMemo(() => parseSearchOperators(query), [query]);
+  const channelId = scopedChannelId ?? operatorChannelId;
+  const unresolvedChannel = !!parsed.in && !channelId;
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
   const owner = useMemo(
-    () => ({ session, query, scopedChannelId, attempt }),
-    [session, query, scopedChannelId, attempt],
+    () => ({ session, query, channelId, unresolvedChannel, attempt }),
+    [session, query, channelId, unresolvedChannel, attempt],
   );
   // The copied result changes synchronously even if React has not committed it yet.
   const copied = useRef<Result | undefined>(undefined);
@@ -47,34 +58,77 @@ export function useSearchMessages(
     [session, replace],
   );
   useEffect(() => {
-    if (!query) return;
+    if (!parsed.text || unresolvedChannel) return;
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
     const timer = setTimeout(() => {
-      void session
-        .read(
-          [
-            {
-              kinds: [9, 40002, 40008],
-              search: query,
-              search_mode: "prefix",
-              limit: 20,
-              ...(scopedChannelId ? { "#h": [scopedChannelId] } : {}),
-            },
-          ],
-          { signal: controller.signal, priority: "foreground", fresh: true },
-        )
+      void (async () => {
+        let author: string | undefined;
+        if (parsed.from) {
+          if (isHexPubkey(parsed.from)) {
+            author = parsed.from.toLowerCase();
+          } else {
+            const handle = normalizeFromHandle(parsed.from).toLowerCase();
+            if (!handle) return [];
+            // The same signed kind-0 index used by the base user typeahead.
+            // Exact names only: a hit in a profile's bio is not an identity match.
+            const candidates = await session.read(
+              [
+                {
+                  kinds: [0],
+                  search: handle,
+                  search_mode: "prefix",
+                  limit: 40,
+                },
+              ],
+              {
+                signal: controller.signal,
+                priority: "foreground",
+                fresh: true,
+              },
+            );
+            const profiles = foldProfiles(candidates);
+            author = [...profiles].find(
+              ([pubkey, profile]) =>
+                profile.name.trim().toLowerCase() === handle ||
+                pubkey === handle,
+            )?.[0];
+            if (!author) return [];
+          }
+        }
+        if (channelId && !session.channels.get?.(channelId))
+          await session.channels.resolve?.([channelId], {
+            signal: controller.signal,
+            priority: "foreground",
+          });
+        if (channelId && !session.channels.get?.(channelId)) return [];
+        const filter: ReadFilter = {
+          kinds: [9, 40002, 40008],
+          search: parsed.text,
+          search_mode: "prefix",
+          limit: 20,
+          ...(channelId ? { "#h": [channelId] } : {}),
+          ...(author ? { authors: [author] } : {}),
+          ...(parsed.since !== null ? { since: parsed.since } : {}),
+          ...(parsed.until !== null ? { until: parsed.until } : {}),
+        };
+        return session.read([filter], {
+          signal: controller.signal,
+          priority: "foreground",
+          fresh: true,
+        });
+      })()
         .then((events) => {
           if (controller.signal.aborted) return;
           const messages = events.flatMap((event): SearchMessage[] => {
             const destinations = event.tags.filter(([name]) => name === "h");
-            const channelId = destinations[0]?.[1];
+            const hitChannelId = destinations[0]?.[1];
             if (
               ![9, 40002, 40008].includes(event.kind) ||
               destinations.length !== 1 ||
-              !channelId ||
-              (scopedChannelId && channelId !== scopedChannelId) ||
-              !session.channels.get?.(channelId)
+              !hitChannelId ||
+              (channelId && hitChannelId !== channelId) ||
+              !session.channels.get?.(hitChannelId)
             )
               return [];
             // Search returns original indexed events, not an auxiliary edit fold.
@@ -90,7 +144,7 @@ export function useSearchMessages(
             return [
               {
                 id: event.id,
-                channelId,
+                channelId: hitChannelId,
                 authorId: event.pubkey,
                 createdAt: event.created_at,
                 preview:
@@ -114,13 +168,21 @@ export function useSearchMessages(
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, query, scopedChannelId, owner, replace]);
+  }, [
+    session,
+    parsed,
+    channelId,
+    unresolvedChannel,
+    owner,
+    replace,
+    scopedChannelId,
+  ]);
   const current = result?.owner === owner ? result : undefined;
   return {
     messages: (current?.messages ?? []).filter(
       (message) => !!session.channels.get?.(message.channelId),
     ),
-    loading: !!query && !current,
+    loading: !!parsed.text && !unresolvedChannel && !current,
     error: current?.error,
     retry: () => setAttempt((value) => value + 1),
   };

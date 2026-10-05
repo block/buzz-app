@@ -63,6 +63,22 @@ The standalone design viewer imports the real shared controls without app startu
 identity or relay services. Check the actual app as well as specimens, in both
 themes and at narrow, intermediate and wide widths with enlarged text.
 
+### Plugin-owned color meanings
+
+Plugins define integration-specific semantic mappings in their own styles, using
+shared roles where shared improvements should flow through. The shared system
+owns palette values and generic paint roles, not integration-specific status
+names. Categorical purple (`--text-categorical-purple` paired with
+`--surface-categorical-purple`) stays independent of customizable app accent.
+
+GitHub owns its `--github-*` status/diff mappings and browser coverage of the
+resolved text/fill pairs in both themes, including shared-role updates and merged
+independence from accent. Contrast measurements are diagnostic during this design
+iteration, not a new strict gate or a full accessibility audit. Existing base
+contrast checks remain unchanged. Changes to accessibility requirements need the
+calculation/acceptance policy updated too; plugin-owned checks cannot discover a
+new standard automatically.
+
 ## Future theme contributions
 
 There is no theme contribution API yet. A future theme would have an identity separate

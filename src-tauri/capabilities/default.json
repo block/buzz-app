@@ -15,6 +15,8 @@
     "allow-relay-publish-read-state",
     "allow-relay-http",
     "allow-relay-workflow-runs",
+    "allow-relay-project-git",
+    "allow-relay-project-git-cancel",
     "allow-relay-channel-sign",
     "allow-relay-channel-publish",
     "allow-relay-kit-sign",

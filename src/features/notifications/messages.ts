@@ -142,11 +142,12 @@ export function bindMessageNotifications(
               )
                 return "wait";
             }
+            const whileViewing =
+              notifications.snapshot().preferences.notifyWhileViewing;
             if (
               attention.status === "ineligible" ||
               (!attention.pending && attention.category !== category) ||
-              (!notifications.snapshot().preferences.notifyWhileViewing &&
-                attention.viewing)
+              (!whileViewing && attention.viewing)
             )
               return false;
             if (
@@ -157,7 +158,10 @@ export function bindMessageNotifications(
               attention.status === "unknown"
             )
               return "wait";
-            return attention.unread;
+            // The open view's reading dwell can mark the row read before
+            // presentation settles. With Notify while viewing, that read must
+            // not cancel the alert; a read row no longer in view stays quiet.
+            return attention.unread || (whileViewing && attention.viewing);
           },
           () =>
             messageNotificationText(

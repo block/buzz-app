@@ -615,6 +615,17 @@ fn isolated_agent_ipc_probe() {
     .unwrap_err()
     .to_string()
     .contains("Invalid workflow read"));
+    assert!(invoke(
+        "relay_project_git",
+        serde_json::json!({
+            "community": "https://relay.test",
+            "id": "11111111-1111-4111-8111-111111111111",
+            "read": { "owner": "a".repeat(64), "dtag": "../query" }
+        })
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("Invalid Git read"));
 }
 
 #[test]

@@ -10,6 +10,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import * as imageCopy from "./image-copy";
 import { ImageReviewStage } from "./ImageReviewStage";
 
 afterEach(() => {
@@ -457,4 +458,130 @@ it("changes gallery photos immediately when reduced motion is requested", () => 
     vi.unstubAllGlobals();
     Reflect.deleteProperty(HTMLElement.prototype, "animate");
   }
+});
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function copyGallery() {
+  const photos = ["one", "two"].map((name) => ({
+    url: `https://fixture.test/${name}.png`,
+    kind: "image" as const,
+  }));
+  function CopyGallery() {
+    const [selectedUrl, select] = useState(photos[0]?.url ?? "");
+    return (
+      <ImageReviewStage
+        attachments={photos}
+        selectedUrl={selectedUrl}
+        select={select}
+        media={(url) => url}
+        onOpenLink={() => false}
+      />
+    );
+  }
+  return render(<CopyGallery />);
+}
+
+function stubImageCopy({ supported = true } = {}) {
+  vi.spyOn(imageCopy, "supportsImageCopy").mockReturnValue(supported);
+  const copy = vi.spyOn(imageCopy, "copyImageToClipboard").mockResolvedValue();
+  return copy;
+}
+
+it("shows the copy image button only when clipboard image copy is supported", () => {
+  stubImageCopy({ supported: true });
+  setup();
+  expect(screen.getByRole("button", { name: "Copy image" })).toBeVisible();
+
+  cleanup();
+  vi.restoreAllMocks();
+  stubImageCopy({ supported: false });
+  setup();
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
+});
+
+it("ignores duplicate copy presses while a clipboard write is pending", async () => {
+  const gate = deferred<void>();
+  const copy = stubImageCopy();
+  copy.mockReturnValue(gate.promise);
+  const user = userEvent.setup();
+  setup();
+  const button = screen.getByRole("button", { name: "Copy image" });
+
+  try {
+    await user.click(button);
+    expect(copy).toHaveBeenCalledTimes(1);
+    expect(button).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(button);
+    expect(copy).toHaveBeenCalledTimes(1);
+  } finally {
+    gate.resolve();
+  }
+  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+});
+
+it("shows copy success and failure messages and clears them on timers", async () => {
+  vi.useFakeTimers();
+  const copy = stubImageCopy();
+  setup();
+  const button = screen.getByRole("button", { name: "Copy image" });
+
+  fireEvent.click(button);
+  await act(async () => {});
+  expect(screen.getByRole("status")).toHaveTextContent("Image copied");
+  act(() => vi.advanceTimersByTime(3999));
+  expect(screen.getByText("Image copied")).toBeVisible();
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByText("Image copied")).not.toBeInTheDocument();
+
+  copy.mockRejectedValueOnce(new Error("denied"));
+  fireEvent.click(button);
+  await act(async () => {});
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't copy image");
+  act(() => vi.advanceTimersByTime(5999));
+  expect(screen.getByText("Couldn't copy image")).toBeVisible();
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByText("Couldn't copy image")).not.toBeInTheDocument();
+});
+
+it("clears copy feedback when switching gallery images", async () => {
+  stubImageCopy();
+  const user = userEvent.setup();
+  copyGallery();
+  await user.click(screen.getByRole("button", { name: "Copy image" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/two.png",
+  );
+  expect(screen.queryByText("Image copied")).not.toBeInTheDocument();
+});
+
+it("does not show copy feedback when a stale copy finishes after switching images", async () => {
+  const gate = deferred<void>();
+  const copy = stubImageCopy();
+  copy.mockReturnValue(gate.promise);
+  const user = userEvent.setup();
+  copyGallery();
+  await user.click(screen.getByRole("button", { name: "Copy image" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+
+  await act(async () => {
+    gate.resolve();
+    await gate.promise;
+  });
+  expect(screen.queryByText("Image copied")).not.toBeInTheDocument();
+  expect(screen.queryByText("Couldn't copy image")).not.toBeInTheDocument();
 });

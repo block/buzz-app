@@ -1,7 +1,10 @@
 import { useEffect } from "react";
+import { DOMParser as EditorDOMParser, Fragment } from "prosemirror-model";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
 import { safeMessageUrl } from "../relay/message-content";
+import { composerSchema, projectComposerDocument } from "./composer-document";
+import { composerMarkdown } from "./composer-markdown";
 
 /** `text` reads well outside the app; `markdown` keeps identity locators and
  * the block syntax the composer understands; `html` is the semantic `text/html`
@@ -16,8 +19,15 @@ export function serializeSelection(
   const values: string[] = [];
   for (let index = 0; index < selection.rangeCount; index++) {
     const range = selection.getRangeAt(index);
-    if (!range.collapsed)
-      values.push(serializeNode(range.commonAncestorContainer, format, range));
+    if (!range.collapsed) {
+      const ancestor = range.commonAncestorContainer;
+      // A whole chip can have both endpoints inside its one label text node.
+      const element = elementOf(ancestor);
+      const chip = element?.closest("[data-profile-target], a");
+      // TR/TD/TBODY fragments lose their markup when parsed outside a table.
+      const root = chip ?? element?.closest("table") ?? ancestor;
+      values.push(serializeNode(root, format, range));
+    }
   }
   return values.join("\n");
 }
@@ -31,6 +41,7 @@ export function serializeNode(
   format: CopyFormat,
   range?: Range,
 ): string {
+  if (format === "markdown") return markdown(node, range);
   if (range && !range.intersectsNode(node)) return "";
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
@@ -40,8 +51,6 @@ export function serializeNode(
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
   if (tag === "IMG")
     return text(node.getAttribute("data-copy-emoji") ?? "", format);
-  if (format === "markdown" && /^(UL|OL)$/.test(tag) && structural(node))
-    return list(node, range);
   const inner = children(node, format, range);
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
@@ -57,17 +66,17 @@ export function serializeNode(
   switch (tag) {
     case "STRONG":
     case "B":
-      return wrap(format, inner, "**", "strong");
+      return wrap(format, inner, "strong");
     case "EM":
     case "I":
-      return wrap(format, inner, "_", "em");
+      return wrap(format, inner, "em");
     case "S":
     case "DEL":
-      return wrap(format, inner, "~~", "s");
+      return wrap(format, inner, "s");
     case "CODE":
       return node.parentElement?.tagName === "PRE"
         ? inner
-        : wrap(format, inner, "`", "code");
+        : wrap(format, inner, "code");
     case "PRE": {
       if (format === "text") return inner;
       // The info string travels as the conventional class; the composer's own
@@ -76,16 +85,38 @@ export function serializeNode(
         node.querySelector("code")?.className.match(/language-(\S+)/)?.[1] ??
         node.getAttribute("data-language") ??
         "";
-      if (format === "html")
-        return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${inner}</code></pre>`;
-      return `\`\`\`${language}\n${inner}\n\`\`\``;
+      let code = inner;
+      if (range) {
+        const remainder = node.ownerDocument.createRange();
+        remainder.selectNodeContents(node);
+        if (range.compareBoundaryPoints(Range.END_TO_END, remainder) < 0) {
+          remainder.setStart(range.endContainer, range.endOffset);
+          // A clipped block needs its own terminator: its selected final newline
+          // may be content, before the renderer's actual last newline.
+          if (remainder.toString()) code += "\n";
+        }
+      }
+      return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre>`;
     }
-    case "BLOCKQUOTE":
-      if (format === "markdown")
-        return inner
-          .split("\n")
-          .map((line) => (line ? `> ${line}` : ">"))
-          .join("\n");
+  }
+  if (
+    format === "html" &&
+    /^(UL|OL|LI|BLOCKQUOTE|TABLE|THEAD|TBODY|TFOOT|TR|TD|TH)$/.test(tag) &&
+    !node.querySelector("[data-message-id]")
+  ) {
+    const start =
+      tag === "OL"
+        ? Number.parseInt(node.getAttribute("start") ?? "1", 10) +
+          (range
+            ? Math.max(
+                0,
+                [...node.children].findIndex((item) =>
+                  range.intersectsNode(item),
+                ),
+              )
+            : 0)
+        : 1;
+    return `<${tag.toLowerCase()}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
   }
   return format === "html" && blockTag.test(tag) && !node.querySelector(blocks)
     ? `<p>${inner}</p>`
@@ -124,46 +155,55 @@ function link(
   if (format === "html")
     return `<a href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
   if (format === "markdown")
-    return `[${label.replace(/[\\[\]]/g, "\\$&")}](${href})`;
+    return `[${label.replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${href.replace(/[()]/g, (character) => (character === "(" ? "%28" : "%29"))})`;
   return plain;
 }
 
-function wrap(
-  format: CopyFormat,
-  inner: string,
-  marker: string,
-  tag: string,
-): string {
+function wrap(format: CopyFormat, inner: string, tag: string): string {
   if (format === "html") return `<${tag}>${inner}</${tag}>`;
-  if (format !== "markdown" || !inner) return inner;
-  if (marker === "`") return `${marker}${inner}${marker}`;
-  // Emphasis cannot open or close against whitespace, so it stays outside the
-  // delimiters, as the composer serializer writes it.
-  const lead = inner.length - inner.trimStart().length;
-  const trail = inner.trimEnd().length;
-  return lead < trail
-    ? `${inner.slice(0, lead)}${marker}${inner.slice(lead, trail)}${marker}${inner.slice(trail)}`
-    : inner;
+  return inner;
 }
 
-/** Items take the composer's markers and indent their continuation lines. */
-function list(node: Element, range?: Range): string {
-  const start = Number.parseInt(node.getAttribute("start") ?? "", 10) || 1;
-  const items: string[] = [];
-  [...node.children].forEach((item, index) => {
-    if (item.tagName !== "LI" || (range && !range.intersectsNode(item))) return;
-    const marker = node.tagName === "OL" ? `${start + index}. ` : "- ";
-    items.push(
-      marker +
-        children(item, "markdown", range)
-          .split("\n")
-          .map((line, index) =>
-            index ? " ".repeat(marker.length) + line : line,
-          )
-          .join("\n"),
-    );
-  });
-  return items.join("\n");
+/** Reuse the send serializer's CommonMark flanking, escaping and code delimiters.
+ * Only the semantic HTML emitted above reaches the editor parser. Anchors become
+ * source tokens, not recipients; the paste host still owns mention acceptance. */
+function markdown(node: Node, range?: Range): string {
+  const container = (node.ownerDocument ?? document).createElement("div");
+  container.innerHTML = serializeNode(node, "html", range);
+  // Tables remain tab-separated source in the composer, whose schema has no table.
+  for (const row of container.querySelectorAll("tr"))
+    for (const cell of [...row.children].slice(1)) cell.prepend("\t");
+  const parser = new EditorDOMParser(composerSchema, [
+    {
+      tag: "a",
+      node: "token",
+      getAttrs: (element) => ({
+        source: anchor(element, element.textContent ?? "", "markdown"),
+      }),
+    },
+    {
+      tag: "pre",
+      node: "code_block",
+      getAttrs: (element) => ({
+        language:
+          element
+            .querySelector("code")
+            ?.className.match(/language-(\S+)/)?.[1] ?? null,
+      }),
+      getContent: (element) => {
+        // Both clipboard producers use the renderer's one final newline. Remove
+        // just that terminator, preserving intentional blank lines in the code.
+        const value = (element.textContent ?? "").replace(/\n$/, "");
+        return value
+          ? Fragment.from(composerSchema.text(value))
+          : Fragment.empty;
+      },
+    },
+    { tag: "tr", node: "paragraph" },
+    ...EditorDOMParser.fromSchema(composerSchema).rules,
+  ]);
+  const doc = parser.parse(container, { preserveWhitespace: "full" });
+  return composerMarkdown(projectComposerDocument(doc).draft);
 }
 
 function text(value: string, format: CopyFormat): string {
@@ -207,16 +247,10 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
   let text = "";
   let previous: Node | undefined;
   for (const child of node.childNodes) {
-    if (
-      (range && !range.intersectsNode(child)) ||
-      (format === "markdown" && formatting(child))
-    )
-      continue;
+    if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
     const value = serializeNode(child, format, range);
     const separator =
-      previous && format !== "html"
-        ? siblingSeparator(previous, child, format)
-        : "";
+      previous && format !== "html" ? siblingSeparator(previous, child) : "";
     if (separator === "\t") text += separator;
     else if (
       text &&
@@ -237,32 +271,19 @@ const blockTag =
 const blocks =
   "div, p, li, ol, ul, section, table, blockquote, pre, h1, h2, h3, h4, h5, h6, tr, thead, tbody, tfoot, td, th";
 
-function siblingSeparator(previous: Node, current: Node, format: CopyFormat) {
+function siblingSeparator(previous: Node, current: Node) {
   const previousTag = previous instanceof Element ? previous.tagName : "";
   const currentTag = current instanceof Element ? current.tagName : "";
   if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
     return "\t";
-  // Block syntax ends only at a blank line; lines of prose keep one break.
-  if (format === "markdown" && (structural(previous) || structural(current)))
-    return "\n\n";
   return blockTag.test(previousTag) || blockTag.test(currentTag) ? "\n" : "";
 }
 
-/** Block syntax the composer serializes and the timeline renders. The
- * timeline's own list of message rows is layout, not a Markdown list. */
-function structural(node: Node): node is Element {
-  return (
-    node instanceof Element &&
-    /^(UL|OL|BLOCKQUOTE|PRE)$/.test(node.tagName) &&
-    !node.querySelector("[data-message-id]")
-  );
-}
-
-/** Whitespace between blocks is source formatting, not content; Markdown blocks
- * join on their own separators. */
+/** Whitespace between rendered blocks is formatting; blocks supply separators. */
 function formatting(node: Node): boolean {
   return (
     node.nodeType === Node.TEXT_NODE &&
+    !node.parentElement?.closest("pre, code") &&
     !/\S/.test((node as Text).data) &&
     [node.previousSibling, node.nextSibling].some(
       (sibling) => sibling instanceof Element && blockTag.test(sibling.tagName),

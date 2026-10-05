@@ -134,4 +134,74 @@ test("pasting copied messages into the composer restores chips, the recipient an
   const published = app.report.publications[0].event;
   expect(published.content).toBe(source);
   expect(published.tags).toContainEqual(["p", app.viewer]);
+
+  // One representative renderer → clipboard → editor → signed-send round trip.
+  // The detailed syntax matrix belongs to the colocated component tests.
+  const blocks =
+    "- one\n- two\n\n3. first\n\n> quoted\n\n```sh\necho hi\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |";
+  const structured = app.append("primary", "alpha", blocks);
+  const structuredRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${structured.id}"]`,
+  );
+  await expect(structuredRow.locator("table")).toBeVisible();
+  const payload = await structuredRow.locator("ul").evaluate((list) => {
+    const content = list.parentElement;
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const clipboardData = new DataTransfer();
+    content.dispatchEvent(
+      new ClipboardEvent("copy", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+    return {
+      text: clipboardData.getData("text/plain"),
+      html: clipboardData.getData("text/html"),
+    };
+  });
+  expect(payload.text).toBe("one\ntwo\nfirst\nquoted\necho hi\na\tb\n1\t2");
+  await expect(input).toHaveJSProperty("value", "");
+  await pasteInto(input, payload);
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(2);
+  expect(app.report.publications[1].event.content).toBe(
+    blocks.replace(/\| a \| b \|[\s\S]*$/, "a\tb\n1\t2"),
+  );
+
+  // A real picker-produced token carries Markdown escapes, unlike timeline HTML.
+  await expect(input).toHaveJSProperty("value", "");
+  await input.pressSequentially("#Bet");
+  await page
+    .getByRole("listbox", { name: "Channel suggestions" })
+    .getByRole("option", { name: "Beta", exact: true })
+    .click();
+  const channelCopy = await input.evaluate((element) => {
+    element.setSelectionRange(0, element.value.length);
+    const clipboardData = new DataTransfer();
+    element.dispatchEvent(
+      new ClipboardEvent("copy", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+    return {
+      text: clipboardData.getData("text/plain"),
+      html: clipboardData.getData("text/html"),
+    };
+  });
+  expect(channelCopy.text).toBe("#Beta ");
+  await input.fill("");
+  await pasteInto(input, channelCopy);
+  await expect(input.locator("[data-link-renderer]")).toHaveText("Beta");
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(3);
+  expect(app.report.publications[2].event.content).toBe(
+    "[#Beta](buzz://channel/beta)",
+  );
 });

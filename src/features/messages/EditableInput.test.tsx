@@ -350,6 +350,11 @@ it("follows the parser for intraword delimiters: snake_case stays literal, 5*3*2
       { type: "text", value: "2" },
     ],
   });
+  act(() => h.input.setSelectionRange(0, h.input.value.length));
+  const copied = clipboard(h.input, "copy");
+  const target = mount();
+  paste(target.input, copied.text ?? "", copied.html);
+  expect(target.markdown()).toBe(h.markdown());
 });
 
 it.each(["a*b**", "a*b**c"])(
@@ -2531,6 +2536,117 @@ function readBack(html: string | undefined) {
   return serializeNode(template.content, "markdown");
 }
 
+it.each(["italic", "bold", "strike"] as const)(
+  "round-trips punctuation-only %s next to letters",
+  (format) => {
+    const h = mount("x!y");
+    act(() => {
+      h.input.setSelectionRange(1, 2);
+      h.input.toggleFormat(format);
+      h.input.setSelectionRange(0, h.input.value.length);
+    });
+    const copied = clipboard(h.input, "copy");
+    const target = mount();
+    paste(target.input, copied.text ?? "", copied.html);
+    expect(target.markdown()).toBe(h.markdown());
+  },
+);
+
+it.each([
+  ["inline", "`"],
+  ["inline", " a`b "],
+  ["block", "echo hi\n```\nend"],
+  ["block", "echo hi\n\n"],
+])("round-trips %s code containing %j", (kind, text) => {
+  const h = mount({
+    text: "",
+    recipients: [],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: kind === "block" ? "code_block" : "paragraph",
+            ...(kind === "block" ? { attrs: { language: "sh" } } : {}),
+            content: [
+              {
+                type: "text",
+                text,
+                ...(kind === "inline" ? { marks: [{ type: "code" }] } : {}),
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  act(() => h.input.setSelectionRange(0, h.input.value.length));
+  const copied = clipboard(h.input, "copy");
+  const target = mount();
+  paste(target.input, copied.text ?? "", copied.html);
+  expect(target.markdown()).toBe(h.markdown());
+});
+
+it("uses plain text when pasting rich content into an existing code block", async () => {
+  const accept = vi.fn();
+  const h = mount("", { links: true, acceptRecipient: accept });
+  await h.user.keyboard("```x");
+  paste(
+    h.input,
+    "Hi @Mic b",
+    timelineHtml(
+      `Hi <a href="${profileTarget(mic)}">@Mic</a> <strong>b</strong>`,
+    ),
+  );
+  expect(h.input.querySelector("pre")?.textContent).toBe("xHi @Mic b");
+  expect(h.markdown()).toBe("```\nxHi @Mic b\n```");
+  expect(accept).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["- one\n- two", "one\ntwo"],
+  ["3. first\n4. second", "first\nsecond"],
+  ["> quoted", "quoted"],
+  ["```sh\necho hi\n```", "echo hi\n"],
+  ["```sh\necho hi\n\n```", "echo hi\n\n"],
+  ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2"],
+  [
+    "intro\n\n- one\n- two\n\n> quoted\n\nouter",
+    "intro\none\ntwo\nquoted\nouter",
+  ],
+])(
+  "copies real timeline structure through the composer: %s",
+  (content, plain) => {
+    const view = render(
+      <MessageMarkdown
+        row={{
+          id: "m",
+          channelId: "general",
+          authorId: mic,
+          content,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+        }}
+        media={() => undefined}
+        onOpenLink={() => false}
+      />,
+    );
+    const copied = {
+      text: serializeNode(view.container, "text"),
+      html: `<div data-buzz-copy="timeline">${serializeNode(view.container, "html")}</div>`,
+    };
+    expect(copied.text).toBe(plain);
+    const target = mount();
+    paste(target.input, copied.text, copied.html);
+    expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+  },
+);
+
 it("copies a selection as humanised text and semantic HTML that reads back as the slice's Markdown", () => {
   const h = mount("", { links: true });
   act(() => {
@@ -2592,7 +2708,9 @@ it("writes blocks, breaks and spoilers as HTML the paste side reads back", async
   const copied = clipboard(h.input, "copy");
   expect(copied).toEqual({
     text: h.markdown(),
-    html: copyHtml("<p>first ||secret||<br>next</p><pre><code>ls</code></pre>"),
+    html: copyHtml(
+      "<p>first ||secret||<br>next</p><pre><code>ls\n</code></pre>",
+    ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());
 });
@@ -2646,7 +2764,7 @@ it("copies marked whitespace, lists, a quote and a fence as HTML that reads back
   expect(copied).toEqual({
     text: h.markdown(),
     html: copyHtml(
-      '<p>a <strong>bold </strong>b</p><ul><li><p>one</p></li><li><p>two</p></li></ul><ol start="3"><li><p>first</p></li></ol><blockquote><p>quoted</p></blockquote><pre><code class="language-sh">ls</code></pre>',
+      '<p>a <strong>bold </strong>b</p><ul><li><p>one</p></li><li><p>two</p></li></ul><ol start="3"><li><p>first</p></li></ol><blockquote><p>quoted</p></blockquote><pre><code class="language-sh">ls\n</code></pre>',
     ),
   });
   expect(readBack(copied.html)).toBe(h.markdown());

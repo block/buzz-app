@@ -1419,16 +1419,19 @@ export function EditableInput({
               )
             )
               return true;
-            // Only this app's own payload is read as HTML; other apps paste as text.
+            const code = editor.state.selection.$from.parent.type.spec.code;
+            // Code takes visible text verbatim. Outside code, only this app's
+            // own payload is read as HTML; other apps paste as text.
             let text =
-              buzzCopyMarkdown(
-                event.clipboardData?.getData("text/html") ?? "",
-              ) ||
+              (!code &&
+                buzzCopyMarkdown(
+                  event.clipboardData?.getData("text/html") ?? "",
+                )) ||
               event.clipboardData?.getData("text/plain") ||
               "";
             if (!text) return true;
             let link = false;
-            if (!editor.state.selection.$from.parent.type.spec.code)
+            if (!code)
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });

@@ -73,6 +73,35 @@ afterEach(() => {
 });
 
 describe("serializeNode", () => {
+  it.each([
+    [mention(), "Morgan", "@Morgan", `[@Morgan](${target})`],
+    [
+      anchor("buzz://channel/design", "#design", "design"),
+      "design",
+      "#design",
+      "[#design](buzz://channel/design)",
+    ],
+    [
+      anchor("https://example.com/docs", "docs"),
+      "docs",
+      "docs (https://example.com/docs)",
+      "[docs](https://example.com/docs)",
+    ],
+  ])(
+    "keeps a whole chip selected within one text node: %s",
+    (html, label, plain, markdown) => {
+      const paragraph = query("p", mount(row(`<p>before ${html} after</p>`)));
+      const labelNode = lastText(query("button, a", paragraph));
+      const { selection } = select(labelNode, 0, labelNode, label.length);
+      expect(serializeSelection(selection, "text")).toBe(plain);
+      expect(serializeSelection(selection, "markdown")).toBe(markdown);
+      expect(serializeSelection(selection, "html")).toContain("<a href=");
+      select(labelNode, 1, labelNode, label.length - 1);
+      for (const format of formats)
+        expect(serializeSelection(selection, format)).toBe(label.slice(1, -1));
+    },
+  );
+
   it("keeps a whole mention's identity and drops it from a fragment", () => {
     const paragraph = query("p", mount(row(`<p>Hi ${mention()} there</p>`)));
     expect(each(paragraph)).toEqual({
@@ -189,9 +218,35 @@ describe("serializeNode", () => {
       `First\nSecond [@Morgan](${target})\na\t\tc`,
     );
     expect(serializeSelection(selection, "html")).toBe(
-      `<p>First</p><p>Second <a href="${target}">@Morgan</a></p><p>a</p><p></p><p>c</p>`,
+      `<p>First</p><p>Second <a href="${target}">@Morgan</a></p><table><tbody><tr><td>a</td><td></td><td>c</td></tr></tbody></table>`,
     );
   });
+
+  it.each([
+    [2, "a\tb"],
+    [4, "a\tb\nc\td"],
+  ])(
+    "keeps table boundaries when the selection ends in cell %s",
+    (end, expected) => {
+      const body = mount(
+        row(
+          "<table><tbody><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></tbody></table>",
+        ),
+      );
+      const cells = body.querySelectorAll("td");
+      const { selection } = select(
+        lastText(cells.item(0)),
+        0,
+        lastText(cells.item(end - 1)),
+        1,
+      );
+      expect(serializeSelection(selection, "text")).toBe(expected);
+      expect(serializeSelection(selection, "markdown")).toBe(expected);
+      const html = document.createElement("template");
+      html.innerHTML = `<div data-buzz-copy="timeline">${serializeSelection(selection, "html")}</div>`;
+      expect(serializeNode(html.content, "markdown")).toBe(expected);
+    },
+  );
 
   it("keeps inline formatting, code and fenced blocks", () => {
     const body = mount(
@@ -202,7 +257,7 @@ describe("serializeNode", () => {
     expect(each(query("[data-message-id]", body))).toEqual({
       text: "bold it gone ls\nnext\necho hi\nls",
       markdown: "**bold** _it_ ~~gone~~ `ls`\nnext\n\n```sh\necho hi\nls\n```",
-      html: '<p><strong>bold</strong> <em>it</em> <s>gone</s> <code>ls</code><br>next</p>\n<pre><code class="language-sh">echo hi\nls</code></pre>',
+      html: '<p><strong>bold</strong> <em>it</em> <s>gone</s> <code>ls</code><br>next</p><pre><code class="language-sh">echo hi\nls</code></pre>',
     });
   });
 
@@ -215,14 +270,36 @@ describe("serializeNode", () => {
     );
     expect(each(paragraph)).toEqual({
       text: "a bold b it c  ls ",
-      markdown: "a **bold** b _it_ c ` ls `",
+      markdown: "a **bold** b _it_ c `  ls  `",
       html: "<p>a<strong> bold </strong>b <em>it </em>c <code> ls </code></p>",
     });
   });
 
+  it.each([
+    [1, "a"],
+    [2, "a\n"],
+    [3, "a\nb"],
+    [4, "a\nb"],
+  ])(
+    "keeps selected code content at offset %s while removing only its terminator",
+    (end, value) => {
+      const body = mount(row("<p>x</p><pre><code>a\nb\n</code></pre>"));
+      const { selection } = select(
+        lastText(query("p", body)),
+        0,
+        lastText(query("code", body)),
+        end,
+      );
+      const expected = `x\n\n\`\`\`\n${value}\n\`\`\``;
+      expect(serializeSelection(selection, "markdown")).toBe(expected);
+      const html = document.createElement("template");
+      html.innerHTML = serializeSelection(selection, "html");
+      expect(serializeNode(html.content, "markdown")).toBe(expected);
+    },
+  );
+
   it("writes lists, quotes and fences as Markdown blocks", () => {
-    // The timeline renderer's shapes, with its whitespace between blocks; only
-    // Markdown drops that whitespace, since its blocks bring their own breaks.
+    // Renderer formatting whitespace is omitted; semantic blocks own separation.
     const body = mount(
       row(
         '<ul><li>one</li><li>two <strong>b</strong></li></ul>\n<ol start="3"><li><p>first</p>\n<ul><li>sub</li></ul></li></ol>\n<blockquote><p>quoted</p>\n<blockquote><p>deep</p></blockquote></blockquote>\n<pre data-language="sh"><code>ls</code></pre>',
@@ -232,8 +309,7 @@ describe("serializeNode", () => {
       text: "one\ntwo b\nfirst\nsub\nquoted\ndeep\nls",
       markdown:
         "- one\n- two **b**\n\n3. first\n   \n   - sub\n\n> quoted\n>\n> > deep\n\n```sh\nls\n```",
-      // The HTML flavor flattens list and quote structure to paragraphs.
-      html: '<p>one</p><p>two <strong>b</strong></p>\n<p>first</p>\n<p>sub</p>\n<p>quoted</p>\n<p>deep</p>\n<pre><code class="language-sh">ls</code></pre>',
+      html: '<ul><li>one</li><li>two <strong>b</strong></li></ul><ol start="3"><li><p>first</p><ul><li>sub</li></ul></li></ol><blockquote><p>quoted</p><blockquote><p>deep</p></blockquote></blockquote><pre><code class="language-sh">ls</code></pre>',
     });
     // A partial selection keeps each item's own number.
     const { range } = select(

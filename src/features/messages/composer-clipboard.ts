@@ -15,11 +15,20 @@ import { serializeNode } from "./selection-copy";
 export function identityLink(
   source: string,
 ): { pubkey: string; name: string } | undefined {
+  const link = markdownLink(source);
+  const pubkey = link && profileKey(link.href);
+  const name = link?.label.replace(/^@/, "");
+  return pubkey && name ? { pubkey, name } : undefined;
+}
+
+/** Read labels with Markdown semantics, including escapes and entities. */
+function markdownLink(
+  source: string,
+): { href: string; label: string } | undefined {
   const { links } = scanMarkdown(source);
   const link = links.length === 1 ? links[0] : undefined;
-  const pubkey = link?.url && profileKey(link.url);
   if (
-    !pubkey ||
+    !link?.url ||
     link.position?.start.offset !== 0 ||
     link.position.end.offset !== source.length
   )
@@ -31,8 +40,7 @@ export function identityLink(
     if (node?.value) name += node.value;
     else pending.push(...(node?.children ?? []).slice().reverse());
   }
-  name = name.replace(/^@/, "");
-  return name ? { pubkey, name } : undefined;
+  return { href: link.url, label: name };
 }
 
 /** The anchor a token stands for: a recipient, a resource, a link the
@@ -50,7 +58,8 @@ function tokenLink(
   messageLinkParts(
     source,
     (start, end, label, href) => {
-      if (start === 0 && end === source.length) link = { href, label };
+      if (start === 0 && end === source.length)
+        link = { href, label: markdownLink(source)?.label ?? label };
     },
     (start, end, href) => {
       if (start === 0 && end === source.length) link ??= { href, label: href };
@@ -70,9 +79,11 @@ const serializer = new DOMSerializer(
     blockquote: () => ["blockquote", 0],
     code_block: (node) => [
       "pre",
-      node.attrs.language
-        ? ["code", { class: `language-${node.attrs.language}` }, 0]
-        : ["code", 0],
+      [
+        "code",
+        node.attrs.language ? { class: `language-${node.attrs.language}` } : {},
+        `${node.textContent}\n`,
+      ],
     ],
     bullet_list: () => ["ul", 0],
     ordered_list: (node) => [

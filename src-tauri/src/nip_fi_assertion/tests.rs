@@ -554,16 +554,18 @@ async fn a_late_session_denial_retries_with_the_replacement_without_signing_out(
 
     let assertion = request.await.unwrap().unwrap().unwrap();
     assert_eq!(assertion.header.as_str(), "Bearer fixture.assertion");
-    let requests = service.records();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[0].authorization.as_deref(),
-        Some("Bearer old-cli-session")
-    );
-    assert_eq!(
-        requests[1].authorization.as_deref(),
-        Some("Bearer new-cli-session")
-    );
+    {
+        let requests = service.records();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer old-cli-session")
+        );
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer new-cli-session")
+        );
+    }
     assert_eq!(
         owner
             .session_snapshot()

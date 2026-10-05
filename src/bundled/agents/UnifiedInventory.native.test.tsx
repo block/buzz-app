@@ -16,6 +16,7 @@ import { controlFixture } from "../../features/agents/control-testing";
 import type { ClientSnapshot } from "../../features/communities/service";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UnifiedInventory } from "./UnifiedInventory";
 
 // A packaged desktop connection: the real adapter selection, with no broker.
@@ -120,6 +121,7 @@ it("discovers and retries an unselected joined community through native reads", 
         onUseHere={() => {}}
         onImport={() => {}}
       />,
+      { wrapper: ToastProvider },
     );
     await screen.findByText(/could not be checked for https:\/\/joined/);
     unavailable = false;

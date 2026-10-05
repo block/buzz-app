@@ -1,6 +1,7 @@
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { useEffect, useEffectEvent, useId, type ReactNode } from "react";
 import { XIcon } from "../icons";
+import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 
 type NoticeData = {
@@ -162,12 +163,33 @@ export function ToastNotice({
 
 /** Completed actions belong to the host stack, not the originating row's lifetime. */
 export function useToastNotification() {
-  const { add } = BaseToast.useToastManager<NoticeData>();
-  return (title: string, tone: "success" | "error" | "info") =>
-    add({
+  const { add, close } = BaseToast.useToastManager<NoticeData>();
+  return (
+    title: string,
+    tone: "success" | "error" | "info",
+    action?: { label: string; onClick(): void },
+  ) => {
+    const id = add({
       title,
       type: tone,
-      timeout: 4000,
-      data: { dismissible: true, closeLabel: "Dismiss notification" },
+      // An action needs time to reach with the keyboard (F6, then Tab).
+      timeout: action ? 8000 : 4000,
+      data: {
+        dismissible: true,
+        closeLabel: "Dismiss notification",
+        actions: action && (
+          <Button
+            size="compact"
+            onClick={() => {
+              close(id);
+              action.onClick();
+            }}
+          >
+            {action.label}
+          </Button>
+        ),
+      },
     });
+    return id;
+  };
 }

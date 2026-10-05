@@ -447,6 +447,13 @@ function ProfileDetails({
                       pubkey={pubkey}
                       control={control}
                       scope={scope}
+                      name={name}
+                      community={
+                        communityOrigin
+                          ? new URL(communityOrigin).host
+                          : undefined
+                      }
+                      running={runtimeAgent?.status === "running"}
                       onDeleted={close}
                     />
                   )}

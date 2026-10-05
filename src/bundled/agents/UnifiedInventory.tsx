@@ -9,7 +9,12 @@ import type {
   AgentView,
   ImportSource,
 } from "../../features/agents/control";
-import { relayOrigin } from "../../features/communities/destination";
+import {
+  communityDestination,
+  relayOrigin,
+} from "../../features/communities/destination";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { useInventoryArchive } from "./inventory-archive";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -102,6 +107,32 @@ export function UnifiedInventory({
   // Archive is the first removal step and hides the row. Keep a started
   // removal's card until it finishes, so its later steps and errors stay visible.
   const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
+  const communityName =
+    client?.memberships.find((membership) => {
+      try {
+        return communityDestination(membership.id).url === destination;
+      } catch {
+        return false;
+      }
+    })?.name || (destination ? new URL(destination).host : "this community");
+  const notify = useToastNotification();
+  const archiving = useInventoryArchive(
+    archives,
+    destination,
+    (pubkey, action) => {
+      const name = rows.get(pubkey)?.displayName ?? "Agent";
+      notify(
+        `${name} ${action === "archive" ? "archived" : "unarchived"} in ${communityName}`,
+        "success",
+        action === "archive"
+          ? {
+              label: "Undo",
+              onClick: () => void archiving.run(pubkey, "unarchive"),
+            }
+          : undefined,
+      );
+    },
+  );
   const {
     communityIdentities,
     profiles: sourceProfiles,
@@ -144,15 +175,19 @@ export function UnifiedInventory({
     data,
     (key, fallback) => sourceProfiles.get(key)?.name ?? fallback,
   );
-  // Apply the shared archive rule after all discovery sources join. The one
-  // Agents-only exception: an identity with local controls stays manageable.
+  // Apply the shared archive rule after all discovery sources join. Archived
+  // agents stay listed in their own section, so they can be unarchived. A card
+  // keeps its place while its Remove request runs, and keeps its starting
+  // section while an Archive or Unarchive request runs or shows its error.
+  const archivedHere = new Set<string>();
   for (const row of rows.values()) {
     const key = `${destination} ${row.pubkey}`;
-    if (
-      ((archived(row.pubkey) && !held.has(key)) || removed.has(key)) &&
-      !row.localIdentity
+    const run = archiving.runs.get(row.pubkey);
+    if (removed.has(key) && !row.localIdentity) rows.delete(row.pubkey);
+    else if (
+      run ? run.action === "unarchive" : archived(row.pubkey) && !held.has(key)
     )
-      rows.delete(row.pubkey);
+      archivedHere.add(row.pubkey);
   }
   const viewer = connection.viewer;
   const removeRelay =
@@ -210,6 +245,17 @@ export function UnifiedInventory({
       duplicate={duplicate}
       remove={remove}
       removeRelay={removeRelay}
+      archive={
+        connection.status === "ready" && selectedViewerMatches && destination
+          ? {
+              archived: archivedHere,
+              community: communityName,
+              runs: archiving.runs,
+              request: (pubkey, action) => void archiving.run(pubkey, action),
+              focus: archiving.focus,
+            }
+          : undefined
+      }
       importedId={importedId}
       resolveProfile={resolveProfile}
       profileKeys={profileKeys}

@@ -10,6 +10,7 @@
     "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",
+    "allow-identity-sign-builderlab-binding",
     "allow-relay-decode-read-state",
     "allow-relay-sign-read-state",
     "allow-relay-publish-read-state",

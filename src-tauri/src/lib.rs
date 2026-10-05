@@ -32,7 +32,7 @@ use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, IdentityHost,
+    identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
@@ -398,6 +398,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         identity_prepare_remote_agent_authorization,
+        identity_sign_builderlab_binding,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,

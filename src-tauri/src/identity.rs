@@ -889,6 +889,72 @@ pub async fn identity_prepare_remote_agent_authorization(
 ) -> Result<Vec<String>> {
     host.authorize_agent(owner, agent_pubkey).await
 }
+
+/// Builderlab's identity-binding origin; this signer never binds the key elsewhere.
+const BUILDERLAB_ORIGIN: &str = "https://app.builderlab.xyz";
+
+/// The challenge fields Builderlab returns for binding this identity.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuilderlabChallenge {
+    challenge_id: String,
+    nonce: String,
+    verification_code: String,
+    origin: String,
+    expires_at: String,
+}
+impl BuilderlabChallenge {
+    /// block/buzz's `nostr_bind` checks and kind 24243 tags, pinned to Builderlab.
+    fn template(self, now: u64) -> Result<EventTemplate> {
+        let nonce_ok = self.nonce.len() == 43
+            && self
+                .nonce
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        let expires = chrono::DateTime::parse_from_rfc3339(&self.expires_at)
+            .map(|at| at.timestamp())
+            .unwrap_or(i64::MIN);
+        if self.challenge_id.len() != 36
+            || uuid::Uuid::parse_str(&self.challenge_id).is_err()
+            || !nonce_ok
+            || self.verification_code.len() != 6
+            || !self.verification_code.bytes().all(|b| b.is_ascii_digit())
+            || self.origin != BUILDERLAB_ORIGIN
+            || expires <= i64::try_from(now).unwrap_or(i64::MAX)
+        {
+            return Err("Invalid Nostr identity challenge".into());
+        }
+        let tag = |name: &str, value: String| vec![name.to_owned(), value];
+        Ok(EventTemplate {
+            created_at: now,
+            kind: 24243,
+            content: String::new(),
+            tags: vec![
+                tag("challenge_id", self.challenge_id),
+                tag("nonce", self.nonce),
+                tag("verification_code", self.verification_code),
+                tag("audience", "buzz:nostr-identity".into()),
+                tag("action", "bind_nostr_identity".into()),
+                tag("protocol", "buzz-nostr-identity".into()),
+                tag("version", "1".into()),
+                tag("origin", self.origin),
+                tag("expires_at", self.expires_at),
+            ],
+        })
+    }
+}
+/// Signs only a valid Builderlab binding challenge; never a general event signer.
+#[tauri::command]
+pub async fn identity_sign_builderlab_binding(
+    host: tauri::State<'_, IdentityHost>,
+    challenge: BuilderlabChallenge,
+) -> Result<serde_json::Value> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "System clock is before 1970")?
+        .as_secs();
+    host.sign(challenge.template(now)?).await
+}
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {
     with_identity(host.inner().clone(), Identity::restore).await

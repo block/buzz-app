@@ -38,6 +38,7 @@ fn main() {
             "identity_create",
             "identity_export",
             "identity_prepare_remote_agent_authorization",
+            "identity_sign_builderlab_binding",
             "enterprise_login_gate",
             "relay_sign",
             "relay_decode_read_state",

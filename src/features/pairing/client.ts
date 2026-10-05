@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 export type PairingStatus =
   | {
       phase:
+        | "uncertain"
         | "expired"
         | "idle"
         | "connecting"

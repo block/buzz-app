@@ -132,7 +132,9 @@ export function PairingSettings({
     state.phase,
     pairing,
   ]);
-  const scanned = ["code", "transferring", "complete"].includes(state.phase);
+  const scanned = ["code", "transferring", "complete", "uncertain"].includes(
+    state.phase,
+  );
   const confirmed = ["transferring", "complete"].includes(state.phase);
   const done = state.phase === "complete";
   const legacy = state.phase === "code" && !state.codeEntry;
@@ -189,6 +191,7 @@ export function PairingSettings({
                 <>
                   {!busy &&
                     !done &&
+                    state.phase !== "uncertain" &&
                     (!account ? (
                       <Button disabled={reading} onClick={() => void prepare()}>
                         {reading
@@ -295,6 +298,19 @@ export function PairingSettings({
                         className="motion-safe:animate-spin"
                       />
                       Finishing pairing on your phone…
+                    </div>
+                  )}
+                  {state.phase === "uncertain" && (
+                    <div
+                      role="status"
+                      className="flex flex-col items-center gap-3"
+                    >
+                      <h3 className="m-0 text-label">Check your phone</h3>
+                      <p className="m-0 text-body-sm text-muted">
+                        The account was sent, but your phone hasn’t confirmed.
+                        It may already be paired.
+                      </p>
+                      <Button onClick={start}>Start a new pairing</Button>
                     </div>
                   )}
                   {done && (

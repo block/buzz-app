@@ -15,7 +15,7 @@ fn message(keys: &Keys, source: &PairingSession, value: PairingMessage) -> Event
         .sign_with_keys(keys)
         .unwrap()
 }
-fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload) {
+fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload, String) {
     let (session, qr) = PairingSession::new_source("wss://relay.test".into());
     let target = Keys::generate();
     let mut exchange = Exchange {
@@ -29,7 +29,7 @@ fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload) {
         PairingMessage::Offer {
             session_id: hex::encode(crypto::derive_session_id(&qr.session_secret)),
             version: 1,
-            confirmation: Some("code-entry".into()),
+            confirmation: Some("desktop-code-v1".into()),
         },
     );
     let output = exchange.receive(&offer).unwrap();
@@ -40,8 +40,11 @@ fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload) {
             ..
         })
     ));
-    assert!(output.events.is_empty());
-    (exchange, target, qr)
+    assert_eq!(output.events.len(), 1);
+    let Some(Status::Code { code, .. }) = output.status else {
+        panic!("missing code")
+    };
+    (exchange, target, qr, code)
 }
 fn proof(exchange: &Exchange, target: &Keys, qr: &buzz_pairing::QrPayload) -> Event {
     let shared =
@@ -62,14 +65,83 @@ fn proof(exchange: &Exchange, target: &Keys, qr: &buzz_pairing::QrPayload) -> Ev
         },
     )
 }
+fn submission(exchange: &Exchange, target: &Keys, code: &str, attempt: u8) -> Event {
+    message(
+        target,
+        &exchange.session,
+        PairingMessage::CodeSubmit {
+            code: code.into(),
+            request_id: attempt.to_string(),
+        },
+    )
+}
+#[test]
+fn transcript_alone_never_exports_and_guess_budget_cannot_be_reset() {
+    let (mut exchange, target, qr, code) = entry();
+    assert!(exchange
+        .receive(&proof(&exchange, &target, &qr))
+        .unwrap()
+        .events
+        .is_empty());
+    assert!(exchange.payload.is_some());
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    for attempt in 1..=5 {
+        let event = submission(&exchange, &target, wrong, attempt);
+        let output = exchange.receive(&event).unwrap();
+        assert_eq!(output.events.len(), 1);
+        assert!(exchange.payload.is_some());
+        if attempt == 5 {
+            assert!(matches!(output.status, Some(Status::Error { .. })));
+        }
+        if attempt < 5 {
+            assert!(exchange.receive(&event).unwrap().events.is_empty());
+        } else {
+            assert!(exchange.receive(&event).is_err());
+        }
+    }
+    assert!(exchange
+        .receive(&submission(&exchange, &target, &code, 6))
+        .is_err());
+    assert!(exchange.payload.is_some());
+}
+#[test]
+fn timeout_preserves_possible_import_only_after_payload_publication() {
+    let manager = Pairing::default();
+    let (tx, _) = mpsc::channel(1);
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: CancellationToken::new(),
+        confirm: tx,
+        status: Status::Transferring,
+        payload_sent: false,
+    });
+    manager.expire("live");
+    assert_eq!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Expired
+    );
+    manager.mark_payload_sent("live");
+    manager.expire("stale");
+    assert_eq!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Expired
+    );
+    manager.expire("live");
+    assert_eq!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Uncertain
+    );
+}
 #[test]
 fn entry_requires_phone_proof_and_real_completion() {
-    let (mut exchange, target, qr) = entry();
+    let (mut exchange, target, qr, code) = entry();
     assert!(
         exchange.confirm().is_err(),
         "desktop cannot bypass code entry"
     );
-    let output = exchange.receive(&proof(&exchange, &target, &qr)).unwrap();
+    let output = exchange
+        .receive(&submission(&exchange, &target, &code, 1))
+        .unwrap();
     assert_eq!(output.status, Some(Status::Transferring));
     assert_eq!(output.events.len(), 2);
     let plain = Zeroizing::new(
@@ -96,18 +168,23 @@ fn entry_requires_phone_proof_and_real_completion() {
 }
 #[test]
 fn mismatch_and_phone_import_failure_never_claim_success() {
-    let (mut exchange, target, _) = entry();
+    let (mut exchange, target, _, code) = entry();
     let wrong = message(
         &target,
         &exchange.session,
-        PairingMessage::SasConfirm {
-            transcript_hash: "00".repeat(32),
+        PairingMessage::CodeSubmit {
+            code: if code == "000000" { "000001" } else { "000000" }.into(),
+            request_id: "wrong".into(),
         },
     );
-    assert!(exchange.receive(&wrong).is_err());
+    let rejection = exchange.receive(&wrong).unwrap();
+    assert_eq!(rejection.events.len(), 1);
+    assert_ne!(rejection.status, Some(Status::Transferring));
     assert!(exchange.payload.is_some());
-    let (mut exchange, target, qr) = entry();
-    exchange.receive(&proof(&exchange, &target, &qr)).unwrap();
+    let (mut exchange, target, _qr, code) = entry();
+    exchange
+        .receive(&submission(&exchange, &target, &code, 1))
+        .unwrap();
     let rejected = message(
         &target,
         &exchange.session,
@@ -156,6 +233,7 @@ fn old_session_cleanup_cannot_cancel_or_overwrite_replacement() {
         cancel: cancel.clone(),
         confirm: tx,
         status: Status::Connecting,
+        payload_sent: false,
     });
     manager.cancel("old").unwrap();
     manager.update("old", Status::Complete);
@@ -180,6 +258,7 @@ fn window_reload_or_destruction_cancels_the_live_attempt() {
         cancel: cancel.clone(),
         confirm: tx,
         status: Status::Connecting,
+        payload_sent: false,
     });
     manager.cancel_all();
     assert!(cancel.is_cancelled());

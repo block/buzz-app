@@ -2,7 +2,7 @@ mod identity;
 mod qr;
 mod relay;
 
-use buzz_pairing::{PairingError, PairingSession, PayloadType, SessionState};
+use buzz_pairing::{PairingSession, PayloadType, SessionState};
 use futures_util::FutureExt;
 use nostr_pairing::Event;
 use serde::Serialize;
@@ -29,6 +29,7 @@ pub enum Status {
     Transferring,
     Complete,
     Expired,
+    Uncertain,
     Error {
         message: String,
     },
@@ -39,6 +40,7 @@ struct Active {
     cancel: CancellationToken,
     confirm: mpsc::Sender<()>,
     status: Status,
+    payload_sent: bool,
 }
 #[derive(Clone, Default)]
 pub struct Pairing(Arc<Mutex<Option<Active>>>);
@@ -60,6 +62,28 @@ impl Pairing {
             }
         }
     }
+    fn mark_payload_sent(&self, id: &str) {
+        if let Ok(mut active) = self.0.lock() {
+            if let Some(active) = active.as_mut().filter(|a| a.id == id) {
+                active.payload_sent = true;
+            }
+        }
+    }
+    fn expire(&self, id: &str) {
+        if let Ok(mut active) = self.0.lock() {
+            if let Some(active) = active
+                .as_mut()
+                .filter(|a| a.id == id && !a.cancel.is_cancelled())
+            {
+                active.status = if active.payload_sent {
+                    Status::Uncertain
+                } else {
+                    Status::Expired
+                };
+            }
+        }
+    }
+
     fn cancel(&self, id: &str) -> Result<(), String> {
         let mut active = self
             .0
@@ -152,6 +176,7 @@ pub fn pairing_start(
             cancel: cancel.clone(),
             confirm: tx,
             status: Status::Connecting,
+            payload_sent: false,
         });
     }
     let host = host.inner().clone();
@@ -165,7 +190,7 @@ pub fn pairing_start(
         match result {
             Ok(Ok(())) => pairing.update(&id, Status::Complete),
             Ok(Err(message)) => pairing.update(&id, Status::Error { message }),
-            Err(_) => pairing.update(&id, Status::Expired),
+            Err(_) => pairing.expire(&id),
         }
     });
     Ok(())
@@ -228,13 +253,22 @@ async fn run(
                 }
             }
         };
-        for event in output.events {
+        let payload_index = output.events.len().checked_sub(1);
+        for (index, event) in output.events.into_iter().enumerate() {
+            if output.status == Some(Status::Transferring) && Some(index) == payload_index {
+                // Once publication begins, cancellation of the await cannot prove
+                // that the phone did not receive and import this payload.
+                pairing.mark_payload_sent(id);
+            }
             relay::send(&mut socket, &event).await?;
             auth.unacknowledged.push(event);
         }
         if let Some(status) = output.status {
             if status == Status::Complete {
                 return Ok(());
+            }
+            if let Status::Error { message } = status {
+                return Err(message);
             }
             pairing.update(id, status);
         }
@@ -281,20 +315,36 @@ impl Exchange {
         }
         if let Ok((code, code_entry)) = self.session.handle_offer_with_confirmation(event) {
             self.code_entry = code_entry;
+            let (code, events) = if code_entry {
+                let (code, challenge) = self
+                    .session
+                    .start_desktop_code()
+                    .map_err(|_| "Couldn’t create the desktop verification code.")?;
+                (code, vec![challenge])
+            } else {
+                (code, vec![])
+            };
             return Ok(Output {
-                events: vec![],
+                events,
                 status: Some(Status::Code { code, code_entry }),
             });
         }
         if self.code_entry && self.session.state() == SessionState::Confirming {
-            match self.session.handle_target_sas_confirm(event) {
-                Ok(proof) => return self.transfer(proof),
-                Err(PairingError::TranscriptMismatch) => {
-                    return Err("The codes didn’t match. Create a new code and try again.".into())
+            if let Ok((reply, accepted)) = self.session.handle_target_code(event) {
+                if accepted {
+                    return self.transfer(reply);
                 }
-                Err(_) => {}
+                let status =
+                    (self.session.state() == SessionState::Aborted).then(|| Status::Error {
+                        message: "Too many incorrect codes. Try pairing again.".into(),
+                    });
+                return Ok(Output {
+                    events: vec![reply],
+                    status,
+                });
             }
         }
+
         match self.session.handle_complete(event) {
             Ok(()) => {
                 return Ok(Output {

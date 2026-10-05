@@ -23,12 +23,15 @@ new plugin security sandbox. The frontend CSP is unchanged.
    readiness before showing the QR. Each attempt expires after two minutes and
    automatically renews while the section remains open. Connection failures show
    **Try again** instead of retrying indefinitely.
-3. A compatible phone advertises encrypted `code-entry` support. Desktop shows
-   six digits in one display container; the phone validates entry and sends its
-   transcript proof. Only then does desktop send the encrypted account payload.
+3. A compatible phone advertises encrypted `desktop-code-v1` support. Desktop
+   generates a separate random six-digit code that is never sent in the QR or
+   challenge. The phone submits the entered code; desktop verifies it with a
+   five-attempt budget before sending the encrypted account payload.
 4. Older phones retain explicit **Codes match** confirmation. Desktop never uses
    that action to bypass a code-entry phone's proof.
 5. **Phone paired** requires the phone's successful import acknowledgement.
+   If a sent transfer times out awaiting acknowledgement, **Check your phone**
+   preserves the uncertain outcome and requires a deliberate new attempt.
    Closing or reloading the window, leaving the Settings section, switching accounts/communities, disabling the
    plugin disposes the attempt. Retries use a fresh native session.
 
@@ -46,7 +49,7 @@ subsequent work; it cannot retract a payload already delivered to the phone.
 ## Verification
 
 - `crates/pairing`: imported protocol tests and vectors from PR #8085, pinned to
-  `530c3a454ecf4808237ca566c515d3d5a10d59a9`; see its README for provenance.
+  `ac0ad7c3004683e5db813492846d787404a2b475`; see its README for provenance.
 - Native tests: account mismatch, code-entry and legacy transfers, phone import
   failure, stale-session cancellation, secure destination validation, and actual
   local WebSocket subscription/authentication exchanges with temporary keys.

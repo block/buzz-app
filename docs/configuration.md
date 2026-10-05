@@ -12,6 +12,7 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
 | `BUZZ_BUILDERLAB_URL` | Vite build: public URL exposed as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL` in web and packaged desktop frontend code; no runtime override. |
+| `BL_HOME`, `BL_SKILLS_PROFILE`, `BL_AUTH_STORAGE`, `BL_AUTH_STORAGE_FILE`, `KGOOSE_BASE_URL`, `KGOOSE_SERVICE_PATH` | Native desktop runtime: the `bl` CLI's own environment, read from the app process at launch to locate the [shared Builderlab session](#builderlab-session-shared-with-the-bl-cli). Not build inputs. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
@@ -58,6 +59,55 @@ Restart Vite after changing development inputs. Production web and desktop
 frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Builderlab session shared with the bl CLI
+
+On desktop, Hosted communities signs in through `src-tauri/src/builderlab.rs`
+rather than the development broker, and the session lives in the store the `bl`
+CLI uses. A `bl auth login` appears on the Communities card without a second
+sign-in; Buzz's Sign out revokes the session and `bl auth status` then reports
+signed out; a `bl auth logout` returns the card to Sign in. On macOS the item is
+the Keychain generic password with service `com.squareup.builderbot.cli-auth`
+and account `<profile>@<service URL>`, `default@https://block.builderlab.xyz/api/goose`
+by default. On Windows and Linux it is `$BL_HOME/auth-sessions.json`, which `bl`
+uses only when run with `BL_AUTH_STORAGE=file`; sharing there works exactly then.
+That file has no locking, so a write concurrent with `bl` can tear it; delete it
+to recover.
+
+The app resolves the key the way `bl` does, from its process environment at
+launch: `just desktop` inherits the shell, a packaged app launched from Finder
+sees none of these and takes the defaults. Restart the app to change them.
+
+| Variable | Default when unset |
+| --- | --- |
+| `BL_HOME` | `<home>/.bl`, holding `skills.yaml`, `config.yaml` and the file store. |
+| `BL_SKILLS_PROFILE` | `current_profile` from `$BL_HOME/skills.yaml`, else `default`. |
+| `BL_AUTH_STORAGE` | Keychain on macOS; `$BL_HOME/auth-sessions.json` on Windows and Linux. `keyring` (macOS only), `file` and `file:<path>` select as in `bl`; `memory` is rejected because a per-call store would always be empty. |
+| `BL_AUTH_STORAGE_FILE` | None; when set, the file store at that path. |
+| `KGOOSE_BASE_URL` | `https://builderlab.xyz`. The `org` from `$BL_HOME/config.yaml`, `block` when absent, is prefixed onto `.xyz` and `.build` hosts, giving `https://block.builderlab.xyz`. |
+| `KGOOSE_SERVICE_PATH` | `/api/goose`, or `/cash-app/goose` for a direct kgoose host such as `kgoose.sqprod.co`. |
+
+Every request goes to the resulting service URL and the item is keyed by that
+same URL, so the credential and the endpoint cannot disagree. `bl`'s own default
+host is `kgoose.sqprod.co`, which does not serve the login endpoints, so run `bl`
+with `KGOOSE_BASE_URL=https://builderlab.xyz` for both tools to resolve the same
+key. `BUZZ_BUILDERLAB_URL` stays a frontend-only public URL; the native module
+does not read it.
+
+Expect a macOS Keychain prompt naming Buzz the first time the Communities card
+reads an item `bl` created, and again after each `bl auth logout` and `bl auth
+login`, because `bl` recreates the item and its access list trusts only the
+creator; `bl` is likewise prompted in Terminal for an item Buzz created.
+Ad-hoc-signed development builds prompt again after each rebuild; Always Allow
+sticks for a packaged app. These prompts are expected, not defects. Deny shows
+the sign-in card with "Keychain access was denied. Allow Buzz to use the
+Builderlab session in Keychain and retry."; Sign in reads again. The store is
+first read when the card mounts, never at launch, and an unanswered prompt
+leaves the card at Checking sign-in… by design.
+
+Only sign-in is native. Identity binding and community actions still need the
+development broker; a native build shows "Hosted community actions are not
+available natively yet" for them until the native `/v1/buzz/*` routes land.
 
 ## Deliberate exclusions
 

@@ -115,8 +115,9 @@ Saved enabled/disabled flags win over defaults (except required Channels). There
 is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities still requires its development
-broker backend. Disabling Community admin removes its Invite to community shortcut.
+only on macOS/Linux desktop; Hosted communities signs in natively on desktop but
+still needs its development broker for community actions. Disabling Community
+admin removes its Invite to community shortcut.
 
 Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
@@ -159,11 +160,16 @@ estimated from visible rows. One origin-wide pending slot is
 re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
-stays in the existing Add a community dialog; the card only copies the new relay address. Its
-`/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
-which keeps the session credential and signing key in Node. Packaged builds ship no
-broker, so this plugin cannot sign in or manage communities there until a native
-backend exists.
+stays in the existing Add a community dialog; the card only copies the new relay address.
+Sign-in is native on desktop: `src-tauri/src/builderlab.rs` opens the browser,
+receives the loopback callback and keeps the session in the store the `bl` CLI
+uses, so one login serves both tools and signing out of either ends it for both
+([shared session](configuration.md#builderlab-session-shared-with-the-bl-cli)).
+Browser builds still need the broker. Identity binding and community actions
+still use the `/api/builderlab/*` routes in the development broker
+(`dev/builderlab.mjs`), which keeps the signing key in Node; a native build
+reports "Hosted community actions are not available natively yet" for them until
+the native routes land.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no

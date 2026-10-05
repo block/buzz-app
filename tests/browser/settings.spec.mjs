@@ -415,6 +415,10 @@ confirmedPresence(
       await tab();
       await expect(customEmoji).toBeFocused();
       await tab();
+      await expect(
+        sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
+      await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
       await expect(
@@ -480,6 +484,10 @@ confirmedPresence(
       await expect(personalGroups).toBeFocused();
       await tab();
       await expect(customEmoji).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();

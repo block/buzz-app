@@ -87,6 +87,21 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 }
               }
             }
+            // Desktop shares .env.local/process inputs with the native build.
+            // An explicit empty process value clears the frontend URL too.
+            writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            for (const [command, override, expected] of [
+              ['serve', undefined, 'https://app.builderlab.xyz/'],
+              ['build', 'https://login.example:8443/deployment/', 'https://login.example:8443/deployment/'],
+              ['build', '', ''],
+            ]) {
+              if (override === undefined) delete process.env.BUZZ_BUILDERLAB_URL;
+              else process.env.BUZZ_BUILDERLAB_URL = override;
+              const result = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
+            }
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';

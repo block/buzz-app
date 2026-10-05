@@ -105,10 +105,10 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+All 22 plugins remain bundled. **Channels is the only required plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
-Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
+Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Saved enabled/disabled flags win over defaults (except required Channels). There
@@ -379,7 +379,7 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
-External plugins can declare host access in `manifest.json`:
+Plugins can declare host access in `manifest.json`:
 
 ```json
 {
@@ -392,7 +392,7 @@ External plugins can declare host access in `manifest.json`:
 
 Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
-ID; the program and arguments come only from the installed manifest. Native
+ID; the program and arguments come only from the plugin's manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout. The direct command invocation has a five-second deadline;
 cancellation or timeout kills its process group on Unix or its job process tree
@@ -402,7 +402,17 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
-Requests use the native HTTPS client, so an external plugin can declare an exact
+Bundled host grants use the effective compiled manifest at revision `bundled` and
+require the plugin to be enabled in the native catalog. External grants require the
+enabled current artifact and its integrity checks; safe mode pauses external
+plugins while enabled bundled plugins remain usable.
+
+Builderlab's effective manifest derives its exact origin from the validated
+[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
+Its source manifest contains no deployment origins; external plugin declarations
+remain fixed in their installed artifacts.
+
+Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling

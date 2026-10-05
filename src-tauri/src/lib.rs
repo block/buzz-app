@@ -1,4 +1,8 @@
 mod browser;
+mod oauth_callback;
+use oauth_callback::{
+    oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
+};
 #[cfg(test)]
 mod browser_permissions_tests;
 use browser::{
@@ -427,6 +431,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        oauth_callback_begin,
+        oauth_callback_wait,
+        oauth_callback_cancel,
         agent_control_create_prepare,
         agent_control_create_authorize,
         agent_control_create_commit,
@@ -536,6 +543,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
+        .manage(OAuthCallbackHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
@@ -558,7 +566,15 @@ pub fn run() {
                 }
             }
         })
-        .on_page_load(browser::page_load)
+        .on_page_load(|webview, payload| {
+            if let Err(error) = webview
+                .state::<OAuthCallbackHost>()
+                .document_load(webview.label(), payload.event())
+            {
+                eprintln!("OAuth callback cleanup failed: {error}");
+            }
+            browser::page_load(webview, payload);
+        })
         .on_window_event(|window, event| {
             #[cfg(target_os = "macos")]
             if window.label() == "main" {

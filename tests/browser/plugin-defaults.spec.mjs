@@ -9,8 +9,8 @@ async function plugins(page) {
   await selectSettingsSection(page, "Plugins");
 }
 
-// Representative app wiring: real catalogs -> Settings switches -> both shell
-// contributions, across reload. Choice permutations live in storage unit tests.
+// Representative app wiring: real catalogs -> Settings switches -> sidebar page,
+// across reload. Choice permutations live in storage unit tests.
 test("Bestie opts in without changing the other bundled defaults and survives reload", async ({
   page,
   app,
@@ -33,15 +33,16 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await page.reload();
   await expect(bestie).toBeChecked();
   await openPage(page, "Messages");
-  const launcher = page
-    .locator(".shell-header")
-    .getByRole("button", { name: "Bestie", exact: true });
   await expect(
     page
-      .getByRole("navigation", { name: "Pages" })
+      .locator(".shell-header")
       .getByRole("button", { name: "Bestie", exact: true }),
-  ).toBeVisible();
-  await launcher.click();
+  ).toHaveCount(0);
+  const destination = page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Bestie", exact: true });
+  await expect(destination).toBeVisible();
+  await destination.click();
   await expect(
     page.getByRole("heading", { name: "Meet your Bestie" }),
   ).toBeVisible();

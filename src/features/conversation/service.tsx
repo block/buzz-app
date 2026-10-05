@@ -8,6 +8,12 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import {
+  formatDayGroupLabel,
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type {
   ComposerTool,
   ComposerAccessory,
@@ -35,6 +41,19 @@ export type Conversation = {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+  };
+  /** The host's date labels, so plugin text reads like the message rows. */
+  format: {
+    /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
+     * `withTime` appends " at 9:05 AM" outside today. */
+    itemTimestamp: typeof formatItemTimestamp;
+    /** The day divider: "Today", "Yesterday", "Monday", "Saturday, June 20",
+     * "June 20, 2025". */
+    dayGroupLabel: typeof formatDayGroupLabel;
+    /** The hover text on a byline: "Friday, October 2, 2026 at 3:05:09 PM EDT". */
+    fullTimestamp: typeof formatFullTimestamp;
+    /** Link previews: "just now", "5 minutes ago", "3 days ago", "on Jun 20". */
+    relativeTimestamp: typeof relativeTimestamp;
   };
 };
 declare module "@deepseek-ai/cordis" {
@@ -139,6 +158,12 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A link renderer class must be a string");
     this.linkEntries.register(this.ctx, value);
   }
+  readonly format = Object.freeze({
+    itemTimestamp: formatItemTimestamp,
+    dayGroupLabel: formatDayGroupLabel,
+    fullTimestamp: formatFullTimestamp,
+    relativeTimestamp,
+  });
   readonly ui = {
     Thread: (props: EmbeddedThreadProps) => (
       <EmbeddedThread {...props} host={this.ctx} extensions={this} />

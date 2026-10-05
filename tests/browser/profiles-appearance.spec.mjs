@@ -61,11 +61,7 @@ for (const mode of ["light", "dark"]) {
     await expect(key).toHaveCSS("font-size", "12px");
     await expect(key).toHaveCSS("font-family", /JetBrains Mono/);
     await expect(copy).toHaveCSS("height", "32px");
-    const pill = await copy.evaluate((el) => ({
-      radius: parseFloat(getComputedStyle(el).borderRadius),
-      height: el.getBoundingClientRect().height,
-    }));
-    expect(pill.radius).toBeGreaterThanOrEqual(pill.height / 2);
+    await expect(copy).toHaveCSS("border-radius", "12px");
     await copy.hover();
     await expect(copy).toHaveCSS(
       "background-color",

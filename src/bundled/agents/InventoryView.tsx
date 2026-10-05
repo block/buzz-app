@@ -67,6 +67,7 @@ export function InventoryView({
   edit,
   duplicate,
   remove,
+  removeRelay,
   importedId,
   onUseHere,
   onImport,
@@ -83,6 +84,9 @@ export function InventoryView({
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
   importedId: string | null;
   onUseHere(
     pubkey: string,
@@ -161,6 +165,7 @@ export function InventoryView({
                       edit={edit}
                       duplicate={duplicate}
                       remove={remove}
+                      removeRelay={removeRelay}
                       importedId={importedId}
                       onUseHere={onUseHere}
                       onImport={onImport}

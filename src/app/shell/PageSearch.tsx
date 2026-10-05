@@ -145,8 +145,7 @@ export function PageSearch({
     <>
       <IconButton
         ref={trigger}
-        variant="chrome"
-        shape="round"
+        variant="ghost"
         aria-label="Search Buzz"
         title={`Search Buzz (${shortcut})`}
         onClick={() => {

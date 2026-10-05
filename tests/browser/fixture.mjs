@@ -72,6 +72,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  agentManagement: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -122,6 +123,7 @@ export const test = base.extend({
       historyCounts,
       channelIds: channels,
       pluginFixtures,
+      agentManagement,
       developmentReact,
       compiledApp,
     },
@@ -162,6 +164,7 @@ export const test = base.extend({
       dmLabels || readState || exactMessages || actionProfile
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
+    const managementKey = agentManagement ? key(8) : undefined;
     const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
@@ -219,7 +222,10 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKeys.map(getPublicKey);
+      : [
+          ...peerKeys.map(getPublicKey),
+          ...(managementKey ? [getPublicKey(managementKey)] : []),
+        ];
     const dmIds = Object.keys(dmMembers).length
       ? Object.keys(dmMembers)
       : largeSidebar
@@ -736,6 +742,7 @@ export const test = base.extend({
         browserName,
         developmentReact,
         pluginFixtures,
+        agentManagement,
         compiledBuild: {
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
@@ -755,7 +762,7 @@ export const test = base.extend({
         platform: platform(),
         arch: arch(),
         viewport: testInfo.project.use.viewport,
-        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native or real relay`,
+        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; ${agentManagement ? "mocked native agent control" : "no native"}; no real relay`,
       },
       queries: [],
       publications: [],
@@ -2011,6 +2018,7 @@ export const test = base.extend({
           return event;
         },
         participants,
+        managementKey,
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {
@@ -2217,11 +2225,25 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
+      const githubFailures = [...(report.githubFailures ?? [])];
+      const injectedGitHubFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 403/.test(
+            message,
+          )
+        )
+          return false;
+        const match = githubFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        githubFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
+            !injectedGitHubFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

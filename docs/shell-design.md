@@ -32,8 +32,7 @@ semantic tokens, UI authoring rules and the local component reference.
   activation/re-enable order. Sidebar navigation lists only pages registered with
   `primary: true` (Inbox, Bestie, Projects, Agents and Workflows among the bundled
   plugins); page search lists every active page. Inbox and Bestie are placeholder
-  pages of their own plugins, so disabling Bestie removes its row along with its
-  launcher. Channels and Sessions are vended without rows: Messages opens by default,
+  pages of their own plugins, so disabling Bestie removes its row. Channels and Sessions are vended without rows: Messages opens by default,
   from any channel row and from search; Sessions opens from Messages and search.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
@@ -101,9 +100,13 @@ handler, plus scoped HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 
-The top-right group contains enabled plugin launchers (Bestie supplies the snake),
-a page finder, and the local avatar. Search and plugin launchers use the shared
-glass icon-button style; sidebar and history controls remain ghost buttons.
+The top-right group contains enabled plugin launchers, a page finder, and the local
+avatar. Search, sidebar and history controls use unfilled ghost icon buttons with
+32px containers, 16px icons and 10px corners, matching content-toolbar actions.
+Their hover fills remain translucent over the colored backdrop.
+Pressed fills are slightly stronger; icons keep full opacity. Plugin launchers
+use the shared glass style.
+Bestie is available from its sidebar page, without a top-bar shortcut.
 `ProfileButton.tsx` subscribes to the community
 service's local default profile and opens an anchored account dropdown containing
 local presence controls and Settings; there is no separate top-bar Settings button.
@@ -228,7 +231,8 @@ Opening a linked detail from inside a thread adds a closable tab to the same
 secondary pane. Profile activity, managed-instance, and owner-profile links use
 `PanelContext.push` to select an existing target or add a tab; `open` retains its
 replacement semantics. A shared 2.5rem header uses 12rem tabs composed from the sidebar's NavigationItem,
-with profile avatars or detail icons and a trailing close button.
+with 10px corners matching adjacent icon actions, profile avatars or detail icons,
+and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; Delete on a tab and Escape in its content close that tab. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
@@ -274,7 +278,6 @@ and focus restoration with the existing owners. It adds no timer or resize obser
 Channels opts into the reusable companion prop and owns both cards, including a
 companion-only view without a selected channel or relay. Settings and legacy
 pages use the host fallback frame; opening from those pages does not navigate away.
-Disabling Bestie removes its snake and open card without evicting a local link card.
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh
 and freshness indicators are omitted. Channel Settings → Diagnostics keeps
 manual refresh, outbox inspection, and timing capture available on demand.

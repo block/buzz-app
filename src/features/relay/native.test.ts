@@ -1,3 +1,4 @@
+import memberContract from "../channel-members/administration-contract.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -268,6 +269,63 @@ it.each([true, false])(
     } finally {
       owner.dispose();
     }
+  },
+);
+
+it.each([true, false])(
+  "delivers managed-agent unregister through the native outbox (accepted: %s)",
+  async (accepted) => {
+    const transport = await connectNativeTransport(community);
+    assert.exists(transport.writer);
+    const owner = createOutbox(viewer.pubkey, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    owners.push(owner);
+    await owner.outbox.ready();
+    respond = (request) => ({
+      body: {
+        accepted,
+        event_id: JSON.parse(request.body ?? "{}").id,
+        message: accepted ? "" : "denied",
+      },
+    });
+    const coordinate = `30177:${viewer.pubkey}:${"02".repeat(32)}`;
+    const id = owner.outbox.send({
+      kind: 5,
+      content: "",
+      tags: [["a", coordinate]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe(accepted ? "accepted" : "failed"),
+    );
+    const event = JSON.parse(
+      requests.find((request) => request.path === "/events")?.body ?? "null",
+    );
+    expect(event).toMatchObject({
+      id,
+      kind: 5,
+      pubkey: viewer.pubkey,
+      content: "",
+    });
+    expect(event.tags).toEqual([
+      ["a", coordinate],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(vi.mocked(invoke).mock.calls).toContainEqual([
+      "relay_sign",
+      {
+        community,
+        event: {
+          kind: 5,
+          created_at: event.created_at,
+          content: "",
+          tags: event.tags,
+        },
+      },
+    ]);
   },
 );
 
@@ -1771,4 +1829,66 @@ it("refuses native preparation failures and does not accept a mismatched prepare
   await expect(
     transport.uploadAttachment(heic, new AbortController().signal),
   ).rejects.toMatchObject({ code: "invalid" });
+});
+
+it("routes member administration through the native purpose-bound writer, never the generic signer", async () => {
+  const transport = await connectNativeTransport(community);
+  const writer = transport.memberAdministration;
+  assert.exists(writer);
+  const signal = new AbortController().signal;
+  for (const { event: template } of memberContract.accepted) {
+    const event = signed(viewer, template);
+    vi.mocked(invoke).mockResolvedValueOnce(event);
+    expect(await writer.sign(template, signal)).toEqual(event);
+    expect(vi.mocked(invoke).mock.lastCall).toEqual([
+      "relay_channel_sign",
+      { community, route: "member-administration", event: template },
+    ]);
+    vi.mocked(invoke).mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        accepted: true,
+        event_id: event.id,
+        message: "confirmed",
+      }),
+    });
+    await writer.publish(event, signal);
+    expect(vi.mocked(invoke).mock.lastCall).toEqual([
+      "relay_channel_publish",
+      { community, route: "member-administration", event },
+    ]);
+  }
+  const calls = vi.mocked(invoke).mock.calls.length;
+  for (const { event } of memberContract.rejected)
+    await expect(writer.sign(event, signal)).rejects.toThrow();
+  const template = memberContract.accepted[0]?.event;
+  assert.exists(template);
+  const channelTag = template.tags[0];
+  assert.exists(channelTag);
+  await expect(
+    writer.sign(
+      { ...template, tags: [channelTag, ["p", viewer.pubkey]] },
+      signal,
+    ),
+  ).rejects.toThrow();
+  await expect(
+    writer.publish(signed(relay, template), signal),
+  ).rejects.toThrow();
+  const aborted = AbortSignal.abort();
+  await expect(writer.sign(template, aborted)).rejects.toThrow();
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(calls);
+  vi.mocked(invoke).mockResolvedValueOnce(signed(relay, template));
+  await expect(writer.sign(template, signal)).rejects.toThrow();
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: JSON.stringify({ error: "denied" }),
+  });
+  await expect(
+    writer.publish(signed(viewer, template), signal),
+  ).rejects.toBeInstanceOf(PublishRejected);
+  expect(
+    vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
+  ).toBe(false);
 });

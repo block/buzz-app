@@ -1783,6 +1783,41 @@ test("message/reaction deletions pass real signing and publication without admit
   }
 });
 
+test("agent record deletions sign and publish only the viewer's own kind 30177 coordinate", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const agent = "b".repeat(64);
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["a", `30177:${h.event.pubkey}:${agent}`],
+        ["client-id", "11111111-1111-4111-8111-111111111111"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const tags of [
+      [["a", `30177:${"c".repeat(64)}:${agent}`]],
+      [["a", `30178:${h.event.pubkey}:${agent}`]],
+      [["a", `30177:${h.event.pubkey}:${agent}:extra`]],
+      [["a", `30177:${h.event.pubkey}:invalid`]],
+      [...template.tags, ["e", "a".repeat(64)]],
+    ])
+      expect((await h.post("sign", { ...template, tags })).status).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("direct-message transport signs only bounded participants and binds the returned channel to its receipt", async () => {
   const channelId = "11111111-1111-4111-8111-111111111111";
   const h = await harness((call) =>

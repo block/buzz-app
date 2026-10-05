@@ -205,6 +205,86 @@ fn verify(event: &serde_json::Value) {
 }
 
 #[test]
+fn managed_agent_deletion_is_owner_only_through_existing_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let owner = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f";
+    let agent = "02".repeat(32);
+    let coordinate = format!("30177:{owner}:{agent}");
+    let deletion = serde_json::json!({
+        "kind": 5, "created_at": 123, "content": "", "tags": [["a", coordinate]]
+    });
+    for tags in [
+        serde_json::json!([["a", coordinate]]),
+        serde_json::json!([
+            ["a", coordinate],
+            ["k", "30177"],
+            ["client-id", "unregister"]
+        ]),
+    ] {
+        let mut event = deletion.clone();
+        event["tags"] = tags;
+        let signed = sign(event.clone()).unwrap();
+        assert_eq!(signed["pubkey"], owner);
+        for field in ["kind", "created_at", "content", "tags"] {
+            assert_eq!(signed[field], event[field]);
+        }
+        verify(&signed);
+    }
+    for tags in [
+        serde_json::json!([]),
+        serde_json::json!([["a"]]),
+        serde_json::json!([["a", coordinate, "extra"]]),
+        serde_json::json!([["a", format!("30177:{}:{agent}", "a".repeat(64))]]),
+        serde_json::json!([["a", format!("30175:{owner}:{agent}")]]),
+        serde_json::json!([["a", format!("30177:{owner}:")]]),
+        serde_json::json!([["a", format!("30177:{owner}:{}", "A".repeat(64))]]),
+        serde_json::json!([["a", format!("30177:{owner}:{agent}:extra")]]),
+        serde_json::json!([["a", coordinate], ["a", coordinate]]),
+        serde_json::json!([["a", coordinate], ["e", "b".repeat(64)]]),
+        serde_json::json!([["a", coordinate], ["h", "channel"]]),
+        serde_json::json!([["a", coordinate], ["k", "30175"]]),
+        serde_json::json!([["a", coordinate], ["k", "30177"], ["k", "30177"]]),
+        serde_json::json!([
+            ["a", coordinate],
+            ["client-id", "one"],
+            ["client-id", "two"]
+        ]),
+    ] {
+        let mut event = deletion.clone();
+        event["tags"] = tags;
+        assert!(sign(event.clone()).is_err(), "accepted {event}");
+    }
+    let mut event = deletion;
+    event["content"] = serde_json::json!("unexpected content");
+    assert!(sign(event).is_err());
+}
+
+#[test]
 fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
     // The path resolver reads HOME at runtime. Isolate it in a child rather
     // than changing process-global HOME under the parallel test runner.
@@ -732,6 +812,41 @@ fn shared_kind_five_signer_accepts_message_and_reaction_deletion_only_in_broker_
     assert!(validate_event("https://relay.test", &event).is_err());
     event.tags[1][1] = id;
     event.tags.push(vec!["a".into(), "30620:other:id".into()]);
+    assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[test]
+fn shared_kind_five_signer_accepts_only_one_agent_record_deletion() {
+    let owner = "a".repeat(64);
+    let agent = "b".repeat(64);
+    let mut event = EventTemplate {
+        kind: 5,
+        created_at: 123,
+        content: String::new(),
+        tags: vec![
+            vec!["a".into(), format!("30177:{owner}:{agent}")],
+            vec!["client-id".into(), "intent".into()],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    event.tags.pop();
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    for coordinate in [
+        format!("30175:{owner}:{agent}"),
+        format!("30177:{owner}:{}", "B".repeat(64)),
+        format!("30177:{owner}:{agent}:extra"),
+        format!("30177:{owner}"),
+    ] {
+        event.tags[0][1] = coordinate;
+        assert!(validate_event("https://relay.test", &event).is_err());
+    }
+    event.tags[0][1] = format!("30177:{owner}:{agent}");
+    event.content = "reason".into();
+    assert!(validate_event("https://relay.test", &event).is_err());
+    event.content.clear();
+    event
+        .tags
+        .push(vec!["a".into(), format!("30177:{owner}:{owner}")]);
     assert!(validate_event("https://relay.test", &event).is_err());
 }
 

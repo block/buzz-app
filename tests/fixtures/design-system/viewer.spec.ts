@@ -5,6 +5,72 @@ import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory"
 
 const viewer = "/tests/fixtures/design-system.html";
 
+test("floating fills nest with their painted owner across themes, widths and text scales", async ({
+  page,
+}) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["light", "dark"]) {
+      for (const scale of [1, 1.5]) {
+        await page.goto(`${viewer}#/design/components/popover`);
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        await page.evaluate((scale) => {
+          document.documentElement.style.fontSize = `${16 * scale}px`;
+        }, scale);
+        for (const [label, size, radius] of [
+          ["Account actions", "compact", 8],
+          ["Recent activity", "wide", 16],
+        ] as const) {
+          const trigger = page.getByRole("button", {
+            name: label,
+            exact: true,
+          });
+          await trigger.click();
+          const popup = page.locator(
+            `.buzz-popover-popup[data-size="${size}"]`,
+          );
+          await expect(popup).toHaveCSS("border-radius", `${radius * scale}px`);
+          const row = popup.locator(".navigation-item").first();
+          await row.hover();
+          const geometry = await popup.evaluate((element) => {
+            const child = element.querySelector(".navigation-item");
+            if (!child) throw new Error("List popover has no row");
+            const outer = getComputedStyle(element);
+            const inner = getComputedStyle(child);
+            const bounds = element.getBoundingClientRect();
+            return {
+              outer: Number.parseFloat(outer.borderTopLeftRadius),
+              inset:
+                Number.parseFloat(outer.paddingLeft) +
+                Number.parseFloat(outer.borderLeftWidth),
+              corners: [
+                inner.borderTopLeftRadius,
+                inner.borderTopRightRadius,
+                inner.borderBottomLeftRadius,
+                inner.borderBottomRightRadius,
+              ],
+              left: bounds.left,
+              right: bounds.right,
+            };
+          });
+          for (const corner of geometry.corners) {
+            expect(Number.parseFloat(corner)).toBeCloseTo(
+              Math.max(0, geometry.outer - geometry.inset),
+              4,
+            );
+          }
+          expect(geometry.left).toBeGreaterThanOrEqual(0);
+          expect(geometry.right).toBeLessThanOrEqual(width);
+          await page.keyboard.press("Escape");
+          await expect(popup).toHaveCount(0);
+          await expect(trigger).toBeFocused();
+        }
+      }
+    }
+  }
+});
+
 test("badge motion centered pill scales with its avatar and reverses without jumping", async ({
   page,
 }) => {
@@ -1049,15 +1115,7 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
         await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
         if (kind === "icon-button") {
           await expect(button).toHaveCSS("width", `${height}px`);
-          await expect
-            .poll(() =>
-              button.evaluate(
-                (el) =>
-                  parseFloat(getComputedStyle(el).borderRadius) >=
-                  el.clientWidth / 2,
-              ),
-            )
-            .toBe(true);
+          await expect(button).toHaveCSS("border-radius", "10px");
         } else {
           // Half the 52px large height; shorter sizes clamp to their own half-height.
           await expect(button).toHaveCSS("border-radius", "26px");
@@ -1329,17 +1387,13 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
-  // Every position and grouped choice uses the shared full-round token.
+  // Real painted edges prove concentric nesting, including grouped choices.
   const expectRounded = async (item: Locator) => {
     const radius = await item.evaluate((element) => {
-      // The shared pill token is rem-based; computed corner values are pixels.
-      const rem = Number.parseFloat(
-        getComputedStyle(element).getPropertyValue("--radius-pill"),
-      );
-      const rootSize = Number.parseFloat(
-        getComputedStyle(document.documentElement).fontSize,
-      );
-      return `${rem * rootSize}px`;
+      const popup = element.closest(".buzz-menu-popup");
+      if (!popup) throw new Error("Menu item has no popup owner");
+      const outer = getComputedStyle(popup);
+      return `${Math.max(0, Number.parseFloat(outer.borderTopLeftRadius) - Number.parseFloat(outer.paddingLeft) - Number.parseFloat(outer.borderLeftWidth))}px`;
     });
     for (const corner of [
       "top-left",

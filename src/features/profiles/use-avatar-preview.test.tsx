@@ -18,6 +18,7 @@ import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
 import { AgentCard } from "../../bundled/agents/AgentCard";
 import { controlFixture } from "../agents/control-testing";
 import { keypair } from "../relay/testing";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentEditor } from "../../bundled/agents/AgentEditor";
 import { createAgentControl } from "../agents/control";
 
@@ -110,7 +111,7 @@ it.each(["card", "editor", "display-only"] as const)(
     try {
       expect((await nativeFetch(`${base}${brokerUrl}`)).status).toBe(400);
       expect(upstream).not.toHaveBeenCalled();
-      render(preview(kind));
+      render(preview(kind), { wrapper: ToastProvider });
       await act(async () => {
         await started.promise;
       });

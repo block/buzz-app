@@ -1,3 +1,4 @@
+import { archiveHides } from "../../features/relay/identity-archives";
 import { createPortal } from "react-dom";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
@@ -39,7 +40,8 @@ export function AgentLibrary({
   }, [library, archives]);
   const { identities, profiles } = identityTiles(
     snapshot,
-    (key) => managedKeys.includes(key) || archives.state(key) === "archived",
+    (key) =>
+      managedKeys.includes(key) || archiveHides(archives, key, session.viewer),
   );
   const candidates = identities.map((identity) => identity.pubkey);
   const identityLabel = (identity: { pubkey: string; name: string }) =>

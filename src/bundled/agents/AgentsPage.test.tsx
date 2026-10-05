@@ -25,6 +25,8 @@ import { controlFixture } from "../../features/agents/control-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+
 const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
@@ -126,6 +128,7 @@ function setup(
       navigation={navigation}
       {...(open ? { open } : {})}
     />,
+    { wrapper: ToastProvider },
   );
   return {
     f,
@@ -465,6 +468,7 @@ it("confirms local deletion, keeps the card on failure, and removes it only afte
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
   const dialog = screen.getByRole("dialog", { name: "Delete Fixture agent?" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
   expect(
     within(dialog).getByText(/relay identity and past messages remain visible/),
   ).toBeVisible();
@@ -659,7 +663,9 @@ it("selects bundled Goose without subcommand arguments and saves its provider an
     await screen.findByRole("option", { name: "Each thread" }),
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
-  await within(dialog).findByText("Saved.");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+  );
   expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
     {
       edit: {
@@ -1057,6 +1063,7 @@ it.each(["Create agent", "Edit agent"] as const)(
       );
     }
     const dialog = screen.getByRole("dialog", { name: dialogName });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
     fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Edited before setup" },
     });
@@ -1087,7 +1094,7 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
   fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
-  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  let dialog = screen.getByRole("dialog", { name: "Edit agent" });
   expect(within(dialog).getByLabelText("Name")).toBeVisible();
   expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
   expectAIFieldOrder(dialog);
@@ -1096,8 +1103,15 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
     target: { value: "Focused everyday edit" },
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
-  await within(dialog).findByText("Saved.");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+  );
   expect(f.agent.harness).toEqual(original);
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  dialog = screen.getByRole("dialog", { name: "Edit agent" });
   const advanced = within(dialog).getByRole("button", {
     name: "Environment",
   });
@@ -1759,7 +1773,10 @@ for (const mode of ["edit", "create"] as const) {
     );
     if (mode === "create")
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    else await within(dialog).findByText("Saved.");
+    else
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull(),
+      );
     const edit =
       mode === "create"
         ? create.mock.calls[0]?.[1]

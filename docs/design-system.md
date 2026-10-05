@@ -63,6 +63,22 @@ The standalone design viewer imports the real shared controls without app startu
 identity or relay services. Check the actual app as well as specimens, in both
 themes and at narrow, intermediate and wide widths with enlarged text.
 
+### Plugin-owned color meanings
+
+Plugins define integration-specific semantic mappings in their own styles, using
+shared roles where shared improvements should flow through. The shared system
+owns palette values and generic paint roles, not integration-specific status
+names. Categorical purple (`--text-categorical-purple` paired with
+`--surface-categorical-purple`) stays independent of customizable app accent.
+
+GitHub owns its `--github-*` status/diff mappings and browser coverage of the
+resolved text/fill pairs in both themes, including shared-role updates and merged
+independence from accent. Contrast measurements are diagnostic during this design
+iteration, not a new strict gate or a full accessibility audit. Existing base
+contrast checks remain unchanged. Changes to accessibility requirements need the
+calculation/acceptance policy updated too; plugin-owned checks cannot discover a
+new standard automatically.
+
 ## Future theme contributions
 
 There is no theme contribution API yet. A future theme would have an identity separate
@@ -220,9 +236,10 @@ Anchored emoji, mention, completion, account and diagnostics surfaces use
 `popover-surface` for their border, fill, elevation and layer. Their placement,
 scrolling and specialized keyboard/editor interactions remain feature-owned.
 Completion highlights use `affordance-popover-selected` so they remain visible on the
-raised dark surface. The shared popover recipe maps selection to this same role. Compact
-completion/emoji layouts may select shared radius
-tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+raised dark surface. The shared popover recipe maps selection to this same role.
+Completion and picker containers use the 16px container role. Nested fills follow
+the shared [corner scale and nesting rule](../src/shared/design-system/DESIGN.md#corner-scale-and-nesting),
+including the actual padding and border inset. Shared Button/IconButton `title` props render
 a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
 
 Explicit exceptions: GIF and image tiles use native media buttons, image zoom

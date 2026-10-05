@@ -854,7 +854,7 @@ test.use({
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
-test("Projects → Messages keeps saved groups, selected channel, and scroll on every visible frame without re-decoding", async ({
+test("Projects → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding", async ({
   page,
   app,
 }) => {
@@ -870,13 +870,18 @@ test("Projects → Messages keeps saved groups, selected channel, and scroll on 
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
+  await openPage(page, "Projects");
+  await expect(sidebar).toBeVisible();
+  // Navigation reveals the current entry; keep Beta in view at a nonzero
+  // offset so the warm return has no reason to move the list.
   const scroll = await sidebar.evaluate((element) => {
-    element.scrollTop = 1000;
+    element.scrollTop = 0;
+    const row = element.querySelector('button[data-channel-id="beta"]');
+    element.scrollTop =
+      row.getBoundingClientRect().top - element.getBoundingClientRect().top;
     return element.scrollTop;
   });
   expect(scroll).toBeGreaterThan(100);
-  await openPage(page, "Projects");
-  await expect(sidebar).toBeVisible();
   let release;
   const held = new Promise((resolve) => {
     release = resolve;

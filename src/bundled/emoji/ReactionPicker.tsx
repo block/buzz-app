@@ -37,6 +37,7 @@ export function createReactionPicker() {
         <IconButton
           ref={trigger}
           size="toolbar"
+          shape="round"
           type="button"
           aria-label="Add reaction"
           title="Add reaction"

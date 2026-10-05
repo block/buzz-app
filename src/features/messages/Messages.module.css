@@ -620,7 +620,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
-  border-radius: var(--radius-pill);
   margin-top: var(--space-1);
   padding: var(--space-1);
   padding-right: var(--space-1h);
@@ -1581,10 +1580,11 @@ button.mediaPreview {
 }
 .messageActions {
   @apply popover-surface;
+  --floating-radius: var(--radius-control);
+  --floating-inset: var(--space-half);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
-  border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1955,7 +1955,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   align-items: center;
   min-height: 1.25rem;
   padding: 0 var(--space-1h);
-  border-radius: calc(var(--radius-row) * 0.4);
+  border-radius: var(--radius-chip);
   background: var(--affordance-selected);
   font: var(--text-mono--font-weight) var(--text-mono) var(--font-mono);
 }
@@ -1979,10 +1979,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-width: 95rem;
   max-height: 61.25rem;
   border: 1px solid var(--affordance-subtle-hover);
-  border-radius: var(
-    --media-preview-radius,
-    calc(var(--radius-control) + var(--space-1))
-  );
+  border-radius: var(--media-preview-radius, var(--radius-container));
   background: var(--surface-panel);
 }
 .mediaReviewViewer[data-color-mode="dark"] .mediaReviewStage {
@@ -2264,7 +2261,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .jumpToLatestSurface {
   @apply glass-secondary;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   visibility: hidden;
   opacity: 0;
   transform: translateY(2px) scale(0.97);

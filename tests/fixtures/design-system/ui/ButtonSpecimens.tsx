@@ -334,7 +334,7 @@ export function IconButtonSpecimen() {
       >
         <SectionHeading
           title="Buzz treatments"
-          description="Tint supports quiet composer actions. Chrome uses the workspace glass material. Round is the default; control corners remain an explicit option."
+          description="Tint supports quiet composer actions. Chrome uses the workspace glass material. Top-bar and content-toolbar actions share 32px containers and even 10px corners; avatar controls remain round."
         />
         <ExamplePreview
           code={`<div className="flex flex-wrap items-start gap-4">

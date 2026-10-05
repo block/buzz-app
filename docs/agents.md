@@ -100,12 +100,33 @@ usable, with partial failures surfaced through Retry. `status: ready` means usab
 not complete: automatic-recipient inference must honor `complete`, and automatic
 saved-template resolution must wait for required pending identity/roster evidence.
 
+Archive visibility has one owner. The projection reads `session.archives` and
+exposes `identities` (every known agent, including archived ones, for facts about
+existing content) and `selectable` (known-archived agents removed; unknown state
+fails open; the viewer is never hidden). Every forward-looking agent chooser uses
+`selectable`, including the session agent picker and profile **Add to channel**.
+Session admission in `workSessions.addAgents` rejects every known-archived key,
+including parent-channel members; unknown archive state keeps the library and
+parent-member rules. Selectors demand the lazy archive read through
+`useAgentChoices(session, includeLegacy, true)`, and the session picker shows an
+archive read failure with Retry. The same base rule,
+`archiveHides`, filters mention recipients, channel member invitations and member
+addition, and the Agents page and Agent Library. The Agents page keeps one
+documented exception: an archived identity with local controls stays listed so it
+can still be managed. Do not reimplement the rule per surface.
+
+Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
+an identity without its own avatar shows its linked definition's avatar
+(`inheritDefinitionAvatars`). Surfaces read `identity.avatar` and do not repeat
+the lookup.
+
 Action policy stays explicit: ordinary member mentions use the channel roster and
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
 access. Session invitations retain their existing rules, including legacy choices.
-Templates additionally require verified non-archived state, and legacy-only choices
+Templates additionally require verified non-archived state (`templateAgentChoices`
+returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.
 Template pickers and agent identity details display npubs, not raw hex keys.
 Save-as-template discloses an incomplete inferred

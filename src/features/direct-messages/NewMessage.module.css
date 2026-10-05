@@ -112,7 +112,7 @@
   padding: var(--space-1);
 }
 .people {
-  --radius-row: max(0px, calc(var(--radius-control) - var(--space-1)));
+  --radius-row: var(--floating-inner-radius);
   max-height: min(25rem, 50vh, calc(var(--available-height) - 0.625rem));
   overflow-y: auto;
   overscroll-behavior: contain;

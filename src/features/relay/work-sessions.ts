@@ -16,7 +16,11 @@ export function createWorkSessions(
   signal: AbortSignal,
   receipts?: Pick<Outbox, "snapshot" | "subscribe">,
   confirmCreation?: (id: string) => Promise<boolean>,
-  agentKeys?: () => readonly string[],
+  /** Forward-looking agent choices plus the base archive rule for admissions. */
+  agents?: {
+    selectable: () => readonly string[];
+    archived: (pubkey: string) => boolean;
+  },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
@@ -407,7 +411,11 @@ export function createWorkSessions(
       !["stream", "forum", "session"].includes(parent.channelType ?? "")
     )
       throw new Error("Refresh the parent channel before adding agents.");
-    const known = new Set(agentKeys?.() ?? []);
+    // Archive state applies to every new admission, even for parent members;
+    // unknown archive state fails open to the library/parent-member rule.
+    if (unique.some((key) => agents?.archived(key)))
+      throw new Error("This agent is archived. Choose another agent.");
+    const known = new Set(agents?.selectable() ?? []);
     if (unique.some((key) => !parent.members?.includes(key) && !known.has(key)))
       throw new Error("Choose an agent from your agent library.");
     // Parent metadata organizes the UI; both channels keep their own rosters.
@@ -563,7 +571,7 @@ export function createWorkSessions(
         );
       if (!/^[0-9a-f]{64}$/.test(pubkey))
         throw new Error("Choose a valid participant.");
-      if (!new Set(agentKeys?.() ?? []).has(pubkey))
+      if (!new Set(agents?.selectable() ?? []).has(pubkey))
         throw new Error("Choose an agent from your agent library.");
       return writer().send({
         kind: 9000,

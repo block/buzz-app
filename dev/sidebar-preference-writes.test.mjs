@@ -67,7 +67,11 @@ async function harness(chunkBytes) {
         return Response.json({ accepted: true, event_id: body.id });
       }
       if (queryFailure) return queryFailure;
-      const head = heads.get(body[0]["#d"][0]);
+      // Model an empty stale replica: only strong reads observe the writer head.
+      const head =
+        body[0].consistency === "strong"
+          ? heads.get(body[0]["#d"][0])
+          : undefined;
       return Response.json(head ? [head] : []);
     },
   }).configureServer({
@@ -132,7 +136,13 @@ it("real broker Star roundtrip signs scoped requests and confirms before project
     "/query",
   ]);
   expect(h.calls[0].body).toEqual([
-    { kinds: [30078], authors: [h.viewer], "#d": ["channel-stars"], limit: 1 },
+    {
+      kinds: [30078],
+      authors: [h.viewer],
+      "#d": ["channel-stars"],
+      limit: 1,
+      consistency: "strong",
+    },
   ]);
   expect(
     await h.transport.writeSidebarStar(
@@ -150,6 +160,9 @@ it("real broker Star roundtrip signs scoped requests and confirms before project
   expect(h.calls.filter((call) => call.url.endsWith("/events"))).toHaveLength(
     2,
   );
+  const queries = h.calls.filter(({ url }) => url.endsWith("/query"));
+  expect(queries).toHaveLength(5);
+  for (const { body } of queries) expect(body).toEqual(h.calls[0].body);
 });
 it("refuses invalid intent and foreign origins without upstream requests", async () => {
   const h = await harness();
@@ -224,6 +237,18 @@ it("real broker creates and assigns a section through the signed, confirmed narr
     ),
   ).toEqual(result);
   expect(h.calls.filter(({ url }) => url.endsWith("/events"))).toHaveLength(1);
+  const queries = h.calls.filter(({ url }) => url.endsWith("/query"));
+  expect(queries).toHaveLength(3);
+  for (const { body } of queries)
+    expect(body).toEqual([
+      {
+        kinds: [30078],
+        authors: [h.viewer],
+        "#d": ["channel-sections"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ]);
   const before = h.calls.length;
   expect(
     (

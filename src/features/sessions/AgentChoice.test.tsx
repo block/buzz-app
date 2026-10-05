@@ -162,3 +162,146 @@ it("distinguishes session admission from parent-channel admission", () => {
     "session-and-channel",
   );
 });
+
+it("does not offer an archived agent, and demands archive evidence on mount", async () => {
+  const user = userEvent.setup();
+  const archived = "a".repeat(64),
+    active = "b".repeat(64);
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      { pubkey: archived, name: "Retired" },
+      { pubkey: active, name: "Fizz" },
+    ],
+  }));
+  const listeners = new Set<() => void>();
+  let snapshot: { status: "idle" | "ready"; archived: string[] } = {
+    status: "idle",
+    archived: [],
+  };
+  const ensure = vi.fn(async () => {
+    if (snapshot.status !== "idle") return;
+    snapshot = { status: "ready", archived: [archived] };
+    for (const listener of listeners) listener();
+  });
+  const archives = {
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    state: (key: string) =>
+      snapshot.status !== "ready"
+        ? ("unknown" as const)
+        : snapshot.archived.includes(key)
+          ? ("archived" as const)
+          : ("not-archived" as const),
+    ensure,
+    refresh: ensure,
+  };
+  const session = {
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      archives,
+      signal: new AbortController().signal,
+    }),
+  } as RelaySession;
+  render(<AgentChoice session={session} value="" onChange={vi.fn()} />);
+  await waitFor(() => expect(ensure).toHaveBeenCalledTimes(1));
+  await user.click(
+    await screen.findByRole("button", { name: "Choose an agent" }),
+  );
+  expect(
+    await screen.findByRole("menuitemradio", { name: "Fizz" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitemradio", { name: "Retired" }),
+  ).not.toBeInTheDocument();
+  library.dispose();
+});
+
+it("shows an archive read failure and removes the archived agent after Retry", async () => {
+  const user = userEvent.setup();
+  const archived = "a".repeat(64),
+    active = "b".repeat(64);
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      { pubkey: archived, name: "Retired" },
+      { pubkey: active, name: "Fizz" },
+    ],
+  }));
+  const listeners = new Set<() => void>();
+  let snapshot: {
+    status: "idle" | "ready" | "error";
+    archived: string[];
+    error?: string;
+  } = { status: "idle", archived: [] };
+  let fail = true;
+  const publish = (next: typeof snapshot) => {
+    snapshot = next;
+    for (const listener of listeners) listener();
+  };
+  const read = vi.fn(async () => {
+    publish(
+      fail
+        ? { status: "error", archived: [], error: "Archive read failed" }
+        : { status: "ready", archived: [archived] },
+    );
+  });
+  const archives = {
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    state: (key: string) =>
+      snapshot.status !== "ready"
+        ? ("unknown" as const)
+        : snapshot.archived.includes(key)
+          ? ("archived" as const)
+          : ("not-archived" as const),
+    ensure: vi.fn(async () => {
+      if (snapshot.status === "idle") await read();
+    }),
+    refresh: read,
+  };
+  const session = {
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      archives,
+      signal: new AbortController().signal,
+    }),
+  } as RelaySession;
+  render(<AgentChoice session={session} value="" onChange={vi.fn()} />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await user.click(
+    await screen.findByRole("button", { name: "Choose an agent" }),
+  );
+  // Fail open: the choices stay, and the failure and its recovery are visible.
+  expect(
+    await screen.findByRole("menuitemradio", { name: "Retired" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Couldn’t check which agents are archived/),
+  ).toBeInTheDocument();
+  fail = false;
+  await user.click(screen.getByRole("menuitem", { name: "Retry agent list" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("menuitemradio", { name: "Retired" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("menuitemradio", { name: "Fizz" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Couldn’t check which agents are archived/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Retry agent list" }),
+  ).not.toBeInTheDocument();
+  library.dispose();
+});

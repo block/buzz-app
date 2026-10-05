@@ -31,6 +31,7 @@ pub(crate) fn fixture() -> Agent {
         auth_tag: Some("private-attestation".into()),
         imported: json!({"futureSetting": {"opaque": "preserve-me"}}),
         extra: BTreeMap::from([("futureTopLevel".into(), json!([1, 2, 3]))]),
+        plugin: None,
     }
 }
 fn edit() -> AgentEdit {
@@ -43,6 +44,7 @@ fn edit() -> AgentEdit {
         workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: fixture().harness,
         environment: BTreeMap::new(),
+        plugin: None,
     }
 }
 #[test]

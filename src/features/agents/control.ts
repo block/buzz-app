@@ -22,6 +22,24 @@ export interface RestartDiffEntry {
   field: string;
   change: RestartChange;
 }
+/** An agent the app runs through a plugin's agent type instead of a harness process.
+ * `type` is the contribution key (`pluginId/typeId`); `config` belongs to that type. */
+export interface PluginRuntime {
+  type: string;
+  config: unknown;
+}
+/** What a plugin agent may publish as itself: a message (9), an edit of its own
+ * message (40003), a reaction (7) or a deletion (5). */
+export interface AgentEventTemplate {
+  kind: 5 | 7 | 9 | 40003;
+  content: string;
+  tags?: string[][];
+}
+/** The accepted event. Edits are ordered by `created_at`, in whole seconds. */
+export interface PublishedAgentEvent {
+  id: string;
+  created_at: number;
+}
 export interface AgentView {
   id: string;
   pubkey: string;
@@ -77,6 +95,8 @@ export interface AgentView {
   needsTeamImport?: boolean;
   /** Absent on older hosts means an existing configured setup. */
   configured?: boolean;
+  /** Set for plugin agents; their harness fields are empty. */
+  plugin?: PluginRuntime | null;
 }
 export interface ParkedIdentity {
   pubkey: string;
@@ -152,6 +172,8 @@ export interface AgentEdit {
   harness: Omit<AgentView["harness"], "environmentKeys">;
   /** Missing preserves the native value; null removes it; string replaces it. */
   environment: Record<string, string | null>;
+  /** Required for a plugin agent with its saved type; omitted for a harness agent. */
+  plugin?: PluginRuntime;
 }
 export interface AgentImportPreview {
   token: string;
@@ -203,6 +225,11 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  /** Native signs with the agent's key and posts it; resolves to the signed event. */
+  publishAs?(
+    id: string,
+    event: AgentEventTemplate,
+  ): Promise<PublishedAgentEvent>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -261,6 +288,8 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  /** Enabled plugin agents only. Independent of the control snapshot and its busy state. */
+  publishAs?: AgentControlHost["publishAs"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -289,7 +318,8 @@ export function agentLaunchBlock(
     return "Choose Use here before starting this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
-  if (!state.data?.runtimeAvailable)
+  // A plugin agent runs in the app and needs no harness runtime.
+  if (!state.data?.runtimeAvailable && !agent.plugin)
     return (
       state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
     );
@@ -328,6 +358,7 @@ export function canStopAgent(state: AgentControlState, id: string): boolean {
 export const agentControlUnavailable =
   "Local agent controls require the desktop app. This browser cannot run or manage agent processes.";
 
+type PublishAs = NonNullable<AgentControlHost["publishAs"]>;
 /** Own once at app composition. Disposing this projection never stops native agents. */
 export function createAgentControl(
   host: AgentControlHost | null,
@@ -590,6 +621,23 @@ export function createAgentControl(
             ),
         }
       : {}),
+    // Not a control mutation: it changes no snapshot, so it never takes `busy`.
+    ...(host?.publishAs
+      ? {
+          publishAs: async (id: string, event: AgentEventTemplate) => {
+            try {
+              return await (host.publishAs as PublishAs)(id, event);
+            } catch (problem) {
+              // Native rejects with a sanitized reason; the agent's function reads it.
+              throw new Error(
+                typeof problem === "string"
+                  ? problem
+                  : "The agent could not publish.",
+              );
+            }
+          },
+        }
+      : {}),
     ...(host?.setStartOnAppLaunch
       ? {
           setStartOnAppLaunch: (id: string, enabled: boolean) =>
@@ -667,6 +715,9 @@ export function createAgentControl(
           state.data?.agents.filter(
             (agent) =>
               agent.configured !== false &&
+              // Waking exists to launch a process on demand. A plugin agent
+              // that was turned off stays off.
+              !agent.plugin &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];

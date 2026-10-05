@@ -32,6 +32,7 @@ import { sameCommunityAgents } from "../../features/agents/choices";
 import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard, type ProfileResolver } from "./AgentCard";
+import type { AgentTypes } from "../../features/agent-types/service";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 import { PanelCard } from "../../features/panels/PanelCard";
@@ -45,6 +46,7 @@ const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
 export function AgentsPage({
   relay,
   control,
+  agentTypes,
   navigation,
   open,
   panels,
@@ -56,6 +58,7 @@ export function AgentsPage({
   control?: AgentControl;
   panels?: Panels;
   communities?: CommunityReader;
+  agentTypes?: AgentTypes;
   open?: (
     target: OpenTarget,
     options?: { replace?: boolean },
@@ -240,6 +243,7 @@ export function AgentsPage({
                 {control ? (
                   <AgentControlPanel
                     control={control}
+                    agentTypes={agentTypes}
                     editTarget={editTarget}
                     onOpenHarnesses={
                       open

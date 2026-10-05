@@ -1,6 +1,6 @@
 //! Exact native agent profile publication; no renderer-supplied event or key.
 use base64::Engine;
-use buzz_agent_controller::{CreationProfile, Secret};
+use buzz_agent_controller::{CreationProfile, PluginIdentity, Secret};
 use serde_json::Value;
 
 type Result<T> = std::result::Result<T, String>;
@@ -85,6 +85,44 @@ pub(super) async fn publish<F: std::future::Future<Output = Result<()>>>(
     }
     // A superseded replaceable event can be accepted without becoming current.
     profile.confirm(&current(client, profile, key).await?, event_id)
+}
+
+/// Posts one already-signed plugin agent event with the same NIP-98 and owner
+/// attestation headers as profile publication.
+pub(super) async fn publish_event(
+    client: &reqwest::Client,
+    identity: &PluginIdentity,
+    key: &Secret,
+    event: &Value,
+) -> Result<()> {
+    let event_id = event
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Invalid agent event")?;
+    let bytes = serde_json::to_vec(event).map_err(|_| "Could not encode agent event")?;
+    let response = client
+        .post(&identity.url)
+        .header("Content-Type", "application/json")
+        .header(
+            "Authorization",
+            authorization(identity.authenticate(key, &bytes)?)?,
+        )
+        .header("x-auth-tag", &identity.auth)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|_| "Agent event unconfirmed; it may or may not have been accepted")?;
+    if !response.status().is_success() {
+        return Err("The community refused the agent event".into());
+    }
+    let receipt: Value = serde_json::from_slice(&body(response, 16 * 1024).await?)
+        .map_err(|_| "Invalid agent event receipt")?;
+    if receipt.get("accepted").and_then(Value::as_bool) != Some(true)
+        || receipt.get("event_id").and_then(Value::as_str) != Some(event_id)
+    {
+        return Err("The community did not accept the agent event".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

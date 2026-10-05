@@ -472,6 +472,7 @@ mod tests {
                         databricks: None,
                     },
                     environment,
+                    plugin: None,
                 },
             )
         };

@@ -17,6 +17,7 @@ import type {
 import { PlusIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
+import type { AgentTypes } from "../../features/agent-types/service";
 import { AgentCard } from "./AgentCard";
 import { AgentEditor } from "./AgentEditor";
 import { LocalInventoryAction } from "./LocalInventoryAction";
@@ -29,6 +30,7 @@ import "./AgentControls.css";
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
 export function AgentControlPanel({
   control,
+  agentTypes,
   importDestination = "",
   createOwner,
   resolveName,
@@ -41,6 +43,7 @@ export function AgentControlPanel({
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
+  agentTypes?: AgentTypes | undefined;
   importDestination?: string;
   createOwner?: string | undefined;
   editTarget?: string | null;
@@ -428,6 +431,7 @@ export function AgentControlPanel({
       {adding && (
         <AgentCreateDialog
           control={control}
+          agentTypes={agentTypes}
           state={state}
           destination={adding.destination}
           owner={adding.owner}
@@ -445,6 +449,7 @@ export function AgentControlPanel({
           agent={editing}
           displayName={label(editing)}
           control={control}
+          agentTypes={agentTypes}
           state={state}
           avatar={editTarget ? undefined : selected?.avatar}
           onOpenHarnesses={onOpenHarnesses}

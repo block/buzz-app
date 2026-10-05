@@ -453,6 +453,11 @@ impl Controller {
             default_settings: defaults.view(),
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
+            // The app runs a plugin agent in-process; enabled is its whole state.
+            if saved.plugin.is_some() && saved.enabled {
+                agent.status = ProcessStatus::Running;
+                agent.running_revision = Some(saved.revision);
+            }
             agent.acp_command.clone_from(&acp_command);
             agent.mcp_command.clone_from(&mcp_command);
             if let Some(run) = self.running.get_mut(&agent.id) {
@@ -923,9 +928,40 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(|a| a.starts_on_launch() && a.configured())
+            .filter(|a| a.starts_on_launch() && a.configured() && a.plugin.is_none())
             .map(|a| a.id)
             .collect())
+    }
+    /// Whether the app runs this agent in-process, with no harness to launch.
+    pub fn is_plugin(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .store
+            .agents()?
+            .iter()
+            .any(|a| a.id == id && a.plugin.is_some()))
+    }
+    /// What signing as an enabled plugin agent needs. Never crosses IPC.
+    pub fn plugin_identity(&self, id: &str) -> Result<crate::create::PluginIdentity> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.plugin.is_none() || !agent.enabled {
+            return Err("Agent is not a running plugin agent".into());
+        }
+        let auth = agent.auth_tag.ok_or("Missing owner authorization")?;
+        crate::secret::validate_attestation(&auth, &agent.pubkey)?;
+        Ok(crate::create::PluginIdentity {
+            credential_id: agent.credential_id,
+            pubkey: agent.pubkey,
+            url: format!(
+                "{}/events",
+                agent.relay_url.replacen("wss://", "https://", 1)
+            ),
+            auth,
+        })
     }
     fn start(&mut self, id: &str) -> Result<()> {
         self.start_with_key(id, None, None, None)
@@ -954,6 +990,9 @@ impl Controller {
         }
         if !agent.enabled {
             return Err("Agent is disabled".into());
+        }
+        if agent.plugin.is_some() {
+            return Ok(());
         }
         // Blank fields inherit agent defaults at each start; never saved back.
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);

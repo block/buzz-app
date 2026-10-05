@@ -78,6 +78,34 @@ impl Secret {
             ],
         )
     }
+    /// A message (9), edit (40003), reaction (7) or deletion (5) with the owner attestation
+    /// attached. Bounds what in-app plugin code can sign as an agent.
+    pub(crate) fn plugin_event(
+        &self,
+        kind: u16,
+        content: String,
+        mut tags: Vec<Vec<String>>,
+        auth: &str,
+    ) -> Result<serde_json::Value> {
+        if !matches!(kind, 5 | 7 | 9 | 40003) {
+            return Err(
+                "Plugin agents can sign messages, edits, reactions and deletions only".into(),
+            );
+        }
+        if content.len() > 64 * 1024
+            || tags.len() > 256
+            || tags
+                .iter()
+                .any(|tag| tag.is_empty() || tag.iter().map(String::len).sum::<usize>() > 4096)
+        {
+            return Err("Agent event is too large".into());
+        }
+        let auth: Vec<String> =
+            serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
+        tags.retain(|tag| tag.first().map(String::as_str) != Some("auth"));
+        tags.push(auth);
+        self.sign_event(kind, content, tags)
+    }
     fn sign_event(
         &self,
         kind: u16,
@@ -235,4 +263,41 @@ pub(crate) fn test_attestation(agent: &str) -> String {
         &sig.to_string(),
     ])
     .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_events_are_bounded_and_carry_only_the_saved_attestation() {
+        let key = Secret::generate().unwrap();
+        let auth = test_attestation(key.pubkey());
+        let saved: Vec<String> = serde_json::from_str(&auth).unwrap();
+        for kind in [5, 7, 9, 40003] {
+            let tags = vec![
+                vec!["auth".to_owned(), "forged".to_owned()],
+                vec!["h".to_owned(), "channel".to_owned()],
+            ];
+            let event = key.plugin_event(kind, "hi".into(), tags, &auth).unwrap();
+            assert_eq!(event["kind"], kind);
+            assert_eq!(event["pubkey"], key.pubkey());
+            assert!(event["created_at"].as_u64().is_some());
+            let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+            assert_eq!(
+                tags,
+                [vec!["h".to_owned(), "channel".to_owned()], saved.clone()]
+            );
+        }
+        for kind in [0, 1, 3, 9000, 30078, 40002] {
+            assert!(key
+                .plugin_event(kind, String::new(), vec![], &auth)
+                .is_err());
+        }
+        let long = "x".repeat(64 * 1024 + 1);
+        assert!(key.plugin_event(9, long, vec![], &auth).is_err());
+        assert!(key
+            .plugin_event(9, String::new(), vec![vec![]], &auth)
+            .is_err());
+    }
 }

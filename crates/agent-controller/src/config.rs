@@ -85,6 +85,7 @@ pub struct AgentView {
     pub deployed_remote: bool,
     pub needs_team_import: bool,
     pub configured: bool,
+    pub plugin: Option<PluginRuntime>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,6 +121,9 @@ pub struct AgentEdit {
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
+    /// Required for a plugin agent, with its saved type; refused for a harness agent.
+    #[serde(default)]
+    pub plugin: Option<PluginRuntime>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -130,6 +134,36 @@ pub struct HarnessEdit {
     pub provider: String,
     #[serde(default)]
     pub databricks: Option<crate::connection::DatabricksSettings>,
+}
+/// An agent the app runs in-process through a plugin's agent type instead of a
+/// harness process. `type` is the contribution key; `config` is that type's own data.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginRuntime {
+    pub r#type: String,
+    pub config: Value,
+}
+impl PluginRuntime {
+    fn validate(&self) -> Result<()> {
+        let key = |part: &str| {
+            !part.is_empty()
+                && part.len() <= 128
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+        };
+        if !self
+            .r#type
+            .split_once('/')
+            .is_some_and(|(plugin, id)| key(plugin) && key(id))
+        {
+            return Err("Invalid agent type".into());
+        }
+        if serde_json::to_vec(&self.config).map_or(true, |bytes| bytes.len() > 64 * 1024) {
+            return Err("Agent type settings are too large".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +191,9 @@ pub(crate) struct Agent {
     /// Credential reference only. Secret key resides in the native credential store.
     pub credential_id: String,
     pub auth_tag: Option<String>,
+    /// Set at creation and never switched: plugin agents have no harness process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginRuntime>,
     /// Original source records/config; edits never rewrite or discard these fields.
     pub imported: Value,
     #[serde(flatten)]
@@ -211,6 +248,7 @@ impl Agent {
             restart_diff: Vec::new(),
             deployed_remote: self.deployed_remote(),
             needs_team_import: self.needs_team_import(),
+            plugin: self.plugin.clone(),
         }
     }
     pub fn needs_team_import(&self) -> bool {
@@ -285,6 +323,14 @@ impl Agent {
         }
         self.workspace = edit.workspace;
         self.harness = edit.harness;
+        // Revision 0 is creation. Afterwards the runtime kind and type are fixed.
+        if self.revision > 0
+            && self.plugin.as_ref().map(|plugin| &plugin.r#type)
+                != edit.plugin.as_ref().map(|plugin| &plugin.r#type)
+        {
+            return Err("An agent's type cannot change after creation".into());
+        }
+        self.plugin = edit.plugin;
         for (key, value) in edit.environment {
             if let Some(value) = value {
                 validate_env_key(&key, &self.harness.command)?;
@@ -319,6 +365,17 @@ impl Agent {
             validate_picture(picture)?;
         }
         text(&self.system_prompt, 128 * 1024, "System prompt")?;
+        if let Some(plugin) = &self.plugin {
+            // No process, so no workspace, harness or environment to launch with.
+            if !self.workspace.is_empty()
+                || !self.harness.command.is_empty()
+                || !self.harness.args.is_empty()
+                || !self.environment.is_empty()
+            {
+                return Err("Plugin agents have no harness settings".into());
+            }
+            return plugin.validate();
+        }
         text(&self.workspace, 4096, "Workspace")?;
         if !Path::new(&self.workspace).is_absolute() {
             return Err("Choose an absolute workspace path".into());

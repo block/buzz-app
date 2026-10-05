@@ -293,6 +293,7 @@ async fn installed_pi_catalog_uses_production_context() {
             databricks: None,
         },
         environment: BTreeMap::from([("BUZZ_ACP_AGENTS".into(), Some("10".into()))]),
+        plugin: None,
     })
     .unwrap();
     let models = fetch(verify(context).await.unwrap().into_context())
@@ -334,6 +335,7 @@ async fn installed_pi_connection_test_uses_production_context() {
                 databricks: None,
             },
             environment,
+            plugin: None,
         })
         .unwrap()
     };

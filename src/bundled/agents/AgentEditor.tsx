@@ -17,8 +17,15 @@ import {
   type AgentControlState,
   type AgentView,
 } from "../../features/agents/control";
+import type { AgentTypes } from "../../features/agent-types/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentSettingsFields } from "./AgentSettingsFields";
+import {
+  AgentTypeFields,
+  agentTypeError,
+  useAgentActivity,
+  useAgentTypes,
+} from "./AgentTypeFields";
 import {
   agentDraft,
   agentEdit,
@@ -30,6 +37,7 @@ export function AgentEditor({
   agent,
   displayName = agent.name,
   control,
+  agentTypes,
   state,
   avatar,
   onClose,
@@ -40,6 +48,7 @@ export function AgentEditor({
   children,
 }: {
   agent: AgentView;
+  agentTypes?: AgentTypes | undefined;
   onOpenHarnesses?: (() => void) | undefined;
   displayName?: string;
   control: AgentControl;
@@ -60,6 +69,8 @@ export function AgentEditor({
       mounted.current = false;
     };
   }, []);
+  const types = useAgentTypes(agentTypes);
+  const activity = useAgentActivity(agentTypes, agent.id);
   const [draft, setDraft] = useState<AgentDraft | null>(initialDraft ?? null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(initialNotice ?? null);
@@ -133,6 +144,8 @@ export function AgentEditor({
               }
               let edit: ReturnType<typeof agentEdit>;
               try {
+                const invalid = agentTypeError(current, types);
+                if (invalid) throw new Error(invalid);
                 edit = agentEdit(current);
               } catch (problem) {
                 setError((problem as Error).message);
@@ -201,18 +214,28 @@ export function AgentEditor({
                   {agent.relayUrl}
                 </p>
               </div>
-              <AgentSettingsFields
-                id={agent.id}
-                savedRevision={agent.revision}
-                draft={current}
-                control={control}
-                state={state}
-                disabled={disabled || state.busy}
-                environmentKeys={agent.harness.environmentKeys}
-                onChange={change}
-                onOpenHarnesses={onOpenHarnesses}
-                discardEdits={dirty}
-              />
+              {agent.plugin ? (
+                <AgentTypeFields
+                  draft={current}
+                  types={types}
+                  disabled={disabled || state.busy}
+                  agent={agent}
+                  onChange={change}
+                />
+              ) : (
+                <AgentSettingsFields
+                  id={agent.id}
+                  savedRevision={agent.revision}
+                  draft={current}
+                  control={control}
+                  state={state}
+                  disabled={disabled || state.busy}
+                  environmentKeys={agent.harness.environmentKeys}
+                  onChange={change}
+                  onOpenHarnesses={onOpenHarnesses}
+                  discardEdits={dirty}
+                />
+              )}
               <div className="-mx-2">
                 <Accordion
                   variant="form"
@@ -228,17 +251,24 @@ export function AgentEditor({
                               {agentProcessLabel(agent)}
                             </p>
                             <p className="text-body-sm text-subtle">
-                              {agent.configured === false
-                                ? "Imported · close the editor and choose Use here before starting"
-                                : agent.enabled
-                                  ? !state.data?.runtimeAvailable
-                                    ? "Enabled intent saved · execution unavailable"
+                              {agent.plugin
+                                ? agent.status !== "running"
+                                  ? "Start it to listen for events again"
+                                  : activity?.subscription
+                                    ? "Listening for matching events your connection receives in this community"
+                                    : (activity?.lastError ??
+                                      "Not listening · open its community, and check that its plugin is enabled")
+                                : agent.configured === false
+                                  ? "Imported · close the editor and choose Use here before starting"
+                                  : agent.enabled
+                                    ? !state.data?.runtimeAvailable
+                                      ? "Enabled intent saved · execution unavailable"
+                                      : agent.startOnAppLaunch
+                                        ? "Enabled · starts with buzz-app"
+                                        : "Enabled · manual-start only"
                                     : agent.startOnAppLaunch
-                                      ? "Enabled · starts with buzz-app"
-                                      : "Enabled · manual-start only"
-                                  : agent.startOnAppLaunch
-                                    ? "Start on launch enabled"
-                                    : "Manual start · a later sent mention can start this agent"}
+                                      ? "Start on launch enabled"
+                                      : "Manual start · a later sent mention can start this agent"}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -261,20 +291,36 @@ export function AgentEditor({
                             >
                               Stop
                             </Button>
-                            <Button
-                              disabled={launchBlocked}
-                              onClick={() => act("restart")}
-                            >
-                              {unapplied ? "Restart to apply" : "Restart"}
-                            </Button>
+                            {!agent.plugin && (
+                              <Button
+                                disabled={launchBlocked}
+                                onClick={() => act("restart")}
+                              >
+                                {unapplied ? "Restart to apply" : "Restart"}
+                              </Button>
+                            )}
                           </div>
-                          <p className="text-body-sm text-subtle">
-                            Saved revision {agent.revision} · Running revision{" "}
-                            {agent.runningRevision ?? "none"}.
-                            {unapplied && " Saved changes are not running yet."}{" "}
-                            Stop ends current work. After setup, a later sent
-                            mention can start it again.
-                          </p>
+                          {agent.plugin ? (
+                            <p className="text-body-sm text-subtle">
+                              Since this app opened: ran {activity?.fired ?? 0}{" "}
+                              · failed {activity?.errors ?? 0} · skipped{" "}
+                              {activity?.dropped ?? 0}.
+                              {activity?.subscription &&
+                                activity.lastError &&
+                                ` Last failure: ${activity.lastError}`}{" "}
+                              Saved changes apply to the next event. It runs
+                              only while this app is open.
+                            </p>
+                          ) : (
+                            <p className="text-body-sm text-subtle">
+                              Saved revision {agent.revision} · Running revision{" "}
+                              {agent.runningRevision ?? "none"}.
+                              {unapplied &&
+                                " Saved changes are not running yet."}{" "}
+                              Stop ends current work. After setup, a later sent
+                              mention can start it again.
+                            </p>
+                          )}
                         </div>
                       ),
                     },
@@ -301,6 +347,14 @@ export function AgentEditor({
                               </dd>
                             </div>
                           </dl>
+                          {activity?.subscription && (
+                            <div className="space-y-2">
+                              <h4 className="text-label">Subscription</h4>
+                              <pre className="whitespace-pre-wrap break-words text-mono">
+                                {JSON.stringify(activity.subscription, null, 2)}
+                              </pre>
+                            </div>
+                          )}
                           {!!agent.diagnostics.length && (
                             <div className="space-y-2">
                               <h4 className="text-label">Host diagnostics</h4>

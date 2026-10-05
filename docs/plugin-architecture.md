@@ -951,3 +951,123 @@ The intended fix is to match Alt/Option chords on the physical `event.code` in
 both the capture control and the dispatcher's `matches`, which is a coordinated
 change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
+
+## Plugin agent types
+
+A plugin can contribute an agent type: a factory for agents that run inside the
+app instead of as a harness process. Each agent created from a type is an ordinary
+agent record with its own bot identity (a native-held key and the owner's NIP-OA
+attestation), plus the type's key and that agent's saved config. The host composes
+one `AgentTypesService` in `app/services.ts`; bundled and external plugins use the
+same call.
+
+```tsx
+import type { Context } from "@buzz/author";
+export const inject = ["agentTypes"];
+export function apply(ctx: Context) {
+  ctx.agentTypes.register<{ channel: string; word: string }>({
+    id: "keyword",
+    title: "Keyword responder",
+    defaults: { channel: "", word: "deploy" },
+    // The type's settings form. Create agent and the agent's own screen both show it.
+    Configure: ({ config, onChange, disabled }) => <>…</>,
+    validate: (config) => (config.word ? undefined : "Enter a word"),
+    // Config → NIP-01 filter data. Called again after every save.
+    subscription: (config, agent) => ({
+      kinds: [9],
+      ...(config.channel ? { "#h": [config.channel] } : {}),
+    }),
+    run: async ({ event, channelId, agent, config, signal }) => {
+      if (!channelId || !event.content.includes(config.word)) return;
+      await agent.publish({
+        kind: 9,
+        content: `Heard "${config.word}".`,
+        tags: [["h", channelId], ["e", event.id, "", "reply"]],
+      });
+    },
+  });
+}
+```
+
+**What the plugin owns.** The config shape, the `Configure` form, how config becomes
+a subscription, and the function. Config is opaque JSON to the host (at most 64 KB),
+saved on the agent record as `plugin: { type, config }`, where `type` is the
+contribution key `pluginId/typeId`. A type that changes its config shape versions it
+inside the config.
+
+**What the host owns.** Identity, the owner attestation, the agent record, Start and
+Stop, and publishing.
+
+- *Create.* The Agents page's Create agent dialog lists active types beside
+  "Harness". Choosing a type replaces the harness fields with a name and the type's
+  `Configure`, starting from `defaults`. Create uses the existing native path
+  unchanged: native generates the key, the owner signs the NIP-OA attestation, and
+  the kind 0 profile is published. A type cannot be changed after creation.
+- *Edit.* The agent's screen shows the same `Configure` with the saved config and
+  `agent` set. Save writes a new revision; the service recomputes the subscription
+  and the next event runs with the new config.
+- *Start and Stop.* A plugin agent has no process. Start and Stop only set
+  `enabled`; an enabled plugin agent reports `running`. `enabled` is saved, so a
+  started agent resumes when the app next opens. A mention does not wake a stopped
+  one.
+
+**Dispatch.** `subscription` returns one filter or a list. It must be plain data
+(`ids`, `authors`, `kinds`, `since`, `until`, `#tag` lists); `limit`, relay
+extensions such as `search`, and functions are rejected, and the agent then does not
+listen and its screen says why. The same value could later be given to a relay for a
+workload that runs elsewhere, so a condition a filter cannot express belongs at the
+top of `run`.
+
+Registering a type or creating an agent opens no relay subscription. The service
+listens to `session.subscribeLive` on the selected community's ready session and
+matches each event locally, for every enabled agent of an active type whose
+community is the selected one. An agent therefore sees what its owner's connection
+already streams: the channel kinds in `features/relay/live.ts` for the channels the
+owner has joined, plus the global routes. Replayed history, finite reads and local
+unsent intent never run it.
+
+`run` receives the event, the route's channel when known, the config, a signal and
+`agent`: `{ id, pubkey, name, owner, publish }`. It receives no key, session or UI
+object.
+
+- The agent's own events are skipped. The owner's events and other agents' events
+  are input.
+- Each agent sees an event id once (the last 512 ids), runs one event at a time,
+  queues at most 32, and runs at most 60 times per minute. Excess matches are
+  counted as skipped.
+- A run has 30 seconds (`timeoutMs` on the type overrides). `signal` aborts on
+  timeout, Stop, save, delete, plugin disable or replacement, and when the session is
+  replaced. `agent.publish` rejects after any of those except timeout.
+- A thrown error or rejection is logged and counted; it does not stop the agent or
+  affect others. The agent's screen shows run, failure and skip counts, the last
+  failure, and the subscription in force.
+
+**Publishing.** `agent.publish({ kind, content, tags })` calls the native command
+`agent_identity_publish`. Native checks the agent is an enabled plugin agent, reads
+its key from the credential store, signs the event with the owner's `auth` tag
+attached, and posts it to the community's `/events` endpoint with NIP-98, the same
+route agent profiles use. Only kinds 9 (message), 40003 (edit), 7 (reaction) and 5
+(deletion) are signed. It resolves to the accepted event's `id` and `created_at`;
+edits are ordered by `created_at` in whole seconds, so a function that edits a
+message repeatedly spaces its edits at least a second apart. The key never enters the
+WebView. The owner's socket is not used, because the relay accepts an event only
+from the identity that authenticated the connection.
+
+The community applies its normal rules to the agent as author: it must be a member
+of a private channel to post there. Creating an agent does not join it to any
+channel, so an agent can be delivered events from channels it cannot post to.
+
+Known limitations.
+
+- Agents run only while the app is open with the agent's community selected.
+  Delivery is best-effort and at most once: events that arrive while the socket
+  reconnects or while the app is closed are not delivered, and there is no catch-up.
+- Every open window, and every device with the same agent record, runs its own copy,
+  so one event can be handled more than once.
+- If the owner leaves a channel, the agent stops receiving it. DMs addressed to the
+  agent are not on the owner's connection and never arrive.
+- Plugins share the WebView and are trusted. The kind allowlist and the native key
+  are a boundary on what is signed, not a sandbox: any enabled plugin can reach the
+  agent control service.
+- Harness agents are not agent types yet. The shape allows it (the harness form as
+  `Configure`, mentions as the subscription), but nothing has been moved.

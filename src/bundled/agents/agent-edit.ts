@@ -1,6 +1,10 @@
 import { harnessPreset } from "../../features/agents/harness-presets";
 export { harnessKind, isGoose } from "../../features/agents/harness-presets";
-import type { AgentEdit, AgentView } from "../../features/agents/control";
+import type {
+  AgentEdit,
+  AgentView,
+  PluginRuntime,
+} from "../../features/agents/control";
 
 export interface AgentDraft {
   revision: number;
@@ -15,6 +19,8 @@ export interface AgentDraft {
   provider: string;
   environment: Record<string, string | null>;
   databricks?: { host: string; filter: string } | null;
+  /** A plugin agent: its type's config replaces every harness field above. */
+  plugin?: PluginRuntime;
 }
 // Goose provider config keys, checked against built-in ConfigKey declarations
 // and declarative provider api_key_env values. OAuth/local providers have none.
@@ -66,6 +72,7 @@ export function agentDraft(agent: AgentView): AgentDraft {
     provider: agent.harness.provider,
     environment: {},
     ...(databricks ? { databricks: { ...databricks } } : {}),
+    ...(agent.plugin ? { plugin: agent.plugin } : {}),
   };
 }
 export function agentEdit(
@@ -74,6 +81,18 @@ export function agentEdit(
 ): AgentEdit {
   if (!modelDiscovery && !draft.name.trim())
     throw new Error("Enter an agent name.");
+  // Native refuses harness settings on a plugin agent: it has no process.
+  if (draft.plugin)
+    return {
+      name: draft.name,
+      ...(draft.picture === undefined ? {} : { picture: draft.picture }),
+      systemPrompt: "",
+      sessionPolicy: null,
+      workspace: "",
+      harness: { command: "", args: [], model: "", provider: "" },
+      environment: {},
+      plugin: draft.plugin,
+    };
   if (!draft.command.trim()) throw new Error("Enter a harness executable.");
   if (!modelDiscovery && !draft.workspace.trim())
     throw new Error("Enter a workspace path.");
@@ -111,6 +130,10 @@ export function agentEdit(
   };
 }
 export function agentProcessLabel(agent: AgentView): string {
+  if (agent.plugin)
+    return agent.status === "running"
+      ? "On · runs in this app while it is open"
+      : "Off";
   switch (agent.status) {
     case "running":
       return "Process running · relay readiness unverified";

@@ -448,6 +448,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
             .map(str::to_owned),
         imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "harness": custom, "teamInstructions": team_instructions(data, record)? }),
         extra: BTreeMap::new(),
+        plugin: None,
     })
 }
 // Match old Buzz's deployment-team lookup: a deleted team contributes no section.

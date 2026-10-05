@@ -198,11 +198,29 @@ struct LoginState {
     active: Option<ActiveLogin>,
     canceled: VecDeque<String>,
     generation: u64,
+    // A lifecycle generation can change without a login adopting a session.
+    session_adoption: u64,
 }
 
 struct ActiveLogin {
     id: String,
     cancel: oneshot::Sender<()>,
+}
+
+#[cfg(test)]
+struct ClearPause {
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+impl ClearPause {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            started: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -211,6 +229,8 @@ pub(crate) struct EnterpriseAuthHost {
     login: Arc<Mutex<LoginState>>,
     commit: Arc<tokio::sync::Mutex<()>>,
     store: Arc<dyn CredentialStore>,
+    #[cfg(test)]
+    clear_pause: Option<Arc<ClearPause>>,
 }
 
 #[cfg(not(test))]
@@ -234,7 +254,15 @@ impl EnterpriseAuthHost {
             login: Arc::new(Mutex::new(LoginState::default())),
             commit: Arc::new(tokio::sync::Mutex::new(())),
             store,
+            #[cfg(test)]
+            clear_pause: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_clear_pause(mut self, clear_pause: Arc<ClearPause>) -> Self {
+        self.clear_pause = Some(clear_pause);
+        self
     }
 
     pub(crate) async fn get(&self, identity: &IdentityHost) -> Result<Option<EnterpriseAuthInfo>> {
@@ -419,7 +447,7 @@ impl EnterpriseAuthHost {
 
     async fn clear_scope(&self, scope: Scope) -> Result<()> {
         // Cancel and fence as one state transition before waiting for storage.
-        let generation = {
+        let session_adoption = {
             let mut state = self
                 .login
                 .lock()
@@ -429,15 +457,23 @@ impl EnterpriseAuthHost {
                 remember_canceled(&mut state.canceled, &active.id);
                 let _ = active.cancel.send(());
             }
-            state.generation
+            state.session_adoption
         };
+        #[cfg(test)]
+        if let Some(pause) = &self.clear_pause {
+            pause.started.notify_one();
+            pause.release.notified().await;
+        }
         let _commit = self.commit.lock().await;
         let clear_generation = {
             let mut state = self
                 .login
                 .lock()
                 .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
-            if state.generation != generation {
+            // A newer login can begin while we await the commit owner. It has
+            // not replaced the session yet, so clear the old session without
+            // touching that login. Preserve an actually adopted replacement.
+            if state.session_adoption != session_adoption {
                 None
             } else {
                 let clear_generation = Self::bump_generation(&mut state);
@@ -594,6 +630,7 @@ impl EnterpriseAuthHost {
                 .map_err(|_| "Enterprise authentication state is unavailable".to_owned())?;
             if state.active.as_ref().is_some_and(|active| active.id == id) {
                 Self::bump_generation(&mut state);
+                Self::bump_session_adoption(&mut state);
                 self.remember(scope.clone(), session);
                 true
             } else {
@@ -620,6 +657,10 @@ impl EnterpriseAuthHost {
             (Ok(()), Err(error)) => Err(error),
             (Ok(()), Ok(())) => Err("Enterprise authentication was canceled".into()),
         }
+    }
+
+    fn bump_session_adoption(state: &mut LoginState) {
+        state.session_adoption = state.session_adoption.wrapping_add(1);
     }
 
     fn remember(&self, scope: Scope, session: StoredSession) {
@@ -2295,6 +2336,172 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clear_cleans_old_session_when_new_login_only_begins() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let old_raw = encode_session(&old).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.remember(scope.clone(), old);
+
+        let commit_guard = host.commit.lock().await;
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while host.current_generation().unwrap() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("new-login".into(), cancel).unwrap());
+        drop(commit_guard);
+
+        clear.await.unwrap().unwrap();
+        assert!(host.is_active("new-login").unwrap());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let newer_raw = encode_session(&newer).unwrap();
+        assert!(host
+            .commit_session(
+                &scope,
+                "new-login",
+                newer,
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+        assert_eq!(
+            store.read(scope.service, &scope.account).unwrap(),
+            newer_raw
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_does_not_adopt_a_restore_started_after_its_initial_fence() {
+        let server = HeldSessionServer::spawn().await;
+        let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let scope = scope_for_adapter(&server.base, viewer).unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let old_raw = encode_session(&old).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let pause = ClearPause::new();
+        let host = EnterpriseAuthHost::with_store(store.clone()).with_clear_pause(pause.clone());
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        pause.started.notified().await;
+
+        let restore = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            let client = test_http_client(Duration::from_secs(1));
+            async move { host.get_scope_with_client(scope, &client).await }
+        });
+        server.first_started.notified().await;
+        server.release_first.notify_one();
+        assert!(restore.await.unwrap().unwrap().is_some());
+
+        pause.release.notify_one();
+        clear.await.unwrap().unwrap();
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_preserves_a_newer_committed_session_at_adoption_fence() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let old_raw = encode_session(&old).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let pause = ClearPause::new();
+        let host = EnterpriseAuthHost::with_store(store.clone()).with_clear_pause(pause.clone());
+        host.remember(scope.clone(), old);
+
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        pause.started.notified().await;
+
+        let (cancel, _receiver) = oneshot::channel();
+        assert!(host.begin("new-login".into(), cancel).unwrap());
+        let newer = StoredSession {
+            token: Zeroizing::new("new-session".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let newer_raw = encode_session(&newer).unwrap();
+        assert!(host
+            .commit_session(
+                &scope,
+                "new-login",
+                newer,
+                EnterpriseAuthInfo {
+                    expires_at: "2031-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+
+        pause.release.notify_one();
+        clear.await.unwrap().unwrap();
+        assert!(host.is_active("new-login").unwrap());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "new-session");
+        assert_eq!(
+            store.read(scope.service, &scope.account).unwrap(),
+            newer_raw
+        );
+    }
+
+    #[tokio::test]
     async fn clear_fences_a_restore_started_during_delete() {
         let server = HeldSessionServer::spawn().await;
         let viewer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -3098,6 +3305,104 @@ mod tests {
             store.stored(scope.service, &scope.account).as_slice(),
             newer.as_slice()
         );
+    }
+
+    #[tokio::test]
+    async fn clear_removes_old_session_after_a_canceled_failed_write() {
+        let scope = scope_for_adapter(
+            "https://adapter.example",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let old = StoredSession {
+            token: Zeroizing::new("old-session".into()),
+            expires_at: "2030-01-01T00:00:00Z".into(),
+        };
+        let old_raw = encode_session(&old).unwrap();
+        let store = Arc::new(FixtureStore::default());
+        store
+            .replace(scope.service, &scope.account, &old_raw)
+            .unwrap();
+        let (replace_started, replace_started_receiver) = mpsc::channel();
+        let (release_replace, release_replace_receiver) = mpsc::channel();
+        *store.replace_started.lock().unwrap() = Some(replace_started);
+        *store.release_replace.lock().unwrap() = Some(release_replace_receiver);
+        *store.replace_error.lock().unwrap() = Some(StoreError::Denied);
+        let host = EnterpriseAuthHost::with_store(store.clone());
+        host.remember(scope.clone(), old);
+
+        let (b_cancel, _b_receiver) = oneshot::channel();
+        assert!(host.begin("login-b".into(), b_cancel).unwrap());
+        let b_session = StoredSession {
+            token: Zeroizing::new("session-b".into()),
+            expires_at: "2031-01-01T00:00:00Z".into(),
+        };
+        let b_commit = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move {
+                host.commit_session(
+                    &scope,
+                    "login-b",
+                    b_session,
+                    EnterpriseAuthInfo {
+                        expires_at: "2031-01-01T00:00:00Z".into(),
+                    },
+                )
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || replace_started_receiver.recv().unwrap())
+            .await
+            .unwrap();
+
+        let clear = tokio::spawn({
+            let host = host.clone();
+            let scope = scope.clone();
+            async move { host.clear_scope(scope).await }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while host.is_active("login-b").unwrap() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let (c_cancel, _c_receiver) = oneshot::channel();
+        assert!(host.begin("login-c".into(), c_cancel).unwrap());
+        release_replace.send(()).unwrap();
+        assert_eq!(
+            b_commit.await.unwrap().unwrap_err(),
+            "Enterprise secure storage access was denied; unlock it and retry"
+        );
+        clear.await.unwrap().unwrap();
+        assert!(host.is_active("login-c").unwrap());
+        assert!(host.cached(&scope).is_none());
+        assert_eq!(
+            store.read(scope.service, &scope.account),
+            Err(StoreError::Absent)
+        );
+
+        *store.replace_error.lock().unwrap() = None;
+        let c_session = StoredSession {
+            token: Zeroizing::new("session-c".into()),
+            expires_at: "2032-01-01T00:00:00Z".into(),
+        };
+        let c_raw = encode_session(&c_session).unwrap();
+        assert!(host
+            .commit_session(
+                &scope,
+                "login-c",
+                c_session,
+                EnterpriseAuthInfo {
+                    expires_at: "2032-01-01T00:00:00Z".into(),
+                },
+            )
+            .await
+            .is_ok());
+        assert_eq!(host.cached(&scope).unwrap().token.as_str(), "session-c");
+        assert_eq!(store.read(scope.service, &scope.account).unwrap(), c_raw);
     }
 
     #[tokio::test]

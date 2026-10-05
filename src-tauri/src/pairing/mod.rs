@@ -70,15 +70,18 @@ impl Pairing {
         }
     }
     fn expire(&self, id: &str) {
+        self.fail(id, Status::Expired, true);
+    }
+    fn fail(&self, id: &str, status: Status, ambiguous: bool) {
         if let Ok(mut active) = self.0.lock() {
             if let Some(active) = active
                 .as_mut()
                 .filter(|a| a.id == id && !a.cancel.is_cancelled())
             {
-                active.status = if active.payload_sent {
+                active.status = if active.payload_sent && ambiguous {
                     Status::Uncertain
                 } else {
-                    Status::Expired
+                    status
                 };
             }
         }
@@ -189,16 +192,36 @@ pub fn pairing_start(
         };
         match result {
             Ok(Ok(())) => pairing.update(&id, Status::Complete),
-            Ok(Err(message)) => pairing.update(&id, Status::Error { message }),
+            Ok(Err(failure)) => {
+                let ambiguous = matches!(failure, Failure::Transport(_));
+                let (Failure::Transport(message) | Failure::Rejected(message)) = failure;
+                pairing.fail(&id, Status::Error { message }, ambiguous);
+            }
             Err(_) => pairing.expire(&id),
         }
     });
     Ok(())
 }
 
+#[derive(Debug)]
+enum Failure {
+    Transport(String),
+    Rejected(String),
+}
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Transport(message)
+    }
+}
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Self::Transport(message.into())
+    }
+}
+
 async fn guard(
-    future: impl std::future::Future<Output = Result<(), String>>,
-) -> Result<(), String> {
+    future: impl std::future::Future<Output = Result<(), Failure>>,
+) -> Result<(), Failure> {
     std::panic::AssertUnwindSafe(future)
         .catch_unwind()
         .await
@@ -214,7 +237,7 @@ async fn run(
     viewer: String,
     origin: url::Url,
     mut confirm: mpsc::Receiver<()>,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let origin_string = origin.as_str().trim_end_matches('/').to_string();
     let payload = identity::prepare(host, viewer, origin_string).await?;
     let relay_url = relay::discover(&origin).await?;
@@ -242,14 +265,14 @@ async fn run(
     let mut pending = std::collections::VecDeque::from(pending);
     loop {
         let output = if let Some(event) = pending.pop_front() {
-            exchange.receive(&event)?
+            exchange.receive(&event).map_err(Failure::Rejected)?
         } else {
             tokio::select! {
-                Some(())=confirm.recv()=>exchange.confirm()?,
+                Some(())=confirm.recv()=>exchange.confirm().map_err(Failure::Rejected)?,
                 message=relay::next(&mut socket)=>{
                     let message=message?;
                     if auth.handle(&mut socket, &exchange.session, &relay_url, &message).await? {continue;}
-                    if let Some(event)=relay::event(&message) {exchange.receive(&event)?} else {continue;}
+                    if let Some(event)=relay::event(&message) {exchange.receive(&event).map_err(Failure::Rejected)?} else {continue;}
                 }
             }
         };
@@ -268,7 +291,7 @@ async fn run(
                 return Ok(());
             }
             if let Status::Error { message } = status {
-                return Err(message);
+                return Err(Failure::Rejected(message));
             }
             pairing.update(id, status);
         }

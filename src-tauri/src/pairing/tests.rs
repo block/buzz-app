@@ -269,7 +269,38 @@ fn window_reload_or_destruction_cancels_the_live_attempt() {
 async fn unexpected_connection_failure_becomes_a_visible_error() {
     let result = guard(async { panic!("simulated connection setup failure") }).await;
     assert_eq!(
-        result.unwrap_err(),
+        match result.unwrap_err() {
+            Failure::Transport(message) => message,
+            other => panic!("{other:?}"),
+        },
         "Pairing stopped unexpectedly. Create a new code and try again."
     );
+}
+
+#[test]
+fn transport_failure_is_uncertain_after_publication_but_phone_rejection_is_definite() {
+    let manager = Pairing::default();
+    let (tx, _) = mpsc::channel(1);
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: CancellationToken::new(),
+        confirm: tx,
+        status: Status::Transferring,
+        payload_sent: false,
+    });
+    let error = Status::Error {
+        message: "connection lost".into(),
+    };
+    manager.fail("live", error.clone(), true);
+    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
+    manager.mark_payload_sent("live");
+    manager.fail("stale", error.clone(), true);
+    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
+    manager.fail("live", error.clone(), true);
+    assert_eq!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Uncertain
+    );
+    manager.fail("live", error.clone(), false);
+    assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
 }

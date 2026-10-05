@@ -61,7 +61,7 @@ export function PairingSettings({
     lifetime.current++;
     return () => {
       lifetime.current++;
-      void pairing.cancel();
+      void pairing.cancel(true);
     };
   }, [pairing]);
   // Changing accounts/communities invalidates the pairing being displayed.
@@ -72,7 +72,7 @@ export function PairingSettings({
     setAccount(client.viewer);
     setRelay(client.selected ? communityDestination(client.selected).url : "");
     return () => {
-      void pairing.cancel();
+      void pairing.cancel(true);
     };
   }, [client.viewer, client.selected, pairing]);
   const busy = ["connecting", "qr", "code", "transferring"].includes(
@@ -116,7 +116,7 @@ export function PairingSettings({
       (client.viewer && account !== client.viewer) ||
       (client.selected &&
         relay !== communityDestination(client.selected).url) ||
-      !["idle", "cancelled", "expired"].includes(state.phase)
+      !["idle", "expired"].includes(state.phase)
     )
       return;
     const origin = client.selected ? relayOrigin(relay) : manualOrigin;
@@ -224,7 +224,7 @@ export function PairingSettings({
                             />
                           </div>
                         )}
-                        {state.phase === "error" && (
+                        {["error", "cancelled"].includes(state.phase) && (
                           <Button variant="prominent" onClick={start}>
                             Try again
                           </Button>
@@ -324,9 +324,7 @@ export function PairingSettings({
                         className="text-success"
                       />
                       <h3 className="m-0 text-label">Phone paired</h3>
-                      <Button onClick={() => void pairing.cancel()}>
-                        Pair another phone
-                      </Button>
+                      <Button onClick={start}>Pair another phone</Button>
                     </div>
                   )}
                   {(error || state.phase === "error") && (

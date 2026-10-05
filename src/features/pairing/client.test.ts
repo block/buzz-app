@@ -118,3 +118,17 @@ it("does not revive legacy confirmation from a status response already in flight
   expect(api.confirm).toHaveBeenCalledTimes(1);
   await client.cancel();
 });
+
+it("resets client-controlled cleanup without treating native cancellation as idle", async () => {
+  const api = native();
+  const client = createPairingClient(api);
+  api.status.mockResolvedValue({ phase: "cancelled" });
+  await client.start("viewer", "https://relay.test");
+  expect(client.snapshot().phase).toBe("cancelled");
+  await client.cancel(true);
+  expect(client.snapshot().phase).toBe("idle");
+  api.cancel.mockRejectedValue(new Error("cleanup failed"));
+  await client.start("viewer", "https://relay.test");
+  await client.cancel(true);
+  expect(client.snapshot().phase).toBe("error");
+});

@@ -124,11 +124,12 @@ export function createPairingClient(native: PairingNative = nativePairing) {
           update({ phase: "error", message: String(error) });
       }
     },
-    async cancel() {
+    async cancel(reset = false) {
       const attempt = ++generation;
       update({ phase: "cancelled" });
       try {
         await stop();
+        if (reset && attempt === generation) update({ phase: "idle" });
       } catch {
         if (attempt === generation)
           update({

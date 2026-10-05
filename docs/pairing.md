@@ -30,10 +30,11 @@ new plugin security sandbox. The frontend CSP is unchanged.
 4. Older phones retain explicit **Codes match** confirmation. Desktop never uses
    that action to bypass a code-entry phone's proof.
 5. **Phone paired** requires the phone's successful import acknowledgement.
-   If a sent transfer times out awaiting acknowledgement, **Check your phone**
+   If a sent transfer times out or loses its connection awaiting acknowledgement, **Check your phone**
    preserves the uncertain outcome and requires a deliberate new attempt.
    Closing or reloading the window, leaving the Settings section, switching accounts/communities, disabling the
-   plugin disposes the attempt. Retries use a fresh native session.
+   plugin disposes the attempt. Native cancellation remains terminal until an explicit retry
+   or reopening the pairing section. Retries use a fresh native session.
 
 Pairing uses the current native app identity through a purpose-bound
 `IdentityHost.with_key` operation. The public viewer is checked before producing

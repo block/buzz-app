@@ -827,6 +827,7 @@ export function createRelaySession(
     // scheduler and verified transport stay shared; unread fences access epochs.
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
+    relayAuthor: transport?.relayAuthor ?? "",
     notify,
   });
   const inboxFeed = createInboxFeed({

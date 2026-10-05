@@ -1125,6 +1125,116 @@ it.each([5, 9005])(
   },
 );
 
+it.each([
+  { scenario: "owner attribution", owner: true, mentioned: false },
+  {
+    scenario: "explicit owner mention",
+    owner: true,
+    explicit: true,
+    mentioned: true,
+  },
+  { scenario: "rendered non-owner mention", owner: false, mentioned: true },
+  {
+    scenario: "forged workflow metadata",
+    owner: true,
+    forged: true,
+    mentioned: true,
+  },
+  {
+    scenario: "ordinary relay message",
+    owner: true,
+    workflow: false,
+    mentioned: true,
+  },
+  { scenario: "non-workflow kind", owner: true, kind: 40002, mentioned: true },
+  {
+    scenario: "provenance without recipient",
+    owner: true,
+    explicit: true,
+    recipient: false,
+    mentioned: false,
+  },
+])(
+  "classifies $scenario without confusing workflow ownership and mentions",
+  (test) => {
+    const h = setup();
+    h.grant("room");
+    const row = signed(test.forged ? h.alice : h.relay, {
+      kind: test.kind ?? 9,
+      created_at: 11,
+      content: "Workflow output",
+      tags: [
+        ["h", "room"],
+        ...(test.recipient === false ? [] : [["p", h.viewer.pubkey]]),
+        ...(test.workflow === false ? [] : [["buzz:workflow", "true"]]),
+        ["buzz:workflow-owner", test.owner ? h.viewer.pubkey : h.alice.pubkey],
+        ...(test.explicit ? [["buzz:workflow-mention", h.viewer.pubkey]] : []),
+      ],
+    });
+    h.emit([row]);
+    const attention = h.session.unread.attention("room", row.id);
+    expect(attention.status).toBe(test.mentioned ? "eligible" : "ineligible");
+    expect(attention.category).toBe(test.mentioned ? "mention" : undefined);
+    expect(attention.mentioned).toBe(test.mentioned ? true : undefined);
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 1,
+      attentionCount: test.mentioned ? 1 : 0,
+    });
+    expect(h.session.unread.inbox().items).toHaveLength(test.mentioned ? 1 : 0);
+  },
+);
+
+it("does not make an unrelated workflow reply relevant to its owner", async () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.alice, "room", "someone else's conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id).unread).toBe(false);
+  await flush();
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+});
+
+it("keeps workflow-owner thread participation and DM attention without inventing a mention", () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.viewer, "room", "my conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      created_at: 20,
+      content: "",
+      tags: [
+        ["d", "room"],
+        ["t", "dm"],
+      ],
+    }),
+  ]);
+  expect(h.session.unread.attention("room", row.id).category).toBe("direct");
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+});
+
 it("projects event attention through the same mention, DM, participation and frontier policy", async () => {
   const h = setup();
   h.grant("room");

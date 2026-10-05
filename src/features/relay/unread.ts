@@ -32,7 +32,7 @@ export type UnreadSnapshot = Readonly<{
 export type MessageAttention = Readonly<{
   status: "unknown" | "ineligible" | "eligible";
   category?: "mention" | "direct" | "thread";
-  /** The event explicitly p-tags the viewer, even inside DM channels. */
+  /** The event mentions the viewer, excluding trusted workflow-owner attribution. */
   mentioned?: boolean;
   rootId?: string;
   /** The reply's conversation is still being looked up; it may become thread
@@ -174,12 +174,14 @@ export function createUnread({
   channels,
   reader,
   viewer,
+  relayAuthor,
   notify = (listener) => listener(),
 }: {
   reads: ReturnType<typeof createReadState>;
   channels: ChannelQueries;
   reader: RelayReader;
   viewer: string;
+  relayAuthor?: string;
   notify?: (listener: () => void) => void;
 }) {
   let closed = false,
@@ -334,6 +336,24 @@ export function createUnread({
   let failures = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
   const membershipListeners = new Set<() => void>();
+  function mentionsViewer(event: RelayEvent): boolean {
+    const tagged = (name: string, value: string) =>
+      event.tags.some((tag) => tag[0] === name && tag[1] === value);
+    if (!tagged("p", viewer)) return false;
+    // The relay also p-tags the workflow owner for attribution. Only trusted
+    // kind-9 workflow output may disambiguate that tag; ordinary senders cannot
+    // use workflow metadata to suppress a mention. Other recipients keep p-tag
+    // semantics: workflow-mention is template provenance, not every recipient.
+    if (
+      event.kind === 9 &&
+      relayAuthor &&
+      event.pubkey === relayAuthor &&
+      tagged("buzz:workflow", "true") &&
+      tagged("buzz:workflow-owner", viewer)
+    )
+      return tagged("buzz:workflow-mention", viewer);
+    return true;
+  }
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
@@ -369,9 +389,7 @@ export function createUnread({
         channelId: channel,
         rootId: parentId ? rootId : undefined,
         parentId,
-        mentioned: event.tags.some(
-          ([name, value]) => name === "p" && value === viewer,
-        ),
+        mentioned: mentionsViewer(event),
         broadcast: event.tags.some(
           ([name, value]) => name === "broadcast" && value === "1",
         ),

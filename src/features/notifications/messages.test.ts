@@ -17,6 +17,42 @@ afterEach(async () => {
   for (const stop of cleanups.splice(0)) await stop();
   vi.restoreAllMocks();
 });
+it("does not notify workflow owners for another recipient, but still notifies explicit owner mentions", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup();
+  const tags = [
+    ["p", h.viewer.pubkey],
+    ["p", h.peer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["buzz:workflow-mention", h.peer.pubkey],
+  ];
+  const output = message(
+    h.relay,
+    "room",
+    "@Westie do the work",
+    1_780_000_000,
+    tags,
+  );
+  h.emit([output], "live");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  const explicit = message(
+    h.relay,
+    "room",
+    "@Wes review the result",
+    1_780_000_000,
+    [...tags, ["buzz:workflow-mention", h.viewer.pubkey]],
+  );
+  h.emit([explicit], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wes review the result");
+  h.click();
+  expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
+    messageId: explicit.id,
+  });
+});
+
 it.each([9, 40002])(
   "only production live kind-%s traffic can notify, never history/replay/local observation",
   async (kind) => {

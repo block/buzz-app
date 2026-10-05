@@ -1955,6 +1955,7 @@ export const test = base.extend({
           ? testInfo.outputPath("archive.sqlite3")
           : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
           return sign(13534, [["member", viewer, role]], "", relayKey);

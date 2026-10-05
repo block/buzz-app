@@ -45,7 +45,7 @@ export type Conversation = {
     Composer: (
       props: Omit<
         MessageComposerProps,
-        "extensions" | "startCommand" | "registerDraft"
+        "extensions" | "startCommand" | "registerDraft" | "suspended"
       >,
     ) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
@@ -207,7 +207,7 @@ export class ConversationService extends Service implements Conversation {
     Composer: (
       props: Omit<
         MessageComposerProps,
-        "extensions" | "startCommand" | "registerDraft"
+        "extensions" | "startCommand" | "registerDraft" | "suspended"
       >,
     ) => (
       <MessageComposer
@@ -215,6 +215,7 @@ export class ConversationService extends Service implements Conversation {
         extensions={this}
         startCommand={undefined}
         registerDraft={undefined}
+        suspended={undefined}
       />
     ),
     Message: (props: Omit<MessageRowProps, "extensions">) => (

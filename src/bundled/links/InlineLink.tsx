@@ -1,6 +1,6 @@
 import { sessionReferenceTitle } from "../../features/sessions/session-reference";
+import { SessionReferenceLabel } from "../../features/sessions/SessionReferenceLabel";
 import {
-  ClipboardTextIcon,
   GithubLogoIcon,
   GoogleDriveLogoIcon,
   FigmaLogoIcon,
@@ -136,20 +136,7 @@ export function LinkLabel({
   if (label === href && contextualLabel) label = contextualLabel;
   const sessionTitle = sessionReferenceTitle(href, label);
   if (sessionTitle !== undefined)
-    return (
-      <span
-        data-buzz-ui
-        data-link-kind="session"
-        className={styles.session}
-        title={sessionTitle}
-      >
-        <span className={styles.sessionIcon}>
-          <ClipboardTextIcon size={16} weight="regular" aria-hidden="true" />
-        </span>
-        <span className={styles.sessionLabel}>Session</span>
-        <span className={styles.sessionTitle}>{sessionTitle}</span>
-      </span>
-    );
+    return <SessionReferenceLabel href={href} label={label} />;
   if (label === href) {
     if (kind === "channel") label = "Channel";
     else if (kind === "message") label = "Message";

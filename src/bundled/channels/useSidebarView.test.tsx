@@ -2,10 +2,20 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readView, writeView } from "../../shared/view-state";
 import { useSidebarView } from "./useSidebarView";
 
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
 const group = "session-children:general";
 function Harness({ scope = "community/viewer" }: { scope?: string }) {
   const sidebar = useSidebarView(scope, true);
@@ -43,6 +53,7 @@ const saved = () => readView("community/viewer", "channel-sidebar", {});
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 it("defaults only session children closed and leaves categories open", () => {

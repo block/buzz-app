@@ -276,6 +276,8 @@ export function useSessionEvidence(
       Math.max(latestMessages.get(reply.rootId) ?? 0, reply.createdAt),
     );
   return {
+    profiles,
+    known,
     eligible,
     latestMessages,
     loading:

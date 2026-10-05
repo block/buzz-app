@@ -127,6 +127,7 @@ it.each(["quiet", "chip"] as const)(
           observe: async (ids: readonly string[]) => {
             observed.push([...ids]);
           },
+          catchUp: async () => {},
           dispose() {},
         }),
       },
@@ -193,6 +194,9 @@ it.each(["quiet", "chip"] as const)(
       view.container.querySelector(`[data-message-id='${id}']`),
     ).not.toBeNull();
     expect(rootRow()).not.toHaveAttribute("data-session-chip");
+    expect(rootRow()).toHaveTextContent("quiet root");
+    expect(session.channels.window("general").rows).toBe(props.window.rows);
+    expect(data.report.published).toHaveLength(1);
     act(() => {
       entries = [entry];
       for (const fn of listeners) fn();

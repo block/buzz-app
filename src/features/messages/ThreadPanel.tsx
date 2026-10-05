@@ -66,6 +66,7 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
+  onOpenInThread?: (() => void) | undefined;
   shareInChannel?: ((title: string) => string | undefined) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
@@ -167,6 +168,7 @@ function OwnedThreadPanel({
   requireReadyRoot,
   onDraftSaved,
   shareInChannel,
+  onOpenInThread,
   renderThreadAccessory,
   close,
 }: ThreadPanelProps) {
@@ -214,10 +216,11 @@ function OwnedThreadPanel({
   ]);
   return (
     <>
-      {presentation === "session" && (
+      {presentation === "session" && close && (
         <SessionConversationHeader
           title={title}
           back={close}
+          onOpenInThread={onOpenInThread}
           share={
             view && !error && shareInChannel
               ? () => {
@@ -1039,7 +1042,9 @@ function ThreadMessages({
         ref={scroller}
         data-message-scroller
         className={styles.threadHistory}
-        aria-label={presentation === "session" ? "Session messages" : "Thread messages"}
+        aria-label={
+          presentation === "session" ? "Session messages" : "Thread messages"
+        }
         aria-busy={positioning}
         data-positioning={positioning || undefined}
         style={hasAccessory ? { overflowAnchor: "none" } : undefined}
@@ -1138,23 +1143,23 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-        {hasAccessory && snapshot.root && renderThreadAccessory && (
-          <div ref={accessoryElement}>
-            {renderThreadAccessory({
-              session,
-              scope,
-              channelId,
-              threadRootId: snapshot.root.id,
-              messages: rows,
-            })}
-          </div>
-        )}
-        {presentation !== "session" && (
-          <div className={styles.threadDivider}>
-            {snapshot.replies.length}{" "}
-            {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
-          </div>
-        )}
+          {hasAccessory && snapshot.root && renderThreadAccessory && (
+            <div ref={accessoryElement}>
+              {renderThreadAccessory({
+                session,
+                scope,
+                channelId,
+                threadRootId: snapshot.root.id,
+                messages: rows,
+              })}
+            </div>
+          )}
+          {presentation !== "session" && (
+            <div className={styles.threadDivider}>
+              {snapshot.replies.length}{" "}
+              {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
+            </div>
+          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
@@ -1175,8 +1180,14 @@ function ThreadMessages({
               to check the destination.
             </p>
           )}
-        {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <p role="status">{presentation === "session" ? "Loading session…" : "Loading thread…"}</p>
+        {positioning ||
+        (snapshot.status === "loading" &&
+          (!rows.length || presentation === "session")) ? (
+          <p role="status">
+            {presentation === "session"
+              ? "Loading session…"
+              : "Loading thread…"}
+          </p>
         ) : null}
         {snapshot.targetStatus === "unavailable" && (
           <p role="status">Selected message unavailable.</p>
@@ -1206,7 +1217,9 @@ function ThreadMessages({
             snapshot.targetStatus === "ready")) && (
           <MessageComposer
             sessionConversation={sessionConversation}
-            label={presentation === "session" ? "Message this session" : undefined}
+            label={
+              presentation === "session" ? "Message this session" : undefined
+            }
             key={`${scope}:${channelId}:${snapshot.root.id}`}
             extensions={extensions}
             session={session}

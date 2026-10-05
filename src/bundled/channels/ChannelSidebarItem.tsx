@@ -71,6 +71,7 @@ type ItemProps = {
   menuAnchor?: HTMLElement | undefined;
   /** Only the open row receives content, so closed rows keep equal props. */
   menuContent?: ReactNode;
+  extraChildren?: ReactNode;
   onCloseMenu?: () => void;
   onMenuClosed?: (channelId: string) => void;
   menuFinalFocus?: (channelId: string) => HTMLElement | false;
@@ -149,6 +150,7 @@ function ChannelSidebarItemCore({
   menuOpen = false,
   menuAnchor,
   menuContent,
+  extraChildren,
   onCloseMenu,
   onMenuClosed,
   menuFinalFocus,
@@ -304,6 +306,7 @@ function ChannelSidebarItemCore({
       draft={draft}
       draftSelected={draftSelected}
       sessions={sessions}
+      extraChildren={extraChildren}
       childContent={(child) => (
         <UnreadBadge
           session={session}

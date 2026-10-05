@@ -23,6 +23,18 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import {
+  sessionReference,
+  referenceMarkdown,
+} from "../sessions/session-reference";
+import {
+  composerResource,
+  composerSchema,
+  projectComposerDocument,
+} from "./composer-document";
+import { appendComposerResource } from "./composer-resource";
+import { composerMarkdown } from "./composer-markdown";
+import { EditorState } from "prosemirror-state";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
@@ -1088,3 +1100,70 @@ it("keeps one channel Larry plain despite global namesakes and follows membershi
   names.dispose();
   owned.dispose();
 });
+
+// The actual Share resource and old copied Markdown must both retain their label.
+it.each([false, true])(
+  "renders shared Session resources with Links enabled=%s",
+  (enabled) => {
+    const rootId = "b".repeat(64);
+    const reference = sessionReference(
+      { viewer: "a".repeat(64), communityOrigin: "https://sessions.example" },
+      "general",
+      rootId,
+      "@Blossom review **the** release & checklist",
+    );
+    const resource = { uri: reference.href, label: reference.label };
+    const state = EditorState.create({ schema: composerSchema });
+    const tr = appendComposerResource(state, resource, 16000);
+    if (typeof tr === "string") throw new Error(tr);
+    const serialized = composerMarkdown(projectComposerDocument(tr.doc).draft);
+    expect(serialized.trim()).toBe(composerResource(resource)?.source);
+    const entry = {
+      id: "link",
+      title: "Links",
+      key: "links/link",
+      pluginId: "links",
+      revision: "one",
+      matches: () => true,
+      className: referenceStyles.link,
+      component: ({ url }: { url: string }) => <LinkLabel href={url} />,
+    };
+    const entries = enabled ? [entry] : [];
+    const tools: readonly never[] = [];
+    const onOpenLink = vi.fn(() => true);
+    const legacyMarkdown = referenceMarkdown(reference);
+    if (!legacyMarkdown) throw new Error("Invalid reference fixture");
+    for (const content of [serialized, legacyMarkdown]) {
+      const view = renderDom(
+        <MessageMarkdown
+          {...props(content, {
+            onOpenLink,
+            extensions: {
+              ...extensions,
+              tools: { snapshot: () => tools, subscribe: () => () => {} },
+              links: { snapshot: () => entries, subscribe: () => () => {} },
+            },
+          })}
+        />,
+      );
+      const anchor = view.getByRole("link", { name: reference.label });
+      expect(anchor).toHaveAttribute("href", reference.href);
+      expect(anchor.querySelector("a,button")).toBeNull();
+      if (enabled) {
+        expect(
+          anchor.querySelector('[data-link-kind="session"]'),
+        ).not.toBeNull();
+        expect(anchor).toHaveTextContent(`Session · ${rootId.slice(0, 8)}`);
+        expect(anchor).toHaveTextContent(
+          "@Blossom review **the** release & checklist",
+        );
+      } else {
+        expect(anchor).not.toHaveAttribute("data-link-renderer");
+        expect(anchor).toHaveTextContent(reference.label);
+      }
+      fireEvent.click(anchor);
+      expect(onOpenLink).toHaveBeenLastCalledWith(reference.href);
+      view.unmount();
+    }
+  },
+);

@@ -1155,3 +1155,17 @@
     max-width: 144px;
   }
 }
+
+/* Keep identity and view selection in one header, including narrow panels. */
+.channelViews {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-6);
+}
+.channelViews h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

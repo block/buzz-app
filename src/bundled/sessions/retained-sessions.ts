@@ -1,6 +1,13 @@
 import { sessionActivity, type SessionActivityState } from "./session-activity";
 import { knownAgentPubkeys } from "../../features/agents/known";
-import type { RetainedChannelEvidence } from "../../features/relay/contracts";
+import type {
+  Profile,
+  RetainedChannelEvidence,
+  RetainedChannelMessage,
+} from "../../features/relay/contracts";
+import { profileMentionParts } from "../../features/messages/profile-mentions";
+import { profileKey } from "../../features/profiles/target";
+import type { AgentChoicesSnapshot } from "../../features/agents/choices";
 import type { RelaySession } from "../../features/relay/session";
 
 export type PersonalSession = Readonly<{
@@ -10,12 +17,76 @@ export type PersonalSession = Readonly<{
 }>;
 const empty: readonly PersonalSession[] = Object.freeze([]);
 
+/** Sidebar-only, bounded display text. No inferred recipients or semantic rewrite. */
+export function personalSessionTitle(
+  row: RetainedChannelMessage,
+  known: ReadonlySet<string>,
+  profiles?: ReadonlyMap<string, Profile>,
+  agents: AgentChoicesSnapshot["identities"] = [],
+): string {
+  const source = row.titleSource;
+  if (source === undefined || row.edited) return row.excerpt || "Thread";
+  // The shared display matcher is not a Markdown parser: container indentation
+  // and mixed backtick delimiter lengths can hide code. Keep this sidebar's
+  // original excerpt rather than removing any mentions in those uncertain bodies.
+  if (/^ {0,3}>/m.test(source) || new Set(source.match(/`+/g) ?? []).size > 1)
+    return row.excerpt || "Thread";
+  const names = [...row.mentions, ...(row.mentionReferences ?? [])]
+    .flatMap((key) => [
+      profiles?.get(key)?.name,
+      ...agents
+        .filter((agent) => agent.pubkey === key)
+        .map((agent) => agent.name),
+    ])
+    .filter((name): name is string => !!name);
+  let offset = 0;
+  let title = "";
+  const removed = new Map<string, string>();
+  for (const part of profileMentionParts(
+    {
+      content: source,
+      mentions: row.mentions,
+      mentionReferences: row.mentionReferences ?? [],
+    },
+    profiles,
+    agents,
+  )) {
+    const start = offset;
+    offset += part.text.length;
+    const key = part.target && profileKey(part.target);
+    // On a cut, an unfinished bracketed span could be a link whose closing
+    // syntax was omitted. Keep it literal rather than guessing from the prefix.
+    const bracket = source.lastIndexOf("[", start);
+    const cutLink =
+      bracket >= 0 &&
+      !/\n|\]\([^)]*\)|\]\[[^\]]*\]/.test(source.slice(bracket));
+    // A cut must not turn a longer name or legacy key qualifier into a short match.
+    const incomplete =
+      source.length > 160 &&
+      (cutLink ||
+        offset >= 160 ||
+        names.some((name) => `@${name}`.startsWith(source.slice(start))) ||
+        /^ (?:\([a-f0-9]{0,64}\)?)?$/i.test(source.slice(offset)));
+    if (key && known.has(key) && !incomplete)
+      removed.set(key, part.text.slice(1));
+    else title += part.text.slice(0, Math.max(0, 160 - start));
+  }
+  title = title.trim().replace(/\s+/g, " ");
+  if (title) return title;
+  // Never call a truncated prefix a mentions-only prompt.
+  return removed.size && source.length <= 160
+    ? `Session with ${[...removed.values()].join(", ")}`
+    : row.excerpt || "Thread";
+}
+
 /** One pass over the shared retained snapshot, not one fold per sidebar channel. */
 export function personalSessions(
   rows: RetainedChannelEvidence,
   viewer: string | undefined,
   known: ReadonlySet<string>,
-): ReadonlyMap<string, readonly PersonalSession[]> {
+  profiles?: ReadonlyMap<string, Profile>,
+  agents: AgentChoicesSnapshot["identities"] = [],
+): Map<string, readonly PersonalSession[]> {
   const roots = new Map(
     rows
       .filter((row) => !row.threadRootId)
@@ -46,17 +117,14 @@ export function personalSessions(
     );
     root.latest = Math.max(root.latest, reply.createdAt);
   }
-  const result = new Map<string, PersonalSession[]>();
+  const result = new Map<
+    string,
+    { row: RetainedChannelMessage; latest: number }[]
+  >();
   for (const { row, personal, agent, latest } of roots.values()) {
     if (!personal || !agent) continue;
     const entries = result.get(row.channelId) ?? [];
-    entries.push(
-      Object.freeze({
-        rootId: row.id,
-        title: row.excerpt || "Thread",
-        lastMessageAt: latest,
-      }),
-    );
+    entries.push({ row, latest });
     result.set(row.channelId, entries);
   }
   const bounded = new Map<string, readonly PersonalSession[]>();
@@ -66,11 +134,16 @@ export function personalSessions(
       Object.freeze(
         entries
           .sort(
-            (a, b) =>
-              b.lastMessageAt - a.lastMessageAt ||
-              a.rootId.localeCompare(b.rootId),
+            (a, b) => b.latest - a.latest || a.row.id.localeCompare(b.row.id),
           )
-          .slice(0, 5),
+          .slice(0, 5)
+          .map(({ row, latest }) =>
+            Object.freeze({
+              rootId: row.id,
+              title: personalSessionTitle(row, known, profiles, agents),
+              lastMessageAt: latest,
+            }),
+          ),
       ),
     );
   return bounded;
@@ -90,15 +163,14 @@ export function createRetainedSessions() {
     let previousProfiles:
       | ReturnType<typeof session.profiles.snapshot>
       | undefined;
-    let previousLibrary:
-      | ReturnType<typeof session.agentLibrary.snapshot>
+    let previousChoices:
+      | ReturnType<typeof session.agentChoices.snapshot>
       | undefined;
     let previousActivityRows: RetainedChannelEvidence | undefined;
     let previousTurns:
       | ReturnType<typeof session.agentActivity.snapshot>["turns"]
       | undefined;
     let activity: ReadonlyMap<string, SessionActivityState> = new Map();
-    let previousKnown = "";
     let projection: ReadonlyMap<string, readonly PersonalSession[]> = new Map();
     const publish = () => {
       for (const listener of listeners) listener();
@@ -108,24 +180,37 @@ export function createRetainedSessions() {
         if (disposed || closed) return empty;
         const rows = session.channels.retained?.();
         const profiles = session.profiles.snapshot();
-        const library = session.agentLibrary.snapshot();
-        let known: ReadonlySet<string> | undefined;
-        let knownChanged = false;
-        if (profiles !== previousProfiles || library !== previousLibrary) {
-          known = knownAgentPubkeys(profiles, library);
-          const key = [...known].sort().join(":");
-          knownChanged = key !== previousKnown;
-          previousKnown = key;
-          previousProfiles = profiles;
-          previousLibrary = library;
-        }
-        if (rows !== previousRows || knownChanged) {
+        const choices = session.agentChoices.snapshot();
+        if (
+          rows !== previousRows ||
+          profiles !== previousProfiles ||
+          choices !== previousChoices
+        ) {
           previousRows = rows;
-          projection = personalSessions(
+          previousProfiles = profiles;
+          previousChoices = choices;
+          const next = personalSessions(
             rows ?? [],
             session.viewer,
-            known ?? new Set(previousKnown ? previousKnown.split(":") : []),
+            knownAgentPubkeys(profiles, choices),
+            profiles,
+            choices.identities,
           );
+          // Cached name evidence may change without changing any visible row.
+          for (const [id, entries] of next) {
+            const old = projection.get(id);
+            if (
+              old?.length === entries.length &&
+              entries.every(
+                (row, i) =>
+                  row.rootId === old[i]?.rootId &&
+                  row.title === old[i]?.title &&
+                  row.lastMessageAt === old[i]?.lastMessageAt,
+              )
+            )
+              next.set(id, old);
+          }
+          projection = next;
         }
         return projection.get(channelId) ?? empty;
       },
@@ -148,7 +233,7 @@ export function createRetainedSessions() {
           stops = [
             session.channels.subscribeRetained?.(publish) ?? (() => {}),
             session.profiles.subscribe(publish),
-            session.agentLibrary.subscribe(publish),
+            session.agentChoices.subscribe(publish),
             session.agentActivity.subscribe(publish),
           ];
         return () => {
@@ -157,10 +242,9 @@ export function createRetainedSessions() {
             active.delete(owner);
             for (const stop of stops) stop();
             stops = [];
-            previousKnown = "";
             previousRows = undefined;
             previousProfiles = undefined;
-            previousLibrary = undefined;
+            previousChoices = undefined;
             projection = new Map();
             previousActivityRows = undefined;
             previousTurns = undefined;
@@ -173,10 +257,9 @@ export function createRetainedSessions() {
         for (const stop of stops) stop();
         stops = [];
         listeners.clear();
-        previousKnown = "";
         previousRows = undefined;
         previousProfiles = undefined;
-        previousLibrary = undefined;
+        previousChoices = undefined;
         projection = new Map();
         previousActivityRows = undefined;
         previousTurns = undefined;

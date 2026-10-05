@@ -14,17 +14,29 @@ import {
 import { PluginRuntime } from "../../plugins/runtime";
 import { ConversationService } from "../../features/conversation/service";
 import { PanelsService } from "../../features/panels/service";
+import { useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { ChannelSidebar } from "../../features/channel-navigation/ChannelSidebar";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import { ChannelsPage } from "./ChannelsPage";
 import * as mentionsPlugin from "../mentions/index";
 import * as sessionsPlugin from "../sessions/index";
 import { PagesService } from "../../features/pages/service";
 import { provideNavigation } from "../../features/navigation/service";
+import { composerDOMFixture } from "../../features/messages/composer-testing";
+import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { writeView } from "../../shared/view-state";
 import userEvent from "@testing-library/user-event";
 import { sessionsData } from "../../../tests/fixtures/channel-sessions-data";
+composerDOMFixture();
 const cleanups: (() => Promise<void>)[] = [];
 beforeEach(() => {
   localStorage.clear();
+  window.history.replaceState(null, "", "/");
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -34,24 +46,29 @@ beforeEach(() => {
     },
   );
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  // jsdom has no layout; real visibility/focus eligibility is covered in browsers.
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 100, 20),
+  ] as unknown as DOMRectList);
 });
 afterEach(async () => {
   cleanup();
   for (const stop of cleanups.splice(0)) await stop();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 async function mount(
   options: Parameters<typeof sessionsData>[0] = {},
   module = sessionsPlugin,
 ) {
-  const data = sessionsData(options);
-  writeView("sessions-fixture", "selected-channel", "general");
+  const data = sessionsData({ ...options, canonicalScope: true });
+  writeView(data.scope, "selected-channel", "general");
   const ctx = new Context();
   const runtime = new PluginRuntime(ctx, async (plugin) =>
     plugin.manifest.id === "buzz.mentions" ? mentionsPlugin : module,
   );
   const pages = new PagesService(ctx);
-  provideNavigation(ctx, undefined);
+  const navigationHost = provideNavigation(ctx, undefined);
   ctx.provide("relay", data.relay);
   const extensions = new ConversationService(ctx);
   const panels = new PanelsService(ctx);
@@ -79,16 +96,75 @@ async function mount(
     await runtime.dispose();
     await ctx.fiber.dispose();
   });
-  const view = render(
-    <ChannelsPage
-      relay={data.relay}
-      panels={panels}
-      pages={pages}
-      providers={providers}
-      extensions={extensions}
-    />,
-    { reactStrictMode: true },
-  );
+  function Harness() {
+    const [away, setAway] = useState(false);
+    const [holdPresentation, setHoldPresentation] = useState(false);
+    const state = useSyncExternalStore(
+      navigationHost.navigation.subscribe,
+      navigationHost.navigation.snapshot,
+    );
+    const registered = useSyncExternalStore(pages.subscribe, pages.snapshot);
+    const [presentation, setPresentation] = useState<{
+      attempt: typeof state.attempt;
+      request: ReturnType<typeof navigationHost.request>["request"];
+    }>();
+    useLayoutEffect(() => {
+      if (holdPresentation) return;
+      const { request, dispose } = navigationHost.request(state.attempt, {
+        valid: () => true,
+        subscribe: () => () => {},
+      });
+      setPresentation({ attempt: state.attempt, request });
+      return dispose;
+    }, [state.attempt, holdPresentation]);
+    return (
+      <ChannelNavigationProvider relay={data.relay}>
+        <button
+          type="button"
+          onClick={() => setHoldPresentation((held) => !held)}
+        >
+          {holdPresentation
+            ? "Bind fixture presentation"
+            : "Hold fixture presentation"}
+        </button>
+        <button type="button" onClick={() => setAway(true)}>
+          Other fixture page
+        </button>
+        <ChannelSidebar
+          relay={data.relay}
+          navigator={navigationHost.navigation}
+          providers={providers}
+          target={state.entry.target}
+          channelDirectories={extensions.channelDirectories}
+          sessionsEnabled={registered.some(
+            (page) => page.pluginId === "buzz.sessions",
+          )}
+        >
+          {null}
+        </ChannelSidebar>
+        {away ? (
+          <button type="button" onClick={() => setAway(false)}>
+            Return fixture page
+          </button>
+        ) : (
+          <ChannelsPage
+            relay={data.relay}
+            panels={panels}
+            pages={pages}
+            providers={providers}
+            extensions={extensions}
+            navigator={navigationHost.navigation}
+            navigation={
+              !holdPresentation && presentation?.attempt === state.attempt
+                ? presentation.request
+                : undefined
+            }
+          />
+        )}
+      </ChannelNavigationProvider>
+    );
+  }
+  const view = render(<Harness />, { reactStrictMode: true });
   await screen.findByRole("textbox", {
     name:
       options.channelType === "dm"
@@ -125,7 +201,16 @@ async function mount(
       .flat()
       .some((filter) => filter["#e"] && !filter.depth_limit),
   ).toBe(false);
-  return { data, runtime, plugin, view, pages, extensions, loadedHeads };
+  return {
+    data,
+    runtime,
+    plugin,
+    view,
+    pages,
+    extensions,
+    loadedHeads,
+    navigation: navigationHost.navigation,
+  };
 }
 it("real host directory mounts no hidden timeline/composer/readers, then owns exactly one ordinary thread", async () => {
   const h = await mount();
@@ -215,10 +300,7 @@ it("real thread read failure exposes existing retry, and removal retires detail 
   fireEvent.click(screen.getByRole("button", { name: "Return to Channel" }));
   await screen.findByRole("textbox", { name: "Message #General" });
 });
-// TODO(channel-sessions-rebase): rewire these host-shell journeys through
-// features/channel-navigation/ChannelSidebar. The rebased ChannelsPage no longer
-// owns the channel sidebar; lower directory/session contracts remain covered.
-it.skip("session replacement and channel switch dispose real detail readers", async () => {
+it("session replacement and channel switch dispose real detail readers", async () => {
   const h = await mount();
   fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
   fireEvent.click(
@@ -265,6 +347,16 @@ it("revocation during a held real thread read disposes it and fences the late re
     });
     expect(h.data.report.activeReaders).toBe(1);
     act(() => h.data.revoke());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Sessions" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Session" }),
+    ).not.toBeInTheDocument();
+    // Exact routed destinations do not silently substitute another channel.
+    fireEvent.click(screen.getByRole("button", { name: "Other" }));
     await screen.findByRole("textbox", { name: "Message #Other" });
     expect(h.data.report.activeReaders).toBe(0);
   } finally {
@@ -282,7 +374,7 @@ it("revocation during a held real thread read disposes it and fences the late re
   ).not.toBeInTheDocument();
 });
 
-it.skip.each([
+it.each([
   ["channel metadata", "directory"],
   ["channel metadata", "detail"],
   ["member profile", "directory"],
@@ -325,7 +417,7 @@ it.skip.each([
     expect(
       screen
         .getByRole("article", { name: "Conversation" })
-        .querySelector("header strong"),
+        .querySelector("header"),
     ).toHaveTextContent(label);
     expect(screen.getByRole("tab", { name: "Sessions" })).toHaveAttribute(
       "aria-selected",
@@ -360,13 +452,19 @@ it.skip.each([
   },
 );
 
-it.skip("real session revocation removes the directory destination and regrant requires fresh selection", async () => {
+it("real session revocation removes the directory destination and regrant requires fresh selection", async () => {
   const h = await mount();
   fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
   await screen.findByRole("region", { name: "Sessions" });
   const rootId = h.data.rows[0]?.rootId;
   if (!rootId) throw new Error("Missing fixture root");
   act(() => h.data.revoke());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Sessions" }),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Other" }));
   await screen.findByRole("textbox", { name: "Message #Other" });
   expect(
     h.data.session.channels
@@ -392,7 +490,7 @@ it.skip("real session revocation removes the directory destination and regrant r
   );
 });
 
-it.skip("fixture thread traversal settles without pagination errors, including a reply refresh", async () => {
+it("fixture thread traversal settles without pagination errors, including a reply refresh", async () => {
   const h = await mount();
   fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
   fireEvent.click(
@@ -437,9 +535,11 @@ it.skip("fixture thread traversal settles without pagination errors, including a
     thread_cursor_id: h.data.threadSnapshot()?.replies[0]?.id,
   });
   const completedPages = pages().length;
-  fireEvent.input(within(thread).getByRole("textbox"), {
-    target: { textContent: "A fixture regression reply" },
+  const reply = within(thread).getByRole("textbox") as ComposerInputElement;
+  act(() => {
+    reply.value = "A fixture regression reply";
   });
+  fireEvent.input(reply);
   fireEvent.click(within(thread).getByRole("button", { name: "Send message" }));
   await waitFor(() =>
     expect(
@@ -485,10 +585,12 @@ it("offers agent-only loaded Sessions in a forum", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
   await screen.findByRole("region", { name: "Sessions" });
   expect(
-    screen.getByText(/Threads that mention or include an agent/),
+    screen.getByText(
+      /Checked history · replies sampled; some sessions may be missing/,
+    ),
   ).toBeInTheDocument();
 });
-it.skip("same-channel selection and a private draft retire directory detail without revival", async () => {
+it("same-channel selection and a private draft retire directory detail without revival", async () => {
   const h = await mount();
   const open = async () => {
     fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
@@ -511,9 +613,11 @@ it.skip("same-channel selection and a private draft retire directory detail with
   expect(h.data.report.activeReaders).toBe(0);
   await open();
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "More options for General" }),
-  );
+  const channelRow = within(
+    screen.getByRole("complementary", { name: "Channel sidebar" }),
+  ).getByRole("button", { name: /^General/ });
+  channelRow.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
   await user.click(
     await screen.findByRole("menuitem", { name: "New session" }),
   );
@@ -539,7 +643,7 @@ it.skip("same-channel selection and a private draft retire directory detail with
   );
 });
 
-it.skip("channel preview follow-ups use exact explicit mentions, never private-session invitations or remembered recipients", async () => {
+it("channel preview follow-ups use exact explicit mentions, never private-session invitations or remembered recipients", async () => {
   const h = await mount();
   await act(async () =>
     h.runtime.reconcile([
@@ -567,10 +671,10 @@ it.skip("channel preview follow-ups use exact explicit mentions, never private-s
   fireEvent.click(
     await content.findByRole("button", { name: "Mention a member" }),
   );
-  const picker = await content.findByRole("region", {
-    name: "Mention a channel member",
+  const picker = await screen.findByRole("dialog", {
+    name: "Mention a member or agent",
   });
-  expect(picker).toHaveTextContent("Only members of this channel are shown.");
+  expect(picker).toHaveTextContent("Fixture member");
   fireEvent.click(
     await within(picker).findByRole("button", {
       name: `Fixture member ${h.data.member}`,
@@ -587,9 +691,11 @@ it.skip("channel preview follow-ups use exact explicit mentions, never private-s
     "",
     "reply",
   ]);
-  fireEvent.input(content.getByRole("textbox"), {
-    target: { textContent: "A plain follow-up" },
+  const followUp = content.getByRole("textbox") as ComposerInputElement;
+  act(() => {
+    followUp.value = "A plain follow-up";
   });
+  fireEvent.input(followUp);
   fireEvent.click(content.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(messages()).toHaveLength(2));
   expect(messages()[1]?.tags.some(([key]) => key === "p")).toBe(false);
@@ -719,6 +825,16 @@ it("revocation fences a held real classification read without leaking the former
       await gate.started;
     });
     act(() => h.data.revoke());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Sessions" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("complementary", { name: "Session" }),
+    ).not.toBeInTheDocument();
+    // Exact routed destinations do not silently substitute another channel.
+    fireEvent.click(screen.getByRole("button", { name: "Other" }));
     await screen.findByRole("textbox", { name: "Message #Other" });
   } finally {
     await act(async () => gate.release());
@@ -757,7 +873,7 @@ it("header creation is a distinct local blank draft; backing out restores direct
   ).toHaveTextContent("keep the channel draft");
 });
 
-it.skip("passive personal children coexist with private rows, switch from another channel and restore sidebar focus", async () => {
+it("passive personal children coexist with private rows, switch from another channel and restore sidebar focus", async () => {
   const h = await mount();
   const sidebar = within(
     screen.getByRole("complementary", { name: "Channel sidebar" }),
@@ -769,13 +885,8 @@ it.skip("passive personal children coexist with private rows, switch from anothe
   expect(
     sidebar.queryByRole("region", { name: "Your sessions in General" }),
   ).not.toBeInTheDocument();
-  const search = sidebar.getByRole("textbox", { name: "Search channels" });
-  fireEvent.change(search, { target: { value: "General" } });
-  expect(expand).toHaveAttribute("aria-expanded", "true");
-  fireEvent.click(expand);
-  expect(expand).toHaveAttribute("aria-expanded", "true");
-  fireEvent.change(search, { target: { value: "" } });
-  expect(expand).toHaveAttribute("aria-expanded", "false");
+  // Search expansion remains covered by useSidebarView.test.tsx; the persistent
+  // sidebar deliberately has no search field.
   fireEvent.click(expand);
   const personal = () =>
     within(sidebar.getByRole("region", { name: "Your sessions in General" }));
@@ -960,4 +1071,495 @@ it("real inline activity stays after the root, resets disclosure on retarget and
   } finally {
     release();
   }
+});
+
+async function openShareDetail() {
+  fireEvent.click(screen.getByRole("tab", { name: "Sessions" }));
+  const region = await screen.findByRole("region", { name: "Sessions" });
+  fireEvent.click(
+    within(region).getByRole("button", {
+      name: /Review the release checklist/,
+    }),
+  );
+  return screen.findByRole("button", { name: "Share in channel" });
+}
+
+it("Share retains the real channel editor document and undo history without publishing", async () => {
+  const h = await mount({ canonicalScope: true });
+  const input = screen.getByRole("textbox", {
+    name: "Message #General",
+  }) as ComposerInputElement;
+  act(() => {
+    input.insertText("Keep this ");
+    input.toggleFormat("bold");
+    input.insertText("formatted");
+    input.setSelectionRange(0, 4);
+  });
+  const before = input.captureCheckpoint();
+  const share = await openShareDetail();
+  expect(
+    screen.queryByRole("textbox", { name: "Message #General" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(share);
+  const returned = (await screen.findByRole("textbox", {
+    name: "Message #General",
+  })) as ComposerInputElement;
+  expect(returned.value).toContain("Keep this formatted");
+  expect(returned.querySelector("strong")).toHaveTextContent("formatted");
+  expect(returned).toHaveTextContent(
+    `Session · ${h.data.rows[0]?.rootId.slice(0, 8)}Review the release checklist`,
+  );
+  expect(returned).toHaveFocus();
+  expect(returned.selectionStart).toBe(returned.value.length);
+  act(() => returned.undo(false));
+  expect(returned.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+    true,
+  );
+  expect(returned.selectionStart).toBe(0);
+  expect(returned.selectionEnd).toBe(4);
+  act(() => returned.undo(true));
+  expect(returned).toHaveTextContent(
+    `Session · ${h.data.rows[0]?.rootId.slice(0, 8)}Review the release checklist`,
+  );
+  expect(h.data.report.published).toEqual([]);
+});
+
+it("Share latches a saved conflict and explicit recovery preserves local Undo", async () => {
+  const h = await mount({ canonicalScope: true });
+  const input = screen.getByRole("textbox", {
+    name: "Message #General",
+  }) as ComposerInputElement;
+  act(() => input.insertText("Local draft"));
+  await openShareDetail();
+  fireEvent.click(screen.getByRole("button", { name: "Open in thread" }));
+  const thread = await screen.findByRole("complementary", { name: "Thread" });
+  await within(thread).findByText(
+    "Fixture reply for task 1. The conversation stays in its original thread.",
+  );
+  await waitFor(() => expect(h.navigation.snapshot().status).toBe("opened"));
+  const routedEntry = h.navigation.snapshot().entry;
+  const share = await openShareDetail();
+  writeView(h.data.scope, "draft:general", "Other window draft");
+  fireEvent.click(share);
+  // Failed append must not navigate or revoke the still-mounted exact detail.
+  expect(h.navigation.snapshot().entry).toBe(routedEntry);
+  expect(screen.getByRole("tab", { name: "Sessions" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.queryByRole("complementary", { name: "Thread" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Share in channel" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+  const returned = (await screen.findByRole("textbox", {
+    name: "Message #General",
+  })) as ComposerInputElement;
+  expect(returned.value).toBe("Local draft");
+  const composer = returned.closest("form");
+  if (!composer) throw new Error("Missing channel composer");
+  expect(
+    within(composer).getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("region", { name: "Channel draft conflict" }),
+  ).toHaveTextContent("Other window draft");
+  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(returned.value).toBe("Other window draft");
+  act(() => returned.undo(false));
+  expect(returned.value).toBe("Local draft");
+  act(() => returned.undo(true));
+  expect(returned.value).toBe("Other window draft");
+  expect(h.data.report.published).toEqual([]);
+});
+
+it.each(["prior typing", "Share"])(
+  "Share retains rich local text, recipients and Undo when writes first fail on %s",
+  async (firstFailure) => {
+    const h = await mount({ canonicalScope: true });
+    const input = screen.getByRole("textbox", {
+      name: "Message #General",
+    }) as ComposerInputElement;
+    act(() => {
+      input.insertText("Keep ");
+      input.toggleFormat("bold");
+      input.insertText("formatted");
+      input.toggleFormat("bold");
+      input.insertText(" @Viewer ", { pubkey: h.data.viewer, name: "Viewer" });
+    });
+    const key = `buzz-view.v1:${JSON.stringify([h.data.scope, "draft:general"])}`;
+    const baseline = localStorage.getItem(key);
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("quota");
+      });
+    try {
+      if (firstFailure === "prior typing")
+        act(() => input.insertText("Unsaved local text"));
+      act(() => input.setSelectionRange(0, 4));
+      const before = input.captureCheckpoint();
+      fireEvent.click(await openShareDetail());
+      const returned = (await screen.findByRole("textbox", {
+        name: "Message #General",
+      })) as ComposerInputElement;
+      expect(returned.value).toContain(before.draft.text);
+      expect(returned).toHaveTextContent(
+        `Session · ${h.data.rows[0]?.rootId.slice(0, 8)}Review the release checklist`,
+      );
+      expect(returned.querySelector("strong")).toHaveTextContent("formatted");
+      expect(returned.captureCheckpoint().draft.recipients).toEqual(
+        before.draft.recipients,
+      );
+      expect(before.draft.recipients).toEqual([
+        { pubkey: h.data.viewer, name: "Viewer", start: 14, end: 21 },
+      ]);
+      expect(returned).toHaveFocus();
+      expect(returned.selectionStart).toBe(returned.value.length);
+      expect(
+        screen.queryByRole("region", { name: "Channel draft conflict" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      const shared = returned.captureCheckpoint();
+      act(() => returned.undo(false));
+      expect(returned.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+        true,
+      );
+      expect(returned.selectionStart).toBe(0);
+      expect(returned.selectionEnd).toBe(4);
+      act(() => returned.undo(true));
+      expect(returned.captureCheckpoint().state.doc.eq(shared.state.doc)).toBe(
+        true,
+      );
+      expect(returned.captureCheckpoint().draft.recipients).toEqual(
+        before.draft.recipients,
+      );
+      expect(localStorage.getItem(key)).toBe(baseline);
+      expect(fail).toHaveBeenCalled();
+      expect(h.data.report.published).toEqual([]);
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
+
+it.each(["malformed", "read failure"])(
+  "Share handles %s without changing the local document and recovers explicitly",
+  async (failure) => {
+    const h = await mount({ canonicalScope: true });
+    const input = screen.getByRole("textbox", {
+      name: "Message #General",
+    }) as ComposerInputElement;
+    act(() => input.insertText("Local recovery"));
+    const key = `buzz-view.v1:${JSON.stringify([h.data.scope, "draft:general"])}`;
+    const original = localStorage.getItem(key);
+    const share = await openShareDetail();
+    const spy =
+      failure === "read failure"
+        ? vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("blocked");
+          })
+        : undefined;
+    if (failure === "malformed") localStorage.setItem(key, "{");
+    try {
+      fireEvent.click(share);
+    } finally {
+      spy?.mockRestore();
+    }
+    expect(
+      screen.getByRole("button", { name: "Share in channel" }),
+    ).toBeInTheDocument();
+    if (failure === "malformed") {
+      fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+      expect(
+        screen.getByRole("button", { name: "Retry saved draft" }),
+      ).toBeInTheDocument();
+      localStorage.setItem(key, original ?? "null");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Retry saved draft" }),
+      );
+    } else {
+      fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+      // Main's revision owner does not silently refresh an unreadable Share
+      // review. Explicit retry observes it before Load chooses that exact value.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Retry saved draft" }),
+      );
+    }
+    const returned = (await screen.findByRole("textbox", {
+      name: "Message #General",
+    })) as ComposerInputElement;
+    expect(returned.value).toBe("Local recovery");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+    fireEvent.click(await openShareDetail());
+    const recovered = (await screen.findByRole("textbox", {
+      name: "Message #General",
+    })) as ComposerInputElement;
+    expect(recovered.value).toContain("Local recovery [Session:");
+    act(() => recovered.undo(false));
+    expect(recovered.value).toBe("Local recovery");
+    expect(h.data.report.published).toEqual([]);
+  },
+);
+
+it("Share does not replace an unreadable draft already present when the editor mounts", async () => {
+  const get = Storage.prototype.getItem;
+  const spy = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(function (this: Storage, key: string) {
+      return key.includes('"draft:general"') ? "{" : get.call(this, key);
+    });
+  try {
+    const h = await mount({ canonicalScope: true });
+    fireEvent.click(await openShareDetail());
+    fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+    expect(
+      screen.getByRole("button", { name: "Retry saved draft" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(h.data.report.published).toEqual([]);
+    expect(
+      get.call(
+        localStorage,
+        `buzz-view.v1:${JSON.stringify([h.data.scope, "draft:general"])}`,
+      ),
+    ).toBeNull();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("a pending sidebar intent suppresses hidden channel startup when Channels mounts independently in StrictMode", async () => {
+  const h = await mount();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Expand sessions in General" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Other fixture page" }));
+  const sidebar = within(
+    screen.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+  const root = await sidebar.findByRole("button", {
+    name: "Review the release checklist",
+  });
+  const heads = h.data.report.queries
+    .flat()
+    .filter((filter) => filter.top_level).length;
+  const leases = h.data.report.readingLeases;
+  fireEvent.click(root);
+  fireEvent.click(screen.getByRole("button", { name: "Return fixture page" }));
+  await screen.findByRole("complementary", { name: "Session" });
+  expect(
+    screen.queryByRole("textbox", { name: "Message #General" }),
+  ).not.toBeInTheDocument();
+  expect(
+    h.data.report.queries.flat().filter((filter) => filter.top_level),
+  ).toHaveLength(heads);
+  expect(h.data.report.readingLeases).toBe(leases);
+  expect(h.data.report.activeReaders).toBe(1);
+});
+
+it.each(["General", "Other"])(
+  "holds undefined presentation without starting saved %s before the exact sidebar handoff binds",
+  async (savedChannel) => {
+    const h = await mount();
+    const sidebar = within(
+      screen.getByRole("complementary", { name: "Channel sidebar" }),
+    );
+    fireEvent.click(
+      sidebar.getByRole("button", { name: "Expand sessions in General" }),
+    );
+    if (savedChannel === "Other") {
+      fireEvent.click(sidebar.getByRole("button", { name: "Other" }));
+      await screen.findByRole("textbox", { name: "Message #Other" });
+      await waitFor(() =>
+        expect(h.data.session.channels.window("other").status).toBe("ready"),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Other fixture page" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hold fixture presentation" }),
+    );
+    const ensures = h.data.report.windowEnsures.length;
+    const leases = h.data.report.readingLeases;
+    try {
+      fireEvent.click(
+        sidebar.getByRole("button", { name: "Review the release checklist" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Return fixture page" }),
+      );
+      // act has committed the independent StrictMode mount and its effects while
+      // presentation stays explicitly held, not synchronously bound by useMemo.
+      expect(document.querySelector("[data-channel-timeline]")).toBeNull();
+      expect(
+        screen.queryByRole("textbox", { name: /^Message #/ }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("complementary", { name: "Session" }),
+      ).not.toBeInTheDocument();
+      expect(h.data.report.windowEnsures).toHaveLength(ensures);
+      expect(h.data.report.readingLeases).toBe(leases);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bind fixture presentation" }),
+      );
+      await screen.findByRole("complementary", {
+        name: "Session",
+      });
+      expect(h.data.report.windowEnsures).toHaveLength(ensures);
+      expect(h.data.report.readingLeases).toBe(leases);
+      expect(h.data.report.activeReaders).toBe(1);
+      fireEvent.click(screen.getByRole("button", { name: "Back to Sessions" }));
+      await screen.findByRole("region", { name: "Sessions" });
+      fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+      await screen.findByRole("textbox", { name: "Message #General" });
+      expect(
+        document.querySelector('[data-channel-timeline="general"]'),
+      ).not.toBeNull();
+    } finally {
+      const bind = screen.queryByRole("button", {
+        name: "Bind fixture presentation",
+      });
+      if (bind) fireEvent.click(bind);
+    }
+  },
+);
+
+it("Open in thread reuses the same session root in the ordinary channel panel without publishing or changing the parent draft", async () => {
+  const h = await mount();
+  const input = screen.getByRole("textbox", {
+    name: "Message #General",
+  }) as ComposerInputElement;
+  act(() => input.insertText("Keep my channel draft"));
+  const before = input.captureCheckpoint();
+  await openShareDetail();
+  const rootId = h.data.rows[0]?.rootId;
+  await waitFor(() => expect(h.data.threadSnapshot()?.status).toBe("ready"));
+  expect(
+    screen
+      .getByRole("region", { name: "Session messages" })
+      .querySelector("[data-message-id]"),
+  ).toHaveAttribute("data-message-id", rootId);
+  const open = screen.getByRole("button", { name: "Open in thread" });
+  fireEvent.focus(open);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Open in thread",
+  );
+  expect(open.textContent).toBe("");
+  fireEvent.click(open);
+  const thread = await screen.findByRole("complementary", {
+    name: "Thread",
+  });
+  await waitFor(() =>
+    expect(thread.querySelector("[data-message-id]")).toHaveAttribute(
+      "data-message-id",
+      rootId,
+    ),
+  );
+  expect(
+    screen.queryByRole("complementary", { name: "Session" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Channel" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const returned = screen.getByRole("textbox", {
+    name: "Message #General",
+  }) as ComposerInputElement;
+  expect(returned.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+    true,
+  );
+  expect(h.data.report.activeReaders).toBe(1);
+  expect(h.data.report.published).toEqual([]);
+});
+
+it("Open in thread then directory Share retires the routed panel and preserves exact draft recipients and Back", async () => {
+  const h = await mount();
+  const input = screen.getByRole("textbox", {
+    name: "Message #General",
+  }) as ComposerInputElement;
+  act(() => {
+    input.insertText("Keep ");
+    input.toggleFormat("bold");
+    input.insertText("formatted");
+    input.toggleFormat("bold");
+    input.insertText(" @Viewer ", { pubkey: h.data.viewer, name: "Viewer" });
+    input.setSelectionRange(0, 4);
+  });
+  const before = input.captureCheckpoint();
+  const rootId = h.data.rows[0]?.rootId;
+  for (let visit = 0; visit < 2; visit++) {
+    await openShareDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Open in thread" }));
+    const thread = await screen.findByRole("complementary", { name: "Thread" });
+    await within(thread).findByText(
+      "Fixture reply for task 1. The conversation stays in its original thread.",
+    );
+    await waitFor(() => expect(h.navigation.snapshot().status).toBe("opened"));
+    expect(h.navigation.snapshot().entry.target).toMatchObject({
+      channelId: "general",
+      messageId: rootId,
+      threadRootId: rootId,
+    });
+    expect(input.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(true);
+    expect(h.data.report.published).toEqual([]);
+  }
+  const routedEntry = h.navigation.snapshot().entry.id;
+  fireEvent.click(await openShareDetail());
+  const returned = (await screen.findByRole("textbox", {
+    name: "Message #General",
+  })) as ComposerInputElement;
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("complementary", { name: "Thread" }),
+    ).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(h.navigation.snapshot().status).toBe("opened"));
+  expect(h.navigation.snapshot().entry.target).not.toHaveProperty("messageId");
+  expect(screen.getByRole("tab", { name: "Channel" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(returned).toHaveFocus();
+  expect(returned.value).toContain(before.draft.text);
+  expect(returned.querySelector("strong")).toHaveTextContent("formatted");
+  expect(returned.captureCheckpoint().draft.recipients).toEqual(
+    before.draft.recipients,
+  );
+  expect(before.draft.recipients).toEqual([
+    { pubkey: h.data.viewer, name: "Viewer", start: 14, end: 21 },
+  ]);
+  expect(returned.querySelectorAll('[data-link-kind="session"]')).toHaveLength(
+    1,
+  );
+  act(() => returned.undo(false));
+  expect(returned.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+    true,
+  );
+  expect(returned.selectionStart).toBe(0);
+  expect(returned.selectionEnd).toBe(4);
+  act(() => returned.undo(true));
+  const shared = returned.captureCheckpoint();
+  act(() => h.navigation.back());
+  const backThread = await screen.findByRole("complementary", {
+    name: "Thread",
+  });
+  await within(backThread).findByText(
+    "Fixture reply for task 1. The conversation stays in its original thread.",
+  );
+  await waitFor(() => expect(h.navigation.snapshot().status).toBe("opened"));
+  expect(h.navigation.snapshot().entry.id).toBe(routedEntry);
+  act(() => h.navigation.forward());
+  await waitFor(() => expect(h.navigation.snapshot().status).toBe("opened"));
+  expect(
+    screen.queryByRole("complementary", { name: "Thread" }),
+  ).not.toBeInTheDocument();
+  expect(returned.captureCheckpoint().state.doc.eq(shared.state.doc)).toBe(
+    true,
+  );
+  expect(h.data.report.published).toEqual([]);
 });

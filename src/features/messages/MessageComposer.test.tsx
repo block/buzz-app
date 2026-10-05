@@ -33,7 +33,12 @@ import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import {
+  MessageComposer,
+  type MessageComposerProps,
+  type ChannelDraftHandle,
+} from "./MessageComposer";
+import { sessionReference } from "../sessions/session-reference";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -407,6 +412,306 @@ function mount(
     },
   };
 }
+
+it.each(["prior typing", "Share"])(
+  "retains local unsaved draft/undo when writes first fail on %s, including the share handoff",
+  (firstFailure) => {
+    const viewer = "c".repeat(64);
+    const scope = `https://example.com:${viewer}`;
+    let handle: ChannelDraftHandle | undefined;
+    const h = mount(
+      {
+        scope,
+        registerDraft: (next) => {
+          handle = next;
+        },
+      },
+      undefined,
+      viewer,
+    );
+    const list = {
+      status: "ready",
+      channels: [
+        {
+          id: "channel",
+          name: "General",
+          channelType: "stream",
+          members: [viewer],
+        },
+      ],
+    } as const;
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          list: () => list,
+        },
+      } as RelaySession,
+    });
+    const reference = sessionReference(
+      { viewer, communityOrigin: "https://example.com" },
+      "channel",
+      "d".repeat(64),
+      "Actual root title",
+    );
+    if (firstFailure === "Share") h.fill("Unsaved local context");
+    const key = `buzz-view.v1:${JSON.stringify([scope, "draft:channel"])}`;
+    const baseline = localStorage.getItem(key);
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("quota");
+      });
+    try {
+      if (firstFailure === "prior typing") h.fill("Unsaved local context");
+      h.retarget({ suspended: true });
+      act(() => expect(handle?.appendReference(reference)).toBe(true));
+      expect(handle?.error).toBeUndefined();
+      h.retarget({ suspended: false });
+      const shared = h.input().value;
+      expect(shared).toContain("Unsaved local context");
+      expect(shared).toContain(reference.href);
+      expect(
+        screen.queryByRole("region", { name: "Channel draft conflict" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      act(() => h.input().undo(false));
+      expect(h.input().value).toBe("Unsaved local context");
+      act(() => h.input().undo(true));
+      expect(h.input().value).toBe(shared);
+      expect(localStorage.getItem(key)).toBe(baseline);
+      expect(fail).toHaveBeenCalled();
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.messages.reply).not.toHaveBeenCalled();
+    } finally {
+      fail.mockRestore();
+    }
+    act(() => h.input().insertText(" More context"));
+    expect(readView(scope, "draft:channel", { text: "" }).text).toBe(
+      h.input().value,
+    );
+  },
+);
+
+it("shows the existing command recovery notice and honors its lock without sending", () => {
+  const submit = vi.fn();
+  const h = mount({
+    startCommand: {
+      generation: 1,
+      locked: true,
+      notice: <p role="alert">Session accepted; review existing recovery.</p>,
+      bindEditor: () => () => {},
+      submit,
+    },
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "review existing recovery",
+  );
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  h.submit();
+  expect(submit).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+function shareHarness(initial?: string) {
+  const viewer = "c".repeat(64);
+  const scope = `https://example.com:${viewer}`;
+  const key = `buzz-view.v1:${JSON.stringify([scope, "draft:channel"])}`;
+  if (initial !== undefined) localStorage.setItem(key, initial);
+  let handle: ChannelDraftHandle | undefined;
+  const retired = vi.fn();
+  const h = mount(
+    {
+      scope,
+      onDraftSaved: retired,
+      registerDraft: (next) => {
+        handle = next;
+      },
+    },
+    undefined,
+    viewer,
+  );
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        name: "General",
+        channelType: "stream",
+        members: [viewer],
+      },
+    ],
+  } as const;
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as RelaySession,
+  });
+  const reference = sessionReference(
+    { viewer, communityOrigin: "https://example.com" },
+    "channel",
+    "d".repeat(64),
+    "Exact root",
+  );
+  return {
+    ...h,
+    key,
+    scope,
+    retired,
+    share() {
+      let result: boolean | undefined;
+      act(() => {
+        result = handle?.appendReference(reference);
+      });
+      return result;
+    },
+    error: () => handle?.error,
+  };
+}
+
+it.each([
+  "{",
+  "null",
+  "{}",
+  '["draft"]',
+  '{"text":"work"}',
+  '{"text":"work","recipients":[],"document":{"version":99}}',
+  '{"text":"work","recipients":[{}]}',
+])(
+  "Share refuses malformed saved evidence even when that raw revision is unchanged: %s",
+  (raw) => {
+    const h = shareHarness(raw);
+    h.retarget({ suspended: true });
+    expect(h.share()).toBe(false);
+    expect(h.error()).toContain("could not be read");
+    expect(localStorage.getItem(h.key)).toBe(raw);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.retired).not.toHaveBeenCalled();
+  },
+);
+
+it("Share refuses unreadable storage without changing the local draft or baseline", () => {
+  const h = shareHarness();
+  h.fill("Local work");
+  const baseline = localStorage.getItem(h.key);
+  h.retarget({ suspended: true });
+  const fail = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw Error("unreadable");
+  });
+  try {
+    expect(h.share()).toBe(false);
+  } finally {
+    fail.mockRestore();
+  }
+  expect(localStorage.getItem(h.key)).toBe(baseline);
+  h.retarget({ suspended: false });
+  expect(h.input()).toHaveValue("Local work");
+  expect(h.retired).not.toHaveBeenCalled();
+});
+
+it.each(["text", "document"])(
+  "Share refuses a stale clean suspended checkpoint after a %s-only saved change",
+  (change) => {
+    const h = shareHarness(JSON.stringify("Same text"));
+    h.retarget({ suspended: true });
+    const next =
+      change === "text"
+        ? "New saved text"
+        : {
+            text: "Same text",
+            recipients: [],
+            document: {
+              version: 1,
+              content: {
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "text",
+                        text: "Same text",
+                        marks: [{ type: "bold" }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          };
+    act(() => writeView(h.scope, "draft:channel", next));
+    const baseline = localStorage.getItem(h.key);
+    expect(h.share()).toBe(false);
+    expect(localStorage.getItem(h.key)).toBe(baseline);
+    h.retarget({ suspended: false });
+    fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+    expect(h.input()).toHaveValue(
+      change === "text" ? "New saved text" : "Same text",
+    );
+    if (change === "document")
+      expect(h.input().querySelector("strong")).toHaveTextContent("Same text");
+    h.retarget({ suspended: true });
+    expect(h.share()).toBe(true);
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.retired).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps a clean Share review latched when another saved revision arrives", () => {
+  const h = shareHarness(JSON.stringify("Original clean draft"));
+  h.retarget({ suspended: true });
+  act(() => writeView(h.scope, "draft:channel", "First saved replacement"));
+  expect(h.share()).toBe(false);
+  act(() => writeView(h.scope, "draft:channel", "Second saved replacement"));
+  h.retarget({ suspended: false });
+  expect(h.input()).toHaveValue("First saved replacement");
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByRole("region", { name: "Channel draft conflict" }),
+  ).toHaveTextContent("First saved replacement");
+  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("First saved replacement");
+  expect(
+    screen.getByRole("region", { name: "Channel draft conflict" }),
+  ).toHaveTextContent("Second saved replacement");
+  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("Second saved replacement");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("First saved replacement");
+});
+
+it("Share review rechecks unseen saved replacements and Load saved preserves local Undo", () => {
+  const h = shareHarness();
+  h.fill("Previous local work");
+  h.retarget({ suspended: true });
+  act(() => writeView(h.scope, "draft:channel", "First other draft"));
+  expect(h.share()).toBe(false);
+  h.retarget({ suspended: false });
+  expect(
+    screen.getByRole("region", { name: "Channel draft conflict" }),
+  ).toHaveTextContent("First other draft");
+  // Simulate a write whose storage event has not arrived; first click reviews it.
+  localStorage.setItem(h.key, JSON.stringify("Unseen replacement"));
+  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("Previous local work");
+  expect(
+    screen.getByRole("region", { name: "Channel draft conflict" }),
+  ).toHaveTextContent("Unseen replacement");
+  fireEvent.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("Unseen replacement");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("Previous local work");
+  act(() => h.input().undo(true));
+  expect(h.input()).toHaveValue("Unseen replacement");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.onSend).not.toHaveBeenCalled();
+  expect(h.retired).not.toHaveBeenCalled();
+});
 
 it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
   const viewer = keypair(),
@@ -4190,4 +4495,28 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
   });
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
+});
+
+it("suspension detaches editor/tools/emoji demand while preserving document selection and history", () => {
+  const h = mount();
+  act(() => {
+    h.input().insertText("local");
+    h.input().setSelectionRange(1, 3);
+  });
+  const saved = h.input().captureCheckpoint();
+  const tools = h.commands();
+  h.retarget({ suspended: true });
+  expect(h.container.firstElementChild).toBeEmptyDOMElement();
+  expect(h.emojiListeners.size).toBe(0);
+  expect(tools.insertText("stale tool")).toBe(false);
+  h.retarget({ suspended: false });
+  expect(h.input().captureCheckpoint().state.doc.eq(saved.state.doc)).toBe(
+    true,
+  );
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(3);
+  act(() => h.input().undo(false));
+  expect(h.input().value).toBe("");
+  act(() => h.input().undo(true));
+  expect(h.input().value).toBe("local");
 });

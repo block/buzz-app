@@ -149,7 +149,10 @@ function fixture(
     disconnect() {},
     async clearCache() {},
   } satisfies RelayData;
+  const navigationState = { attempt: 0 };
   const navigator = {
+    snapshot: () => navigationState,
+    subscribe: () => () => {},
     open: vi.fn().mockResolvedValue({ status: "opened" }),
   } as unknown as Navigation;
   const view = (

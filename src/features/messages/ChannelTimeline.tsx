@@ -229,7 +229,6 @@ function Timeline({
   const signature = useMemo(
     () => geometrySignature(presented, profiles, resolveName),
     [presented, profiles, resolveName],
-
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   // Holders are counted per row: a report notice and an image viewer can hold

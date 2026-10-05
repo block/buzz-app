@@ -24,7 +24,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./ChannelDirectories.module.css";
 import { messageViewKey } from "../../features/messages/view-key";
-import type { SidebarIntent } from "./DirectorySidebar";
+import type { SidebarIntent, DirectorySelection } from "./DirectorySidebar";
 
 const empty: readonly Contribution<ChannelThreadDirectory>[] = [];
 const absent: ContributionReader<ChannelThreadDirectory> = {
@@ -62,7 +62,9 @@ export function useChannelDirectories({
   renderThread,
   onSelect,
   shareReference,
+  openInThread,
   sidebarIntent,
+  onSelection,
 }: {
   registry?: ContributionReader<ChannelThreadDirectory> | undefined;
   relay: RelayData;
@@ -73,10 +75,15 @@ export function useChannelDirectories({
     close: () => void,
     share: (title: string) => string | undefined,
     accessory?: (props: ChannelThreadAccessoryProps) => ReactNode,
+    onOpenInThread?: () => void,
   ): ReactNode;
+  openInThread?(rootId: string): void;
   shareReference?(rootId: string, title: string): string | undefined;
   onSelect(): void;
   sidebarIntent?: SidebarIntent | undefined;
+  onSelection?:
+    | ((selection: DirectorySelection | undefined) => void)
+    | undefined;
 }) {
   const entries = useSyncExternalStore(
     registry.subscribe,
@@ -85,6 +92,11 @@ export function useChannelDirectories({
   );
   const [opening, setOpening] = useState<Opening>();
   const active = useRef<Opening>(undefined);
+  const installed = useRef<{
+    destination: Destination | undefined;
+    registry: typeof registry;
+    relay: RelayData;
+  }>(undefined);
   const current = useRef<Destination>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const tabs = useRef<HTMLDivElement>(null);
@@ -143,7 +155,14 @@ export function useChannelDirectories({
   );
   useLayoutEffect(() => {
     current.current = destination;
-    update(undefined);
+    // StrictMode effect replay must not consume an already handed-off intent twice.
+    if (
+      installed.current?.destination !== destination ||
+      installed.current?.registry !== registry ||
+      installed.current?.relay !== relay
+    )
+      update(undefined);
+    installed.current = { destination, registry, relay };
     const check = () => {
       const value = active.current;
       if (value && !value.unavailable && !valid(value))
@@ -163,7 +182,6 @@ export function useChannelDirectories({
     destination?.signal?.addEventListener("abort", check);
     return () => {
       current.current = undefined;
-      active.current = undefined;
       destination?.signal?.removeEventListener("abort", check);
       for (const stop of stops) stop();
     };
@@ -204,14 +222,38 @@ export function useChannelDirectories({
     restore.current = undefined;
     const origin = restoreTarget.current;
     restoreTarget.current = undefined;
-    if (origin?.isConnected && !origin.closest("[hidden]")) origin.focus();
-    else if (control && container.current?.contains(control)) control.focus();
-    else
-      tabs.current
-        ?.querySelector<HTMLElement>("[aria-selected='true']")
-        ?.focus();
+    const focus = (target: HTMLElement | null | undefined) => {
+      if (
+        !target?.isConnected ||
+        target.closest('[hidden], [inert], [aria-hidden="true"]') ||
+        target.matches(":disabled") ||
+        !target.getClientRects().length ||
+        getComputedStyle(target).visibility !== "visible"
+      )
+        return false;
+      target.focus();
+      return document.activeElement === target;
+    };
+    if (focus(origin)) return;
+    if (control && container.current?.contains(control) && focus(control))
+      return;
+    focus(tabs.current?.querySelector<HTMLElement>("[aria-selected='true']"));
   };
   const selected = opening?.destination === destination ? opening : undefined;
+  useLayoutEffect(() => {
+    onSelection?.(
+      selected && !selected.unavailable
+        ? {
+            session: selected.destination.session,
+            scope: selected.destination.scope,
+            channelId: selected.destination.channelId,
+            entry: selected.entry,
+            rootId: selected.rootId,
+          }
+        : undefined,
+    );
+    return () => onSelection?.(undefined);
+  }, [selected, onSelection]);
   const returnToChannel = () => {
     update(undefined);
     tabs.current
@@ -379,7 +421,7 @@ export function useChannelDirectories({
     tabs: destination && (entries.length > 0 || selected) && (
       <div ref={tabs} className={styles.tabs}>
         <Tabs
-          variant="panel"
+          variant="workspace"
           label="Channel views"
           value={selected?.entry.key ?? "channel"}
           items={items}
@@ -447,6 +489,13 @@ export function useChannelDirectories({
                             <Accessory {...props} />
                           </ContributionBoundary>
                         );
+                      }
+                    : undefined,
+                  openInThread
+                    ? () => {
+                        if (!valid(selected) || !selected.rootId) return;
+                        update(undefined);
+                        openInThread(selected.rootId);
                       }
                     : undefined,
                 )

@@ -344,7 +344,10 @@ export const MessageRow = memo(function MessageRow({
     />
   );
   return (
-    <div data-message-id={row.id} data-session-chip={reference ? "" : undefined}>
+    <div
+      data-message-id={row.id}
+      data-session-chip={reference ? "" : undefined}
+    >
       {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (

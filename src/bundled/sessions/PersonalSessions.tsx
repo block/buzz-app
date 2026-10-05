@@ -28,6 +28,7 @@ export function PersonalSessions({
     !!session.channels.retained && !!session.channels.subscribeRetained;
   return (
     <section
+      data-buzz-ui=""
       className={styles.children}
       aria-label={`Your sessions in ${channelName}`}
     >

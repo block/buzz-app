@@ -1,4 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 // Browser-only proof: real Cordis -> ChannelsPage -> ThreadPanel wiring, native
 // tab/row focus, full-width geometry and independent scroll in both engines.
@@ -38,6 +39,10 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
   await expect(personalRoot).toBeVisible();
   await expect(personal.getByRole("button")).toHaveCount(6);
   await expect(
+    personal.getByRole("button", { name: /^Investigate task 3/ }),
+  ).toHaveAttribute("title", "Investigate task 3");
+
+  await expect(
     personal.getByRole("button", { name: "View all sessions" }),
   ).toHaveAccessibleDescription("From loaded history · may be incomplete");
   await page.keyboard.press("Enter");
@@ -69,7 +74,7 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
   await page
     .getByRole("button", { name: "Private Sessions fixture", exact: true })
     .click();
-  await expect(sidebar).toBeHidden();
+  await expect(sidebar).toBeVisible();
   await page
     .getByRole("button", { name: "Messages fixture", exact: true })
     .click();
@@ -243,8 +248,7 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
   await expect(
     page
       .getByRole("article", { name: "Conversation" })
-      .locator("header strong")
-      .first(),
+      .locator(".panel-header-title h2"),
   ).toHaveText("General renamed");
   await expect(sessions).toHaveAttribute("aria-selected", "true");
   await expect(row).toBeFocused();
@@ -316,8 +320,7 @@ test("shared preview coexists with private Sessions, opens the existing full-wid
   await expect(
     page
       .getByRole("article", { name: "Conversation" })
-      .locator("header strong")
-      .first(),
+      .locator(".panel-header-title h2"),
   ).toHaveText("General updated");
   await expect(sessions).toHaveAttribute("aria-selected", "true");
   await expect(
@@ -435,6 +438,31 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       await expect(
         directory.getByRole("heading", { name: "Today", exact: true }).first(),
       ).toBeVisible();
+      await expect(
+        directory.getByRole("heading", { name: "Sessions", exact: true }),
+      ).toHaveCount(0);
+      const mentionRow = directory.getByRole("button", {
+        name: /Investigate task 3/,
+      });
+      await expect(
+        mentionRow.getByRole("img", { name: "Agent Fixture member" }),
+      ).toBeVisible();
+      await expect(mentionRow.locator("button")).toHaveCount(0);
+      const starter = mentionRow.getByRole("img", {
+        name: "Started by Fixture reader",
+      });
+      await expect(starter).toHaveAttribute("data-avatar-shape", "circle");
+      const starterBox = await starter.boundingBox();
+      const timeBox = await mentionRow.locator("time").boundingBox();
+      expect(starterBox.width).toBe(24);
+      const mentionBox = await mentionRow.locator(".inline-chip").boundingBox();
+      const rowBox = await mentionRow.boundingBox();
+      expect(starterBox.x).toBe(rowBox.x);
+      expect(starterBox.x + starterBox.width).toBeLessThan(mentionBox.x);
+      expect(timeBox.x).toBeGreaterThan(mentionBox.x + mentionBox.width);
+      expect(timeBox.x + timeBox.width).toBeCloseTo(rowBox.x + rowBox.width, 0);
+      await expect(mentionRow.locator(":scope > svg")).toHaveCount(0);
+
       // Existing sampled replies supply real unread evidence without adding history.
       const unreadRow = directory.getByRole("button", {
         name: /Review the release checklist/,
@@ -453,22 +481,27 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       expect(activityBox.x + activityBox.width).toBeLessThanOrEqual(
         unreadBox.x,
       );
-      // Resizing and tab selection animate the real Base UI indicator. Observe
-      // its settled geometry rather than capturing an in-flight underline.
-      await expect
-        .poll(async () => {
-          const tab = await page
-            .getByRole("tab", { name: "Sessions", exact: true })
-            .boundingBox();
-          const indicator = await page
-            .locator(".buzz-tabs-indicator")
-            .boundingBox();
-          return (
-            Math.abs(tab.x - indicator.x) +
-            Math.abs(tab.width - indicator.width)
-          );
-        })
-        .toBeLessThan(1);
+      // The shared workspace variant keeps selection without an underline.
+      const selectedTab = page.getByRole("tab", {
+        name: "Sessions",
+        exact: true,
+      });
+      await expect(selectedTab).toHaveAttribute("aria-selected", "true");
+      await expect(page.locator(".buzz-tabs-indicator")).toBeHidden();
+      await expect(selectedTab).toHaveCSS("text-decoration-line", "none");
+      // Routine history controls stay keyboard-reachable without occupying the list.
+      const options = directory.locator("details");
+      const summary = directory.getByText("History options", { exact: true });
+      await expect(options).not.toHaveAttribute("open");
+      await expect(
+        directory.getByText(/Checked history · replies sampled/),
+      ).toBeHidden();
+      await summary.focus();
+      await page.keyboard.press("Enter");
+      await expect(options).toHaveAttribute("open", "");
+      await expect(
+        directory.getByText(/Checked history · replies sampled/),
+      ).toBeVisible();
       // Capture the final host theme, not an in-flight button color transition.
       await page.mouse.move(0, 0);
       await expect
@@ -477,8 +510,8 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
             .getByRole("button", { name: "Refresh loaded history" })
             .evaluate((button) => {
               const probe = document.createElement("span");
-              probe.style.color = "var(--text-primary)";
-              probe.style.backgroundColor = "var(--neutral-2)";
+              probe.style.color = "var(--text-standard)";
+              probe.style.backgroundColor = "transparent";
               document.body.append(probe);
               const expected = getComputedStyle(probe);
               const actual = getComputedStyle(button);
@@ -490,9 +523,15 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
             }),
         )
         .toBe(true);
+      await summary.click();
+      await expect(options).not.toHaveAttribute("open");
       const sidebar = page.getByRole("complementary", {
         name: "Channel sidebar",
       });
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
       const toggle = sidebar.getByRole("button", {
         name: "Expand sessions in General",
         exact: true,
@@ -551,7 +590,21 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       await expect(all.getByRole("img")).toHaveCount(0);
       await expect(all).toHaveAttribute("aria-current", "page");
       const allBox = await all.boundingBox();
-      expect(Math.abs(allBox.x - childText.x)).toBeLessThan(1);
+      await expect(child).toHaveCSS("border-top-width", "0px");
+      await expect(child).toHaveCSS("border-radius", "0px");
+      await expect(child).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(child).toHaveCSS("font-size", "14px");
+      await expect(child).toHaveCSS("font-weight", "400");
+      await expect(child).toHaveCSS("padding-top", "4px");
+      await expect(child).toHaveCSS("padding-bottom", "4px");
+      await expect(child.locator("span").nth(1)).toHaveCSS(
+        "text-decoration-line",
+        "none",
+      );
+      const childBorder = await child.evaluate((element) =>
+        parseFloat(getComputedStyle(element).borderLeftWidth),
+      );
+      expect(Math.abs(allBox.x + childBorder - childText.x)).toBeLessThan(1);
       expect(allBox.width).toBeLessThan(childBox.width - 20);
       await expect(all).toHaveAccessibleDescription(
         "From loaded history · may be incomplete",
@@ -562,27 +615,36 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
       const colors = await all.evaluate(() => {
         const probe = document.createElement("span");
         document.body.append(probe);
-        probe.style.color = "var(--text-primary)";
-        const primary = getComputedStyle(probe).color;
-        probe.style.color = "var(--text-secondary)";
+        probe.style.color = "var(--text-metadata)";
+        const metadata = getComputedStyle(probe).color;
+        probe.style.color = "var(--text-subtle)";
         const secondary = getComputedStyle(probe).color;
         probe.remove();
-        return { primary, secondary };
+        return { metadata, secondary };
       });
-      await expect(all).toHaveCSS("color", colors.primary);
+      await expect(all).toHaveCSS("color", colors.metadata);
+      await expect(all).toHaveCSS("text-decoration-line", "none");
       await all.focus();
+      await page.keyboard.press("ArrowLeft");
       await expect(all).toBeFocused();
-      await expect
-        .poll(() => all.evaluate((el) => getComputedStyle(el).outlineStyle))
-        .toBe("solid");
-      await expect(all).toHaveCSS("color", colors.primary);
+      expect(await all.evaluate((el) => el.matches(":focus-visible"))).toBe(
+        true,
+      );
+      await expect(all).toHaveCSS("color", colors.secondary);
+      await expect(all).toHaveCSS("text-decoration-line", "none");
       await all.hover();
+      await expect(all).toHaveCSS("color", colors.secondary);
+      await expect(all).toHaveCSS("text-decoration-line", "none");
       await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await directory
-        .getByRole("heading", { name: "Sessions", exact: true })
-        .click();
+      await page
+        .getByRole("button", { name: "Toggle fixture navigation" })
+        .focus();
       await page.mouse.move(0, 0);
-      await expect(all).toHaveCSS("color", colors.primary);
+      await expect(all).toHaveCSS("color", colors.metadata);
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
       const firstRow = await directory
         .locator("li button")
         .first()
@@ -614,33 +676,46 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
           page.evaluate(() => window.sessionsFixture.threadSnapshot()?.status),
         )
         .toBe("ready");
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
       await expect(all).not.toHaveAttribute("aria-current");
+      const selectedChild = sidebar.locator(
+        '[id^="personal-session-"][aria-current="page"]',
+      );
+      await expect(selectedChild.locator("span").nth(1)).toHaveCSS(
+        "text-decoration-line",
+        "none",
+      );
       await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expect(all).toHaveCSS("font-weight", "400");
-      await expect(all).toHaveCSS("color", colors.secondary);
+      await expect(all).toHaveCSS("color", colors.metadata);
+      await expect(all).toHaveCSS("text-decoration-line", "none");
       await all.focus();
       await page.keyboard.press("ArrowLeft");
       await expect(all).toBeFocused();
-      await expect(all).toHaveCSS("outline-style", "solid");
-      await expect(all).toHaveCSS("color", colors.primary);
-      await detail
-        .getByRole("heading", {
-          name: "Review the release checklist",
-          exact: true,
-        })
-        .click();
-      await all.hover();
-      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await expect(all).toHaveCSS("color", colors.primary);
-      await detail
-        .getByRole("heading", {
-          name: "Review the release checklist",
-          exact: true,
-        })
-        .click();
-      await page.mouse.move(0, 0);
+      expect(await all.evaluate((el) => el.matches(":focus-visible"))).toBe(
+        true,
+      );
       await expect(all).toHaveCSS("color", colors.secondary);
+      await page
+        .getByRole("button", { name: "Toggle fixture navigation" })
+        .focus();
+      await all.hover();
+      await expect(all).toHaveCSS("text-decoration-line", "none");
+      await expect(all).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(all).toHaveCSS("color", colors.secondary);
+      await page
+        .getByRole("button", { name: "Toggle fixture navigation" })
+        .focus();
+      await page.mouse.move(0, 0);
+      await expect(all).toHaveCSS("color", colors.metadata);
       await expect(detail.getByText(/repl(?:y|ies) shown/)).toHaveCount(0);
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
       const inset = width > 1000 ? 32 : width > 650 ? 24 : 16;
       expect(
         await detail.evaluate((element) => ({
@@ -684,7 +759,7 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
           size: getComputedStyle(element).fontSize,
           leading: getComputedStyle(element).lineHeight,
         })),
-      ).toEqual({ size: "24px", leading: "24px" });
+      ).toEqual({ size: "16px", leading: "24px" });
       expect(
         await detail
           .getByRole("region", { name: "Session messages" })
@@ -693,52 +768,139 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
 
       expect(Math.abs(composer.x - box.x - inset)).toBeLessThan(1);
       expect(Math.abs(root.x - composer.x)).toBeLessThan(1);
-      expect(root.y - title.y - title.height).toBeGreaterThanOrEqual(32);
-      expect(root.y - title.y - title.height).toBeLessThanOrEqual(48);
+      const detailHeader = detail.locator("header").first();
+      await expect(detailHeader).toHaveCSS("border-bottom-width", "1px");
+      await expect(detailHeader).toHaveCSS("border-bottom-style", "solid");
+      const dividerColor = await detailHeader.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--border-standard)";
+        element.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      });
+      await expect(detailHeader).toHaveCSS("border-bottom-color", dividerColor);
+      const detailHeaderBox = await detailHeader.boundingBox();
+      expect(root.y).toBeGreaterThanOrEqual(
+        detailHeaderBox.y + detailHeaderBox.height + 16,
+      );
+      expect(Math.abs(detailHeaderBox.x - root.x)).toBeLessThan(1);
+      expect(root.y - title.y - title.height).toBeGreaterThanOrEqual(28);
+      expect(root.y - title.y - title.height).toBeLessThanOrEqual(44);
       expect(
         Math.abs(box.y + box.height - composer.y - composer.height - 24),
       ).toBeLessThan(1);
       const heading = await page
         .getByRole("article", { name: "Conversation" })
-        .locator(":scope > header")
+        .locator(".panel-header")
         .boundingBox();
       const tabs = await page
         .getByRole("tablist", { name: "Channel views" })
         .boundingBox();
       const channelTitle = await page
         .getByRole("article", { name: "Conversation" })
-        .locator("header strong")
+        .locator("header")
         .first()
         .boundingBox();
-      if (width > 1100) {
-        expect(Math.abs(heading.height - 80)).toBeLessThan(1);
-        expect(
-          Math.abs(
-            tabs.y + tabs.height / 2 - channelTitle.y - channelTitle.height / 2,
-          ),
-        ).toBeLessThan(1);
-      } else {
-        expect(tabs.y).toBeGreaterThanOrEqual(
-          channelTitle.y + channelTitle.height,
-        );
-      }
+      // Header identity and the view tabs share one line, even in narrow panels.
+      const headerMinimum = await page
+        .getByRole("article", { name: "Conversation" })
+        .locator(".panel-header")
+        .evaluate((element) => parseFloat(getComputedStyle(element).minHeight));
+      expect(heading.height).toBeGreaterThanOrEqual(headerMinimum);
+      expect(tabs.y).toBeGreaterThanOrEqual(channelTitle.y);
+      expect(tabs.y + tabs.height).toBeLessThanOrEqual(
+        channelTitle.y + channelTitle.height,
+      );
+      const nameBox = await page
+        .getByRole("article", { name: "Conversation" })
+        .locator(".panel-header h2")
+        .boundingBox();
+      expect(
+        Math.abs(nameBox.y + nameBox.height / 2 - tabs.y - tabs.height / 2),
+      ).toBeLessThan(1);
+      expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(tabs.x);
       expect(
         await detail.evaluate(
           (element) => element.scrollWidth <= element.clientWidth,
         ),
       ).toBe(true);
+      const share = detail.getByRole("button", { name: "Share in channel" });
+      const openThread = detail.getByRole("button", { name: "Open in thread" });
+      for (const action of [share, openThread]) {
+        await expect(action).toHaveText("");
+        await expect(action).toBeInViewport();
+      }
+      const shareBox = await share.boundingBox();
+      const openBox = await openThread.boundingBox();
+      expect(openBox.x).toBeGreaterThanOrEqual(shareBox.x + shareBox.width);
+      expect(openBox.y).toBe(shareBox.y);
+      await share.hover();
+      await expect(
+        page.getByRole("tooltip", { name: "Share in channel", exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await openThread.focus();
+      await expect(
+        page.getByRole("tooltip", { name: "Open in thread", exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
       await page.screenshot({
         path: testInfo.outputPath(`session-detail-${width}-${mode}.png`),
       });
       await detail.getByRole("button", { name: "Back to Sessions" }).click();
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
       await sidebar
         .getByRole("button", {
           name: "Collapse sessions in General",
           exact: true,
         })
         .click();
+      if (width <= 650)
+        await page
+          .getByRole("button", { name: "Toggle fixture navigation" })
+          .click();
     }
   }
+  // Representative keyboard handoff through real host navigation; lease/failure
+  // permutations and parent-document equality are exercised in React tests.
+  await directory
+    .getByRole("button", { name: /Review the release checklist/ })
+    .click();
+  const detail = page.getByRole("complementary", {
+    name: "Session",
+    exact: true,
+  });
+  const rootId = await page.evaluate(
+    () => window.sessionsFixture.rows[0].rootId,
+  );
+  await expect(detail.locator("[data-message-id]").first()).toHaveAttribute(
+    "data-message-id",
+    rootId,
+  );
+  await detail.getByRole("button", { name: "Open in thread" }).focus();
+  await page.keyboard.press("Enter");
+  const ordinary = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(ordinary.locator("[data-message-id]").first()).toHaveAttribute(
+    "data-message-id",
+    rootId,
+  );
+  await expect(detail).toHaveCount(0);
+  await expect(
+    page.getByRole("tab", { name: "Channel", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
+  await page.screenshot({
+    path: testInfo.outputPath("session-open-in-thread.png"),
+  });
 });
 
 // One added journey: native rich-editor mention selection/focus, independent draft
@@ -746,8 +908,7 @@ test("fixture layout stays readable across light/dark and narrow/intermediate/wi
 test("header New session selects an agent explicitly, opens the shared thread and keeps its parent timeline quiet", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const { errors } = watchPageErrors(page);
   await page.goto("/tests/fixtures/channel-sessions.html");
   const channel = page.getByRole("textbox", { name: "Message #General" });
   await expect(channel).toBeVisible();
@@ -789,7 +950,7 @@ test("header New session selects an agent explicitly, opens the shared thread an
     .click();
   const member = await page.evaluate(() => window.sessionsFixture.member);
   await page
-    .getByRole("region", { name: "Mention a channel member" })
+    .getByRole("dialog", { name: "Mention a member or agent" })
     .getByRole("button", { name: `Fixture member ${member}`, exact: true })
     .click();
   await expect(draft).toBeFocused();
@@ -884,7 +1045,7 @@ test("header New session selects an agent explicitly, opens the shared thread an
           .getByRole("button", { name: "Back to Sessions" })
           .evaluate((button) => {
             const probe = document.createElement("span");
-            probe.style.color = "var(--text-primary)";
+            probe.style.color = "var(--text-standard)";
             document.body.append(probe);
             const expected = getComputedStyle(probe).color;
             probe.remove();
@@ -892,19 +1053,10 @@ test("header New session selects an agent explicitly, opens the shared thread an
           }),
       )
       .toBe(true);
-    await expect
-      .poll(async () => {
-        const tab = await page
-          .getByRole("tab", { name: "Sessions", exact: true })
-          .boundingBox();
-        const indicator = await page
-          .locator(".buzz-tabs-indicator")
-          .boundingBox();
-        return (
-          Math.abs(tab.x - indicator.x) + Math.abs(tab.width - indicator.width)
-        );
-      })
-      .toBeLessThan(1);
+    await expect(page.locator(".buzz-tabs-indicator")).toBeHidden();
+    await expect(
+      page.getByRole("tab", { name: "Sessions", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     const bounds = await draft.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
@@ -930,9 +1082,7 @@ test("two windows share one creation claim and recover the same accepted root", 
   }, seeds);
   const other = await context.newPage();
   const lockPage = await context.newPage();
-  const errors = [];
-  for (const p of [page, other, lockPage])
-    p.on("pageerror", (error) => errors.push(String(error)));
+  const reports = [page, other, lockPage].map(watchPageErrors);
   await Promise.all(
     [page, other, lockPage].map((p) =>
       p.goto("/tests/fixtures/channel-sessions.html"),
@@ -949,7 +1099,7 @@ test("two windows share one creation claim and recover the same accepted root", 
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
     await p
-      .getByRole("region", { name: "Mention a channel member" })
+      .getByRole("dialog", { name: "Mention a member or agent" })
       .getByRole("button", { name: `Fixture member ${member}`, exact: true })
       .click();
     await p.keyboard.type("One cross-window investigation");
@@ -1105,7 +1255,7 @@ test("two windows share one creation claim and recover the same accepted root", 
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("region", { name: "Mention a channel member" })
+    .getByRole("dialog", { name: "Mention a member or agent" })
     .getByRole("button", { name: `Fixture member ${member}`, exact: true })
     .click();
   await page.keyboard.type("Cleanup before stale claim");
@@ -1169,7 +1319,7 @@ test("two windows share one creation claim and recover the same accepted root", 
   expect(
     all.filter((event) => event.content.includes("Cleanup before stale claim")),
   ).toHaveLength(1);
-  expect(errors).toEqual([]);
+  expect(reports.flatMap((report) => report.errors)).toEqual([]);
 });
 
 // New browser boundary: real contenteditable chip/caret, clipboard source and
@@ -1177,22 +1327,29 @@ test("two windows share one creation claim and recover the same accepted root", 
 test("Share in channel keeps the draft and exact recipients, edits one canonical chip and sends only on explicit Send", async ({
   page,
 }, testInfo) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const { errors } = watchPageErrors(page);
   await page.goto("/tests/fixtures/channel-sessions.html?share");
   const input = page.getByRole("textbox", { name: "Message #General" });
   await expect(input).toBeVisible();
   await input.fill("Some context ");
+  await input.evaluate((element) => element.setSelectionRange(0, 12));
+  await page.keyboard.press("ControlOrMeta+b");
+  await expect(input.locator("strong")).toHaveText("Some context");
+  await input.evaluate((element) =>
+    element.setSelectionRange(element.value.length, element.value.length),
+  );
   const recipient = await page.evaluate(() => window.sessionsFixture.viewer);
   const rootAgent = await page.evaluate(() => window.sessionsFixture.member);
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("region", { name: "Mention a channel member" })
+    .getByRole("dialog", { name: "Mention a member or agent" })
     .getByRole("button", { name: `Fixture reader ${recipient}`, exact: true })
     .click();
   const before = await input.evaluate((element) => element.value);
+  // Sharing ignores this native selection; undo restores it with the rich doc.
+  await input.evaluate((element) => element.setSelectionRange(0, 4));
   await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(input).toHaveCount(0);
   await page
@@ -1215,6 +1372,27 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
   }
+  // Native focus regression: the ordinary routed thread must not revive when
+  // sharing after re-entering Sessions. The retained rich draft/mentions survive.
+  await detail.getByRole("button", { name: "Open in thread" }).click();
+  const ordinaryThread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    ordinaryThread.getByText(
+      "Fixture reply for task 1. The conversation stays in its original thread.",
+    ),
+  ).toBeVisible();
+  await expect(input).toHaveJSProperty("value", before);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await page
+    .getByRole("region", { name: "Sessions", exact: true })
+    .getByRole("button", { name: /Review the release checklist/ })
+    .click();
+  await expect(
+    detail.getByRole("heading", { name: "Review the release checklist" }),
+  ).toBeVisible();
   // The real reader reports a failed source refresh; Share must not use stale
   // source evidence or mutate the retained channel draft.
   await page.evaluate(async () => {
@@ -1243,8 +1421,17 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
   await detail.getByRole("button", { name: "Share in channel" }).click();
   await expect(detail).toHaveCount(0);
   await expect(input).toBeFocused();
+  await expect(ordinaryThread).toHaveCount(0);
+  await expect(
+    page.getByRole("tab", { name: "Channel", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
   const shared = await input.evaluate((element) => element.value);
   expect(shared.startsWith(before)).toBe(true);
+  await expect(input.locator("strong")).toHaveText("Some context");
+  await expect(input.locator('[data-source*="buzz:"]')).toHaveCount(1);
   await expect(input.locator('[data-link-kind="session"]')).toHaveCount(1);
   await expect(input.locator("a,button")).toHaveCount(0);
   expect(await input.evaluate((element) => element.selectionStart)).toBe(
@@ -1252,6 +1439,13 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
   );
   await page.keyboard.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", before);
+  await expect(input.locator("strong")).toHaveText("Some context");
+  expect(
+    await input.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]),
+  ).toEqual([0, 4]);
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await expect(input).toHaveJSProperty("value", shared);
   for (const width of [390, 740, 1280]) {
@@ -1262,14 +1456,14 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
           document.documentElement.setAttribute("data-color-mode", mode),
         mode,
       );
-      await expect(input.locator('[data-link-kind="session"]')).toBeVisible();
+      await expect(input.locator('[data-source*="buzz:"]')).toBeVisible();
       await expect
         .poll(() =>
           input.evaluate((element) => ({
             scroll: element.scrollWidth,
             client: element.clientWidth,
             chip: element
-              .querySelector('[data-link-kind="session"]')
+              .querySelector('[data-source*="buzz:"]')
               .getBoundingClientRect().width,
             fits: element.scrollWidth <= element.clientWidth,
           })),
@@ -1293,7 +1487,7 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
     element.setSelectionRange(element.value.length, element.value.length);
     return clipboardData.getData("text/plain");
   });
-  expect(clipboard).toBe(shared);
+  expect(clipboard).toBe(shared.replace("Some context", "**Some context**"));
   // Paste the copied canonical source over itself using the actual editor path.
   // Replacing only the link (not the mention) preserves exact recipient intent.
   const reference = shared.slice(before.length).trim();
@@ -1311,9 +1505,9 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
     );
   }, reference);
   await expect(input).toHaveJSProperty("value", shared);
-  await expect(input.locator('[data-link-kind="session"]')).toHaveCount(1);
+  await expect(input.locator('[data-source*="buzz:"]')).toHaveCount(1);
   // Double-click selects the complete source token for native replacement.
-  await input.locator('[data-link-kind="session"]').dblclick();
+  await input.locator('[data-source*="buzz:"]').dblclick();
   expect(
     await input.evaluate((element) =>
       element.value.slice(element.selectionStart, element.selectionEnd),
@@ -1324,8 +1518,8 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
     "value",
     shared.replace("Review", "Revised Review"),
   );
-  await expect(input.locator('[data-link-kind="session"]')).toHaveText(
-    "SessionRevised Review the release checklist",
+  await expect(input.locator('[data-source*="buzz:"]')).toHaveText(
+    /^Session · [a-f0-9]{8}Revised Review the release checklist$/,
   );
   await page.keyboard.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", shared);
@@ -1337,15 +1531,15 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
   await expect(input).toHaveJSProperty("value", `${shared}Please review.`);
   const href = shared.match(/\]\((buzz:[^)]+)\)/)?.[1];
   expect(href).toBeTruthy();
-  const target = JSON.parse(new URL(href).searchParams.get("target"));
+  const url = new URL(href);
   const root = await page.evaluate(() => window.sessionsFixture.rows[0].rootId);
-  expect(target).toMatchObject({
-    kind: "conversation",
-    channelId: "general",
-    messageId: root,
-    threadRootId: root,
-  });
-  expect(target.scope).toEqual({ communityOrigin: "https://sessions.example" });
+  expect(url.protocol).toBe("buzz:");
+  expect(url.hostname).toBe("message");
+  expect([...url.searchParams]).toEqual([
+    ["channel", "general"],
+    ["id", root],
+    ["thread", root],
+  ]);
   expect(
     await page.evaluate(() => window.sessionsFixture.report.published),
   ).toEqual([]);
@@ -1359,7 +1553,9 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
     () => window.sessionsFixture.report.published,
   );
   expect(event.kind).toBe(9);
-  expect(event.content).toBe(`${shared}Please review.`);
+  expect(event.content).toBe(
+    `${shared.replace("Some context", "**Some context**")}Please review.`,
+  );
   expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([
     ["p", recipient],
   ]);
@@ -1377,6 +1573,49 @@ test("Share in channel keeps the draft and exact recipients, edits one canonical
   const publishedChip = page.locator(
     `[data-message-id="${event.id}"] [data-link-kind="session"]`,
   );
+  await expect(publishedChip).toContainText(`Session · ${root.slice(0, 8)}`);
+  await expect(publishedChip).toHaveAttribute(
+    "title",
+    `Session · ${root}: Review the release checklist`,
+  );
+  // Browser-only: measure the published host anchor as well as the inert editor
+  // chip. Both must stay unlined and fit narrow layouts in either color mode.
+  for (const width of [390, 740, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate(
+        (mode) => (document.documentElement.dataset.colorMode = mode),
+        mode,
+      );
+      await expect(publishedChip).toBeVisible();
+      await expect
+        .poll(() =>
+          publishedChip.evaluate((chip) => {
+            const anchor = chip.closest("a");
+            const preview = chip.lastElementChild;
+            return {
+              decoration: getComputedStyle(anchor).textDecorationLine,
+              display: getComputedStyle(chip).display,
+              wrap: getComputedStyle(preview).whiteSpace,
+              overflow: getComputedStyle(preview).textOverflow,
+              fits:
+                chip.getBoundingClientRect().right <=
+                document.documentElement.clientWidth,
+            };
+          }),
+        )
+        .toEqual({
+          decoration: "none",
+          display: "inline-flex",
+          wrap: "nowrap",
+          overflow: "ellipsis",
+          fits: true,
+        });
+      await page.screenshot({
+        path: testInfo.outputPath(`published-share-${width}-${mode}.png`),
+      });
+    }
+  }
   await publishedChip.click();
   await expect(
     page.getByRole("complementary", { name: "Thread", exact: true }),
@@ -1495,8 +1734,7 @@ test("sharing does not overwrite a channel draft changed in another window", asy
 test("channel /session publishes one actual chip root, opens Sessions, and the retained editor can start again", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const { errors } = watchPageErrors(page);
   await page.clock.setFixedTime(new Date("2026-09-21T14:00:00Z"));
   await page.goto("/tests/fixtures/channel-sessions.html?share");
   const input = page.getByRole("textbox", { name: "Message #General" });
@@ -1530,7 +1768,7 @@ test("channel /session publishes one actual chip root, opens Sessions, and the r
         .poll(() =>
           hint.evaluate((element) => {
             const probe = document.createElement("span");
-            probe.style.color = "var(--text-secondary)";
+            probe.style.color = "var(--text-subtle)";
             document.body.append(probe);
             const expected = getComputedStyle(probe).color;
             probe.remove();
@@ -1577,7 +1815,7 @@ test("channel /session publishes one actual chip root, opens Sessions, and the r
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
     await page
-      .getByRole("region", { name: "Mention a channel member" })
+      .getByRole("dialog", { name: "Mention a member or agent" })
       .getByRole("button", { name: `Fixture member ${member}`, exact: true })
       .click();
     await page.keyboard.type(body);
@@ -1585,10 +1823,21 @@ test("channel /session publishes one actual chip root, opens Sessions, and the r
   await compose(prompt);
   await page.evaluate(() => {
     window.publicationGate = window.sessionsFixture.holdPublication();
+    window.publicationStarted = false;
+    window.publicationGate.started.then(() => {
+      window.publicationStarted = true;
+    });
   });
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   try {
-    await page.evaluate(() => window.publicationGate.started);
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          started: window.publicationStarted,
+          error: document.querySelector('[role="alert"]')?.textContent ?? null,
+        })),
+      )
+      .toEqual({ started: true, error: null });
     await expect(input).toHaveAttribute("contenteditable", "false");
     await expect(hint).toHaveCount(0);
     await expect(
@@ -1681,7 +1930,7 @@ test("inline owner activity preserves the native reading anchor and lazy keyboar
       }),
     )
     .toBe(true);
-  await expect(history.locator("[data-message-id]")).toHaveCount(19);
+  await expect(history.locator("[data-message-id]")).toHaveCount(29);
   await page.evaluate(() => window.sessionsFixture.enableActivity());
   await expect
     .poll(() =>
@@ -1835,4 +2084,138 @@ test("inline owner activity preserves the native reading anchor and lazy keyboar
       (element) => element.scrollWidth <= element.clientWidth,
     ),
   ).toBe(true);
+});
+
+// Browser-only: AppShell's real inert/aria-hidden drawer and clipped desktop
+// sidebar cannot be modeled by jsdom geometry or a hidden attribute substitute.
+for (const width of [390, 1280]) {
+  test(`Back to Sessions focuses the visible tab with the real ${width === 390 ? "closed drawer" : "collapsed sidebar"}`, async ({
+    page,
+  }) => {
+    const errors = watchPageErrors(page);
+    await page.setViewportSize({ width, height: 950 });
+    await page.goto("/tests/fixtures/channel-sessions.html?shell&share");
+    await expect(
+      page.getByRole("textbox", { name: "Message #General" }),
+    ).toBeVisible();
+    if (width === 390)
+      await page
+        .getByRole("button", { name: "Show navigation", exact: true })
+        .click();
+    const sidebar = page.getByRole("complementary", {
+      name: "Channel sidebar",
+    });
+    await sidebar
+      .getByRole("button", { name: "Expand sessions in General", exact: true })
+      .click();
+    const origin = sidebar.getByRole("button", {
+      name: "Review the release checklist",
+      exact: true,
+    });
+    await origin.focus();
+    await page.keyboard.press("Enter");
+    const detail = page.getByRole("complementary", {
+      name: "Session",
+      exact: true,
+    });
+    await expect(detail).toBeVisible();
+    if (width === 1280)
+      await page
+        .getByRole("button", { name: "Hide Channel sidebar", exact: true })
+        .click();
+    const navigation = page.locator("#shell-navigation");
+    await expect(navigation).toHaveAttribute("inert", "");
+    await expect(navigation).toHaveAttribute("aria-hidden", "true");
+    if (width === 390) await expect(navigation).toBeHidden();
+    else await expect(navigation).toHaveCSS("max-width", "0px");
+    await detail
+      .getByRole("button", { name: "Back to Sessions", exact: true })
+      .click();
+    const tab = page.getByRole("tab", { name: "Sessions", exact: true });
+    await expect(
+      page.getByRole("region", { name: "Sessions", exact: true }),
+    ).toBeVisible();
+    await expect(tab).toBeVisible();
+    await expect(tab).toBeFocused();
+    expect(errors.unexplained()).toEqual([]);
+  });
+}
+
+// Real grid sizing/ellipsis and action visibility cannot be proven in jsdom.
+test("long Session titles reserve one row for both header actions, including a share error", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/tests/fixtures/channel-sessions.html?share&long-title");
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await page
+    .getByRole("region", { name: "Sessions", exact: true })
+    .getByRole("button", { name: /Review the release checklist/ })
+    .click();
+  const detail = page.getByRole("complementary", {
+    name: "Session",
+    exact: true,
+  });
+  const title = detail.getByRole("heading", { level: 2 });
+  await expect(title).toHaveText(/Review the release checklist/);
+  const header = detail.locator("header").first();
+  const share = header.getByRole("button", {
+    name: "Share in channel",
+    exact: true,
+  });
+  const open = header.getByRole("button", {
+    name: "Open in thread",
+    exact: true,
+  });
+  const assertOneRow = async () => {
+    await expect(share).toBeVisible();
+    await expect(open).toBeVisible();
+    const [headingBox, shareBox, openBox, headerBox] = await Promise.all([
+      title.boundingBox(),
+      share.boundingBox(),
+      open.boundingBox(),
+      header.boundingBox(),
+    ]);
+    for (const box of [shareBox, openBox]) {
+      expect(
+        Math.abs(box.y + box.height / 2 - headingBox.y - headingBox.height / 2),
+      ).toBeLessThan(1);
+      expect(box.x + box.width).toBeLessThanOrEqual(
+        headerBox.x + headerBox.width,
+      );
+    }
+    expect(headingBox.x + headingBox.width).toBeLessThanOrEqual(shareBox.x);
+    await expect(title).toHaveCSS("white-space", "nowrap");
+    await expect(title).toHaveCSS("text-overflow", "ellipsis");
+    expect(
+      await title.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    ).toBe(true);
+  };
+  for (const width of [390, 740, 1280, 1512]) {
+    await page.setViewportSize({ width, height: 850 });
+    await assertOneRow();
+    await page.screenshot({
+      path: testInfo.outputPath(`long-session-header-${width}.png`),
+    });
+  }
+  // A legitimate conflict keeps recovery on its own row, never displacing controls.
+  await page.evaluate(() =>
+    localStorage.setItem(
+      `buzz-view.v1:${JSON.stringify([window.sessionsFixture.scope, "draft:general"])}`,
+      JSON.stringify("Another saved draft"),
+    ),
+  );
+  await share.click();
+  const error = header.getByRole("alert");
+  await expect(error).toContainText("changed in another window");
+  await assertOneRow();
+  const [errorBox, shareBox] = await Promise.all([
+    error.boundingBox(),
+    share.boundingBox(),
+  ]);
+  expect(errorBox.y).toBeGreaterThanOrEqual(shareBox.y + shareBox.height);
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
 });

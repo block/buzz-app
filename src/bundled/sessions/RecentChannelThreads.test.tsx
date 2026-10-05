@@ -7,6 +7,8 @@ import {
   fireEvent,
   render,
   screen,
+  within,
+  waitFor,
 } from "@testing-library/react";
 import type {
   ChannelMessage,
@@ -84,13 +86,15 @@ it("groups and sorts latest observed messages with deterministic exact-root ties
       openThread={openThread}
     />,
   );
-  expect(screen.getByText("Latest messages in checked history")).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Sessions" }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Today" })).toBeVisible();
   expect(
     screen
       .getAllByRole("button")
       .slice(0, 2)
-      .map((row) => row.querySelector("strong")?.textContent),
+      .map((row) => row.querySelector("span > span")?.textContent),
   ).toEqual(["a", "b"]);
   expect(screen.getByRole("heading", { name: "Yesterday" })).toBeVisible();
   expect(
@@ -122,11 +126,15 @@ function mount() {
       };
     },
   };
-  const profiles = new Map();
+  let profiles = new Map();
+  const unread = { manual: "none", observedCount: 0 };
   const session = {
     channels,
+    unread: { snapshot: () => unread, subscribe: () => () => {} },
     thread: vi.fn(),
     agentLibrary: createAgentLibrary(undefined).queries,
+    agentChoices: createAgentLibrary(undefined).queries,
+    media: vi.fn((url) => `/media?url=${url}`),
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
@@ -153,9 +161,11 @@ function mount() {
     view,
     channels,
     session,
+    profiles,
     listeners,
     update(value: Partial<ChannelWindow>) {
       act(() => {
+        profiles = new Map(profiles);
         window = { ...window, ...value };
         for (const listener of listeners) listener();
       });
@@ -168,9 +178,19 @@ it("uses one shared window subscription while mounted, with observable loading, 
   expect(
     screen.queryByText("No agent sessions found in the checked history"),
   ).not.toBeInTheDocument();
+  const options = screen.getByText("History options").closest("details");
+  expect(options).not.toHaveAttribute("open");
+  expect(
+    screen.getByText(/Checked history · replies sampled/),
+  ).not.toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading channel history…",
+  );
+  fireEvent.click(screen.getByText("History options"));
   expect(
     screen.getByRole("button", { name: "Refresh loaded history" }),
   ).toBeDisabled();
+  fireEvent.click(screen.getByText("History options"));
   expect(h.listeners.size).toBe(1);
   h.update({ status: "error", error: "History unavailable" });
   expect(screen.getByRole("alert")).toHaveTextContent("History unavailable");
@@ -197,6 +217,8 @@ it("labels cached bounded evidence and delegates refresh and older recovery to t
   expect(
     screen.getByText("Showing cached channel history."),
   ).toBeInTheDocument();
+  fireEvent.click(screen.getByText("History options"));
+  expect(screen.getByText(/Checked history · replies sampled/)).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Refresh loaded history" }),
   );
@@ -205,9 +227,12 @@ it("labels cached bounded evidence and delegates refresh and older recovery to t
   expect(h.channels.loadOlder).toHaveBeenCalledWith("channel");
   h.update({ loadingOlder: true });
   expect(
-    screen.getByRole("button", { name: "Loading older history…" }),
+    screen.getByRole("button", { name: "Load older history" }),
   ).toBeDisabled();
+  fireEvent.click(screen.getByText("History options"));
+  expect(screen.getByText("Loading older history…")).toBeVisible();
   h.update({ loadingOlder: false, error: "Older page failed" });
+  expect(screen.getByRole("alert")).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Retry channel history" }),
   );
@@ -279,7 +304,7 @@ it("uses calendar dates for future days, rejects unrenderable times, and re-grou
   expect(
     screen
       .getAllByRole("button")
-      .map((button) => button.querySelector("strong")?.textContent),
+      .map((button) => button.querySelector("span > span")?.textContent),
   ).toEqual(["Time 1", "Time 0", "Time 2"]);
 });
 
@@ -300,4 +325,70 @@ it("rejects invalid root dates before sorting or formatting while retaining epoc
       "channel",
     ).map((row) => row.createdAt),
   ).toEqual([100, 0]);
+});
+
+it("renders the root starter and only body-safe signed agent chips using cached evidence", async () => {
+  const h = mount();
+  const agent = "c".repeat(64);
+  const namesake = "d".repeat(64);
+  h.profiles.set(root.authorId, {
+    pubkey: root.authorId,
+    name: "Starter",
+    picture: "https://example.test/starter.png",
+  });
+  h.profiles.set(agent, { pubkey: agent, name: "Helper", isAgent: true });
+  h.profiles.set(namesake, { pubkey: namesake, name: "Helper", isAgent: true });
+  const make = (id: string, patch: Partial<ChannelMessage>) => ({
+    ...root,
+    id: id.repeat(64),
+    participants: [agent],
+    content: "@Helper do the work",
+    ...patch,
+  });
+  h.update({
+    status: "ready",
+    rows: [
+      make("1", { mentions: [agent] }),
+      make("2", {}),
+      make("3", { mentions: [agent], edited: true }),
+      make("4", { mentions: [agent], content: "`@Helper` stays code" }),
+      make("5", { authorId: agent }),
+      make("6", { mentions: [agent, namesake] }),
+      make("7", { mentions: [agent], attachmentContentRemoved: true }),
+      make("8", { content: `${" ".repeat(200)}Whitespace before title` }),
+    ],
+  });
+  await waitFor(() => expect(h.session.observe).toHaveBeenCalledTimes(1));
+  const signed = document.getElementById(`session-row-${"1".repeat(64)}`);
+  if (!signed) throw new Error("Missing signed root row");
+  expect(within(signed).getByRole("img", { name: "Agent Helper" })).toHaveClass(
+    "inline-chip",
+  );
+  expect(signed.querySelectorAll("button")).toHaveLength(0);
+  const avatar = within(signed).getByRole("img", {
+    name: "Started by Starter",
+  });
+  expect(avatar).toHaveAttribute("data-avatar-shape", "circle");
+  expect(avatar.querySelector("img")).toHaveAttribute(
+    "src",
+    "/media?url=https://example.test/starter.png",
+  );
+  expect(signed.firstElementChild).toContainElement(avatar);
+  expect(signed.lastElementChild).toBe(signed.querySelector("time"));
+  expect(signed.querySelector(":scope > svg")).toBeNull();
+  for (const id of ["2", "3", "4", "6", "7"]) {
+    const row = document.getElementById(`session-row-${id.repeat(64)}`);
+    if (!row) throw new Error("Missing plain root row");
+    expect(
+      within(row).queryByRole("img", { name: "Agent Helper" }),
+    ).not.toBeInTheDocument();
+  }
+  expect(
+    screen.getByRole("img", { name: "Started by Helper" }),
+  ).toHaveAttribute("data-avatar-shape", "squircle");
+  expect(
+    screen.getByRole("button", { name: /Whitespace before title/ }),
+  ).toBeVisible();
+  expect(h.session.profiles.ensure).not.toHaveBeenCalled();
+  expect(h.session.thread).not.toHaveBeenCalled();
 });

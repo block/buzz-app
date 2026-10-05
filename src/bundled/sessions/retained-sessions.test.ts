@@ -1,7 +1,14 @@
 import { expect, it, vi } from "vitest";
-import type { RetainedChannelMessage } from "../../features/relay/contracts";
+import type {
+  Profile,
+  RetainedChannelMessage,
+} from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { createRetainedSessions, personalSessions } from "./retained-sessions";
+import {
+  createRetainedSessions,
+  personalSessions,
+  personalSessionTitle,
+} from "./retained-sessions";
 const viewer = "v",
   agent = "a".repeat(64);
 const row = (
@@ -109,7 +116,7 @@ it("shares one passive source subscription and projection across channel consume
     viewer,
     channels: { retained: () => rows, subscribeRetained: subscribe },
     profiles: { snapshot: () => profiles, subscribe },
-    agentLibrary: { snapshot: () => library, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
     agentActivity: { snapshot: () => ({ turns: [] }), subscribe },
   } as unknown as RelaySession;
   const factory = createRetainedSessions(),
@@ -160,7 +167,7 @@ it("shares passive activity evidence, fences reset/retarget/disposal, and never 
     viewer,
     channels: { retained: () => rows, subscribeRetained: subscribe, ensure },
     profiles: { snapshot: () => profiles, subscribe, ensure },
-    agentLibrary: { snapshot: () => library, subscribe, refresh: ensure },
+    agentChoices: { snapshot: () => library, subscribe, refresh: ensure },
     agentActivity: { snapshot: () => ({ turns }), subscribe, activate },
   } as unknown as RelaySession;
   const factory = createRetainedSessions(),
@@ -218,4 +225,175 @@ it("shares passive activity evidence, fences reset/retarget/disposal, and never 
   expect(owner.snapshotActivity("c", root)).toBeUndefined();
   expect(replacement.snapshotActivity("c", root)).toBeUndefined();
   expect(owner.snapshot("c")).toEqual([]);
+});
+
+const bubbles = "b".repeat(64),
+  human = "c".repeat(64);
+const names = new Map<string, Profile>([
+  [agent, { name: "Blossom", isAgent: true }],
+  [bubbles, { name: "Bubbles", isAgent: true }],
+  [human, { name: "Wes" }],
+]);
+const known = new Set([agent, bubbles]);
+const namedRow = (
+  content: string,
+  patch: Partial<RetainedChannelMessage> = {},
+) =>
+  row("root", {
+    excerpt: content.slice(0, 160).trim().replace(/\s+/g, " "),
+    titleSource: content.slice(0, 161),
+    mentions: [agent, bubbles, human],
+    ...patch,
+  });
+it.each([
+  ["@Blossom   investigate the task", "investigate the task"],
+  ["Please @Blossom investigate", "Please investigate"],
+  ["Investigate this @Blossom", "Investigate this"],
+  ["@Blossom ask @Bubbles about this @Blossom", "ask about this"],
+  ["@Blossom", "Session with Blossom"],
+  ["@Blossom @Bubbles @Blossom", "Session with Blossom, Bubbles"],
+  ["@Blossom ask @Wes and @unknown", "ask @Wes and @unknown"],
+  ["@Blossoming and @Blossom_foo", "@Blossoming and @Blossom_foo"],
+  ["`@Blossom` then @Bubbles", "`@Blossom` then"],
+  ["```ts\n@Blossom\n```\n@Bubbles", "```ts @Blossom ```"],
+  ["    @Blossom\n@Bubbles", "@Blossom"],
+  [" \t@Blossom\n@Bubbles", "@Blossom"],
+  ["  ~~~\n@Blossom\n~~~", "~~~ @Blossom ~~~"],
+  ["\n    @Blossom", "@Blossom"],
+  ["@Blossom, please!", ", please!"],
+  ["[@Blossom](https://example.test)", "[@Blossom](https://example.test)"],
+  ["https://example.test/@Blossom", "https://example.test/@Blossom"],
+])(
+  "derives only sidebar text from exact safe tagged mentions: %s",
+  (content, expected) => {
+    expect(personalSessionTitle(namedRow(content), known, names)).toBe(
+      expected,
+    );
+  },
+);
+it.each([
+  ">     @Blossom\n\n@Blossom",
+  "``a ``` b ` @Blossom `` then @Blossom",
+  `[click @Blossom](https://example.test/${"x".repeat(180)})`,
+  `![click @Blossom](https://example.test/${"x".repeat(180)})`,
+])(
+  "preserves the original sidebar excerpt for uncertain syntax: %s",
+  (content) => {
+    const root = namedRow(content);
+    expect(personalSessionTitle(root, known, names)).toBe(root.excerpt);
+  },
+);
+it("preserves untagged, unresolved, invalid, ambiguous and edited mentions, including quiet/chip roots", () => {
+  const content = "@Blossom investigate";
+  for (const patch of [
+    { mentions: [] },
+    { mentions: ["invalid"] },
+    { edited: true },
+    { edited: true, quietSession: true },
+    { edited: true, chipSession: true },
+    { titleSource: undefined },
+  ]) {
+    expect(
+      personalSessionTitle(
+        namedRow(content, patch as Partial<RetainedChannelMessage>),
+        known,
+        names,
+      ),
+    ).toBe(content);
+  }
+  expect(personalSessionTitle(namedRow(content), known, new Map())).toBe(
+    content,
+  );
+  expect(
+    personalSessionTitle(
+      namedRow(content),
+      known,
+      new Map([[agent, { name: "Blossom\n" }]]),
+    ),
+  ).toBe(content);
+  expect(
+    personalSessionTitle(
+      namedRow(content),
+      known,
+      new Map([
+        [agent, { name: "Blossom" }],
+        [human, { name: "Blossom" }],
+      ]),
+    ),
+  ).toBe(content);
+});
+it("uses reference tags for titles but never adds reference-only session eligibility", () => {
+  const root = namedRow("@Blossom investigate", {
+    mentions: [],
+    mentionReferences: [agent],
+  });
+  expect(personalSessionTitle(root, known, names)).toBe("investigate");
+  expect(personalSessions([root], viewer, known, names).size).toBe(0);
+});
+it("preserves incomplete tokens, longer known labels and key qualifiers at the raw cut", () => {
+  const longer = new Map<string, Profile>([
+    ...names,
+    [bubbles, { name: "Blossom Smith", isAgent: true }],
+  ]);
+  for (const content of [
+    `${"x".repeat(151)} @Blossoming`,
+    `${"x".repeat(150)} @Blossom Smith`,
+    `${"x".repeat(147)} @Blossom Smith`,
+    `${"x".repeat(150)} @Blossom (${human})`,
+    `${"x".repeat(145)} @Blossom (${human})`,
+    `[@Blossom ${"x".repeat(200)}](https://example.test)`,
+    `[@Blossom](https://example.test/${"x".repeat(200)})`,
+  ]) {
+    const root = namedRow(content);
+    expect(personalSessionTitle(root, known, longer)).toBe(root.excerpt);
+  }
+  const complete = namedRow(`@Blossom ${"x".repeat(200)}`);
+  expect(personalSessionTitle(complete, known, names)).toBe("x".repeat(151));
+});
+it("reacts to cached profile/choice names, preserves unchanged arrays, and starts no reads", () => {
+  const subscribe = vi.fn(() => () => {}),
+    ensure = vi.fn();
+  const rows = [namedRow("@Blossom investigate")];
+  let profiles = new Map([[agent, { isAgent: true, name: "Old" }]]);
+  let choices = {
+    identities: [] as { pubkey: string; name: string; managed: boolean }[],
+    complete: false,
+    pending: true,
+  };
+  const session = {
+    viewer,
+    channels: { retained: () => rows, subscribeRetained: subscribe, ensure },
+    profiles: { snapshot: () => profiles, subscribe, ensure },
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe,
+      ensure,
+      refresh: ensure,
+    },
+    agentActivity: { snapshot: () => ({ turns: [] }), subscribe },
+    observe: ensure,
+  } as unknown as RelaySession;
+  const factory = createRetainedSessions(),
+    owner = factory.forSession(session);
+  const stop = owner.subscribe(() => {});
+  expect(owner.snapshot("c")[0]?.title).toBe("@Blossom investigate");
+  profiles = new Map([[agent, { isAgent: true, name: "Blossom" }]]);
+  expect(owner.snapshot("c")[0]?.title).toBe("investigate");
+  const before = owner.snapshot("c");
+  profiles = new Map(profiles);
+  expect(owner.snapshot("c")).toBe(before);
+  profiles = new Map([[agent, { isAgent: true, name: "Old" }]]);
+  expect(owner.snapshot("c")[0]?.title).toBe("@Blossom investigate");
+  choices = {
+    ...choices,
+    identities: [{ pubkey: agent, name: "Blossom", managed: true }],
+  };
+  expect(owner.snapshot("c")[0]?.title).toBe("investigate");
+  profiles = new Map();
+  expect(owner.snapshot("c")[0]?.title).toBe("investigate");
+  choices = { ...choices, identities: [] };
+  expect(owner.snapshot("c")).toEqual([]);
+  expect(ensure).not.toHaveBeenCalled();
+  stop();
+  factory.dispose();
 });

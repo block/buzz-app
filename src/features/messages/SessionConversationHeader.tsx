@@ -1,6 +1,9 @@
-import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon } from "../../shared/design-system/icons";
+import {
+  ArrowLeftIcon,
+  ArrowSquareOutIcon,
+  ChatsCircleIcon,
+} from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import styles from "./SessionConversation.module.css";
 
@@ -9,9 +12,11 @@ export function SessionConversationHeader({
   title,
   back,
   share,
+  onOpenInThread,
 }: {
   title: string;
   back(): void;
+  onOpenInThread?: (() => void) | undefined;
   share?: ((title: string) => string | undefined) | undefined;
 }) {
   const [error, setError] = useState<string>();
@@ -20,7 +25,7 @@ export function SessionConversationHeader({
     button.current?.focus();
   }, []);
   return (
-    <header className={styles.header}>
+    <header data-buzz-ui="" className={styles.header}>
       <IconButton
         ref={button}
         size="toolbar"
@@ -29,15 +34,26 @@ export function SessionConversationHeader({
         onClick={back}
       />
       <h2 title={title}>{title}</h2>
-      {share && (
-        <Button
-          variant="ghost"
-          size="compact"
-          onClick={() => setError(share(title))}
-        >
-          Share in channel
-        </Button>
-      )}
+      <div className={styles.actions}>
+        {share && (
+          <IconButton
+            size="sm"
+            aria-label="Share in channel"
+            title="Share in channel"
+            icon={<ArrowSquareOutIcon size={16} aria-hidden="true" />}
+            onClick={() => setError(share(title))}
+          />
+        )}
+        {onOpenInThread && (
+          <IconButton
+            size="sm"
+            aria-label="Open in thread"
+            title="Open in thread"
+            icon={<ChatsCircleIcon size={16} aria-hidden="true" />}
+            onClick={onOpenInThread}
+          />
+        )}
+      </div>
       {error && (
         <p className={styles.shareError} role="alert">
           {error}

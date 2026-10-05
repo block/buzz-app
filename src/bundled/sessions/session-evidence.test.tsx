@@ -138,6 +138,10 @@ function harness(
       refresh: vi.fn(),
     },
     profiles: { snapshot: () => profiles, subscribe: subscribe(pl), ensure },
+    agentChoices: {
+      snapshot: () => library,
+      subscribe: subscribe(ll),
+    },
     agentLibrary: {
       snapshot: () => library,
       subscribe: subscribe(ll),
@@ -194,7 +198,7 @@ function harness(
 }
 const row = (n: number) =>
   screen.queryByRole("button", {
-    name: new RegExp(`^Thread ${n}(?:0|1|9) repl`),
+    name: new RegExp(`Thread ${n}(?:0|1|9) repl`),
   });
 async function settled() {
   await waitFor(() =>
@@ -455,6 +459,12 @@ it("retries a failed batch or failed observer allocation without a per-root read
 it("actual profile owner leaves absent agent evidence unknown until one explicit retry", async () => {
   const data = sessionsData();
   data.missingAgentProfile(true);
+  // The app's channel-list owner establishes the roster before this isolated
+  // directory mounts. Metadata-only publications cannot establish membership.
+  data.session.channels.ensureList();
+  await waitFor(() =>
+    expect(data.session.channels.list().status).toBe("ready"),
+  );
   const view = render(
     <RecentChannelThreads
       session={data.session}
@@ -616,8 +626,11 @@ it("orders eligible threads by all shared conversational replies, never summary 
   await settled();
   const order = () =>
     screen
-      .getAllByRole("button", { name: /^Thread / })
-      .map((button) => button.querySelector("strong")?.textContent);
+      .getAllByRole("button", { name: /Thread / })
+      .map(
+        (button) =>
+          `Thread ${Number.parseInt(button.id.slice("session-row-".length), 16)}`,
+      );
   const key = keypair();
   const reply = message(key, "channel", "Human follow-up", 100, [
     ["e", id(1), "", "reply"],

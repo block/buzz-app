@@ -183,14 +183,7 @@ it.each([false, true])(
 );
 
 it("decorates only the authored Session label on a same-root canonical locator", () => {
-  const href = targetLink({
-    version: 1,
-    kind: "conversation",
-    scope: { viewer: "a".repeat(64), communityOrigin: "https://example.com" },
-    channelId: "general",
-    messageId: "b".repeat(64),
-    threadRootId: "b".repeat(64),
-  });
+  const href = `buzz://message?channel=general&id=${"b".repeat(64)}&thread=${"b".repeat(64)}`;
   const html = renderToStaticMarkup(
     <LinkLabelContext value="Session: <script>work</script>">
       <LinkContentContext value={<strong>ignored formatted content</strong>}>

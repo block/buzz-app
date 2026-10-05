@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { parseTargetLink, targetLink } from "../navigation/targets";
+import { parseBuzzLink, buzzLinkTarget } from "../navigation/buzz-links";
 import {
   sessionReference,
   referenceMarkdown,
@@ -18,15 +18,21 @@ it("shares the same exact root without a viewer, tags, or new routing schema", (
     rootId,
     "  Fix\n the issue ",
   );
-  expect(parseTargetLink(reference.href)).toEqual({
-    version: 1,
-    kind: "conversation",
-    scope: { communityOrigin: scope.communityOrigin },
+  expect(parseBuzzLink(reference.href)).toEqual({
+    format: "legacy",
     channelId: "general",
     messageId: rootId,
     threadRootId: rootId,
   });
   expect(decodeURIComponent(reference.href)).not.toContain(scope.viewer);
+  expect(reference.href).not.toContain("example.com");
+  expect(buzzLinkTarget(reference.href, scope)).toMatchObject({ scope });
+  expect(
+    sessionReferenceTitle(
+      `${reference.href}&ignored=x&ignored=y`,
+      reference.label,
+    ),
+  ).toBe("Fix the issue");
   expect(reference.label).toBe("Session: Fix the issue");
 });
 it.each([
@@ -54,15 +60,10 @@ it("does not classify arbitrary links, legacy destinations or mismatched roots a
   for (const href of [
     "javascript:alert(1)",
     "https://example.com",
-    `buzz://message?channel=c&id=${rootId}&thread=${rootId}`,
-    targetLink({
-      version: 1,
-      kind: "conversation",
-      scope,
-      channelId: "general",
-      messageId: rootId,
-      threadRootId: "c".repeat(64),
-    }),
+    "buzz://open?target=retired",
+    `buzz://message?channel=general&id=${rootId}&thread=${"c".repeat(64)}`,
+    `buzz://message?channel=general&id=${rootId}&thread=fake-root`,
+    `buzz://message?channel=general&id=${rootId}&thread=${rootId}&id=${rootId}`,
   ]) {
     expect(referenceMarkdown({ href, label: "Session: Work" })).toBeUndefined();
     expect(sessionReferenceTitle(href, "Session: Work")).toBeUndefined();

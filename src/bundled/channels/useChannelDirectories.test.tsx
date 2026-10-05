@@ -132,6 +132,8 @@ function harness(creation = false) {
   const append = vi.fn<(rootId: string, title: string) => string | undefined>(
     () => undefined,
   );
+  const navigateThread = vi.fn();
+  let openInThread: (() => void) | undefined;
   let share: (title: string) => string | undefined = () => "unmounted";
   function Detail({ close }: { close(): void }) {
     useLayoutEffect(() => dispose, []);
@@ -150,8 +152,10 @@ function harness(creation = false) {
       channelName: "C",
       onSelect() {},
       shareReference: append,
-      renderThread: (_id, close, command) => {
+      openInThread: navigateThread,
+      renderThread: (_id, close, command, _accessory, open) => {
         share = command;
+        openInThread = open;
         return <Detail close={close} />;
       },
     });
@@ -176,6 +180,8 @@ function harness(creation = false) {
     liveListeners,
     dispose,
     append,
+    navigateThread,
+    openInThread: () => openInThread,
     share: () => share,
     command: () => commands.openThread,
     draftCommands: () => draftCommands,
@@ -512,6 +518,55 @@ it.each(["plugin", "access", "session", "channel", "disconnect", "unmount"])(
       if (boundary === "unmount") h.view.unmount();
       expect(share("Actual title")).toMatch(/no longer available/);
     });
+    expect(h.append).not.toHaveBeenCalled();
+  },
+);
+
+it("opens the exact selected thread once and retires the directory before navigation", () => {
+  const h = harness();
+  h.select();
+  fireEvent.click(screen.getByRole("button", { name: "Open fixture root" }));
+  const open = h.openInThread();
+  act(() => {
+    open?.();
+    open?.();
+  });
+  expect(h.navigateThread).toHaveBeenCalledExactlyOnceWith(rootId);
+  expect(screen.getByRole("tab", { name: "Channel" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByText("Channel body")).toBeVisible();
+  expect(h.append).not.toHaveBeenCalled();
+});
+
+it.each([
+  "plugin",
+  "access",
+  "session",
+  "channel",
+  "disconnect",
+  "unmount",
+  "selection",
+])(
+  "revokes Open in thread after %s without navigation or draft mutation",
+  (boundary) => {
+    const h = harness();
+    h.select();
+    fireEvent.click(screen.getByRole("button", { name: "Open fixture root" }));
+    const open = h.openInThread();
+    act(() => {
+      if (boundary === "plugin") h.entries([]);
+      if (boundary === "access") h.access();
+      if (boundary === "session") h.replace();
+      if (boundary === "channel") h.beginNavigation();
+      if (boundary === "disconnect") h.disconnect();
+      if (boundary === "unmount") h.view.unmount();
+      if (boundary === "selection")
+        fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+      open?.();
+    });
+    expect(h.navigateThread).not.toHaveBeenCalled();
     expect(h.append).not.toHaveBeenCalled();
   },
 );

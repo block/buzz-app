@@ -160,6 +160,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               <ChannelSidebar
                 relay={services.relay}
                 navigator={services.navigation}
+                channelDirectories={services.conversation.channelDirectories}
                 providers={services.channelTemplates}
                 target={route.target}
                 sessionsEnabled={route.pages.some(

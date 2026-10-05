@@ -2,7 +2,9 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { DirectorySidebar } from "./DirectorySidebar";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import { DirectorySidebar, sidebarDirectoryIntent } from "./DirectorySidebar";
 import type {
   ChannelThreadDirectory,
   ChannelThreadSidebarProps,
@@ -87,6 +89,10 @@ function fixture() {
     { reactStrictMode: true },
   );
   return {
+    session,
+    relay,
+    registry,
+    entry,
     open,
     commands: () => commands,
     view,
@@ -141,3 +147,49 @@ it.each([
   expect(saved.openDirectory()).toBe(false);
   expect(f.open).not.toHaveBeenCalled();
 });
+
+it.each([
+  "registration",
+  "connection",
+  "access",
+  "disconnect",
+  "cache",
+  "attempt",
+  "dispose",
+])(
+  "one pending sidebar intent latches %s retirement and cannot replay",
+  (kind) => {
+    const f = fixture();
+    const host = createNavigationController(createMemoryHistory());
+    const intent = sidebarDirectoryIntent(
+      {
+        session: f.session,
+        scope: "s",
+        channelId: "c",
+        entry: f.entry,
+        rootId: id,
+      },
+      f.registry,
+      f.relay,
+      host.navigation,
+    );
+    const destination = {
+      session: f.session,
+      scope: "s",
+      channelId: "c",
+      entryId: host.navigation.snapshot().entry.id,
+    };
+    expect(intent.matches(destination)).toBe(true);
+    expect(intent.matches({ ...destination, scope: "other" })).toBe(false);
+    expect(intent.matches({ ...destination, entryId: "another-visit" })).toBe(
+      false,
+    );
+    expect(intent.valid()).toBe(true);
+    if (kind === "attempt") void host.navigation.retry();
+    else if (kind === "dispose") intent.dispose();
+    else f.change(kind);
+    expect(intent.valid()).toBe(false);
+    intent.dispose();
+    host.dispose();
+  },
+);

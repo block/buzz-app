@@ -1,4 +1,6 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { appendComposerResource } from "./composer-resource";
+import { projectComposerDocument } from "./composer-document";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -14,6 +16,7 @@ import {
 } from "./mention-candidates";
 import {
   readComposerSnapshot,
+  readComposerDocument,
   composerMarkdownContext,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
@@ -92,6 +95,7 @@ import { RichComposerInput } from "./RichComposerInput";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
+  ComposerCheckpoint,
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
@@ -119,6 +123,40 @@ function recoveryFor(session: RelaySession) {
   }
   return recovery;
 }
+/** Share must distinguish a readable empty draft from malformed saved evidence. */
+function savedShareDraft(
+  raw: string | null | undefined,
+): MentionDraft | undefined {
+  if (raw === undefined) return;
+  if (raw === null) return mentionDraft("");
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value === "string") return mentionDraft(value);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.text !== "string" || !Array.isArray(record.recipients))
+      return;
+    if (record.document !== undefined && !readComposerSnapshot(record.document))
+      return;
+    if (
+      mentionDraft({ text: record.text, recipients: record.recipients })
+        .recipients.length !== record.recipients.length
+    )
+      return;
+    return mentionDraft(value);
+  } catch {
+    return;
+  }
+}
+
+function normalizedShareDraft(value: MentionDraft) {
+  const draft = mentionDraft(value);
+  return mentionDraft(
+    projectComposerDocument(readComposerDocument(draft, draft.recipients))
+      .draft,
+  );
+}
+
 /** Host-only handoff. Never exposed through the plugin tool contract. */
 export type ChannelDraftHandle = {
   appendReference(reference: SessionReference): boolean;
@@ -127,6 +165,7 @@ export type ChannelDraftHandle = {
 
 export type MessageComposerProps = {
   startCommand?: SessionCommandHandler | undefined;
+  suspended?: boolean | undefined;
   registerDraft?:
     | ((handle: ChannelDraftHandle | undefined) => void)
     | undefined;
@@ -211,6 +250,7 @@ function Composer({
   trailingTool,
   startCommand,
   registerDraft,
+  suspended = false,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
   const list = useSyncExternalStore(
@@ -282,6 +322,10 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
+  // Share's review snapshot is UI evidence, not another persistence owner.
+  const [shareReview, setShareReview] = useState<{
+    raw: string | null | undefined;
+  }>();
   const [value, updateDraft] = useState(() =>
     mentionDraft(
       accepted?.next ??
@@ -289,6 +333,7 @@ function Composer({
         readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
     ),
   );
+  const retained = useRef<ComposerCheckpoint | null>(null);
   const draft = value.text;
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
@@ -414,11 +459,13 @@ function Composer({
     !!list.channels.find((channel) => channel.id === channelId)?.archived ||
     !!list.channels.find((channel) => channel.id === channelId)?.readOnly;
   const editingDisabled =
+    !!shareReview ||
     disabled ||
     admitting ||
     sending ||
     !!accepted ||
     !!submission?.locked ||
+    !!startCommand?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
   const label = editing.target
@@ -446,7 +493,7 @@ function Composer({
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,
-    canAttach && !editingDisabled && !editing.target,
+    active && !suspended && canAttach && !editingDisabled && !editing.target,
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
@@ -474,7 +521,7 @@ function Composer({
   }
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
-    session.emoji.subscribe,
+    suspended ? noChannelSubscription : session.emoji.subscribe,
     session.emoji.snapshot,
     session.emoji.snapshot,
   );
@@ -484,9 +531,9 @@ function Composer({
   );
   const completion = useCompletionEditor(
     input,
-    active && !editingDisabled && !!outbox?.supports(9),
+    active && !suspended && !editingDisabled && !!outbox?.supports(9),
   );
-  function loadSaved(raw: string | null) {
+  function loadSaved(raw: string | null, preserveHistory = false) {
     let next: MentionDraft;
     try {
       next = mentionDraft(JSON.parse(raw ?? "null"));
@@ -497,7 +544,9 @@ function Composer({
     dirty.current = false;
     valueRef.current = next;
     updateDraft(next);
-    input.current?.reset(next);
+    if (!preserveHistory) input.current?.reset(next);
+    else focusRestoredDraft.current = true;
+    setShareReview(undefined);
     completion.invalidate();
     setLinkEdit(null);
     restoreSelection.current = undefined;
@@ -509,7 +558,7 @@ function Composer({
     if (submission || editing.target || writing.current || accepted) return;
     const current = viewRevision(scope, draftKey);
     if (current === undefined || current === revision.current) return;
-    if (dirty.current || sendAttempt.current) setConflict(true);
+    if (dirty.current || sendAttempt.current || shareReview) setConflict(true);
     else loadSaved(current);
   });
   const editingDraft = !!editing.target;
@@ -527,10 +576,16 @@ function Composer({
       setStorageFailed(true);
       return;
     }
+    if (shareReview && current !== shareReview.raw) {
+      setShareReview({ raw: current });
+      return; // Review the newly observed content before replacing either draft.
+    }
+    if (shareReview && !savedShareDraft(current)) return;
     if (keep) {
+      setShareReview(undefined);
       dirty.current = true;
       persist(valueRef.current, current);
-    } else loadSaved(current);
+    } else loadSaved(current, !!shareReview);
   }
   function finishDraft(pending: AcceptedDraft) {
     const result = persist(pending.next, pending.revision);
@@ -554,9 +609,17 @@ function Composer({
     if (!dirty.current) onDraftSaved?.(pending.id);
   }
   useEffect(() => {
-    if (outbox?.supports(9)) void session.emoji.ensure();
-  }, [session, outbox]);
+    if (!suspended && outbox?.supports(9)) void session.emoji.ensure();
+  }, [session, outbox, suspended]);
   useLayoutEffect(() => {
+    if (suspended) {
+      setLinkEdit(null);
+      return;
+    }
+    completion.composing.current = false;
+  }, [suspended, completion.composing]);
+  useLayoutEffect(() => {
+    if (suspended || !input.current) return;
     // Delivery closes while the input is still disabled. Focus only after React
     // has committed the restored, editable draft; preserve its saved selection.
     if (focusRestoredDraft.current) {
@@ -579,6 +642,7 @@ function Composer({
   const startEdit = useEffectEvent((row: ChannelMessage) => {
     if (
       !permitted.current ||
+      suspended ||
       editingDisabled ||
       editDisabled ||
       submission ||
@@ -609,7 +673,7 @@ function Composer({
     setError(undefined);
   });
   useEffect(() => {
-    if (!editScope) return;
+    if (!editScope || suspended) return;
     const start = (row: ChannelMessage) => startEdit(row);
     editScope.current = start;
     editScope.input.current = input.current;
@@ -619,7 +683,7 @@ function Composer({
         editScope.input.current = null;
       }
     };
-  }, [editScope]);
+  }, [editScope, suspended]);
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -704,7 +768,8 @@ function Composer({
           .channels.find((item) => item.id === channelId);
         if (
           !current ||
-          editingDisabled ||
+          !active ||
+          editing.target ||
           submission ||
           threadRootId ||
           !outbox?.supports(9) ||
@@ -713,24 +778,69 @@ function Composer({
           session.channels.list().status !== "ready" ||
           !channel ||
           channel.archived ||
+          channel.readOnly ||
           (channel.channelType !== "stream" &&
             channel.channelType !== "forum") ||
           (channel.members !== undefined &&
             !channel.members.includes(session.viewer)) ||
           !target ||
-          target.channelId !== channelId ||
-          target.scope.communityOrigin !==
-            scope.slice(0, -(session.viewer.length + 1))
+          target.channelId !== channelId
         ) {
           shareFailure.current =
             "The channel draft is unavailable. Return to Channel and try again.";
           return false;
         }
-        const inserted = insertResource({ uri: reference.href, label: reference.label });
-        if (inserted !== true) {
-          shareFailure.current = inserted;
+        const stored = viewRevision(scope, draftKey);
+        const saved = input.current?.captureCheckpoint() ?? retained.current;
+        if (
+          conflict ||
+          stored === undefined ||
+          revision.current === undefined ||
+          stored !== revision.current ||
+          !savedShareDraft(stored) ||
+          !saved ||
+          JSON.stringify(normalizedShareDraft(saved.draft)) !==
+            JSON.stringify(normalizedShareDraft(valueRef.current))
+        ) {
+          if (stored === undefined) setStorageFailed(true);
+          setShareReview({ raw: stored });
+          setConflict(true);
+          shareFailure.current =
+            "The saved channel draft changed in another window or could not be read. Return to Channel to review it before sharing.";
           return false;
         }
+
+        if (
+          editingDisabled ||
+          input.current?.disabled ||
+          input.current?.readOnly
+        ) {
+          shareFailure.current =
+            "The channel draft is unavailable. Return to Channel and try again.";
+          return false;
+        }
+        const tr = appendComposerResource(
+          saved.state,
+          { uri: reference.href, label: reference.label },
+          16000,
+        );
+        if (typeof tr === "string") {
+          shareFailure.current = tr;
+          return false;
+        }
+        const state = saved.state.apply(tr);
+        const next = projectComposerDocument(state.doc).draft;
+        retained.current = {
+          ...saved,
+          state,
+          draft: next,
+          separateHistory: true,
+        };
+        input.current?.restoreCheckpoint(retained.current);
+        // The readable, unchanged baseline permits a local handoff even at quota.
+        saveDraft(next);
+        completion.invalidate();
+        caret.current = next.text.length;
         shareFailure.current = undefined;
         setError(undefined);
         input.current?.focus();
@@ -746,13 +856,14 @@ function Composer({
   useLayoutEffect(() => {
     if (!startCommand || editing.target || submission || threadRootId) return;
     return startCommand.bindEditor((expected) => {
-      if (valueRef.current !== expected) return false;
+      if (suspended || conflict || accepted || valueRef.current !== expected)
+        return false;
       const next = { text: "", recipients: [] };
       saveDraft(next);
       input.current?.reset(next);
       return true;
     });
-  }, [startCommand, editing.target, submission, threadRootId]);
+  });
 
   function replaceCompletion(
     edit: CompletionEdit,
@@ -826,7 +937,7 @@ function Composer({
     setError(undefined);
   }
   async function send() {
-    if (!permitted.current) return;
+    if (!permitted.current || suspended || conflict) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if (!valueRef.current.text.trim()) {
@@ -849,6 +960,7 @@ function Composer({
     if (
       disabled ||
       accepted ||
+      startCommand?.locked ||
       conflict ||
       admission.current ||
       submission?.disabled ||
@@ -892,7 +1004,9 @@ function Composer({
         isSessionCommand(captured.text)
       ) {
         if (capturedAttachments.length)
-          throw new Error("Remove attachments before starting a session command.");
+          throw new Error(
+            "Remove attachments before starting a session command.",
+          );
         admission.current = true;
         setAdmitting(true);
         await startCommand.submit(captured, commandGeneration.current ?? -1);
@@ -1091,6 +1205,7 @@ function Composer({
       )}
     </>
   );
+  if (suspended) return null;
   if (readingOnly)
     return (
       <>
@@ -1207,6 +1322,7 @@ function Composer({
           )}
           <div className={styles.composerInput}>
             <RichComposerInput
+              retained={retained}
               inviteAgents={agentChoices}
               ref={input}
               id={inputId}
@@ -1366,11 +1482,13 @@ function Composer({
             aria-label={editing.target ? "Save changes" : "Send message"}
             title={editing.target ? "Save changes" : "Send message"}
             disabled={
+              !!conflict ||
               disabled ||
               (!editing.target && (!!accepted || conflict)) ||
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
+              startCommand?.locked ||
               submission?.disabled ||
               (!editing.target && attachments.blocked) ||
               (!draft.trim() &&
@@ -1384,13 +1502,22 @@ function Composer({
             icon={<ArrowUpIcon size={16} />}
           />
         </div>
+        {startCommand?.notice}
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}
         {!editing.target &&
           !submission &&
           (accepted || conflict || storageFailed) && (
-            <div>
+            <section
+              aria-label={shareReview ? "Channel draft conflict" : undefined}
+            >
+              {shareReview && (
+                <p>
+                  {savedShareDraft(shareReview.raw)?.text ??
+                    "The saved draft could not be read. Restore readable saved content before reviewing it."}
+                </p>
+              )}
               <p role="alert">
                 {accepted
                   ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
@@ -1405,9 +1532,17 @@ function Composer({
               ) : conflict ? (
                 <>
                   <Button type="button" onClick={() => resolveDraft(false)}>
-                    Load saved draft
+                    {shareReview && !savedShareDraft(shareReview.raw)
+                      ? "Retry saved draft"
+                      : "Load saved draft"}
                   </Button>
-                  <Button type="button" onClick={() => resolveDraft(true)}>
+                  <Button
+                    type="button"
+                    disabled={
+                      !!shareReview && !savedShareDraft(shareReview.raw)
+                    }
+                    onClick={() => resolveDraft(true)}
+                  >
                     Keep my draft
                   </Button>
                 </>
@@ -1416,7 +1551,7 @@ function Composer({
                   Retry draft save
                 </Button>
               )}
-            </div>
+            </section>
           )}
         {editing.retryable && (
           <>

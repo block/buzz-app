@@ -170,6 +170,10 @@ export type RetainedChannelMessage = Readonly<{
   authorId: string;
   createdAt: number;
   excerpt: string;
+  /** First 161 UTF-16 code units, unnormalized: 160 for title + cut evidence. */
+  titleSource?: string;
+  /** Reference-only tags are display evidence, never session eligibility. */
+  mentionReferences?: readonly string[];
   threadRootId: string | undefined;
   edited: boolean;
   quietSession: boolean;

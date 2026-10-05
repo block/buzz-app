@@ -1,12 +1,12 @@
 import {
   createContext,
   useCallback,
-  useLayoutEffect,
   useContext,
   useMemo,
   useState,
   useRef,
   useSyncExternalStore,
+  useLayoutEffect,
   type RefObject,
   type ReactNode,
 } from "react";
@@ -56,12 +56,18 @@ export function useChannelMenuActions() {
     handoff?.menuActions.snapshot ?? noActions,
   );
 }
+import type {
+  SidebarIntent,
+  DirectorySelection,
+} from "../../bundled/channels/DirectorySidebar";
 
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
   session: RelaySession;
   scope: string;
   draftParents: string[];
+  directoryIntent?: SidebarIntent | undefined;
+  directorySelection?: DirectorySelection | undefined;
   preparingDm: PreparingDm | undefined;
   lifecycleDialog:
     | {
@@ -89,6 +95,8 @@ type Handoff = State & {
   menuActions: ReturnType<typeof createMenuActions>;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
+  openDirectory(intent: SidebarIntent): void;
+  selectDirectory(selection: DirectorySelection | undefined): void;
   updateDraftParents(update: (previous: string[]) => string[]): void;
   prepareDm(members: readonly string[]): void;
   clearPreparingDm(): void;
@@ -118,12 +126,15 @@ export function ChannelNavigationProvider({
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
+  const directoryIntent = useRef<SidebarIntent | undefined>(undefined);
   const [state, setState] = useState<State>(() =>
     restore(connection.session, scope),
   );
   if (state.session !== connection.session || state.scope !== scope) {
     activityThread.current = undefined;
     activityAgent.current = undefined;
+    directoryIntent.current?.dispose();
+    directoryIntent.current = undefined;
     setState(restore(connection.session, scope));
   }
   const update = useCallback(
@@ -135,6 +146,21 @@ export function ChannelNavigationProvider({
       );
     },
     [relay, connection.session],
+  );
+  useLayoutEffect(() => () => directoryIntent.current?.dispose(), []);
+  const openDirectory = useCallback(
+    (intent: SidebarIntent) => {
+      directoryIntent.current?.dispose();
+      directoryIntent.current = intent;
+      update((previous) => ({ ...previous, directoryIntent: intent }));
+    },
+    [update],
+  );
+  const selectDirectory = useCallback(
+    (directorySelection: DirectorySelection | undefined) => {
+      update((previous) => ({ ...previous, directorySelection }));
+    },
+    [update],
   );
   const clearPreparingDm = useCallback(() => {
     update((previous) =>
@@ -160,6 +186,8 @@ export function ChannelNavigationProvider({
       menuActions,
       activityThread,
       activityAgent,
+      openDirectory,
+      selectDirectory,
       updateDraftParents(change) {
         update((previous) => {
           const draftParents = change(previous.draftParents);
@@ -221,6 +249,8 @@ export function ChannelNavigationProvider({
       connection.viewer,
       update,
       clearPreparingDm,
+      openDirectory,
+      selectDirectory,
     ],
   );
   return (

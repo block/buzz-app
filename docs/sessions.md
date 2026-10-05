@@ -24,6 +24,83 @@ prerequisites. Neither was requested. Preserve current runner behavior and use
 existing thread identity, messages, access and read state. Justify any backend
 addition individually; a relay/runner redesign is not the starting plan.
 
+## Optional plugin contract and current rebase status (2026-09-30)
+
+**Confirmed product decision:** keep sharing and the channel Sessions tab as
+optional presentation over ordinary channel threads. A recipient does not need
+Sessions enabled to read a shared reference. Channel access, not plugin enablement,
+governs access; a reference never invites someone or grants membership.
+
+- Shared references use main's community-relative `buzz://message?channel=…&id=…&thread=…`
+  with the same exact root in `id` and `thread`. No viewer or community is encoded:
+  the receiving conversation's community owns resolution. This compatibility change
+  was explicitly approved on 2026-10-05. Old `buzz://open?target=…` references are
+  unsupported; no global locator or migration is restored. In-app activation opens
+  the ordinary **Thread** with Sessions either on or off. Full-width Session link
+  routing is not implemented. See [deep links](deep-links.md).
+- Turning Sessions off removes the tab and session-specific root presentation.
+  Quiet/chip roots remain ordinary readable messages. No messages are migrated,
+  deleted, or republished on a toggle. Viewing a chip is not reading its hidden
+  conversation.
+- Optional Links presentation can also be absent: the authored label and the
+  host-owned anchor remain usable. A Sessions-looking label is not authorization.
+- The tab tracks positively evidenced agent-involving threads, including threads
+  that gain an explicit agent mention in a later reply—not only explicit starts.
+  Private channel-backed Sessions retain the separate contract below.
+
+**Historical integration checkpoint after the rebase onto `5d2b08e2`.** The historical
+acceptance records below do not validate the rebased implementation. At `9bf87d3e`,
+the sender's Share action lost its retained channel-draft handle when the composer
+unmounts. Its replacement resource insertion uses the caret/selection rather than
+an append-only transaction, and share-specific saved-draft conflict/recovery
+checks were lost. These are repair blockers, not approved product reductions.
+Personal-session sidebar integration also needs porting into main's persistent
+sidebar owner. The ten integration cases skipped during the rebase have been
+restored; failures must be fixed, not disabled to report a green foundation.
+
+Current focused evidence: `SessionReference.integration.test.tsx` mounts the real
+plugin runtime, Channels page, navigation controller and thread reader around
+signed synthetic received messages. It exercises reference activation with
+Sessions on/off, removal while a thread is open, and reopening without Links.
+Virtualized layout is replaced only to mount rows in jsdom; it does not prove
+native layout, scrolling, cross-window storage or live-relay behavior.
+`ChannelTimeline.sessions.test.tsx` covers quiet/chip readability after removal,
+unchanged retained rows and no extra publication, plus concealed-root read dwell.
+Native toggle acceptance, sender sharing/recovery, and the broader rebased
+integration gate remain outstanding. No live messages were sent for these checks.
+
+### 2026-10-05 main integration
+
+The five-commit stack integrates pinned main `c8e7abb0` with its
+panel tabs, sidebar/read lifecycle and single composer revision owner retained.
+Share appends at the document end through the retained rich-editor checkpoint;
+its detached state retains history but no view-bound normalization plugin.
+Readable, unchanged saved evidence permits an in-memory append even when a quota
+write fails. The saved baseline and save warning remain, and Undo restores the
+previous draft. Share never calls Send or accepted-draft retirement callbacks.
+Malformed/unreadable/changed saved evidence and a stale suspended checkpoint
+(including document-only differences) block Share. Share-specific review uses the
+ordinary external-draft editor sync so **Load saved draft** is undoable; ordinary
+main draft loading retains its reset behavior. Review rechecks the observed raw
+revision before choosing it. Storage comparison is best effort, not an atomic
+cross-window transaction.
+
+The old `/session` cleanup defect remains a known limitation: the current editor
+callback compares a reconstructed accepted draft by object identity and can leave
+an accepted command in recovery instead of clearing/opening automatically. Its
+existing error notice and locked state are now visible; this integration does not
+claim that command flow repaired. Use the existing recovery controls; do not
+repeat a command to work around uncertain acceptance. No command-semantics,
+runner, backend, configuration or live-send change is included here.
+
+Focused synthetic Share journeys pass in Chromium and WebKit, including rich
+formatting, recipients, exact-root link chips, explicit send, cross-window review
+and Undo. The focused 32-file / 932-test pass covers main composer/Inbox Drafts persistence
+and the affected tabs, threads, retained evidence, and plugin-off references.
+The separate pre-existing `/session` suite remains 7 passing / 13 failing; logs
+and the exact rebased head are recorded in the local integration handoff. These results do not certify
+live `/session` acceptance, packaged/native behavior, or full-suite validation.
+
 ## Coexistence with private Sessions
 
 This document governs **channel-local shared, thread-backed Sessions** only.
@@ -1304,7 +1381,7 @@ Ordinary channel rows now offer up to five positively known sessions the viewer
 started or participated in, followed by **View all sessions**. Participation is
 root/reply authorship or a validated relay summary participant, never a received
 mention or a read. Agent eligibility uses exact keys from already-loaded profiles
-and the local library. Ordering follows the latest retained conversational root
+and the cached shared agent choices. Ordering follows the latest retained conversational root
 or reply, not a summary timestamp, edit, reaction or telemetry. Edited ordinary
 roots keep the existing conservative mention rule; quiet/chip roots preserve
 explicit original recipients.
@@ -1553,3 +1630,138 @@ also verified native PID 70281 and HMR, not live/native acceptance. Live/native/
 package acceptance, hosted CI and broader integration remain pending. No new test
 execution, live protocol write, native restart/build, commit, push or full scan
 was performed for this documentation handoff.
+
+### Persistent-sidebar port — 2026-09-30 integration checkpoint
+
+The approved narrow App pass-through now supplies the existing conversation
+`channelDirectories` reader to the persistent ChannelSidebar. Existing directory
+children remain separate from private-session rows and their New session menu.
+ChannelNavigationState owns one transient, exact-registration directory handoff
+and selected directory/root presentation; no global route, plugin API, relay
+session capability or startup read was added. The handoff captures the normal
+navigation attempt, session/scope/generation, access, live state and retained-cache
+epoch. Consumption disposes its subscriptions; repeated same-channel navigation
+requires a fresh intent. The independent Channels mount suppresses its channel
+body while consuming a matching intent, including StrictMode effect replay.
+
+Focused evidence: the real-sidebar/provider/navigation integration file passes
+30 cases, including retained Share regressions and a separately mounted Channels
+page opening one thread without a hidden channel head/read lease. Existing
+sidebar, directory, disclosure and plugin-off reference tests also passed; seven
+new pending-handoff retirement cases passed. The full sidebar/open-thread/back
+focus browser journey passes Chromium and WebKit, as do Share and cross-window
+creation/recovery. Both engines passed channel-opening and large-thread
+measurements (4 checks; `/tmp/session-port-performance.log`).
+
+This is **not full browser acceptance**: the complete session browser file still
+exposes layout-fixture and `/session` command failures during the port. No cases
+were skipped. The fixture now composes the persistent sidebar with the normal
+narrow navigation container; old header/mention selectors and routed-revocation
+expectations were updated at their current owners. Search-expansion coverage
+remains in `useSidebarView.test.tsx`; sidebar search was not restored. Native
+feedback acceptance, broader CI/package validation and independent review remain
+outstanding. No native restart or live publication was performed.
+
+#### Sidebar review repairs — 2026-09-30, task 24
+
+A valid pending sidebar intent now suppresses ordinary channel startup even before
+app navigation binds its presentation in a layout effect. Consumption still needs
+the exact destination match; a consumed/retired intent does not keep Channel
+suspended. Deterministically held undefined presentations cover both the saved
+same channel and a different saved channel, asserting no channel-window ensure
+or reading lease before/after binding and successful return to Channel. Both
+cases failed against the prior predicate.
+
+Back restores focus only to a connected, visible, non-inert usable control,
+otherwise the visible selected tab. Two browser cases (four engine runs) use the
+real AppShell's closed narrow drawer and collapsed desktop sidebar, including its
+inert/aria-hidden/CSS behavior. All four fail with the old focus restore and pass
+with the repair. No production shell, navigation API or timer was added.
+
+Current focused evidence: TypeScript, changed-file Biome, 97 Vitest checks across
+seven integration/support files, and 16 passing browser checks in the complete
+session file (Chromium + WebKit). That file still has four failures: Refresh
+layout/color and `/session` publication-start, each in both engines, matching the
+known pre-repair failures. No assertions were disabled. Logs are
+`/tmp/task24-{focused,directory,browser-full,handoff-before,focus-before}.log`.
+Independent recheck, human/native acceptance and broader validation remain open;
+no commit, push, native restart or live publication was performed.
+
+
+### Sidebar display titles — ready to try (2026-09-30)
+
+Personal sidebar titles remove only exact tagged agent-name mentions recognized
+by the shared safe display matcher and cached profiles/`session.agentChoices`.
+Mentions may appear anywhere in the prompt; the remaining text is only whitespace
+normalized, never reworded. A mentions-only prompt becomes **Session with Blossom**
+(or **Session with Blossom, Bubbles**). Human, untagged, unknown, ambiguous and
+code mentions stay literal. Edited bodies keep their plain excerpt, including
+quiet/chip roots. Reference-only tags can inform a title, not session eligibility.
+
+The existing passive DTO keeps its original 160-character excerpt unchanged and
+adds at most 161 unnormalized UTF-16 code units for title context, plus a separately
+256-key reference list. The extra unit detects a cut: incomplete names, known
+longer-name prefixes, link-like spans and incomplete legacy qualifiers are not guessed. Truncated
+prefixes never claim to be mentions-only prompts. No complete body/event copy,
+profile/choice ensure, new reader, polling or model call is added. Cached name
+changes update titles; activity-only updates do not refold them, and unchanged
+visible rows preserve snapshot identity. Directory chips/previews, original
+messages, sharing, sidebar cap/order, access and activity semantics are unchanged.
+
+### Session spacing and identity placement — 2026-09-30 feedback
+
+The user rejected underlines for this surface. Channel view selection now uses
+shared `Tabs`' existing underline-free workspace variant rather than the panel
+variant; no global tab styling changed. Personal session children use 4px vertical
+padding (28px row height at the default 14/20 type role), and selected child text
+uses medium weight rather than an underline. View all remains muted and unlined.
+Directory rows start with their existing 24px root-starter avatar instead of a
+clipboard glyph; the timestamp is the rightmost element. Timestamp semantics remain
+**last observed conversational message**, not agent completion or process status.
+No identity reads, timestamp inference or ordering behavior changed.
+
+Focused checks for this feedback: 40 React/hook tests and four Chromium/WebKit
+layout/creation journeys passed, including light/dark and 390/740/1280/1512px
+screenshots. Browser assertions cover the hidden tab indicator, no child underline,
+vertical padding, leading avatar and trailing time. Screenshots inspected; native
+human feedback remains the next step. Existing broader rebase gaps are unchanged.
+
+### Session history and header actions — 2026-09-30 feedback
+
+Routine sampled-history caveats, Refresh and Load older now live under the
+initially collapsed **History options** disclosure. Loading, cached/partial
+warnings, retention limits and errors with Retry remain visible outside it.
+The detail header keeps its compact title/divider and offers icon-only **Share in
+channel** and **Open in thread**, with shared hover/keyboard tooltips. Open in
+thread retires the exact directory selection and delegates the same root ID to
+Channels' ordinary thread navigation; it does not copy, publish, or share a
+message, modify the parent draft, or introduce a new read-state policy. Revoked
+plugin, access, session, channel and connection callbacks cannot navigate.
+
+Focused evidence on the uncommitted feedback tree: TypeScript, changed-file
+Biome, 78 tests across the directory hook, real Channels integration and history
+controls, and 18 of 20 cases in the complete Chromium/WebKit session browser file.
+The two remaining failures are the already-known `/session` publication-start
+case (one per engine), not this UI slice. No browser cases were added or removed;
+existing layout and Share journeys retain their coverage. Inspected screenshots
+cover collapsed history, compact actions and ordinary-thread handoff, with
+light/dark and 390/740/1280/1512px captures. No native restart, live send, commit,
+or push was performed; human feedback and broader validation remain separate.
+
+The combined Open in thread → Sessions detail → Share regression is now fixed
+within Channels: only after the retained channel draft accepts the reference,
+normal channel navigation retires the old ordinary thread route and its handoff
+fallback. Failed append leaves the exact directory selection and route intact.
+The successful return selects Channel, leaves the ordinary panel closed and
+focuses the composer; rich text, exact mentions and Undo survive. Back can still
+revisit the ordinary thread. No global navigation or session controller changed.
+
+Regression evidence: the combined real Channels integration failed before the fix
+(panel revival), and the extended existing Share journey failed in both Chromium
+and WebKit (composer focus). Both pass afterward. The focused integration/hook/link
+files pass 73 tests; TypeScript and changed-file Biome pass. The complete browser
+file still passes 18/20 cases, with only the two previously documented `/session`
+publication-start failures (one per engine). No browser cases were added or removed;
+the existing Share case now proves this combined native-focus handoff as well as
+its retained-draft, exact-recipient and explicit-send contracts. Native/human
+acceptance and broader validation remain separate; no live send or restart ran.

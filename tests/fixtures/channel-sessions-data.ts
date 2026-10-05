@@ -26,6 +26,7 @@ export function sessionsData({
   canonicalScope = false,
   rowCount = 2,
   firstThreadReplies = 1,
+  firstTitle,
   identities,
   outboxStorage = { load: () => [], save() {} },
 }: {
@@ -34,6 +35,7 @@ export function sessionsData({
   canonicalScope?: boolean;
   rowCount?: number;
   firstThreadReplies?: number;
+  firstTitle?: string | undefined;
   identities?: readonly [Key, Key, Key, Key];
   outboxStorage?: OutboxStorage;
 } = {}) {
@@ -53,6 +55,7 @@ export function sessionsData({
     readers: 0,
     activeReaders: 0,
     readingLeases: 0,
+    windowEnsures: [] as string[],
     observerControls: [] as (number | null)[],
   };
   const rows: { rootId: string }[] = [];
@@ -62,10 +65,10 @@ export function sessionsData({
     const at = now - (i < 3 ? 0 : i < 7 ? 86400 : 86400 * (i - 5));
     const title =
       i === 0
-        ? "Review the release checklist"
+        ? (firstTitle ?? "Review the release checklist")
         : i === 1
           ? "Explore the onboarding flow"
-          : `Investigate task ${i + 1}`;
+          : `${i === 2 ? "@Fixture member " : ""}Investigate task ${i + 1}`;
     const root = message(
       viewer,
       "general",
@@ -336,6 +339,13 @@ export function sessionsData({
   // Wrap only allocation to measure the real reader lifetime, not substitute it.
   const session = {
     ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      ensure(channelId: string) {
+        report.windowEnsures.push(channelId);
+        return owner.session.channels.ensure(channelId);
+      },
+    },
     unread: {
       ...owner.session.unread,
       reading(...args: Parameters<typeof owner.session.unread.reading>) {

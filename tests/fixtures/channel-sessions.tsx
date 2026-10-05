@@ -1,12 +1,24 @@
+import { AppShell } from "../../src/app/shell/AppShell";
+import { createCommunities } from "../../src/features/communities/service";
+import { AccountActionsService } from "../../src/features/account-actions/service";
+import { writeView } from "../../src/shared/view-state";
 import type { Key } from "../../src/features/relay/testing";
 import { getPublicKey } from "nostr-tools";
 import { readChannelSessionDraft } from "../../src/bundled/sessions/channel-session-draft";
 import { Context } from "@deepseek-ai/cordis";
-import { StrictMode, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  StrictMode,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { PluginRuntime } from "../../src/plugins/runtime";
 import { ConversationService } from "../../src/features/conversation/service";
 import { PanelsService } from "../../src/features/panels/service";
+import { ChannelSidebar } from "../../src/features/channel-navigation/ChannelSidebar";
+import { ChannelNavigationProvider } from "../../src/features/channel-navigation/ChannelNavigationState";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import * as linksPlugin from "../../src/bundled/links/index";
 import * as mentionsPlugin from "../../src/bundled/mentions/index";
@@ -27,8 +39,11 @@ const identities = seeds?.map((seed) => {
 }) as [Key, Key, Key, Key] | undefined;
 const data = sessionsData({
   agentActivity: true,
+  firstTitle: new URL(location.href).searchParams.has("long-title")
+    ? "Review the release checklist ".repeat(12)
+    : undefined,
   firstThreadReplies: new URL(location.href).searchParams.has("inline")
-    ? 18
+    ? 28
     : 1,
   rowCount:
     new URL(location.href).searchParams.has("share") ||
@@ -40,6 +55,7 @@ const data = sessionsData({
   canonicalScope: true,
   ...(identities ? { identities } : {}),
 });
+writeView(data.scope, "selected-channel", "general");
 const ctx = new Context();
 const runtime = new PluginRuntime(ctx, async (plugin) =>
   plugin.manifest.id === "buzz.links"
@@ -50,11 +66,25 @@ const runtime = new PluginRuntime(ctx, async (plugin) =>
         ? activityPlugin
         : sessionsPlugin,
 );
+// Opt in only for actual shell visibility/focus regression coverage.
+const shellContext = new URL(location.href).searchParams.has("shell")
+  ? new Context()
+  : undefined;
+const shellServices = shellContext && {
+  communities: createCommunities(shellContext, false),
+  accountActions: new AccountActionsService(ctx),
+};
 const pages = new PagesService(ctx);
 const navigationHost = provideNavigation(ctx, undefined);
 ctx.provide("relay", data.relay);
 const conversation = new ConversationService(ctx);
 const panels = new PanelsService(ctx);
+const emptyProviders = [] as const;
+const providers = {
+  snapshot: () => emptyProviders,
+  subscribe: () => () => {},
+  register: () => {},
+};
 const plugin = {
   manifest: {
     id: "buzz.sessions",
@@ -130,50 +160,134 @@ function FixtureApp() {
     navigationHost.navigation.subscribe,
     navigationHost.navigation.snapshot,
   );
-  const navigation = useMemo(
-    () =>
-      navigationHost.request(navigationState.attempt, {
+  const [presentation, setPresentation] = useState<{
+    attempt: typeof navigationState.attempt;
+    request: ReturnType<typeof navigationHost.request>["request"];
+  }>();
+  useLayoutEffect(() => {
+    const { request, dispose } = navigationHost.request(
+      navigationState.attempt,
+      {
         valid: () => true,
         subscribe: () => () => {},
-      }),
-    [navigationState.attempt],
-  );
+      },
+    );
+    setPresentation({ attempt: navigationState.attempt, request });
+    return dispose;
+  }, [navigationState.attempt]);
+  const navigation =
+    presentation?.attempt === navigationState.attempt
+      ? presentation.request
+      : undefined;
   const [privatePage, setPrivatePage] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: match the host drawer closing on each navigation attempt.
+  useEffect(() => setNavigationOpen(false), [navigationState.attempt]);
   const PrivatePage = registered[0]?.component;
-  return (
-    <main
-      style={{
-        height: "100dvh",
-        padding: "var(--space-2)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <nav
-        aria-label="Fixture destinations"
-        style={{ display: "flex", flex: "none" }}
-      >
-        <button type="button" onClick={() => setPrivatePage(false)}>
-          Messages fixture
-        </button>
-        <button type="button" onClick={() => setPrivatePage(true)}>
-          Private Sessions fixture
-        </button>
-      </nav>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {privatePage ? (
-          PrivatePage && <PrivatePage />
-        ) : (
+  if (shellServices)
+    return (
+      <ChannelNavigationProvider relay={data.relay}>
+        <AppShell
+          {...shellServices}
+          pages={registered}
+          selected="buzz.channels/channels"
+          navigationAttempt={navigationState.attempt.id}
+          onSelect={() => {}}
+          tone="fixture"
+          workspace
+          sidebar={() => (
+            <ChannelSidebar
+              relay={data.relay}
+              navigator={navigationHost.navigation}
+              providers={providers}
+              target={navigationState.entry.target}
+              channelDirectories={conversation.channelDirectories}
+              sessionsEnabled={registered.some(
+                (page) => page.pluginId === "buzz.sessions",
+              )}
+              agentsEnabled={false}
+            />
+          )}
+        >
           <ChannelsPage
+            providers={providers}
             navigator={navigationHost.navigation}
-            navigation={navigation.request}
+            navigation={navigation}
             extensions={conversation}
             relay={data.relay}
             panels={panels}
+            pages={pages}
           />
-        )}
-      </div>
-    </main>
+        </AppShell>
+      </ChannelNavigationProvider>
+    );
+  return (
+    <ChannelNavigationProvider relay={data.relay}>
+      <main
+        style={{
+          height: "100dvh",
+          padding: "var(--space-2)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <nav
+          aria-label="Fixture destinations"
+          style={{ display: "flex", flex: "none" }}
+        >
+          <button
+            type="button"
+            onClick={() => setNavigationOpen((open) => !open)}
+            aria-expanded={navigationOpen}
+          >
+            Toggle fixture navigation
+          </button>
+          <button type="button" onClick={() => setPrivatePage(false)}>
+            Messages fixture
+          </button>
+          <button type="button" onClick={() => setPrivatePage(true)}>
+            Private Sessions fixture
+          </button>
+        </nav>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            position: "relative",
+          }}
+        >
+          <div className="shell-navigation" data-expanded={navigationOpen}>
+            <ChannelSidebar
+              relay={data.relay}
+              navigator={navigationHost.navigation}
+              providers={providers}
+              target={navigationState.entry.target}
+              channelDirectories={conversation.channelDirectories}
+              sessionsEnabled={registered.some(
+                (page) => page.pluginId === "buzz.sessions",
+              )}
+              agentsEnabled={false}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {privatePage ? (
+              PrivatePage && <PrivatePage />
+            ) : (
+              <ChannelsPage
+                providers={providers}
+                navigator={navigationHost.navigation}
+                navigation={navigation}
+                extensions={conversation}
+                relay={data.relay}
+                panels={panels}
+                pages={pages}
+              />
+            )}
+          </div>
+        </div>
+      </main>
+    </ChannelNavigationProvider>
   );
 }
 createRoot(root).render(
@@ -185,4 +299,5 @@ window.addEventListener("pagehide", () => {
   data.dispose();
   void runtime.dispose();
   void ctx.fiber.dispose();
+  void shellContext?.fiber.dispose();
 });

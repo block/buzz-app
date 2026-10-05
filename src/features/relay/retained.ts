@@ -112,6 +112,12 @@ export function retainedMessages(
         createdAt: event.created_at,
         // Bound before normalization too: no multi-MiB string survives in this DTO.
         excerpt: content.slice(0, 160).trim().replace(/\s+/g, " "),
+        titleSource: content.slice(0, 161),
+        mentionReferences: identities(
+          event.tags.flatMap(([name, value]) =>
+            name === "mention" ? [value] : [],
+          ),
+        ),
         threadRootId: threadReference(event)?.rootId,
         edited: !!edit,
         quietSession: presentation === "quiet",

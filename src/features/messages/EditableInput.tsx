@@ -1,3 +1,4 @@
+import { SessionReferenceLabel } from "../sessions/SessionReferenceLabel";
 import {
   useLayoutEffect,
   useRef,
@@ -72,7 +73,9 @@ import {
   type ComposerFormat,
   type ComposerLinkEdit,
   type ComposerInputElement,
+  type ComposerCheckpoint,
 } from "./composer-dom";
+import { resourceTransactionError } from "./composer-resource";
 import { isApplePlatform } from "../shortcuts/format";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
@@ -147,6 +150,7 @@ export type EditableInputProps = Omit<
   "onChange" | "onInput"
 > & {
   ref: RefObject<ComposerInputElement | null>;
+  retained?: RefObject<ComposerCheckpoint | null>;
   value: string;
   disabled: boolean;
   placeholder: string;
@@ -160,6 +164,7 @@ export type EditableInputProps = Omit<
  * React owns only the noneditable token artwork and the surrounding composer. */
 export function EditableInput({
   ref,
+  retained,
   draft,
   decorationsFor,
   value: _value,
@@ -223,7 +228,9 @@ export function EditableInput({
       current.current.decorationsFor(current.current.draft),
     );
     let editor: EditorView;
-    let separateHistory = false;
+    let separateHistory = retained?.current?.separateHistory ?? false;
+    plain.current = retained?.current?.plain ?? [];
+    if (retained?.current) emitted.current = retained.current.draft;
     const editable = () => !current.current.disabled && !locked.current;
     const projection = () => projectComposerDocument(editor.state.doc);
     const tokenViews = () => refresh((revision) => revision + 1);
@@ -552,13 +559,8 @@ export function EditableInput({
       tr.setSelection(
         Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
       );
-      const next = projectComposerDocument(tr.doc);
-      if (next.tokens.filter((token) => token.node.attrs.resource).length > 32)
-        return "Add at most 32 links to one message";
-      if (composerMarkdown(next.draft).length > current.current.maxLength)
-        return "Message is too long to add this link";
-      if (brokenResources(tr.doc, next).length)
-        return "Links can't be added inside code or other Markdown here";
+      const error = resourceTransactionError(tr, current.current.maxLength);
+      if (error) return error;
       editor.dispatch(tr.scrollIntoView());
       editor.focus();
       return true;
@@ -1005,7 +1007,10 @@ export function EditableInput({
     editor = new EditorView(
       { mount: mount.current },
       {
-        state: state(),
+        state:
+          retained?.current?.state.reconfigure({
+            plugins: [history(), normalize],
+          }) ?? state(),
         editable,
         attributes: {
           role: "textbox",
@@ -1462,6 +1467,20 @@ export function EditableInput({
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
       insertResource: { configurable: true, value: insertResource },
+      captureCheckpoint: { configurable: true, value: () => snapshot() },
+      restoreCheckpoint: {
+        configurable: true,
+        value: (saved: ComposerCheckpoint) => {
+          plain.current = [...saved.plain];
+          separateHistory = saved.separateHistory;
+          emitted.current = saved.draft;
+          editor.updateState(
+            saved.state.reconfigure({ plugins: [history(), normalize] }),
+          );
+          tokenViews();
+          selected();
+        },
+      },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
@@ -1503,18 +1522,10 @@ export function EditableInput({
       checkpoint: {
         configurable: true,
         value: () => {
-          const saved = editor.state;
-          const savedDraft = emitted.current;
-          const savedPlain = [...plain.current];
-          const savedSeparateHistory = separateHistory;
+          const saved = snapshot();
           return () => {
-            if (view.current !== editor) return;
-            plain.current = savedPlain;
-            separateHistory = savedSeparateHistory;
-            emitted.current = savedDraft;
-            editor.updateState(saved);
-            tokenViews();
-            selected();
+            if (retained) retained.current = saved;
+            ref.current?.restoreCheckpoint(saved);
           };
         },
       },
@@ -1553,16 +1564,29 @@ export function EditableInput({
         selected();
       },
     };
+    function snapshot(): ComposerCheckpoint {
+      return {
+        // History is retained, but the view-bound normalization plugin is not.
+        state: editor.state.reconfigure({ plugins: [history()] }),
+        draft: emitted.current,
+        plain: [...plain.current],
+        separateHistory,
+      };
+    }
     ref.current = root;
+    // StrictMode recreates a focused view on the same DOM element. Reconcile
+    // its native selection with the retained state before observing DOM edits.
+    if (document.activeElement === root) editor.focus();
     tokenViews();
     selected();
     return () => {
+      if (retained) retained.current = snapshot();
       ref.current = null;
       view.current = null;
       api.current = null;
       editor.destroy();
     };
-  }, [ref]);
+  }, [ref, retained]);
 
   useLayoutEffect(() => {
     const editor = view.current;
@@ -1643,10 +1667,16 @@ export function EditableInput({
         return createPortal(
           host.resource ? (
             // Host-owned artwork: restore never depends on the providing plugin.
-            <>
-              <span className="sr-only">Resource: </span>
-              <span className={styles.resource}>{host.resource.label}</span>
-            </>
+            <SessionReferenceLabel
+              href={host.resource.uri}
+              label={host.resource.label}
+              fallback={
+                <>
+                  <span className="sr-only">Resource: </span>
+                  <span className={styles.resource}>{host.resource.label}</span>
+                </>
+              }
+            />
           ) : (
             (decoration?.content ?? host.source)
           ),

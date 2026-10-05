@@ -1,3 +1,6 @@
+import { sessionReference } from "../sessions/session-reference";
+import { appendComposerResource } from "./composer-resource";
+import { projectComposerDocument } from "./composer-document";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
@@ -339,4 +342,100 @@ describe("composer resources", () => {
     });
     expect(found).toBe(true);
   });
+});
+
+it.each([
+  "**bold**",
+  "`inline code`",
+  "```\nblock code\n```",
+  "[old](https://example.com)",
+])(
+  "Share appends beyond %s without replacing selection, and retains one history step",
+  (text) => {
+    const h = mount(text);
+    act(() => h.input.setSelectionRange(0, h.input.value.length));
+    const before = h.input.captureCheckpoint();
+    const tr = appendComposerResource(before.state, fix, 16000);
+    if (typeof tr === "string") throw new Error(tr);
+    const state = before.state.apply(tr);
+    const draft = projectComposerDocument(state.doc).draft;
+    act(() => h.input.restoreCheckpoint({ ...before, state, draft }));
+    expect(composerMarkdown(draft)).toContain(text);
+    expect(links(composerMarkdown(draft))).toContain(uri);
+    act(() => h.input.undo(false));
+    expect(h.input.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+      true,
+    );
+    act(() => h.input.undo(true));
+    expect(h.input.captureCheckpoint().state.doc.eq(state.doc)).toBe(true);
+  },
+);
+
+it("Share failures do not mutate the checkpoint or selection", () => {
+  const h = mount("unchanged");
+  const before = h.input.captureCheckpoint();
+  expect(appendComposerResource(before.state, fix, 4)).toBe(
+    "Message is too long to add this link",
+  );
+  expect(
+    appendComposerResource(
+      before.state,
+      { uri: "javascript:bad", label: "x" },
+      16000,
+    ),
+  ).toBe("This link can't be added");
+  expect(h.input.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(true);
+  expect(h.input.selectionStart).toBe(9);
+});
+
+it.each(["bold", "code", "code_block", "link"] as const)(
+  "Share escapes a rich %s tail and leaves its history and marks intact",
+  (format) => {
+    const h = mount("Tail");
+    act(() => {
+      h.input.setSelectionRange(0, 4);
+      if (format === "link")
+        h.input.editLink()?.save("Tail", "https://example.com");
+      else h.input.toggleFormat(format);
+      h.input.setSelectionRange(1, 3);
+    });
+    const before = h.input.captureCheckpoint();
+    const tr = appendComposerResource(before.state, fix, 16000);
+    if (typeof tr === "string") throw new Error(tr);
+    const state = before.state.apply(tr);
+    const draft = projectComposerDocument(state.doc).draft;
+    const token = projectComposerDocument(state.doc).tokens.find(
+      (token) => token.node.attrs.resource,
+    );
+    expect(token?.node.marks).toEqual([]);
+    expect(links(composerMarkdown(draft))).toContain(uri);
+    expect(composerMarkdown(draft)).toContain(composerMarkdown(before.draft));
+    act(() => h.input.restoreCheckpoint({ ...before, state, draft }));
+    act(() => h.input.undo(false));
+    expect(h.input.captureCheckpoint().state.doc.eq(before.state.doc)).toBe(
+      true,
+    );
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([1, 3]);
+    act(() => h.input.undo(true));
+    expect(h.input.captureCheckpoint().state.doc.eq(state.doc)).toBe(true);
+  },
+);
+
+it("Share immediately renders the same inert Session chip without changing resource source", () => {
+  const reference = sessionReference(
+    { viewer: "a".repeat(64), communityOrigin: "https://sessions.example" },
+    "general",
+    "b".repeat(64),
+    "@Blossom review the release",
+  );
+  const resource = { uri: reference.href, label: reference.label };
+  const h = mount();
+  expect(h.insert(resource)).toBe(true);
+  const chip = h.input.querySelector('[data-link-kind="session"]');
+  expect(chip).toHaveTextContent(
+    "Session · bbbbbbbb@Blossom review the release",
+  );
+  expect(h.input.querySelector("a,button")).toBeNull();
+  expect(h.markdown().trim()).toBe(composerResource(resource)?.source);
+  expect(document.activeElement).toBe(h.input);
 });

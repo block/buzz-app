@@ -9,6 +9,17 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import type {
+  ChannelThreadDirectory,
+  ContributionReader,
+} from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
+import {
+  DirectorySidebar,
+  directoryAccess,
+  sidebarDirectoryIntent,
+} from "../../bundled/channels/DirectorySidebar";
+import { contributionKey } from "../conversation/ContributionBoundary";
 import { ChannelLifecycleDialog } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
@@ -86,11 +97,17 @@ import styles from "../../bundled/channels/Channels.module.css";
 
 type Props = {
   relay: RelayData;
+  channelDirectories?: ContributionReader<ChannelThreadDirectory> | undefined;
   navigator: Navigation;
   providers: TemplateProviders;
   target: OpenTarget;
   sessionsEnabled: boolean;
   children: ReactNode;
+};
+const emptyDirectories: readonly Contribution<ChannelThreadDirectory>[] = [];
+const absentDirectories: ContributionReader<ChannelThreadDirectory> = {
+  snapshot: () => emptyDirectories,
+  subscribe: () => () => {},
 };
 export function ChannelSidebar(props: Props) {
   const connection = useRelayConnection(props.relay);
@@ -187,6 +204,7 @@ class SidebarBoundary extends Component<
 }
 function ReadySidebar({
   relay,
+  channelDirectories = absentDirectories,
   navigator,
   providers,
   target,
@@ -283,6 +301,61 @@ function ReadySidebar({
     [workingIds],
   );
   const handoff = useChannelNavigation();
+  const entries = useSyncExternalStore(
+    channelDirectories.subscribe,
+    channelDirectories.snapshot,
+  );
+  const attempt = useSyncExternalStore(
+    navigator.subscribe,
+    navigator.snapshot,
+  ).attempt;
+  const isDirectoryCurrent = useCallback(
+    () => navigator.snapshot().attempt === attempt,
+    [navigator, attempt],
+  );
+  const openDirectoryIntent = handoff?.openDirectory;
+  const openDirectory = useCallback(
+    (
+      entry: Contribution<ChannelThreadDirectory>,
+      channelId: string,
+      rootId?: string,
+    ) => {
+      if (!viewer || !openDirectoryIntent) return false;
+      const focusTarget =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : undefined;
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+      openDirectoryIntent(
+        sidebarDirectoryIntent(
+          { session: queries, scope, channelId, entry, rootId },
+          channelDirectories,
+          relay,
+          navigator,
+          focusTarget,
+        ),
+      );
+      return true;
+    },
+    [
+      viewer,
+      openDirectoryIntent,
+      navigator,
+      scope,
+      queries,
+      channelDirectories,
+      relay,
+    ],
+  );
+  const directorySelection = handoff?.directorySelection;
   const lifecycleDialog = handoff?.lifecycleDialog;
   const draftParents = handoff?.draftParents ?? [];
   const draftParent =
@@ -1263,7 +1336,7 @@ function ReadySidebar({
                           session={queries}
                           working={workingChannels.has(channel.id)}
                           selected={composingMessage ? undefined : selected}
-                          collapsed={sidebar.collapsed.includes(
+                          collapsed={sidebar.isCollapsed(
                             `session-children:${channel.id}`,
                           )}
                           onToggle={sidebar.toggle}
@@ -1272,6 +1345,42 @@ function ReadySidebar({
                           }
                           draftSelected={draftParent === channel.id}
                           sessions={sessions}
+                          extraChildren={
+                            directoryAccess(queries, channel.id) !==
+                              undefined &&
+                            entries.some((entry) => entry.sidebar)
+                              ? entries
+                                  .filter((entry) => entry.sidebar)
+                                  .map((entry) => (
+                                    <DirectorySidebar
+                                      key={contributionKey(entry)}
+                                      entry={entry}
+                                      registry={channelDirectories}
+                                      relay={relay}
+                                      session={queries}
+                                      scope={scope}
+                                      channelId={channel.id}
+                                      channelName={channel.name}
+                                      isCurrent={isDirectoryCurrent}
+                                      open={openDirectory}
+                                      directorySelected={
+                                        current?.id === channel.id &&
+                                        directorySelection?.entry === entry &&
+                                        directorySelection.channelId ===
+                                          channel.id
+                                      }
+                                      selectedRootId={
+                                        current?.id === channel.id &&
+                                        directorySelection?.entry === entry &&
+                                        directorySelection.channelId ===
+                                          channel.id
+                                          ? directorySelection.rootId
+                                          : undefined
+                                      }
+                                    />
+                                  ))
+                              : undefined
+                          }
                           onSelect={select}
                           onNewSession={startSession}
                           onOpenThread={openActivityThread}

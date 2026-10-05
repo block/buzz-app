@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { ChatCircleIcon } from "../../shared/design-system/icons";
 import styles from "./SessionsDirectory.module.css";
 
 export type ThreadPreviewRow = Readonly<{
   rootId: string;
   title: string;
+  preview?: ReactNode;
+  avatar?: ReactNode;
   replyCount: number;
   lastMessageAt: number;
 }>;
@@ -61,15 +62,6 @@ export function SessionsDirectory({
   }
   return (
     <section data-buzz-ui="" className={styles.directory} aria-label="Sessions">
-      <div className={styles.intro}>
-        <h2>Sessions</h2>
-        <p>Latest messages in checked history</p>
-        <p>
-          Threads that mention or include an agent. Replies are sampled; some
-          sessions may be missing.
-        </p>
-      </div>
-      {controls}
       {!sorted.length && showEmpty && (
         <p className={styles.empty}>
           No agent sessions found in the checked history
@@ -93,10 +85,12 @@ export function SessionsDirectory({
                 className={styles.row}
                 onClick={() => openThread(row.rootId)}
               >
-                <ChatCircleIcon size={20} aria-hidden="true" />
+                {row.avatar}
                 <span className={styles.text}>
-                  <strong>{row.title}</strong>
-                  <span>
+                  <span className={styles.preview}>
+                    {row.preview ?? row.title}
+                  </span>
+                  <span className="sr-only">
                     {row.replyCount}{" "}
                     {row.replyCount === 1 ? "reply" : "replies"}
                   </span>
@@ -116,6 +110,7 @@ export function SessionsDirectory({
           )),
         ])}
       </ul>
+      {controls && <footer className={styles.footer}>{controls}</footer>}
     </section>
   );
 }

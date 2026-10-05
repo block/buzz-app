@@ -36,6 +36,7 @@ const record = (value: unknown, n = 10, agent = id(90)) => ({
   agent,
   createdAt: 1,
   receivedAt: 1,
+  historical: false,
   kind: "test",
   channelIds: ["a"],
   plaintext: typeof value === "string" ? value : JSON.stringify(value),
@@ -43,7 +44,19 @@ const record = (value: unknown, n = 10, agent = id(90)) => ({
 const snapshot = (
   records: ReturnType<typeof record>[],
   turns: readonly ActivityTurn[] = [turn],
-) => ({ status: "listening" as const, records, turns, typing: [], trimmed: 0 });
+) => ({
+  status: "listening" as const,
+  records,
+  turns,
+  typing: [],
+  trimmed: 0,
+  history: "unavailable" as const,
+  hasOlder: false,
+  historyOlder: false,
+  historySkipped: 0,
+  historyAgents: [],
+  capture: "unknown" as const,
+});
 const select = (
   records: ReturnType<typeof record>[],
   turns: readonly ActivityTurn[] = [turn],

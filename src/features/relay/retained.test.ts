@@ -270,6 +270,7 @@ describe("passive retained channel evidence", () => {
     store.accept([root]);
     const before = retained();
     expect(before[0]?.excerpt).toHaveLength(160);
+    expect(before[0]?.titleSource).toHaveLength(161);
     expect(JSON.stringify(before).length).toBeLessThan(1024);
     expect(Object.isFrozen(before)).toBe(true);
     store.accept([
@@ -309,6 +310,25 @@ describe("passive retained channel evidence", () => {
       }),
     ]);
     expect(retained()).toEqual([]);
+    store.dispose();
+  });
+  it("retains bounded raw title context and reference tags without changing the ordinary excerpt or eligibility", () => {
+    const { store, retained, read, directory } = setup();
+    const content = `    @Blossom\n${"x".repeat(200)}`;
+    const root = message(viewer, "a", content, 1, [
+      ["mention", agent.pubkey],
+      ["mention", "invalid"],
+    ]);
+    store.accept([root]);
+    expect(retained()[0]).toMatchObject({
+      excerpt: content.slice(0, 160).trim().replace(/\s+/g, " "),
+      titleSource: content.slice(0, 161),
+      mentions: [],
+      mentionReferences: [agent.pubkey],
+    });
+    expect(root.content).toBe(content);
+    expect(read).not.toHaveBeenCalled();
+    expect(directory.ensure).not.toHaveBeenCalled();
     store.dispose();
   });
   it("retains initial accepted locals without allocating any window, rejects their pending edits", () => {

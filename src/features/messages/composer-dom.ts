@@ -1,3 +1,5 @@
+import type { EditorState } from "prosemirror-state";
+import type { PlainLink } from "./composer-link-edit";
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 
@@ -68,6 +70,14 @@ export type ComposerLinkEdit = {
   remove(): boolean;
 };
 
+/** Host-retained editor state; no view, DOM or contribution demand survives detach. */
+export type ComposerCheckpoint = {
+  state: EditorState;
+  draft: MentionDraft;
+  plain: PlainLink[];
+  separateHistory: boolean;
+};
+
 /** Public commands remain in authored-source offsets. Only the editor adapter
  * translates them into document positions; callers never manipulate its DOM. */
 export type ComposerInputElement = HTMLDivElement & {
@@ -85,6 +95,8 @@ export type ComposerInputElement = HTMLDivElement & {
   ): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
+  captureCheckpoint(): ComposerCheckpoint;
+  restoreCheckpoint(saved: ComposerCheckpoint): void;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
   editLink(): ComposerLinkEdit | null;
@@ -94,7 +106,6 @@ export type ComposerInputElement = HTMLDivElement & {
   /** Retain this editor's document, selection and undo state across a temporary edit. */
   checkpoint(): () => void;
 };
-
 
 export function editorText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";

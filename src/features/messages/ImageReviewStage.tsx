@@ -69,7 +69,7 @@ export function ImageReviewStage({
   const selectedUrlRef = useRef(selectedUrl);
   selectedUrlRef.current = selectedUrl;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
-  const canCopyImage = !!source && supportsImageCopy();
+  const canCopyImage = proxySource && !nativeSource && supportsImageCopy();
   const {
     zoom,
     offset,
@@ -77,7 +77,8 @@ export function ImageReviewStage({
     panTo,
     constrain,
   } = useImageViewport(stage, image, source);
-  const idle = useMediaControls(stage, source);
+  const copyFeedbackVisible = copying || copyNotice !== undefined;
+  const idle = useMediaControls(stage, source, copyFeedbackVisible);
   const pannable = zoom > 1;
   const nextZoom = ZOOM_PRESETS.find((preset) => preset > zoom) ?? MIN_ZOOM;
   const { departing, prepare } = useImageGalleryMotion(
@@ -206,6 +207,7 @@ export function ImageReviewStage({
       aria-label="Image gallery"
       tabIndex={-1}
       data-controls-idle={idle || undefined}
+      data-controls-revealed={copyFeedbackVisible || undefined}
       data-review-zoomed={zoom !== 1 || undefined}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
@@ -335,7 +337,7 @@ export function ImageReviewStage({
             icon={<PlusIcon size={16} aria-hidden="true" />}
           />
         </div>
-        {source && supportsImageCopy() && (
+        {canCopyImage && (
           <IconButton
             size="sm"
             type="button"

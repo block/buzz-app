@@ -23,7 +23,7 @@ function setup() {
     <ImageReviewStage
       attachments={[{ url: "https://fixture.test/photo.png", kind: "image" }]}
       selectedUrl="https://fixture.test/photo.png"
-      media={(url) => url}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
       select={() => {}}
       onOpenLink={() => false}
     />,
@@ -482,7 +482,7 @@ function copyGallery() {
         attachments={photos}
         selectedUrl={selectedUrl}
         select={select}
-        media={(url) => url}
+        media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
         onOpenLink={() => false}
       />
     );
@@ -496,10 +496,44 @@ function stubImageCopy({ supported = true } = {}) {
   return copy;
 }
 
-it("shows the copy image button only when clipboard image copy is supported", () => {
+it("shows the copy image button only when browser-proxy image copy is supported", () => {
   stubImageCopy({ supported: true });
-  setup();
+  const attachments = [
+    { url: "proxy", kind: "image" as const },
+    { url: "external", kind: "image" as const },
+    { url: "native", kind: "image" as const },
+  ];
+  function SourcesGallery() {
+    const [selectedUrl, select] = useState("proxy");
+    return (
+      <ImageReviewStage
+        attachments={attachments}
+        selectedUrl={selectedUrl}
+        media={(url) =>
+          ({
+            proxy:
+              "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fphoto.png",
+            external: "https://cdn.fixture.test/photo.png",
+            native:
+              "buzz-media://localhost/https%3A%2F%2Ffixture.test%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          })[url]
+        }
+        select={select}
+        onOpenLink={() => false}
+      />
+    );
+  }
+  render(<SourcesGallery />);
   expect(screen.getByRole("button", { name: "Copy image" })).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
 
   cleanup();
   vi.restoreAllMocks();
@@ -564,7 +598,7 @@ it("clears copy feedback when switching gallery images", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(screen.getByRole("img")).toHaveAttribute(
     "src",
-    "https://fixture.test/two.png",
+    "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ftwo.png",
   );
   expect(screen.queryByText("Image copied")).not.toBeInTheDocument();
 });

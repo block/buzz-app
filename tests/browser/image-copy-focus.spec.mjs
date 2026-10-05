@@ -65,6 +65,24 @@ async function clipboardWrites(page) {
   return page.evaluate(() => window.messagesFixture.clipboardGate.writes);
 }
 
+async function expectVisibleFeedback(dialog, message) {
+  const notice = dialog.getByText(message);
+  await expect(notice).toBeVisible();
+  await expect
+    .poll(async () =>
+      notice.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { opacity: style.opacity, visibility: style.visibility };
+      }),
+    )
+    .toEqual({ opacity: "1", visibility: "visible" });
+}
+
+async function expectFeedbackClears(dialog, message, page) {
+  await page.clock.runFor(message === "Image copied" ? 4000 : 6000);
+  await expect(dialog.getByText(message)).toHaveCount(0);
+}
+
 test("image copy keeps keyboard focus while clipboard write is pending", async ({
   page,
 }) => {
@@ -108,6 +126,44 @@ test("image copy keeps keyboard focus while clipboard write is pending", async (
       await expect(dialog.getByText(message)).toBeVisible();
       await expect(copy).toBeFocused();
       await expect(copy).not.toHaveAttribute("aria-busy", "true");
+      await dialog
+        .getByRole("button", { name: "Close fullscreen viewer" })
+        .click();
+      await expect(dialog).toHaveCount(0);
+    }
+  });
+});
+
+test("image copy feedback remains visible after pointer controls hide", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await withMessagesFixture(page, async () => {
+    for (const outcome of ["success", "failure"]) {
+      await installDeferredImageClipboard(page, outcome);
+      await page
+        .getByRole("button", { name: "Review image", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Image viewer" });
+      await expect(dialog).toBeVisible();
+
+      const controls = dialog.locator(
+        "[data-review-chrome][data-image-controls]",
+      );
+      const copy = controls.getByRole("button", { name: "Copy image" });
+      await expect(copy).toBeVisible();
+      await copy.click();
+      try {
+        await expect.poll(() => clipboardWrites(page)).toBe(1);
+        await page.clock.runFor(2200);
+      } finally {
+        await releaseClipboardGate(page);
+      }
+
+      const message =
+        outcome === "success" ? "Image copied" : "Couldn't copy image";
+      await expectVisibleFeedback(dialog, message);
+      await expectFeedbackClears(dialog, message, page);
       await dialog
         .getByRole("button", { name: "Close fullscreen viewer" })
         .click();

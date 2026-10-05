@@ -29,6 +29,7 @@ export function PageIcon({
         src={image}
         alt=""
         aria-hidden="true"
+        draggable={false}
         className="object-contain"
         style={{ width: length, height: length }}
         onError={() => setFailedImage(image)}

@@ -12,7 +12,7 @@ afterEach(() => {
 const owl = "data:image/svg+xml,%3Csvg%20id%3D%22owl%22%3E%3C%2Fsvg%3E";
 const fox = "data:image/png;base64,iVBORfox";
 
-it("renders a declared image as a decorative img", () => {
+it("renders a declared image as a decorative, non-draggable img", () => {
   const { container } = render(
     <PageIcon icon={BrowserIcon} image={owl} size={17} />,
   );
@@ -21,6 +21,8 @@ it("renders a declared image as a decorative img", () => {
   expect(image).toHaveAttribute("src", owl);
   expect(image).toHaveAttribute("alt", "");
   expect(image).toHaveAttribute("aria-hidden", "true");
+  // A native image drag that starts on the icon swallows the row's click.
+  expect(image).toHaveAttribute("draggable", "false");
 });
 
 it("swaps in the component icon when the image fails to load", () => {

@@ -37,7 +37,6 @@ fn production_git(directory: &Path) -> Git {
         Instant::now() + DEADLINE,
         STOP.get_or_init(|| watch::channel(false).0).subscribe(),
     )
-    .unwrap()
 }
 
 /// Production configuration with only file transport re-enabled, so the full read runs offline.
@@ -81,7 +80,21 @@ fn go(git: &Git, url: &str, read: &GitRead) -> Read<Value> {
 #[test]
 fn first_advertisement_does_not_discover_parent_git_config() {
     let parent = tempfile::tempdir().unwrap();
-    let nested = parent.path().join("nested");
+    check_discovery_ceiling(parent.path());
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_ceiling_handles_symlinked_temp_parent() {
+    let parent = tempfile::tempdir().unwrap();
+    let alias = tempfile::tempdir().unwrap();
+    let link = alias.path().join("linked-temp");
+    std::os::unix::fs::symlink(parent.path(), &link).unwrap();
+    check_discovery_ceiling(&link);
+}
+
+fn check_discovery_ceiling(parent: &Path) {
+    let nested = parent.join("nested");
     std::fs::create_dir(&nested).unwrap();
     sh(&nested, &["init", "-q"]);
     let work = nested.join("read");

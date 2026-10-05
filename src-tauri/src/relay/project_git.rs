@@ -171,10 +171,7 @@ async fn serve(
             .prefix("buzz-project-read-")
             .tempdir()
             .map_err(|_| "Repository read failed")?;
-        let git = match Git::new(directory.path(), &header, deadline, stop) {
-            Ok(git) => git,
-            Err(status) => return Ok(failure(status)),
-        };
+        let git = Git::new(directory.path(), &header, deadline, stop);
         let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
@@ -281,16 +278,12 @@ fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
 }
 
 impl Git {
-    fn new(
-        directory: &Path,
-        header: &str,
-        deadline: Instant,
-        stop: watch::Receiver<bool>,
-    ) -> Read<Self> {
-        // `ls-remote` runs before `init`. A ceiling at the canonical parent
-        // prevents discovery of a repository in that parent or above it.
-        let directory = directory.canonicalize().map_err(|_| 502u16)?;
-        let ceiling = directory.parent().ok_or(502u16)?;
+    fn new(directory: &Path, header: &str, deadline: Instant, stop: watch::Receiver<bool>) -> Self {
+        // `ls-remote` runs before `init`. A ceiling at the read directory's
+        // parent prevents discovery of a repository there or above it.
+        let ceiling = directory
+            .parent()
+            .expect("temporary read directory has a parent");
         let path = crate::host_command::effective_path();
         let settings = [
             ("http.extraHeader", header),
@@ -320,14 +313,14 @@ impl Git {
             env.push((format!("GIT_CONFIG_KEY_{index}").into(), (*name).into()));
             env.push((format!("GIT_CONFIG_VALUE_{index}").into(), (*value).into()));
         }
-        Ok(Self {
+        Self {
             program: git_program(&path),
-            directory,
+            directory: directory.into(),
             env,
             deadline,
             stop,
             store_bytes: STORE_BYTES,
-        })
+        }
     }
 
     /// Stdout and stored objects are bounded. On failure, timeout or cancellation the whole

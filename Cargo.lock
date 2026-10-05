@@ -702,6 +702,7 @@ version = "0.1.0"
 dependencies = [
  "cap-std",
  "dirs",
+ "dotenvy",
  "libc",
  "serde",
  "serde_json",

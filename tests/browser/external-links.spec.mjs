@@ -813,7 +813,12 @@ test("PR Last updated remains relative in the built pane without Checks", async 
   await expect(panel.locator("time")).toHaveCSS("font-size", "12px");
   await expect(panel.locator("time")).toHaveText("3 minutes ago");
   await expect(panel.locator("time")).toHaveAttribute("datetime", updatedAt);
-  await expect(panel.getByRole("tablist")).toHaveCount(0);
+  await expect(
+    panel.getByRole("tab", { name: "Discussion", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    panel.getByRole("tab", { name: "Checks", exact: true }),
+  ).toHaveAttribute("aria-selected", "false");
   await expect(panel.locator("[data-check-state]")).toHaveCount(0);
   expect(requests.sort()).toEqual([
     "/repos/sample/project/issues/6/comments",

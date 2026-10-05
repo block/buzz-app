@@ -9,6 +9,8 @@ import {
   fireEvent,
   render as renderDom,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
 import { profileTarget } from "../profiles/target";
@@ -969,6 +971,117 @@ it.each([
   },
 );
 
+// The desktop opener's injected listener (tauri-plugin-opener 2.5.5) launches
+// the system browser for any unprevented left click on an HTTP(S) anchor that
+// targets `_blank` or carries Ctrl/Shift, skipping only Meta/Alt; a browser tab
+// has none of the app's credentials for the raw attachment URL. Without a review
+// host every activation must still open in-app, from the same media source that
+// loaded the thumbnail.
+it.each([
+  ["plain", {}],
+  ["Shift", { shiftKey: true }],
+  ["Ctrl", { ctrlKey: true }],
+  ["Cmd", { metaKey: true }],
+])(
+  "opens a photo in-app from its media source on a %s click when no review host is present",
+  async (_, modifiers) => {
+    const external: string[] = [];
+    const opener = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.altKey
+      )
+        return;
+      const anchor = event
+        .composedPath()
+        .find(
+          (node): node is HTMLAnchorElement =>
+            node instanceof HTMLAnchorElement,
+        );
+      if (
+        !anchor?.href ||
+        (anchor.target !== "_blank" && !event.ctrlKey && !event.shiftKey)
+      )
+        return;
+      if (/^https?:$/.test(anchor.protocol)) external.push(anchor.href);
+    };
+    window.addEventListener("click", opener);
+    const view = renderMessage({
+      row: {
+        ...row,
+        attachments: [{ kind: "image", url: "https://relay.test/media/a.png" }],
+      },
+      media: (url) => `http://buzz-media.localhost/${encodeURIComponent(url)}`,
+    });
+    try {
+      const source =
+        "http://buzz-media.localhost/https%3A%2F%2Frelay.test%2Fmedia%2Fa.png";
+      const thumbnail = screen.getByRole("link", {
+        name: "Open image attachment",
+      });
+      // Middle click, drag and copy on the web yield the authenticated source.
+      expect(thumbnail).toHaveAttribute("href", source);
+      // The browser's own new-tab default, which the opener leaves to Cmd, is
+      // also cancelled.
+      expect(fireEvent.click(thumbnail, { detail: 1, ...modifiers })).toBe(
+        false,
+      );
+      const dialog = screen.getByRole("dialog", { name: "Image attachment" });
+      expect(
+        within(dialog).getByRole("img", { name: "Attachment preview" }),
+      ).toHaveAttribute("src", source);
+      expect(external).toEqual([]);
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Close fullscreen viewer" }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // The modal boundary hands focus back on the next frame.
+      await waitFor(() => expect(thumbnail).toHaveFocus());
+    } finally {
+      window.removeEventListener("click", opener);
+      view.unmount();
+    }
+  },
+);
+
+it("retires the fullscreen image viewer when its retained row is suspended", () => {
+  const tree = (active: boolean) => (
+    <ConversationPresentation value={active}>
+      <div hidden={!active} inert={!active}>
+        <MessageRow
+          row={{
+            ...row,
+            attachments: [{ kind: "image", url: "https://image.test/a.png" }],
+          }}
+          profile={undefined}
+          media={(url) => url}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </div>
+    </ConversationPresentation>
+  );
+  try {
+    const view = renderDom(tree(true));
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open image attachment" }),
+      { detail: 1 },
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Image attachment" }),
+    ).toBeInTheDocument();
+    view.rerender(tree(false));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    view.rerender(tree(true));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",
   async (delivery) => {
@@ -1292,13 +1405,16 @@ it("keeps audio and video players between their original image runs", () => {
   expect(html.match(/role="group" aria-label="1 image"/g)).toHaveLength(2);
   expect(html).toContain("<audio");
   expect(html).toContain("<video");
-  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
-    html.indexOf("<audio"),
+  const first = html.indexOf(
+    'href="/api/relay/media?url=https%3A%2F%2Fimage.test%2Ffirst.png"',
   );
+  const last = html.indexOf(
+    'href="/api/relay/media?url=https%3A%2F%2Fimage.test%2Flast.png"',
+  );
+  expect(first).toBeGreaterThan(-1);
+  expect(first).toBeLessThan(html.indexOf("<audio"));
   expect(html.indexOf("<audio")).toBeLessThan(html.indexOf("<video"));
-  expect(html.indexOf("<video")).toBeLessThan(
-    html.indexOf('href="https://image.test/last.png"'),
-  );
+  expect(html.indexOf("<video")).toBeLessThan(last);
 });
 
 it.each([true, false])(

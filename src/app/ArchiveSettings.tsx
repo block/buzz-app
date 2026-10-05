@@ -9,7 +9,8 @@ import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreference
 import { Select } from "../shared/design-system/ui/Select";
 import { Button } from "../shared/design-system/ui/Button";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
-import styles from "./AgentSettings.module.css";
+import { InlineHeader } from "../shared/design-system/ui/Header";
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 
 export function ArchiveSettings({
   relay,
@@ -61,11 +62,12 @@ function ArchiveCard({
 }) {
   const heading = useId();
   return (
-    <section className={styles.card} aria-labelledby={heading}>
-      <h3 id={heading} className="text-label">
-        Saved agent activity{community ? ` · ${community}` : ""}
-      </h3>
-      {children}
+    <section className="mt-section-gap" aria-labelledby={heading}>
+      <InlineHeader
+        id={heading}
+        title={`Saved agent activity${community ? ` · ${community}` : ""}`}
+      />
+      <SettingsGroup layout="form">{children}</SettingsGroup>
     </section>
   );
 }

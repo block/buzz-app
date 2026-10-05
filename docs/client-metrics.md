@@ -9,7 +9,14 @@ production builds and unit tests get a no-op recorder
 ## Viewing and exporting
 
 Run `just web` or `just desktop`, use the app, then open **Settings →
-Developer → Client performance**. **Export JSON** downloads the summary and
+Developer → Client performance**.
+
+The Developer page leads with broker totals, then session summary cards,
+a source-by-source wait/render chart, and connection measurements. Connection
+history stays horizontally scrollable when its columns cannot fit. These are
+existing session measurements, not a historical analytics store.
+
+**Export JSON** downloads the summary and
 the raw records, so builds can be compared side by side. **Reset** clears the
 records and keeps the current connection's coverage. In the browser console,
 `__buzzClientMetrics.summary()` returns the same data.

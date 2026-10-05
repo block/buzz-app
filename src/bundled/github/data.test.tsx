@@ -45,7 +45,7 @@ it("loads PR details and preserves merged state, branches, and change counts", a
         merged_at: "2026-10-02T12:00:00Z",
         merged_by: { login: "maintainer" },
         user: { login: "author" },
-        head: { label: "block:panels" },
+        head: { label: "block:panels", sha: "head-sha" },
         base: { label: "block:main" },
         changed_files: 3,
         comments: 5,
@@ -74,6 +74,7 @@ it("loads PR details and preserves merged state, branches, and change counts", a
     author: "author",
     body: "An independent panel contract.",
     bodyHtml: "<p>An independent panel contract.</p>",
+    headSha: "head-sha",
   });
   expect(data.facts.map(([label]) => label)).not.toContain("Comments");
   expect(data.facts).toContainEqual([
@@ -94,6 +95,27 @@ it.each([
   await expect(
     loadGitHubDetails(reference, new AbortController().signal),
   ).rejects.toThrow(String(message));
+});
+
+it("does not expose check head plumbing on non-PR objects", async () => {
+  const issue = parseGitHubReference(
+    "https://github.com/sample/project/issues/1",
+  );
+  assert.exists(issue);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          title: "An issue",
+          head: { sha: "not-a-pr" },
+        }),
+      ),
+    ),
+  );
+  expect(
+    (await loadGitHubDetails(issue, new AbortController().signal)).headSha,
+  ).toBeUndefined();
 });
 
 it.each([

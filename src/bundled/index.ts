@@ -1,4 +1,6 @@
 import todosManifest from "./todos/manifest.json";
+import builderlabManifest from "./builderlab/manifest.json";
+import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
@@ -43,6 +45,11 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...builderlabManifest, apiVersion: 1 },
+    module: builderlab,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...feedbackManifest, apiVersion: 1 },
     module: feedback,

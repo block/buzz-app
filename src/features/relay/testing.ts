@@ -5,7 +5,7 @@ import {
   type EventTemplate,
 } from "nostr-tools";
 import type { ReadFilter, RelayEvent } from "./events";
-import type { ReadTransport } from "./transport";
+import type { ReadTransport, Signer } from "./transport";
 
 /** Test-only signing helpers. Real signatures so the transport's verification stays on. */
 export function keypair() {
@@ -18,6 +18,22 @@ export function signed(
   template: Omit<EventTemplate, "created_at"> & { created_at?: number },
 ): RelayEvent {
   return finalizeEvent({ created_at: 1_700_000_000, ...template }, key.secret);
+}
+/** Production-shaped host signer: the host authenticates and sends the exact
+ * bytes, as the native adapter does. The default host forwards to the test's
+ * stubbed `fetch`; credentials never reach JavaScript. */
+export function hostSigner(
+  key: Key = keypair(),
+  request: Signer["request"] = (url, body, signal) =>
+    fetch(url, { method: "POST", body, signal: signal ?? null }),
+) {
+  return {
+    key,
+    getPublicKey: async () => key.pubkey,
+    signEvent: async (template: Parameters<typeof signed>[1]) =>
+      signed(key, template),
+    request,
+  };
 }
 export function message(
   key: Key,

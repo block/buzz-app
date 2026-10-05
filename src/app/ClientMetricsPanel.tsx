@@ -1,3 +1,6 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
+import { InlineHeader } from "../shared/design-system/ui/Header";
+import styles from "./DeveloperSettings.module.css";
 import { Button } from "../shared/design-system/ui/Button";
 import { Accordion } from "../shared/design-system/ui/Accordion";
 import { useEffect, useState } from "react";
@@ -46,29 +49,23 @@ function LoadRow({
   const render = loads.renderP50 ?? 0;
   const width = (value: number) => `${(value / scale) * 100}%`;
   return (
-    <li className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-x-3 gap-y-0.5">
+    <li className={styles.loadRow}>
       <span className="text-body-sm">
         {label} <span className="text-metadata tabular-nums">{loads.n}</span>
       </span>
+      <span className="text-body-sm tabular-nums">{ms(loads.p50)}</span>
       <span
-        className="flex h-2 gap-0.5"
+        className={styles.loadBar}
         title={`Wait ${ms(wait)}, render ${ms(render)}`}
       >
         {loads.n > 0 && wait > 0 && (
-          <span
-            className={`rounded-sm ${WAIT}`}
-            style={{ width: width(wait) }}
-          />
+          <span className={WAIT} style={{ width: width(wait) }} />
         )}
         {loads.n > 0 && (
-          <span
-            className={`rounded-sm ${RENDER}`}
-            style={{ width: width(render) }}
-          />
+          <span className={RENDER} style={{ width: width(render) }} />
         )}
       </span>
-      <span className="text-body-sm tabular-nums">{ms(loads.p50)}</span>
-      <span className="col-start-2 col-end-4 text-metadata tabular-nums">
+      <span className={`${styles.loadDetail} text-metadata tabular-nums`}>
         {loads.n
           ? `wait ${ms(wait)} · render ${ms(render)} · p90 ${ms(loads.p90)}`
           : "No opens yet"}
@@ -136,114 +133,143 @@ export function ClientMetricsPanel() {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="space-y-1">
-          <h3 className="m-0 text-label-sm">Client performance</h3>
-          <p className="m-0 text-body-sm text-muted">
-            Measured in this window since it loaded. Nothing is sent anywhere.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" onClick={download}>
-            Export JSON
-          </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              clientMetrics.reset();
-              setSummary(clientMetrics.summary());
-            }}
-          >
-            Reset
-          </Button>
-        </div>
+    <section
+      aria-labelledby="client-performance-title"
+      className="grid grid-cols-1 gap-8"
+    >
+      <div className={styles.metricsHeader}>
+        <InlineHeader
+          id="client-performance-title"
+          title="Client performance"
+          subtitle="This window, since launch. Data stays on this device."
+          actions={
+            <div className={styles.actions}>
+              <Button type="button" size="sm" onClick={download}>
+                Export JSON
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  clientMetrics.reset();
+                  setSummary(clientMetrics.summary());
+                }}
+              >
+                Reset
+              </Button>
+            </div>
+          }
+        />
+        <SettingsGroup layout="form">
+          <dl className={styles.metrics}>
+            <Stat label="Channel opens" value={String(opens.n)} />
+            <Stat label="Median load" value={ms(opens.p50)} />
+            <Stat
+              label="From cache"
+              value={
+                opens.cacheHitRate === undefined
+                  ? "–"
+                  : `${Math.round(opens.cacheHitRate * 100)}%`
+              }
+            />
+          </dl>
+          {opens.skipped > 0 && (
+            <p className="m-0 text-body-sm text-muted">
+              {opens.skipped} opens not timed: no visible messages to paint.
+            </p>
+          )}
+        </SettingsGroup>
       </div>
 
-      <section aria-labelledby="metrics-loads" className="space-y-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
-            <h4 id="metrics-loads" className="m-0 text-label-sm">
-              Channel load
-            </h4>
-            <p className="m-0 text-metadata">
-              Median from click to rows on screen, by where the rows came from.
-            </p>
-          </div>
-          <p className="m-0 text-body-sm tabular-nums">
-            {opens.cacheHitRate === undefined
-              ? "No opens yet"
-              : `${Math.round(opens.cacheHitRate * 100)}% from cache`}
-            {opens.skipped ? (
-              <span className="text-metadata">
-                {" "}
-                · {opens.skipped} not timed
-              </span>
-            ) : null}
+      <section aria-labelledby="metrics-loads">
+        <InlineHeader
+          id="metrics-loads"
+          title="Channel load"
+          subtitle="Median load time by source. Wait and render medians may not add up to the total."
+        />
+        <SettingsGroup layout="form">
+          <p className="m-0 flex flex-wrap gap-x-4 text-metadata">
+            <span className="flex items-center gap-1.5">
+              <Swatch className={WAIT} /> Wait: disk read or server request
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Swatch className={RENDER} /> Render: rows in memory to on screen
+            </span>
           </p>
-        </div>
-        <p className="m-0 flex flex-wrap gap-x-4 text-metadata">
-          <span className="flex items-center gap-1.5">
-            <Swatch className={WAIT} /> Wait: disk read or server request
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Swatch className={RENDER} /> Render: rows in memory to on screen
-          </span>
-        </p>
-        <ul className="m-0 list-none space-y-2 p-0">
-          {rows.map(([source, label]) => (
-            <LoadRow
-              key={source}
-              label={label}
-              loads={opens.bySource[source]}
-              scale={scale}
-            />
-          ))}
-        </ul>
-      </section>
-
-      <section aria-labelledby="metrics-live" className="space-y-3">
-        <div>
-          <h4 id="metrics-live" className="m-0 text-label-sm">
-            Live subscriptions{first ? ` · ${phaseName(first, 0)}` : ""}
-          </h4>
-          <p className="m-0 text-metadata">
-            From opening the connection. A subscription is live once the relay
-            has sent its stored events (EOSE), and settled once it is live or
-            has failed (refused, or over the live capacity).
-          </p>
-        </div>
-        {first && (
-          <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-            <Stat label="Connected" value={ms(first.authMs)} />
-            <Stat
-              label={
-                first.routes ? `All ${first.routes} settled` : "All settled"
-              }
-              value={ms(first.coverageMs)}
-            />
-            <Stat
-              label="Each, median / slowest"
-              value={`${ms(first.routeMs.p50)} / ${ms(first.routeMs.max)}`}
-            />
-            <Stat label="Failed" value={String(first.routeErrors)} />
-          </dl>
-        )}
-        {reconnects.length > 0 && (
-          <ul className="m-0 list-none space-y-0.5 p-0 text-body-sm tabular-nums">
-            {reconnects.map((phase, index) => (
-              <li
-                // Phases are append-only; the index is their identity.
-                // biome-ignore lint/suspicious/noArrayIndexKey: see above
-                key={index}
-              >
-                {phaseName(phase, index + 1)}: connected {ms(phase.authMs)},{" "}
-                {phase.routes} settled in {ms(phase.coverageMs)}
-                {phase.routeErrors ? `, ${phase.routeErrors} failed` : ""}
-              </li>
+          <ul className="m-0 list-none space-y-6 p-0">
+            {rows.map(([source, label]) => (
+              <LoadRow
+                key={source}
+                label={label}
+                loads={opens.bySource[source]}
+                scale={scale}
+              />
             ))}
           </ul>
-        )}
+        </SettingsGroup>
+      </section>
+
+      <section aria-labelledby="metrics-live">
+        <InlineHeader
+          id="metrics-live"
+          title="Live subscriptions"
+          subtitle="A subscription is live after stored events arrive (EOSE), and settled when live or failed."
+        />
+        <SettingsGroup layout="form">
+          {!first && (
+            <p className="m-0 text-body-sm text-muted">
+              No connection measurements yet.
+            </p>
+          )}
+          {first && (
+            <dl className={styles.metrics}>
+              <Stat label="Connected" value={ms(first.authMs)} />
+              <Stat
+                label={
+                  first.routes ? `All ${first.routes} settled` : "All settled"
+                }
+                value={ms(first.coverageMs)}
+              />
+              <Stat
+                label="Each, median / slowest"
+                value={`${ms(first.routeMs.p50)} / ${ms(first.routeMs.max)}`}
+              />
+              <Stat label="Failed" value={String(first.routeErrors)} />
+            </dl>
+          )}
+          {reconnects.length > 0 && (
+            <section
+              className={styles.history}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Scroll owner supports keyboard panning of connection history.
+              tabIndex={0}
+              aria-label="Connection history"
+            >
+              <table className="text-body-sm tabular-nums">
+                <thead>
+                  <tr>
+                    <th scope="col">Connection</th>
+                    <th scope="col">Connected</th>
+                    <th scope="col">Settled</th>
+                    <th scope="col">Failed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {phases.map((phase, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: phases are append-only
+                    <tr key={index}>
+                      <th scope="row">{phaseName(phase, index)}</th>
+                      <td>{ms(phase.authMs)}</td>
+                      <td>
+                        {phase.routes} in {ms(phase.coverageMs)}
+                      </td>
+                      <td>{phase.routeErrors}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </SettingsGroup>
       </section>
 
       <Accordion
@@ -284,6 +310,6 @@ export function ClientMetricsPanel() {
           },
         ]}
       />
-    </div>
+    </section>
   );
 }

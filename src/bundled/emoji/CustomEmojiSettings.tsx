@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useRelayConnection } from "../../features/relay/react";
@@ -8,10 +16,13 @@ import {
 } from "../../features/relay/emoji";
 import { prepareAttachment } from "../../features/messages/prepare-attachment";
 import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { SmileyIcon } from "../../shared/design-system/icons";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { CustomEmoji } from "./CustomEmoji";
 import styles from "./Emoji.module.css";
@@ -35,8 +46,8 @@ export function CustomEmojiSettings({
         title="Custom emoji"
         subtitle={
           <>
-            Add your own custom emoji for everyone on this relay to use. Type{" "}
-            <code>:name:</code> in messages and reactions.
+            Share custom emoji on this relay. Use <code>:name:</code> in
+            messages and reactions.
           </>
         }
       />
@@ -64,6 +75,7 @@ function Editor({
   );
   const { add, upload } = session.emoji;
   const canAuthor = Boolean(add && upload);
+  const [tab, setTab] = useState<"add" | "mine">(canAuthor ? "add" : "mine");
   const [name, setName] = useState("");
   const [image, setImage] = useState<{ url: string; filename: string }>();
   const [uploading, setUploading] = useState(false);
@@ -71,6 +83,28 @@ function Editor({
   const [error, setError] = useState("");
   const [added, setAdded] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
+  const uploadButton = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const pendingFocus = useRef(false);
+  const actionsRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    return () => {
+      if (node.contains(document.activeElement)) pendingFocus.current = true;
+    };
+  }, []);
+  const uploadRef = useCallback((node: HTMLButtonElement | null) => {
+    uploadButton.current = node;
+    if (!node) return;
+    return () => {
+      if (node === document.activeElement) pendingFocus.current = true;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    // Upload, Clear, Save, and the empty-state action replace focused controls.
+    // Focus Upload after it mounts/enables; ordinary tab switches keep tab focus.
+    if (pendingFocus.current) uploadButton.current?.focus();
+    pendingFocus.current = false;
+  });
   const nameRef = useRef(name);
   nameRef.current = name;
   const uploadController = useRef<AbortController | null>(null);
@@ -136,69 +170,69 @@ function Editor({
   }
 
   const preview = image && session.media(image.url);
-  return (
-    <div className="grid gap-6">
-      {/* Authoring needs both the uploader and kind-30030 publishing; the reference has no copy for its absence. */}
-      {canAuthor && (
-        <form
-          aria-labelledby="custom-emoji-add-title"
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <InlineHeader id="custom-emoji-add-title" title="Add emoji" />
+  const uploadAction = (
+    <Button
+      ref={uploadRef}
+      loading={uploading}
+      disabled={saving}
+      onClick={() => input.current?.click()}
+    >
+      {uploading
+        ? "Uploading…"
+        : image
+          ? "Choose different image"
+          : "Upload image"}
+    </Button>
+  );
+  const addPanel = canAuthor ? (
+    <form
+      aria-label="Add emoji"
+      className="grid gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canSubmit) {
+          saveButton.current?.focus();
+          void save();
+        }
+      }}
+    >
+      <input
+        ref={input}
+        type="file"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Upload image"
+        accept="image/gif,image/png,image/jpeg,image/webp"
+        disabled={uploading || saving}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void choose(file);
+        }}
+      />
+      {image ? (
+        <SettingsGroup layout="form">
           <div className="grid gap-2">
-            <InlineHeader
-              level={4}
-              title="Upload an image"
-              subtitle="Square images work best. GIF, PNG, JPEG, and WebP files are supported."
-            />
-            <div className="flex items-center gap-3">
-              <span className={styles.emojiPreview}>
-                {preview && (
+            <InlineHeader title="Selected image" />
+            <div className="flex flex-wrap items-center gap-3">
+              {preview && (
+                <span className={styles.emojiPreview}>
                   <img
                     alt="Selected custom emoji preview"
                     src={preview}
                     draggable={false}
                   />
-                )}
-              </span>
+                </span>
+              )}
               <div className="grid min-w-0 gap-2">
-                {image && (
-                  <p className="truncate text-body-sm">{image.filename}</p>
-                )}
-                <Button
-                  disabled={uploading || saving}
-                  onClick={() => input.current?.click()}
-                >
-                  {uploading
-                    ? "Uploading…"
-                    : image
-                      ? "Choose different image"
-                      : "Upload image"}
-                </Button>
+                <p className="truncate text-body-sm">{image.filename}</p>
+                {uploadAction}
               </div>
-              <input
-                ref={input}
-                type="file"
-                className="sr-only"
-                tabIndex={-1}
-                aria-label="Upload image"
-                accept="image/gif,image/png,image/jpeg,image/webp"
-                disabled={uploading || saving}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = "";
-                  if (file) void choose(file);
-                }}
-              />
             </div>
           </div>
           <Field
             label="Give it a name"
-            description="This is what you’ll type to add this emoji to messages and reactions."
+            description="Type this name between colons in messages and reactions."
             error={
               nameInvalid
                 ? "Use only letters, numbers, hyphen, or underscore."
@@ -217,71 +251,90 @@ function Editor({
               />
             </InputGroup>
           </Field>
-          {!nameInvalid &&
-            (!image ? (
-              <p className="text-body-sm text-muted">
-                Choose an image first; Buzz will suggest a name from the
-                filename.
-              </p>
-            ) : replacing ? (
-              <p className="text-body-sm text-muted">
-                You already have :{normalized}: — saving will replace its image.
-              </p>
-            ) : null)}
+          {image && !nameInvalid && replacing && (
+            <p className="text-body-sm text-muted">
+              You already have :{normalized}: — saving will replace its image.
+            </p>
+          )}
           {error && (
             <p role="alert" className="error">
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button
-              disabled={uploading || saving || (!name && !image)}
-              onClick={() => {
-                setName("");
-                setImage(undefined);
-                setError("");
-              }}
+          {image && (
+            <div
+              ref={actionsRef}
+              className="mt-2 flex flex-wrap items-center justify-end gap-3"
             >
-              Clear
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={saving}
-              disabled={!canSubmit}
-            >
-              {saving ? "Saving…" : "Save emoji"}
-            </Button>
-          </div>
-        </form>
+              <Button
+                disabled={uploading || saving}
+                onClick={() => {
+                  setName("");
+                  setImage(undefined);
+                  setError("");
+                }}
+              >
+                Clear
+              </Button>
+              <Button
+                ref={saveButton}
+                type="submit"
+                variant="primary"
+                loading={saving}
+                disabled={uploading || !normalized}
+              >
+                {saving ? "Saving…" : "Save emoji"}
+              </Button>
+            </div>
+          )}
+        </SettingsGroup>
+      ) : (
+        <EmptyState
+          icon={<SmileyIcon />}
+          title="Upload an image"
+          description="Upload a GIF, PNG, JPEG, or WebP. Square images work best."
+          action={uploadAction}
+        />
       )}
-      <section aria-labelledby="custom-emoji-mine-title" className="grid gap-2">
-        <InlineHeader
-          id="custom-emoji-mine-title"
-          title={
-            catalog.mine.length
-              ? `My emoji (${catalog.mine.length})`
-              : "My emoji"
+      {!image && error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </form>
+  ) : null;
+  const minePanel = (
+    <div className="grid gap-2">
+      {catalog.status === "error" ? (
+        <>
+          <p role="alert">{catalog.error}</p>
+          <Button onClick={() => void session.emoji.refresh()}>
+            Retry emoji
+          </Button>
+        </>
+      ) : catalog.status !== "ready" ? (
+        <p className="text-body-sm text-muted">Loading…</p>
+      ) : !catalog.mine.length ? (
+        <EmptyState
+          icon={<SmileyIcon />}
+          title="No emojis yet"
+          description="Add an image to use in messages and reactions."
+          action={
+            canAuthor && (
+              <Button
+                onClick={() => {
+                  pendingFocus.current = true;
+                  setTab("add");
+                }}
+              >
+                Add emoji
+              </Button>
+            )
           }
         />
-        {catalog.status === "error" ? (
-          <>
-            <p role="alert">{catalog.error}</p>
-            <Button onClick={() => void session.emoji.refresh()}>
-              Retry emoji
-            </Button>
-          </>
-        ) : catalog.status !== "ready" ? (
-          <p className="text-body-sm text-muted">Loading…</p>
-        ) : !catalog.mine.length ? (
-          // Its prompt points at the add form; the reference has no copy for an empty list without one.
-          canAuthor && (
-            <p className="text-body-sm text-muted">
-              You haven&apos;t added any emoji yet. Add one above.
-            </p>
-          )
-        ) : (
-          <ul className="grid gap-2">
+      ) : (
+        <SettingsGroup>
+          <ul className="grid gap-2 py-3">
             {catalog.mine.map((emoji) => (
               <li key={emoji.shortcode} className="flex items-center gap-3">
                 <CustomEmoji emoji={emoji} media={session.media} />
@@ -291,8 +344,28 @@ function Editor({
               </li>
             ))}
           </ul>
-        )}
-      </section>
+        </SettingsGroup>
+      )}
+    </div>
+  );
+  return (
+    <>
+      <Tabs
+        label="Custom emoji"
+        variant="panel"
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          ...(canAuthor ? [{ value: "add" as const, label: "Add emoji" }] : []),
+          {
+            value: "mine",
+            label: catalog.mine.length
+              ? `My emojis (${catalog.mine.length})`
+              : "My emojis",
+          },
+        ]}
+        renderPanel={(value) => (value === "add" ? addPanel : minePanel)}
+      />
       {added && (
         <ToastNotice
           title={`Added :${added}:`}
@@ -301,6 +374,6 @@ function Editor({
           onDismiss={() => setAdded(undefined)}
         />
       )}
-    </div>
+    </>
   );
 }

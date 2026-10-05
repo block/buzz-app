@@ -1,3 +1,5 @@
+import styles from "./DeveloperSettings.module.css";
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
@@ -103,85 +105,94 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
       <Header
         id="developer-settings-title"
         title="Developer"
-        subtitle="View local development diagnostics. This section appears only in development builds served from localhost."
+        subtitle="Activity and diagnostics for this session."
       />
-      <div className="grid gap-6">
-        <div className="space-y-2">
-          <InlineHeader title="Runtime settings" />
-          <PreferenceRow
-            title="Log level"
-            subtitle="Applies immediately and survives restarts of this worktree. Browser relay diagnostics use the same level."
-            trailing={
-              <Select
-                label="Log level"
-                variant="compact"
-                value={level}
-                disabled={!settingsReady || saving}
-                onValueChange={(value) => void saveLevel(value)}
-                groups={[
-                  {
-                    label: "",
-                    options: Object.keys(LOG_LEVELS).map((value) => ({
-                      value,
-                      label: value.charAt(0).toUpperCase() + value.slice(1),
-                    })),
-                  },
-                ]}
-              />
-            }
+      <div className="grid grid-cols-1 gap-section-gap">
+        <section aria-labelledby="broker-activity-title">
+          <InlineHeader
+            id="broker-activity-title"
+            title="Broker activity"
+            subtitle="Running totals from the local relay broker. Updates every 5 seconds."
           />
-          <p className="m-0 text-body-sm text-subtle">
-            Info shows lifecycle messages; Debug shows every broker HTTP request
-            and relay WebSocket frame; Trace adds safe protocol metadata.
-            Message bodies and credentials are never included.
-          </p>
-          {settingsError && (
-            <p role="alert" className="m-0 text-body-sm text-muted">
-              {settingsError}
-            </p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <InlineHeader title="Relay broker stats" />
-          {stats ? (
-            <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 text-body-sm">
-              <div>
-                <dt className="text-muted">Queries</dt>
-                <dd className="m-0 tabular-nums">{stats.queries}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Errors</dt>
-                <dd className="m-0 tabular-nums">{stats.errors}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Media</dt>
-                <dd className="m-0 tabular-nums">{stats.media}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Connects</dt>
-                <dd className="m-0 tabular-nums">{stats.connects}</dd>
-              </div>
-            </dl>
-          ) : (
-            <p role="status" className="m-0 text-body-sm text-muted">
-              Broker stats aren’t available. Start the development relay broker
-              on this origin to view them.
-            </p>
-          )}
-        </div>
+          <SettingsGroup layout="form">
+            {stats ? (
+              <dl className={styles.metrics}>
+                {(
+                  [
+                    ["Queries", stats.queries],
+                    ["Errors", stats.errors],
+                    ["Media", stats.media],
+                    ["Connections", stats.connects],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-body-sm text-muted">{label}</dt>
+                    <dd className="m-0 text-heading tabular-nums">
+                      {Number.isFinite(value) ? value.toLocaleString() : "–"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p role="status" className="m-0 text-body-sm text-muted">
+                Broker stats aren’t available. Start the development relay
+                broker on this origin to view them.
+              </p>
+            )}
+          </SettingsGroup>
+        </section>
         {clientMetrics.enabled && <ClientMetricsPanel />}
         <div className="space-y-2">
+          <InlineHeader title="Runtime settings" />
+          <SettingsGroup layout="form">
+            <PreferenceRow
+              title="Log level"
+              subtitle="Saved for this worktree, including browser relay diagnostics."
+              trailing={
+                <Select
+                  label="Log level"
+                  variant="compact"
+                  value={level}
+                  disabled={!settingsReady || saving}
+                  onValueChange={(value) => void saveLevel(value)}
+                  groups={[
+                    {
+                      label: "",
+                      options: Object.keys(LOG_LEVELS).map((value) => ({
+                        value,
+                        label: value.charAt(0).toUpperCase() + value.slice(1),
+                      })),
+                    },
+                  ]}
+                />
+              }
+            />
+            <p className="m-0 text-body-sm text-subtle">
+              Info shows lifecycle messages; Debug shows every broker HTTP
+              request and relay WebSocket frame; Trace adds safe protocol
+              metadata. Message bodies and credentials are never included.
+            </p>
+            {settingsError && (
+              <p role="alert" className="m-0 text-body-sm text-muted">
+                {settingsError}
+              </p>
+            )}
+          </SettingsGroup>
+        </div>
+        <SettingsGroup layout="form">
           <PreferenceRow
             title="Caches"
             subtitle="Clear cached channels, messages, media, and this account’s saved activity in the current community. Turn metrics and your account, relay, and sidebar settings are kept."
             trailing={
-              <Button
-                type="button"
-                disabled={clearing}
-                onClick={() => void clearCache()}
-              >
-                {clearing ? "Clearing…" : "Clear cache"}
-              </Button>
+              <div className={styles.actions}>
+                <Button
+                  type="button"
+                  disabled={clearing}
+                  onClick={() => void clearCache()}
+                >
+                  {clearing ? "Clearing…" : "Clear cache"}
+                </Button>
+              </div>
             }
           />
           {status && (
@@ -189,7 +200,7 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
               {status}
             </p>
           )}
-        </div>
+        </SettingsGroup>
       </div>
     </section>
   );

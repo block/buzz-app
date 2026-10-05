@@ -160,6 +160,18 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
         event["tags"][2],
         serde_json::json!(["payload", format!("{:x}", Sha256::digest(body.as_bytes()))])
     );
+    // A fresh credential per dispatched request: a nonce and the current time.
+    assert_eq!(event["tags"][3][0], "nonce");
+    assert!(event["tags"][3][1]
+        .as_str()
+        .is_some_and(|nonce| !nonce.is_empty()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(event["created_at"]
+        .as_u64()
+        .is_some_and(|at| now.abs_diff(at) <= 5));
     verify(&event);
 }
 

@@ -1,0 +1,435 @@
+import {
+  chooseColorMode,
+  selectSettingsSection,
+  settleShellToggle,
+} from "./navigation.mjs";
+import { test, expect } from "./fixture.mjs";
+
+test.use({ historyCounts: { alpha: 0, beta: 0 } });
+
+// Column sizing and control containment depend on browser layout/font metrics.
+// Service persistence, errors, and draft transitions stay in the component tests.
+test("settings share a centered, bounded column and keep controls contained across themes and widths", async ({
+  page,
+  app,
+}, info) => {
+  await page.goto(app.origin);
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("main")).toBeFocused();
+  // Copy failure must leave the entire value selectable as ordinary text.
+  const profile = page.getByRole("region", { name: "Profile", exact: true });
+  await expect(
+    profile.getByRole("button", { name: "Copy public key" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new Error("Clipboard unavailable");
+        },
+      },
+    });
+  });
+  await profile.getByRole("button", { name: "Copy public key" }).click();
+  await expect(page.getByText(/Select it and copy manually/)).toBeVisible();
+  const publicKey = profile.locator("code").first();
+  const key = await publicKey.textContent();
+  await publicKey.click();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString()))
+    .toBe(key);
+  await profile.getByRole("button", { name: "Copy public key" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    profile.getByRole("button", { name: "Copy nostr address" }),
+  ).toBeFocused();
+  await page
+    .getByRole("dialog", { name: "Identity wasn’t copied" })
+    .getByRole("button", { name: "Dismiss notification" })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Identity wasn’t copied" }),
+  ).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    for (const width of [1440, 800, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const name of [
+        "Profile",
+        "Appearance",
+        "Notifications",
+        "Shortcuts",
+        "Agents",
+        "Plugins",
+        "Updates",
+      ]) {
+        await selectSettingsSection(
+          page,
+          name,
+          name === "Updates" ? "Software updates" : name,
+        );
+        const section = page.getByRole("region", {
+          name: name === "Updates" ? "Software updates" : name,
+          exact: true,
+        });
+        if (name === "Profile") {
+          await expect(
+            section.getByRole("textbox", { name: "Display name", exact: true }),
+          ).toBeEnabled();
+        }
+        if (name === "Notifications") {
+          await expect(
+            section.getByRole("combobox", { name: "Direct messages" }),
+          ).toBeVisible();
+        }
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(
+            () =>
+              section.evaluate((root) => {
+                const bounds = root.getBoundingClientRect();
+                const rem = parseFloat(
+                  getComputedStyle(document.documentElement).fontSize,
+                );
+                const failures = [];
+                const pageStyle = getComputedStyle(
+                  root.closest(".buzz-settings-page"),
+                );
+                if (parseFloat(pageStyle.paddingTop) !== 2 * rem)
+                  failures.push("settings page lost its top inset");
+                if (bounds.width > 48 * rem)
+                  failures.push("content exceeds 48rem");
+                if (document.documentElement.scrollWidth > window.innerWidth)
+                  failures.push("document overflows");
+                for (const control of root.querySelectorAll(
+                  'button, code, input:not([type="checkbox"]), textarea, [role="combobox"]',
+                )) {
+                  if (
+                    !control.checkVisibility() ||
+                    control.getAttribute("aria-hidden") === "true"
+                  )
+                    continue;
+                  const box = control.getBoundingClientRect();
+                  if (box.left < bounds.left || box.right > bounds.right)
+                    failures.push(
+                      `${control.getAttribute("aria-label") || control.textContent}: control overflows`,
+                    );
+                }
+                return failures;
+              }),
+            { message: `${name}, ${mode}, ${width}px` },
+          )
+          .toEqual([]);
+        if (width === 1440) {
+          await expect
+            .poll(() =>
+              section.evaluate((root) => root.getBoundingClientRect().width),
+            )
+            .toBe(768);
+          await expect
+            .poll(() =>
+              section.evaluate((root) => {
+                const bounds = root.getBoundingClientRect();
+                const panel = root
+                  .closest("[data-buzz-surface]")
+                  .getBoundingClientRect();
+                return (
+                  bounds.left +
+                  bounds.width / 2 -
+                  (panel.left + panel.width / 2)
+                );
+              }),
+            )
+            .toBe(0);
+        }
+        await page.screenshot({
+          path: info.outputPath(`${name.toLowerCase()}-${mode}-${width}.png`),
+        });
+      }
+    }
+  }
+  await selectSettingsSection(page, "Appearance");
+  for (let step = 0; step < 10; step++) {
+    await page.getByRole("button", { name: "Increase interface size" }).click();
+  }
+  await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
+    "200%",
+  );
+  await selectSettingsSection(page, "Agents");
+  const agents = page.getByRole("region", { name: "Agents", exact: true });
+  await expect
+    .poll(
+      () =>
+        agents.evaluate((root) => {
+          const bounds = root.getBoundingClientRect();
+          return [...root.querySelectorAll("*")]
+            .filter((node) => {
+              if (
+                !node.checkVisibility() ||
+                node.getAttribute("aria-hidden") === "true"
+              )
+                return false;
+              const box = node.getBoundingClientRect();
+              return box.left < bounds.left || box.right > bounds.right;
+            })
+            .map((node) => ({
+              tag: node.tagName,
+              text: node.textContent,
+              width: node.getBoundingClientRect().width,
+              available: bounds.width,
+            }));
+        }),
+      {
+        message:
+          "Management headings and actions fit at 200% in a narrow panel",
+      },
+    )
+    .toEqual([]);
+  await page.screenshot({ path: info.outputPath("agents-dark-390-200.png") });
+});
+
+// Real layout metrics and Base UI focus handoff need a browser; empty/loading/
+// legacy-source conditions are covered by component tests.
+test.describe("settings empty collections", () => {
+  test.use({ productionBroker: true, channelLifecycle: true });
+  test("empty cards fit the settings column and their actions lead to the editor", async ({
+    page,
+    app,
+  }, info) => {
+    await page.goto(app.origin);
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    for (const mode of ["light", "dark"]) {
+      await selectSettingsSection(page, "Appearance");
+      await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-color-mode",
+        mode,
+      );
+      for (const width of [1440, 800, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const [name, title] of [
+          ["Custom emoji", "No emojis yet"],
+          ["Personal groups", "No personal groups yet"],
+        ]) {
+          if (name === "Personal groups") {
+            await settleShellToggle(page);
+            const show = page.getByRole("button", {
+              name: "Show navigation",
+              exact: true,
+            });
+            if (await show.isVisible()) await show.click();
+            await page
+              .getByRole("complementary", {
+                name: "Settings sidebar",
+                exact: true,
+              })
+              .getByRole("button", { name, exact: true })
+              .click();
+            await expect(
+              page.getByRole("region", {
+                name: "Personal groups settings",
+                exact: true,
+              }),
+            ).toBeVisible();
+          } else {
+            await selectSettingsSection(page, name);
+          }
+          if (name === "Custom emoji")
+            await page
+              .getByRole("tab", { name: "My emojis", exact: true })
+              .click();
+          const card = page.locator(".buzz-empty-state").filter({
+            has: page.getByRole("heading", { name: title, exact: true }),
+          });
+          await expect(card).toBeVisible();
+          await page.evaluate(() => document.fonts.ready);
+          await expect
+            .poll(() =>
+              card.evaluate((root) => {
+                const bounds = root.getBoundingClientRect();
+                return (
+                  [...root.querySelectorAll("*")].every((node) => {
+                    const box = node.getBoundingClientRect();
+                    return box.left >= bounds.left && box.right <= bounds.right;
+                  }) &&
+                  root.scrollWidth <= root.clientWidth &&
+                  document.documentElement.scrollWidth <= innerWidth
+                );
+              }),
+            )
+            .toBe(true);
+          await expect
+            .poll(() =>
+              page
+                .getByRole("main")
+                .evaluate(
+                  (root) =>
+                    root
+                      .getAnimations({ subtree: true })
+                      .filter((animation) => animation.playState === "running")
+                      .length,
+                ),
+            )
+            .toBe(0);
+          await page.screenshot({
+            path: info.outputPath(`${name}-${mode}-${width}.png`),
+          });
+          if (name === "Custom emoji") {
+            const add = card.getByRole("button", {
+              name: "Add emoji",
+              exact: true,
+            });
+            await add.hover();
+            await add.focus();
+            await add.press("Enter");
+            await expect(
+              page.getByRole("tab", { name: "Add emoji", exact: true }),
+            ).toHaveAttribute("aria-selected", "true");
+            const uploadCard = page.locator(".buzz-empty-state").filter({
+              has: page.getByRole("heading", {
+                name: "Upload an image",
+                exact: true,
+              }),
+            });
+            await expect(uploadCard.locator("button")).toBeFocused();
+            await expect
+              .poll(() =>
+                uploadCard.evaluate((root) => {
+                  const bounds = root.getBoundingClientRect();
+                  return [...root.querySelectorAll("*")].every((node) => {
+                    const box = node.getBoundingClientRect();
+                    return box.left >= bounds.left && box.right <= bounds.right;
+                  });
+                }),
+              )
+              .toBe(true);
+            await expect
+              .poll(() =>
+                page
+                  .getByRole("main")
+                  .evaluate(
+                    (root) =>
+                      root
+                        .getAnimations({ subtree: true })
+                        .filter(
+                          (animation) => animation.playState === "running",
+                        ).length,
+                  ),
+              )
+              .toBe(0);
+            await page.screenshot({
+              path: info.outputPath(`emoji-upload-${mode}-${width}.png`),
+            });
+          } else {
+            await card
+              .getByRole("button", {
+                name: "Manage personal groups",
+                exact: true,
+              })
+              .click();
+            const dialog = page.getByRole("dialog", {
+              name: "Personal groups",
+              exact: true,
+            });
+            await expect(
+              dialog.getByRole("button", { name: "New group", exact: true }),
+            ).toBeVisible();
+            await dialog
+              .getByRole("button", { name: "Close personal groups" })
+              .click();
+            await expect(dialog).toHaveCount(0);
+          }
+        }
+      }
+    }
+  });
+});
+
+// Hosted setup states use the real settings page with isolated account replies;
+// account operations and failures are covered by the owning component tests.
+test("hosted settings empty and setup cards fit without covering their actions", async ({
+  page,
+  app,
+}, info) => {
+  let signedIn = false;
+  await page.route("**/api/builderlab/**", async (route) => {
+    const action = new URL(route.request().url()).pathname.split("/").pop();
+    const replies = {
+      auth: {
+        auth: signedIn
+          ? { email: "test@example.com", expiresAt: "2030" }
+          : null,
+      },
+      identity: { identity: { pubkey_hex: app.viewer } },
+      list: { communities: [] },
+    };
+    if (!(action in replies))
+      throw new Error(`Unexpected account action: ${action}`);
+    await route.fulfill({ json: replies[action] });
+  });
+  for (const state of ["setup", "empty"]) {
+    signedIn = state === "empty";
+    await page.goto(app.origin);
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    for (const mode of ["light", "dark"]) {
+      await selectSettingsSection(page, "Appearance");
+      await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
+      for (const width of [1440, 800, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await selectSettingsSection(page, "Hosted communities");
+        const card = page.locator(".buzz-empty-state").filter({
+          has: page.getByRole("heading", {
+            name: signedIn
+              ? "No hosted communities yet"
+              : "Sign in to manage hosted communities",
+          }),
+        });
+        await expect(card).toBeVisible();
+        for (const scale of ["100%", "200%"]) {
+          await page.evaluate((value) => {
+            document.documentElement.style.fontSize = value;
+          }, scale);
+          await expect
+            .poll(
+              () =>
+                card.evaluate((root) => {
+                  const box = root.getBoundingClientRect();
+                  return (
+                    [...root.querySelectorAll("*")].every((node) => {
+                      const child = node.getBoundingClientRect();
+                      return child.left >= box.left && child.right <= box.right;
+                    }) && root.scrollWidth <= root.clientWidth
+                  );
+                }),
+              { message: `${state}, ${mode}, ${width}px, ${scale}` },
+            )
+            .toBe(true);
+          if (!signedIn) {
+            const action = card.getByRole("button", {
+              name: "Sign in with Builderlab",
+            });
+            await action.scrollIntoViewIfNeeded();
+            await expect(action).toBeInViewport({ ratio: 1 });
+          }
+          if (width === 390 && scale === "200%")
+            await page.screenshot({
+              path: info.outputPath(`hosted-${state}-${mode}-200.png`),
+            });
+        }
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "";
+        });
+      }
+    }
+  }
+});

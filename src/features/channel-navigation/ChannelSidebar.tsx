@@ -729,7 +729,6 @@ function ReadySidebar({
         ? sectionKey.slice("group:".length)
         : undefined;
       const starred = sectionKey === "starred";
-      if (actions.length) actions.push(<MenuSeparator key="group-actions" />);
       actions.push(
         <MenuSubmenu key="move-channel">
           <MenuSubmenuTrigger>
@@ -832,8 +831,6 @@ function ReadySidebar({
     const muteable =
       queries.sidebarPreferences.muteWritable && !!preferences.data;
     const readable = queries.unread.sync().capability === "frontier-sync";
-    if (actions.length && (muteable || readable))
-      actions.push(<MenuSeparator key="attention-separator" />);
     if (muteable) {
       const intent = mute.intents.get(channel.id);
       const muted = intent?.pending
@@ -871,7 +868,7 @@ function ReadySidebar({
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
-          separator={actions.length > 0}
+          separator={false}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}

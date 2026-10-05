@@ -52,7 +52,24 @@ export function createAppearance(
   const apply = () => {
     if (!host) return;
     const root = host.document.documentElement;
+    const changingMode =
+      root.dataset.colorMode && root.dataset.colorMode !== state.mode;
+    const transitionGuard = changingMode
+      ? host.document.createElement("style")
+      : undefined;
+    if (transitionGuard) {
+      transitionGuard.textContent =
+        "*,*::before,*::after{transition:none !important}";
+      host.document.head.append(transitionGuard);
+    }
     root.dataset.colorMode = state.mode;
+    if (transitionGuard) {
+      // Commit the new palette before restoring interactive transitions.
+      void root.offsetHeight;
+      host.requestAnimationFrame(() =>
+        host.requestAnimationFrame(() => transitionGuard.remove()),
+      );
+    }
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document

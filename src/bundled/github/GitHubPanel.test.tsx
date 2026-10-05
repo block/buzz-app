@@ -446,7 +446,7 @@ it.each([
   },
 );
 
-it("renders the settled conversation directly without tabs, hidden checks or check requests", async () => {
+it("renders the settled conversation in Discussion without mounting or requesting checks", async () => {
   const pending: ((response: Response) => void)[] = [];
   const fetch = vi.fn((target: string) => {
     if (target.endsWith("/pulls/1"))
@@ -481,10 +481,23 @@ it("renders the settled conversation directly without tabs, hidden checks or che
       screen.queryByText(/some sources are incomplete/),
     ).not.toBeInTheDocument(),
   );
-  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("tabpanel", { hidden: true }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Discussion" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tabpanel", { name: "Discussion" })).toContainElement(
+    screen.getByRole("region", { name: "Pull request conversation" }),
+  );
+  expect(screen.getByRole("tab", { name: "Checks" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  const hiddenChecks = document.getElementById(
+    screen.getByRole("tab", { name: "Checks" }).getAttribute("aria-controls") ??
+      "",
+  );
+  expect(hiddenChecks).not.toBeVisible();
+  expect(hiddenChecks).toBeEmptyDOMElement();
   expect(
     screen.queryByText("Checks", { selector: "dt" }),
   ).not.toBeInTheDocument();

@@ -407,7 +407,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const surface = page.locator("em-emoji-picker #root");
     const region = page.getByRole("dialog", { name: "Emoji picker" });
     await expect(surface).toHaveAttribute("data-theme", "light");
-    await expect(region).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(region).toHaveCSS(
+      "background-color",
+      "rgba(255, 255, 255, 0.9)",
+    );
+    await expect(region).toHaveCSS("backdrop-filter", "blur(8px)");
     await expect(region).toHaveCSS("border-radius", "16px");
     await expect(region).toHaveCSS("border-top-width", "1px");
     await expect(region).not.toHaveCSS("box-shadow", "none");

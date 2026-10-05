@@ -1,5 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
@@ -14,6 +14,8 @@ import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { loadGitHubDetails, type GitHubDetails } from "./data";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { GitHubChecks } from "./GitHubChecks";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
@@ -298,7 +300,7 @@ function ObjectPanel({
             </dl>
           )}
           {reference.kind === "pull" ? (
-            <GitHubConversation details={result} url={reference.url} />
+            <PullContent details={result} reference={reference} />
           ) : (
             result.body && (
               <GitHubBody
@@ -315,5 +317,66 @@ function ObjectPanel({
         actions.
       </p>
     </div>
+  );
+}
+
+function PullContent({
+  details,
+  reference,
+}: {
+  details: GitHubDetails;
+  reference: GitHubReference;
+}) {
+  const id = useId();
+  const [tab, setTab] = useState<"discussion" | "checks">("discussion");
+  const [checksOpened, setChecksOpened] = useState(false);
+  return (
+    <>
+      <div className={styles.pullTabs}>
+        <Tabs
+          variant="panel"
+          label="Pull request content"
+          value={tab}
+          items={[
+            {
+              value: "discussion",
+              label: "Discussion",
+              panelId: `${id}-discussion`,
+            },
+            { value: "checks", label: "Checks", panelId: `${id}-checks` },
+          ]}
+          onValueChange={(next) => {
+            setTab(next);
+            if (next === "checks") setChecksOpened(true);
+          }}
+        />
+      </div>
+      {/* Retain loaded content and disclosures across tab switches, but mount checks only on demand. */}
+      <div
+        role="tabpanel"
+        id={`${id}-discussion`}
+        aria-labelledby={`${id}-discussion-tab`}
+        hidden={tab !== "discussion"}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
+        tabIndex={0}
+      >
+        <GitHubConversation details={details} url={reference.url} />
+      </div>
+      <div
+        role="tabpanel"
+        id={`${id}-checks`}
+        aria-labelledby={`${id}-checks-tab`}
+        hidden={tab !== "checks"}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
+        tabIndex={0}
+      >
+        {checksOpened && (
+          <GitHubChecks
+            repository={reference.repository}
+            sha={details.headSha}
+          />
+        )}
+      </div>
+    </>
   );
 }

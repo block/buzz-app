@@ -54,6 +54,7 @@
    component — families name the jobs, roles name the meanings.
    ============================================================ */
 
+.light,
 :root {
   /* gray */
 
@@ -265,6 +266,7 @@
    number reads as a lightness and means a role.
    ============================================================ */
 
+.light,
 :root {
   /* --- Neutral. Twelve steps. --------------------------------
      Keeps its numbering: unlike the coloured families these steps
@@ -319,6 +321,7 @@
   --glass-2: #ffffff85; /* quiet glass    */
   --glass-3: #ffffff9e; /* default glass  */
   --glass-4: #ffffffc7; /* glass hovered  */
+  --popover-glass-fill: rgb(255 255 255 / 90%);
   --glass-5: #ffffffe0; /* nearly solid   */
 
   /* Media glass stays dark over video pixels in either app mode. */
@@ -438,6 +441,7 @@
   --glass-2: #1c1c1c85;
   --glass-3: #1c1c1ca8;
   --glass-4: #1c1c1cc7;
+  --popover-glass-fill: rgb(40 40 40 / 90%);
   --glass-5: #1c1c1ce0;
 
   /* Dark treatments are their own scenes, not dimmed versions of their light
@@ -512,10 +516,12 @@
 
 /* Semantic colors: color / purpose / emphasis / state.
    Components consume roles; palette steps stay inside this shared layer. */
+.light,
 :root {
   --surface-base: var(--neutral-2);
   --surface-panel: var(--neutral-1);
   --surface-popover: var(--neutral-1);
+  --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --text-navigation: var(--neutral-navigation-text);
@@ -586,6 +592,7 @@
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-raised);
+  --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --text-navigation: var(--neutral-11);

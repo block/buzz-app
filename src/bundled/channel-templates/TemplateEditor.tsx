@@ -201,6 +201,7 @@ export function TemplateEditor({
         initialFocus={cancelReplace}
         finalFocus={replacementTrigger}
         title="Replace channel setup?"
+        description="This replaces the current teams, agents, and starting Canvas in your draft."
         actions={
           <>
             <Button
@@ -222,7 +223,7 @@ export function TemplateEditor({
           </>
         }
       >
-        Replace the current teams, agents and starting Canvas?
+        {null}
       </Dialog>
     </>
   );

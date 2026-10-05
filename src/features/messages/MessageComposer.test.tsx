@@ -650,6 +650,138 @@ it("shows provider-owned pending and retry states and hides an empty publication
   expect(input).not.toHaveAttribute("aria-controls");
 });
 
+it.each(["click", "Enter", "Tab", " "])(
+  "accepts the displayed completion by stable ID during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const other = { id: "other", label: "Other", edit: { text: "other" } };
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    act(() => {
+      publish({ items: [other, chosen], spaceId: chosen.id });
+    });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const option = screen.getByRole("option", { name: "Chosen" });
+    expect(option).toHaveAttribute("aria-selected", "true");
+
+    act(() => {
+      publish({
+        items: [
+          { ...chosen, label: "Refreshed", edit: { text: "fresh" } },
+          other,
+        ],
+        spaceId: chosen.id,
+      });
+      // Hold React's commit until after the event, as when a provider's
+      // passive effect publishes just before an input event is dispatched.
+      expect(option).toHaveTextContent("Chosen");
+      if (key === "click") fireEvent.click(option);
+      else fireEvent.keyDown(input, { key });
+    });
+    expect(input).toHaveValue("fresh ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "rejects withdrawn or ineligible refreshed completions via %s without sending",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    const canSelect = vi.fn(() => false);
+    const replacements: (CompletionResult | undefined)[] = [
+      undefined,
+      { items: [{ id: "other", label: "Other", edit: { text: "other" } }] },
+      { items: [{ ...chosen, disabled: "No longer eligible" }] },
+      { items: [{ ...chosen, canSelect }] },
+    ];
+    for (const replacement of replacements) {
+      let withdraw: ReturnType<typeof publish> = false;
+      act(() => {
+        withdraw = publish({ items: [chosen] });
+      });
+      const option = screen.getByRole("option", { name: "Chosen" });
+      act(() => {
+        if (replacement) publish(replacement);
+        else if (withdraw) withdraw();
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(canSelect).toHaveBeenCalledExactlyOnceWith(key);
+  },
+);
+
+it.each([undefined, "other"])(
+  "leaves space alone if the latest publication's exact match is %s",
+  (spaceId) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const items = [
+      { id: "chosen", label: "Chosen", edit: { text: "chosen" } },
+      { id: "other", label: "Other", edit: { text: "other" } },
+    ];
+    act(() => {
+      publish({ items, spaceId: "chosen" });
+    });
+    act(() => {
+      publish({ items, spaceId });
+      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+    });
+    expect(input).toHaveValue("!search");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "uses only the current retry action during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const oldRetry = vi.fn();
+    const retry = vi.fn();
+    for (const currentRetry of [retry, undefined]) {
+      act(() => {
+        publish({ items: [], retry: oldRetry });
+      });
+      const option = screen.getByRole("option", { name: "Retry suggestions" });
+      act(() => {
+        // A new item at the displayed retry's index is not the user's choice.
+        publish({
+          items: [{ id: "other", label: "Other", edit: { text: "other" } }],
+          ...(currentRetry ? { retry: currentRetry } : {}),
+        });
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(oldRetry).not.toHaveBeenCalled();
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(retry).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("revokes stale completion publications across editor and ownership lifecycles and recovers freshly", () => {
   const h = mount();
   const input = h.input();

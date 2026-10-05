@@ -27,6 +27,10 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
       path.join(crate, entry),
       { recursive: true },
     );
+  cpSync(
+    path.join(root, "crates/build_env.rs"),
+    path.join(directory, "crates/build_env.rs"),
+  );
   // The controller's platform adapter has a sibling path dependency. Copy only
   // that crate's source too, preserving the fixture's isolated build outputs.
   for (const entry of ["Cargo.toml", "src"])

@@ -112,11 +112,15 @@ test.describe("public search destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await expect(button(page, "Search Buzz")).toBeVisible();
+    // Waiting for a rendered conversation is an ordering mitigation for the
+    // WebKit lost-fill failure. Its root cause is unknown, and the failing
+    // schedule has not been reproduced against this change.
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
     for (const mode of ["cold", "warm"]) {
       await button(page, "Search Buzz").click();
       const input = page.getByRole("combobox", { name: "Search Buzz" });
       await input.fill("crew-search");
+      await expect(input).toHaveValue("crew-search");
       const result = page.getByRole("option", {
         name: /crew-search exact public reply/,
       });

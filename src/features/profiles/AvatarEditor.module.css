@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 .avatarFrame {
   position: relative;
   width: 12rem;
@@ -9,6 +11,10 @@
 .avatarFrame[data-shape="squircle"] {
   width: 9rem;
   height: 9rem;
+}
+
+.avatarFrame[data-size="compact"] {
+  @apply size-20;
 }
 
 /* Match Buzz's profile geometry without clipping the edit control's focus. */
@@ -36,6 +42,11 @@
   left: 85%;
   width: 25%;
   height: 25%;
+}
+
+.avatarFrame[data-size="compact"] .editBadge {
+  width: var(--space-8);
+  height: var(--space-8);
 }
 
 .popup {

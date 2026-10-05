@@ -313,7 +313,7 @@ it("keeps compact choices labelled and opens by click and keyboard", async () =>
   const trigger = screen.getByRole("combobox", { name: "Assignee for Review" });
   expect(screen.getByText("Assignee for Review")).toHaveClass("sr-only");
   expect(trigger).toHaveAttribute("data-size", "sm");
-  expect(trigger).toHaveAttribute("data-variant", "ghost");
+  expect(trigger).toHaveAttribute("data-variant", "outline");
   await user.click(trigger);
   await user.click(await screen.findByRole("option", { name: "Two" }));
   expect(trigger).toHaveTextContent("Second");

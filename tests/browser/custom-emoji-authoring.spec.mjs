@@ -247,9 +247,20 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await expect(
       page.getByRole("heading", { name: "Community primary.example" }),
     ).toBeVisible();
-    await expect(
-      page.getByText("You haven't added any emoji yet. Add one above."),
-    ).toBeVisible();
+    await expect(name).toHaveCount(0);
+    await expect(save).toHaveCount(0);
+    const mineTab = page.getByRole("tab", { name: "My emojis", exact: true });
+    await mineTab.click();
+    await expect(page.getByText("No emojis yet")).toBeVisible();
+    await mineTab.press("ArrowLeft");
+    const addTab = page.getByRole("tab", { name: "Add emoji", exact: true });
+    await expect(addTab).toBeFocused();
+    await addTab.press("Enter");
+    await expect(addTab).toHaveAttribute("aria-selected", "true");
+    await page.screenshot({
+      path: testInfo.outputPath("add-emoji-empty.png"),
+      fullPage: true,
+    });
 
     // Upload failure, then retry.
     relay.rejectNextUpload();
@@ -261,7 +272,13 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await expect(page.getByRole("alert")).toHaveText(
       "The server could not accept this file. Its format or metadata may not be supported.",
     );
-    await upload.setInputFiles({
+    const chooser = page.waitForEvent("filechooser");
+    await page
+      .getByRole("form", { name: "Add emoji" })
+      .locator("button")
+      .filter({ hasText: "Upload image" })
+      .click();
+    await (await chooser).setFiles({
       name: "Party Parrot.png",
       mimeType: "image/png",
       buffer: png(true),
@@ -269,6 +286,9 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await expect(
       page.getByRole("img", { name: "Selected custom emoji preview" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Choose different image" }),
+    ).toBeFocused();
     await expect(name).toHaveValue("party_parrot");
     const first = relay.report.uploads.at(-1).url;
 
@@ -281,7 +301,14 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     expect(ownSet(primary)).toBeUndefined();
     await save.click();
     await expect(page.getByText("Added :party_parrot:")).toBeVisible();
-    await expect(page.getByText("My emoji (1)")).toBeVisible();
+    await expect(
+      page
+        .getByRole("form", { name: "Add emoji" })
+        .locator("button")
+        .filter({ hasText: "Upload image" }),
+    ).toBeFocused();
+    await expect(name).toHaveCount(0);
+    await expect(page.getByText("My emojis (1)")).toBeVisible();
     const added = ownSet(primary);
     expect(added.tags).toEqual([
       ["d", "buzz:custom-emoji"],
@@ -291,7 +318,10 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
 
     // Reload: a new page and session read the stored set through the broker.
     await page.reload();
-    await expect(page.getByText("My emoji (1)")).toBeVisible();
+    await page.getByRole("tab", { name: "My emojis (1)" }).click();
+    await expect(
+      page.getByRole("tabpanel", { name: "My emojis (1)" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("img", { name: ":party_parrot:" }).first(),
     ).toBeVisible();
@@ -368,6 +398,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     ).not.toHaveJSProperty("naturalWidth", 0);
 
     // Replace the image under the same name.
+    await page.getByRole("tab", { name: "Add emoji", exact: true }).click();
     await upload.setInputFiles({
       name: "other.png",
       mimeType: "image/png",
@@ -392,7 +423,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
       ["d", "buzz:custom-emoji"],
       ["emoji", "party_parrot", second],
     ]);
-    await expect(page.getByText("My emoji (1)")).toBeVisible();
+    await expect(page.getByText("My emojis (1)")).toBeVisible();
     // Sent messages and reactions keep their original image; the palette offers the replacement.
     const media = (url) => new RegExp(url.match(/[0-9a-f]{64}/)[0]);
     await expect(
@@ -418,9 +449,9 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await expect(
       page.getByRole("heading", { name: "Community secondary.example" }),
     ).toBeVisible();
-    await expect(
-      page.getByText("You haven't added any emoji yet. Add one above."),
-    ).toBeVisible();
+    await page.getByRole("tab", { name: "My emojis", exact: true }).click();
+    await expect(page.getByText("No emojis yet")).toBeVisible();
+    await page.getByRole("tab", { name: "Add emoji", exact: true }).click();
     // With no custom matches, only the settled Unicode search lists options.
     await draft.fill(":party");
     await expect(page.getByRole("option").first()).toBeVisible();
@@ -444,7 +475,7 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     expect(relay.report.uploads.at(-1).url.startsWith(secondary)).toBe(true);
     expect(ownSet(primary).tags).toEqual(replaced.tags);
     await page.getByRole("button", { name: "Switch community" }).click();
-    await expect(page.getByText("My emoji (1)")).toBeVisible();
+    await expect(page.getByText("My emojis (1)")).toBeVisible();
     await expect(page.getByText(":wave:")).toHaveCount(0);
 
     await testInfo.attach("relay-report.json", {

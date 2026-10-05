@@ -464,7 +464,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"][0],
         json!({
-            "command":"buzz-agent", "label":"Buzz Agent",
+            "id":"buzz-agent", "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
             "providers": providers,
             "configurationPolicy": {
@@ -474,6 +474,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             }
         })
     );
+    assert!(before["harnessOptions"].as_array().unwrap().len() >= 4);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["configurationPolicy"],
@@ -529,6 +530,23 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][1]["status"], "ready");
     assert_eq!(before["harnessOptions"][1]["available"], true);
     assert_eq!(before["harnessOptions"][1]["command"], "goose");
+    let codex = before["harnessOptions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|option| option["id"] == "codex")
+        .expect("Codex harness option");
+    assert_eq!(codex["label"], "Codex");
+    assert_eq!(codex["available"], false);
+    assert_eq!(codex["status"], "not-enabled");
+    assert_eq!(
+        codex["configurationPolicy"],
+        json!({
+            "authentication": "external", "provider": "external",
+            "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+            "selectorEnvironment": null
+        })
+    );
     assert!(
         before["harnessOptions"][1]["providers"]
             .as_array()

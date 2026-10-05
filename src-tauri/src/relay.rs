@@ -150,6 +150,65 @@ pub(crate) async fn relay_workflow_runs(
     send(host.inner(), url, "GET", None, true, 1024 * 1024).await
 }
 
+/// A Buzz git repository on this community: `<origin>/git/<owner hex>/<name>`.
+fn git_repository(community: &str, repository: &str) -> Result<Url> {
+    let origin = origin(community)?;
+    let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
+    let segments: Vec<_> = url.path().split('/').skip(1).collect();
+    let name = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 68
+            && !value.starts_with('.')
+            && !value.contains("..")
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    if url.as_str() != repository
+        || url.origin() != origin.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || segments.len() != 3
+        || segments[0] != "git"
+        || !hex_key(segments[1])
+        || !name(segments[2])
+    {
+        return Err("Not a repository in this community".into());
+    }
+    Ok(url)
+}
+
+/// NIP-98 for one repository URL. The relay accepts it for 60 seconds on every Git route
+/// of that repository, so one clone reuses it. Returns the token after `Authorization: Nostr `;
+/// never a general signing capability.
+#[tauri::command]
+pub(crate) async fn relay_git_authorization(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    repository: String,
+) -> Result<String> {
+    let url = git_repository(&community, &repository)?;
+    let auth = host
+        .sign(EventTemplate {
+            kind: 27235,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "System clock is unavailable")?
+                .as_secs(),
+            content: String::new(),
+            tags: vec![
+                vec!["u".into(), url.to_string()],
+                vec!["method".into(), "GET".into()],
+            ],
+        })
+        .await?;
+    Ok(STANDARD.encode(
+        serde_json::to_vec(&auth).map_err(|_| "Could not encode repository authorization")?,
+    ))
+}
+
 #[tauri::command]
 pub(crate) async fn relay_sign(
     host: tauri::State<'_, IdentityHost>,

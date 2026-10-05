@@ -23,6 +23,7 @@ import {
   type KitRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
+import { communityGitRepository } from "../projects/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
@@ -649,6 +650,15 @@ export async function connectNativeTransport(
       if (!/^[0-9a-f]{128}$/.test(signature))
         throw new Error("Log authorization unavailable");
       return signature;
+    },
+    async authorizeGit(input) {
+      const repository = communityGitRepository(origin, input);
+      if (!repository) return null;
+      const token = await invoke<string>("relay_git_authorization", {
+        community: origin,
+        repository,
+      });
+      return { repository, token };
     },
     ...nativeSidebar(transport),
     readState: {

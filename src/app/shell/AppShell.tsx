@@ -8,6 +8,7 @@ import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
@@ -29,6 +30,8 @@ export function AppShell({
   workspace,
   sidebar,
   communities,
+  invite,
+  onInviteClose,
   settingsCards,
   accountActions,
   onProfile,
@@ -48,6 +51,8 @@ export function AppShell({
   workspace?: boolean;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
+  invite?: (InviteLink & { requestId: number }) | undefined;
+  onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   accountActions: AccountActionsService;
   onProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
@@ -212,6 +217,8 @@ export function AppShell({
       <div className="flex min-h-0 flex-1">
         <CommunityRail
           communities={communities}
+          invite={invite}
+          onInviteClose={onInviteClose}
           settingsCards={settingsCards}
           onSelect={onCommunitySelect}
           onOpenTarget={onOpenTarget}

@@ -3,6 +3,7 @@
 // admission path alone decides whether a target opens. Browsers have no OS scheme
 // handler, so everything here is a no-op outside Tauri.
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
@@ -22,6 +23,8 @@ export type DeepLinkHost = Readonly<{
   navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
+  /** Invite presentation belongs to the community rail, not navigation. */
+  invite?: (invite: InviteLink, viewer: string) => void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -98,7 +101,9 @@ export function bindDeepLinks(
     const incoming = held;
     if (
       (incoming.viewer && incoming.viewer !== client.viewer) ||
-      (incoming.selected && incoming.selected !== client.selected)
+      (!parseInviteLink(incoming.url) &&
+        incoming.selected &&
+        incoming.selected !== client.selected)
     ) {
       held = undefined;
       host.fail("denied");
@@ -106,6 +111,16 @@ export function bindDeepLinks(
     }
     if (client.status === "loading")
       return Promise.resolve({ status: "failed", reason: "unavailable" });
+    const invite = parseInviteLink(incoming.url);
+    if (invite && (!client.viewer || client.status !== "ready")) {
+      // Retain the invite through identity setup and client restoration.
+      return Promise.resolve({ status: "failed", reason: "unavailable" });
+    }
+    if (invite && client.viewer && host.invite) {
+      held = undefined;
+      host.invite(invite, client.viewer);
+      return Promise.resolve({ status: "cancelled" });
+    }
     const step = deepLinkStep(incoming.url, client);
     if ("open" in step) {
       held = undefined;
@@ -124,7 +139,9 @@ export function bindDeepLinks(
     held.selected ??= client.selected;
     if (
       (held.viewer && held.viewer !== client.viewer) ||
-      (held.selected && held.selected !== client.selected)
+      (!parseInviteLink(held.url) &&
+        held.selected &&
+        held.selected !== client.selected)
     ) {
       held = undefined;
       host.fail("denied");
@@ -186,7 +203,9 @@ export function bindDeepLinks(
     const next = communities.snapshot();
     if (
       (client.viewer && client.viewer !== next.viewer) ||
-      (client.selected && client.selected !== next.selected)
+      (client.selected &&
+        client.selected !== next.selected &&
+        (!held || !parseInviteLink(held.url)))
     )
       clientEpoch++;
     client = next;

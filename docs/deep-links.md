@@ -21,6 +21,7 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://project?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
 - `buzz://pr?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://issue?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
+- `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
 
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add
@@ -31,12 +32,18 @@ another client decorated still opens; a duplicated known parameter is rejected a
 ambiguous. The `channel` forms carry everything in the path and ignore any query.
 The same forms work in message content.
 
-None carries a community, so each binds to the currently selected community and
-viewer, and fail `unavailable` when no community is selected or no identity is
-known. Every other link, including `buzz://join`, incomplete entity links,
-unknown hosts and oversize links, fails as `invalid-target` and shows "This
-destination couldn't open" with **Open Settings**. Unsupported links have no
-Retry action. Nothing is auto-joined. A valid address is never authorization:
+The navigation forms above do not carry a community, so each binds to the currently
+selected community and viewer, and fails `unavailable` when no community is
+selected or no identity is known. `buzz://join` is the separate invitation form.
+It holds through identity setup and opens the
+existing join dialog with the relay and code prefilled; it never claims or saves
+membership until the user completes discovery, policy acceptance, claim and profile
+confirmation. The relay's HTTPS `/invite/<code>` page supplies that `buzz://join`
+link; HTTPS itself is not registered as an OS handler. Malformed join links,
+incomplete entity links, unknown hosts and oversize links fail as
+`invalid-target` and show "This destination couldn't open" with **Open Settings**.
+Unsupported links have no Retry action. Nothing is auto-joined. A valid address
+is never authorization:
 bound targets pass the same viewer, membership and channel checks as in-app
 navigation, so a link into a channel you cannot read still fails `denied`. The
 frontend expects the canonical lowercase `buzz:` scheme; the native URL parser
@@ -157,9 +164,9 @@ xdg-open "buzz://channel/general"
 - Ordinary development worktrees still share app data. The native agent store
   permits one owner at a time; a second worktree may report owned storage while
   the rest of the app remains usable.
-- Invite links (`buzz://join`, `https://<relay>/invite/<code>`) and remote push
-  are not handled; they end in the
-  failure notice or, for HTTPS, never reach the app.
+- Invite links (`buzz://join`) open the explicit join dialog; HTTPS
+  `/invite/<code>` URLs are shareable through the relay landing page but are not
+  registered as OS application links. Remote push is not handled.
 - Git browsing uses the authenticated development broker or, in desktop builds,
   native NIP-98 signed reads through the system `git` on `PATH` (macOS also checks
   Homebrew paths). Without `git`, or on other adapters, entity metadata still shows

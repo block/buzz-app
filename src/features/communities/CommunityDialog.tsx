@@ -22,10 +22,9 @@ import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
 const CLAIM_REFUSALS = {
-  invite_expired:
-    "This invite has expired. Ask a community admin for a new one.",
+  invite_expired: "This invite code has expired — ask for a new one.",
   invite_exhausted:
-    "This invite has no uses left. Ask a community admin for a new one.",
+    "This invite has reached its use limit. Ask for a new invite.",
   invite_invalid: "This invite code is not valid for this community.",
   join_policy_required:
     "This community requires current policy acceptance. Go back and reopen the relay to review it.",
@@ -38,11 +37,19 @@ export function CommunityDialog({
   mode,
   close,
   onJoined,
+  invite,
 }: {
   communities: Communities;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
+  invite?:
+    | Readonly<{
+        community: string;
+        code: string;
+        policyReceipt?: string;
+      }>
+    | undefined;
 }) {
   const formId = useId();
   const client = communities.snapshot();
@@ -63,7 +70,7 @@ export function CommunityDialog({
   const [url, setUrl] = useState(
     recovery.pending
       ? communityDestination(recovery.pending.community).url
-      : "",
+      : (invite?.community ?? ""),
   );
   const [destination, setDestination] =
     useState<ReturnType<typeof communityDestination>>();
@@ -75,7 +82,7 @@ export function CommunityDialog({
   const [profile, setProfile] = useState<PersonalProfile>(client.profile);
   const [original, setOriginal] =
     useState<Awaited<ReturnType<typeof inspectProfile>>>();
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(invite?.code ?? "");
   const [agreed, setAgreed] = useState(false);
   const [adult, setAdult] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -155,8 +162,12 @@ export function CommunityDialog({
         }
         const transaction = journal?.begin(id);
         if (code.trim()) {
-          let receipt: string | undefined;
-          if (policy)
+          let receipt: string | undefined =
+            invite?.community === destination?.url &&
+            invite?.code === code.trim()
+              ? invite?.policyReceipt
+              : undefined;
+          if (policy && !receipt)
             receipt = (
               await communityRequest<{ receipt: string }>(id, "accept-policy", {
                 code: code.trim(),

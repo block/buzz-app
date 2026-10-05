@@ -24,6 +24,7 @@ import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
+import { createInviteIntent } from "../features/communities/invite-intent";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
@@ -80,8 +81,12 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
-  // OS deep links; a no-op in the browser build.
-  ctx.effect(() => bindDeepLinks(navigationHost, communities));
+  const invites = createInviteIntent();
+  // OS deep links; a no-op in the browser build. Invite admission remains in
+  // the join dialog, never in navigation or the native queue.
+  ctx.effect(() =>
+    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+  );
   if (notifications.indicator.available)
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread),
@@ -105,6 +110,7 @@ export function createServices() {
     plugins,
     relay,
     communities,
+    invites,
     appearance,
     updates,
     dispose() {

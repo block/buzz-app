@@ -56,6 +56,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
     services.communities.subscribe,
     services.communities.snapshot,
   );
+  const invite = useSyncExternalStore(
+    services.invites.subscribe,
+    services.invites.snapshot,
+  );
+  // A queued link cannot be presented under a different identity.
+  useEffect(() => {
+    if (invite && client.viewer && invite.viewer !== client.viewer)
+      services.invites.clear();
+  }, [invite, client.viewer, services.invites]);
   const connection = useSyncExternalStore(
     services.relay.subscribe,
     services.relay.snapshot,
@@ -183,6 +192,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          invite={invite?.viewer === client.viewer ? invite : undefined}
+          onInviteClose={services.invites.clear}
           settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           onProfile={

@@ -43,6 +43,9 @@ let incoming = (_events: readonly RelayEvent[]) => {};
 let releaseProfiles = () => {};
 let libraryReads = 0;
 const reads: (readonly number[])[] = [];
+// Parallel to `reads`: the directory search term a read carries, or null. The
+// directory reads once per new query by design, unlike cold session reads.
+const readSearches: (string | null)[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
 const admission = new URLSearchParams(location.search).has(
@@ -122,6 +125,9 @@ const owner = createRelaySession(
     },
     async query(filters) {
       reads.push(filters.flatMap((filter) => filter.kinds ?? []));
+      readSearches.push(
+        filters.find((filter) => filter.search !== undefined)?.search ?? null,
+      );
       pendingReads++;
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
@@ -339,7 +345,11 @@ Object.assign(window, {
     },
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
-    reads: () => ({ kinds: reads, pending: pendingReads }),
+    reads: () => ({
+      kinds: reads,
+      searches: readSearches,
+      pending: pendingReads,
+    }),
     searches: () => [...searches],
     heldSearches: () => [...heldSearches],
     holdSearches() {

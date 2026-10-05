@@ -236,6 +236,14 @@ and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; Delete on a tab and Escape in its content close that tab. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+On macOS desktop, Cmd+W and the native Close menu close the visible selected tab,
+including a selected detail tab, even while typing in the main conversation or
+using an embedded browser. A terminal tab closes its presentation, not its shell.
+With no visible tab pane, Close retains the normal window-close behavior (hide
+until reopened); hidden tabs remain intact. While a modal is open, Cmd+W does
+nothing rather than closing content behind it. The red
+window button always closes the window. The bottom terminal drawer keeps its
+existing Cmd+J/Hide behavior. Browser and non-macOS shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
 The main-header split control toggles the tab pane without closing its tabs or

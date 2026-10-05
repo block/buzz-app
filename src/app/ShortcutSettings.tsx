@@ -221,7 +221,7 @@ export function ShortcutSettings({
       );
     if (desktop && includes(DESKTOP_CHORDS, binding))
       return refuse(
-        `${chord} is reserved for closing the window and quitting Buzz. Try another.`,
+        `${chord} is reserved for closing tabs or the window and quitting Buzz. Try another.`,
       );
     const conflict = rows.find(
       (row) =>

@@ -1,6 +1,8 @@
 mod archive;
 use archive::relay_archive;
 mod browser;
+#[cfg(target_os = "macos")]
+mod close_menu;
 mod oauth_callback;
 use oauth_callback::{
     oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
@@ -531,7 +533,10 @@ pub fn run() {
             Ok(())
         });
     #[cfg(target_os = "macos")]
-    let builder = builder.manage(TitleBarFillFrames::default());
+    let builder = builder
+        .manage(TitleBarFillFrames::default())
+        .menu(close_menu::menu)
+        .on_menu_event(close_menu::handle);
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
     let builder = if tauri::is_dev() {

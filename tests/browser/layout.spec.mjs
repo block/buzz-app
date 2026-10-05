@@ -1297,7 +1297,10 @@ for (const [control, key] of [
       );
       await expect(focused).toBeFocused();
       const before = await history.evaluate((element) => element.scrollTop);
-      await page.keyboard.press(key);
+      // Linux WebKit can pause a native keyboard scroll and resume it after the
+      // anchor is captured; only the history scrollend completes that gesture.
+      if (nativeScroll) await keyScroll(page, key);
+      else await page.keyboard.press(key);
       if (!nativeScroll) {
         await settle(page);
         expect(await history.evaluate((element) => element.scrollTop)).toBe(

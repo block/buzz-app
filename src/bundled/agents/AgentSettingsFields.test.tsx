@@ -32,7 +32,7 @@ it.each(["/old/bin/hermes-acp", "C:\\tools\\hermes-acp.exe"])(
       providers: [],
       defaultArgs: [],
     };
-    function Example({ found }: { found: boolean }) {
+    function Example({ found }: { found: boolean | "no-option" }) {
       const [draft, setDraft] = useState(current);
       current = draft;
       return (
@@ -45,13 +45,18 @@ it.each(["/old/bin/hermes-acp", "C:\\tools\\hermes-acp.exe"])(
             error: null,
             data: {
               ...f.data,
-              harnessOptions: [
-                {
-                  ...initial,
-                  command: found ? "/new/bin/hermes-acp" : initial.command,
-                  available: found,
-                },
-              ],
+              harnessOptions:
+                found === "no-option"
+                  ? []
+                  : [
+                      {
+                        ...initial,
+                        command: found
+                          ? "/new/bin/hermes-acp"
+                          : initial.command,
+                        available: found,
+                      },
+                    ],
             },
           }}
           disabled={false}
@@ -60,14 +65,16 @@ it.each(["/old/bin/hermes-acp", "C:\\tools\\hermes-acp.exe"])(
       );
     }
     const user = userEvent.setup();
-    const view = render(<Example found={false} />);
+    const view = render(<Example found="no-option" />);
     try {
       expect(
         screen.getByRole("combobox", { name: "Harness" }),
       ).toHaveTextContent("Hermes Agent (current executable)");
       expect(screen.getByText("provider:old-model")).toBeVisible();
       expect(screen.getByText("old-provider")).toBeVisible();
-      expect(() => agentEdit(current)).toThrow("Use Hermes defaults");
+      expect(() => agentEdit(current)).toThrow("Use Hermes Agent defaults");
+      view.rerender(<Example found={false} />);
+      expect(screen.getByText(/needs its ACP launcher/)).toBeVisible();
       view.rerender(<Example found />);
       expect(current).toMatchObject({
         command,
@@ -84,7 +91,7 @@ it.each(["/old/bin/hermes-acp", "C:\\tools\\hermes-acp.exe"])(
         screen.queryByRole("button", { name: /Browse models|Test connection/ }),
       ).toBeNull();
       await user.click(
-        screen.getByRole("button", { name: "Use Hermes defaults" }),
+        screen.getByRole("button", { name: "Use Hermes Agent defaults" }),
       );
       expect(agentEdit(current).harness).toMatchObject({
         command,

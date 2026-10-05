@@ -190,3 +190,8 @@ does not try `.exe`/`.cmd`/`.bat`; recognizing saved paths does not fix detectio
 Browse, device defaults and old-agent import remain follow-ups. Settings icons
 have separate checks and a browser preview; those do not validate Hermes
 compatibility.
+
+The Tier 2 implementation now uses one controller-owned preset definition file,
+shared with TypeScript for metadata and saved-command recognition. Native
+`harnessOptions` still own installation and selectable choices. Hermes is its
+first and only entry; Amp, Cursor and shared ACP Browse remain separate work.

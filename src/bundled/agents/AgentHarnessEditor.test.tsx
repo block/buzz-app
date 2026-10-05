@@ -270,3 +270,60 @@ it("disables Pi's provider list while signed-in providers load and keeps the cur
   );
   expect(screen.queryByLabelText("Custom provider")).toBeNull();
 });
+
+it("shows missing preset setup only for the selected harness", () => {
+  const draft = agentDraft(controlFixture().agent);
+  const missing = {
+    command: "hermes-acp",
+    label: "Hermes Agent",
+    available: false,
+    providers: [],
+  };
+  const onChange = () => {};
+  const onOpenHarnesses = () => {};
+  const { rerender } = render(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "buzz-agent" }}
+      options={[missing]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.queryByText(/needs its ACP launcher/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open Harnesses in Settings" }),
+  ).not.toBeInTheDocument();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[missing]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.getByText(/Hermes Agent needs its ACP launcher/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open Harnesses in Settings" }),
+  ).toBeVisible();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.getByText(/Hermes Agent needs its ACP launcher/)).toBeVisible();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[{ ...missing, command: "/new/hermes-acp", available: true }]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.queryByText(/needs its ACP launcher/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open Harnesses in Settings" }),
+  ).not.toBeInTheDocument();
+});

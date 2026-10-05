@@ -4,6 +4,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
+import { harnessPreset } from "../../features/agents/harness-presets";
 import { harnessKind, PI_API_KEYS, type AgentDraft } from "./agent-edit";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
@@ -27,21 +28,20 @@ export function AgentHarnessEditor({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const kind = harnessKind(draft.command);
-  const hermes = kind === "hermes";
+  const preset = harnessPreset(draft.command);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    (kind === "goose" || kind === "pi" || hermes
+    (kind === "goose" || kind === "pi" || preset
       ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
-  const external =
-    hermes || harness?.label === "Goose" || harness?.label === "Pi";
-  const piLoading = harness?.label === "Pi" && piProviders === null;
+  const isPreset = !!preset;
+  const external = isPreset || kind === "goose" || kind === "pi";
+  const piLoading = kind === "pi" && piProviders === null;
   const missingPi = options.some(
-    (option) => option.label === "Pi" && option.available === false,
+    (option) =>
+      harnessKind(option.command) === "pi" && option.available === false,
   );
-  const missingHermes = options.some(
-    (option) => option.label === "Hermes Agent" && option.available === false,
-  );
+  const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -56,12 +56,12 @@ export function AgentHarnessEditor({
             label: available === false ? `${label} (install first)` : label,
             disabled: available === false,
           })),
-          ...(hermes &&
+          ...(isPreset &&
           !options.some((option) => option.command === draft.command)
             ? [
                 {
                   value: draft.command,
-                  label: "Hermes Agent (current executable)",
+                  label: `${harness?.label ?? preset?.label} (current executable)`,
                 },
               ]
             : []),
@@ -69,9 +69,9 @@ export function AgentHarnessEditor({
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
           const enteringExternal =
-            option?.label === "Goose" ||
-            option?.label === "Pi" ||
-            option?.label === "Hermes Agent";
+            !!option &&
+            (harnessPreset(option.command) ||
+              ["goose", "pi"].includes(harnessKind(option.command) ?? ""));
           onChange({
             command,
             ...(pickedOption && option && (enteringExternal || external)
@@ -91,13 +91,13 @@ export function AgentHarnessEditor({
           Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
-      {missingHermes && (
+      {missingPreset && (
         <p className="text-body-sm text-secondary">
-          Hermes needs its ACP launcher. Install it using the manual setup guide
-          in Settings.
+          {preset.label} needs its ACP launcher. Install it using the manual
+          setup guide in Settings.
         </p>
       )}
-      {(missingPi || missingHermes) && onOpenHarnesses && (
+      {(missingPi || missingPreset) && onOpenHarnesses && (
         <div className="space-y-1">
           <Button
             type="button"
@@ -114,7 +114,7 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      {!hermes && (
+      {!isPreset && (
         <ConfigChoice
           disabled={disabled || piLoading}
           key={harness?.label ?? draft.command}
@@ -129,7 +129,7 @@ export function AgentHarnessEditor({
                 ? `Use agent defaults (${defaultProvider})`
                 : "Not set",
             },
-            ...(harness?.label === "Pi"
+            ...(kind === "pi"
               ? piOptions(piProviders, draft.provider)
               : (harness?.providers ?? [])),
           ]}

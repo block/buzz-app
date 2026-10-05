@@ -72,7 +72,7 @@ install Hermes or manage its provider credentials. Configure its default model
 and sign-in with `hermes model` in your terminal. The agent form uses those
 defaults and offers no Provider, Browse models or Test connection controls for
 Hermes yet. Existing model/provider values remain visible for recovery: select
-**Use Hermes defaults**, then Save, before starting. Native launch rejects those
+**Use Hermes Agent defaults**, then Save, before starting. Native launch rejects those
 selectors, and Hermes does not permit `BUZZ_ACP_MODEL` environment overrides.
 Saved executable paths survive detection refresh; choose the newly discovered
 Hermes option explicitly to replace an old path. Device defaults and old-agent
@@ -276,6 +276,17 @@ Hermes also appears in the main list once its executable is detected:
   chooser and main list; removing its executable hides the main row again.
   Discovery searches for the exact `hermes-acp` launcher name. Windows `.exe`/`.cmd`/`.bat` launchers are a known discovery
   limitation in this slice; saved absolute paths remain recognizable/editable.
+
+Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
+owned by the controller and read by both Rust and TypeScript. Native discovery
+reports executable presence and editing suggestions through `harnessOptions`.
+Settings and create/edit identify presets by executable name using the shared
+JSON; setup metadata is not duplicated in IPC. Frontend lookup preserves
+saved-path identity on older hosts and does not infer installation.
+All presets currently use the harness's own model/provider defaults. Runtime
+quirks remain in the pinned `buzz-acp`; Goose and Pi retain their specialized
+setup and model integrations. Adding a preset definition still requires a real
+ACP compatibility check; this registry does not implement model browsing.
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.

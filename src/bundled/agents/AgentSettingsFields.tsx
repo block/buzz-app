@@ -20,6 +20,8 @@ import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { ProviderApiKeyField } from "./ProviderApiKeyField";
+import { harnessPreset } from "../../features/agents/harness-presets";
+import { PresetSetupHint } from "../../features/agents/PresetSetupHint";
 import { Button } from "../../shared/design-system/ui/Button";
 
 // Draft → Agent defaults → build floor, as native resolves it; null when a
@@ -94,7 +96,7 @@ export function AgentSettingsFields({
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
-  const hermes = harnessKind(draft.command) === "hermes";
+  const preset = harnessPreset(draft.command);
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -258,18 +260,18 @@ export function AgentSettingsFields({
               </p>
             </div>
           )}
-          {hermes ? (
+          {preset ? (
             <div className="space-y-3 text-body-sm">
               <p className="m-0 text-secondary">
-                Hermes uses its own default model and sign-in. To change them,
-                run <code>hermes model</code> in your terminal.
+                {preset.label} uses its own default model and sign-in.{" "}
+                <PresetSetupHint hint={preset.setupHint} />
               </p>
               {(draft.model || draft.provider) && (
                 <div className="space-y-3">
                   <p role="alert">
                     This agent has model or provider settings that Buzz cannot
-                    apply to Hermes yet. Use Hermes defaults before saving or
-                    starting.
+                    apply to {preset.label} yet. Use {preset.label} defaults
+                    before saving or starting.
                   </p>
                   {draft.model && (
                     <p>
@@ -285,7 +287,7 @@ export function AgentSettingsFields({
                     disabled={disabled}
                     onClick={() => change({ model: "", provider: "" })}
                   >
-                    Use Hermes defaults
+                    Use {preset.label} defaults
                   </Button>
                 </div>
               )}
@@ -387,8 +389,8 @@ export function AgentSettingsFields({
                   <p className="text-body-sm text-secondary">
                     {pi
                       ? 'Pi needs both Provider and Model to override its defaults. Advanced Pi options follow --; for example: ["--", "--extension", "/absolute/path/to/extension.ts"]. PI_CODING_AGENT_DIR can select a local Pi configuration directory.'
-                      : hermes
-                        ? "Configure Hermes's model and sign-in in Hermes itself. Buzz model and provider overrides are unavailable."
+                      : preset
+                        ? `Configure ${preset.label}'s model and sign-in in the harness itself. Buzz model and provider overrides are unavailable.`
                         : "Environment overrides take precedence over provider and model selections."}{" "}
                     Arguments are passed literally, not through a shell.
                   </p>

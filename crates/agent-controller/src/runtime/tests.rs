@@ -1090,7 +1090,7 @@ fn hermes_launch_requires_defaults_and_preserves_saved_values_for_recovery() {
         assert!(runtime
             .command(&recovered, &key)
             .unwrap_err()
-            .contains("Use Hermes defaults"));
+            .contains("Use Hermes Agent defaults"));
     }
     // Reading and a failed launch must leave the original values repairable.
     let unchanged = store.agents().unwrap().remove(0);
@@ -1098,9 +1098,11 @@ fn hermes_launch_requires_defaults_and_preserves_saved_values_for_recovery() {
     assert_eq!(unchanged.harness.provider, saved.harness.provider);
     recovered.harness.model.clear();
     recovered.harness.provider.clear();
-    let mut defaults = crate::agent_defaults::AgentDefaults::default();
-    defaults.model = "another-harness-model".into();
-    defaults.provider = "another-provider".into();
+    let mut defaults = crate::agent_defaults::AgentDefaults {
+        model: "another-harness-model".into(),
+        provider: "another-provider".into(),
+        ..Default::default()
+    };
     defaults
         .environment
         .insert("BUZZ_ACP_MODEL".into(), "another-model".into());

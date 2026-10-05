@@ -219,11 +219,12 @@ it("discovers Tier 2 Hermes through Add harness and follows installation changes
     within(dialog).queryByRole("button", { name: /Install|Update/ }),
   ).toBeNull();
   expect(
-    within(dialog).getByRole("link", { name: "Hermes ACP setup guide" }),
+    within(dialog).getByRole("link", { name: "Hermes Agent setup guide" }),
   ).toHaveAttribute(
     "href",
     "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/",
   );
+  await user.click(within(dialog).getByText("Terminal setup"));
   expect(within(dialog).getByText("hermes model")).toBeVisible();
   expect(within(dialog).getByText("hermes acp --check")).toBeVisible();
   const hermes = fixture.data.harnessOptions?.find(
@@ -274,6 +275,33 @@ it("keeps Tier 1 harnesses usable when an older desktop has no Hermes option", a
   expect(
     await screen.findByRole("dialog", { name: "Add harness" }),
   ).toHaveTextContent("Update the desktop app to check Hermes Agent.");
+});
+
+it("recognizes harness commands independently of native display labels", async () => {
+  const { fixture, control } = setupHarnesses("ready");
+  for (const option of fixture.data.harnessOptions ?? []) {
+    option.label = `Renamed ${option.label}`;
+  }
+  await act(() => control.refresh());
+  const list = await screen.findByRole("list", { name: "Harnesses" });
+  expect(within(list).getByText("Renamed Goose")).toBeVisible();
+  expect(
+    within(list).queryByText("Renamed Hermes Agent"),
+  ).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add harness" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add harness" });
+  expect(
+    within(dialog).getByRole("heading", { name: "Renamed Hermes Agent" }),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("link", {
+      name: "Renamed Hermes Agent setup guide",
+    }),
+  ).toHaveAttribute(
+    "href",
+    "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/",
+  );
 });
 
 it("offers manual copying when clipboard access fails", async () => {

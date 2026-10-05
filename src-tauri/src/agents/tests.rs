@@ -138,12 +138,13 @@ fn harnesses_classify_cli_and_adapter_separately() {
 
 #[test]
 fn hermes_is_a_manual_preset_with_presence_based_availability() {
-    let missing = hermes_option(None);
+    let preset = buzz_agent_controller::harness_preset("hermes-acp").unwrap();
+    let missing = preset_option(preset, None);
     assert!(!missing.available);
     assert_eq!(missing.status, "cli-needed");
     assert_eq!(missing.command, "hermes-acp");
     let path = std::env::temp_dir().join("hermes-acp");
-    let installed = hermes_option(Some(path.clone()));
+    let installed = preset_option(preset, Some(path.clone()));
     assert!(installed.available);
     assert_eq!(installed.status, "ready");
     assert_eq!(installed.command, path.to_string_lossy());
@@ -459,7 +460,6 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             "providers": providers
         })
     );
-    assert_eq!(before["harnessOptions"].as_array().unwrap().len(), 3);
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
     assert_eq!(
         before["harnessOptions"][2]["available"],

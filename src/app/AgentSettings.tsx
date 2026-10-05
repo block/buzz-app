@@ -1,5 +1,11 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  harnessPresets,
+  harnessKind,
+  harnessPreset,
+} from "../features/agents/harness-presets";
+import { PresetSetupHint } from "../features/agents/PresetSetupHint";
 import type { AgentControl } from "../features/agents/control";
 import {
   setRememberAgentsPreference,
@@ -7,6 +13,7 @@ import {
 } from "../features/messages/mention-preferences";
 import {
   ArrowsClockwiseIcon,
+  ArrowSquareOutIcon,
   CopyIcon,
   GooseLogoIcon,
   PiLogoIcon,
@@ -40,10 +47,9 @@ const labels = {
 } as const;
 // Artwork only; native harnessOptions still own availability and configuration.
 const harnessIcons: Record<string, ReactNode> = {
-  "Buzz Agent": <RobotIcon size={32} className="shrink-0" />,
-  Goose: <GooseLogoIcon size={32} className="shrink-0" />,
-  Pi: <PiLogoIcon size={32} className="shrink-0" />,
-  "Hermes Agent": <TerminalWindowIcon size={32} className="shrink-0" />,
+  "buzz-agent": <RobotIcon size={32} className="shrink-0" />,
+  goose: <GooseLogoIcon size={32} className="shrink-0" />,
+  pi: <PiLogoIcon size={32} className="shrink-0" />,
 };
 const commands = [
   ["Pi", "Install Pi", piCommand],
@@ -63,6 +69,7 @@ export function AgentSettings({
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>();
   const addHarnessRef = useRef<HTMLButtonElement>(null);
   const [copyMessage, setCopyMessage] = useState("");
   const copyAttempt = useRef(0);
@@ -76,15 +83,25 @@ export function AgentSettings({
     if (active) void control.refresh();
   }, [active, control]);
   const options = state.data?.harnessOptions;
-  const coreHarnesses = (["Buzz Agent", "Goose", "Pi"] as const).map((name) =>
-    options?.find((option) => option.label === name),
+  const coreHarnesses = (["buzz-agent", "goose", "pi"] as const).map((id) =>
+    options?.find((option) => harnessKind(option.command) === id),
   );
   const available = coreHarnesses.every((option) => !!option?.status);
   const pi = coreHarnesses[2];
-  const hermes = options?.find((option) => option.label === "Hermes Agent");
-  const harnesses = hermes?.available
-    ? [...coreHarnesses, hermes]
-    : coreHarnesses;
+  const presets =
+    options?.filter((option) => !!harnessPreset(option.command)) ?? [];
+  const harnesses = [
+    ...coreHarnesses,
+    ...presets.filter((option) => option.available),
+  ];
+  const setup =
+    harnessPresets.find((preset) => preset.id === selectedPresetId) ??
+    harnessPresets[0];
+  // Native owns availability; registry metadata also works on older snapshots.
+  const selected = options?.find(
+    (option) => harnessPreset(option.command) === setup,
+  );
+  const presetLabel = selected?.label ?? setup?.label ?? "Harness";
   const checkDisabled =
     state.status === "unavailable" || state.busy || installingPi;
   const checkAgain = () => {
@@ -167,14 +184,21 @@ export function AgentSettings({
                   <li key={option?.label} className="py-3 text-body-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="flex items-center gap-3">
-                        {option && harnessIcons[option.label]}
+                        {option &&
+                          (harnessIcons[harnessKind(option.command) ?? ""] ?? (
+                            <TerminalWindowIcon
+                              size={32}
+                              className="shrink-0"
+                            />
+                          ))}
                         <span>{option?.label}</span>
                       </span>
                       <span className="flex items-center gap-2">
                         <span className="text-secondary">
                           {option?.status ? labels[option.status] : "Unknown"}
                         </span>
-                        {option?.label === "Pi" &&
+                        {option &&
+                          harnessKind(option.command) === "pi" &&
                           (option.status !== "ready" ||
                             option.updateSupported) &&
                           option.installSupported &&
@@ -200,24 +224,28 @@ export function AgentSettings({
                           )}
                       </span>
                     </div>
-                    {option?.label === "Hermes Agent" && (
+                    {option && harnessPreset(option.command) && (
                       <div
                         className={`${styles.piSetup} space-y-3 text-body-sm`}
                       >
                         <p className="m-0 text-secondary">
-                          Uses the default model and credentials configured in
-                          Hermes. Install and update Hermes yourself, then use
-                          Check again.
+                          Uses the default model and credentials configured in{" "}
+                          {option.label}. Install and update the harness
+                          yourself, then use Check again.
                         </p>
                         <details>
-                          <summary>Manual Hermes setup</summary>
+                          <summary>Manual {option.label} setup</summary>
                           <div className="mt-3">
-                            <HermesSetup />
+                            <PresetSetup
+                              label={option.label}
+                              setup={harnessPreset(option.command)}
+                            />
                           </div>
                         </details>
                       </div>
                     )}
-                    {option?.label === "Pi" &&
+                    {option &&
+                      harnessKind(option.command) === "pi" &&
                       (installingPi ||
                         piResult?.ready ||
                         piResult?.error ||
@@ -352,19 +380,36 @@ export function AgentSettings({
         open={catalogOpen && active}
         onOpenChange={setCatalogOpen}
         title="Add harness"
+        size="wide"
+        height="stable"
         finalFocus={addHarnessRef}
         dismissOnOutsideClick
+        headerActions={
+          <Tooltip content="Check again">
+            <IconButton
+              aria-label="Check again"
+              disabled={checkDisabled || checking}
+              onClick={checkAgain}
+              size="compact"
+              icon={<ArrowsClockwiseIcon size={16} aria-hidden="true" />}
+            />
+          </Tooltip>
+        }
         actions={
-          <Button
-            size="sm"
-            variant="outline"
-            loading={checking}
-            disabled={checkDisabled}
-            onClick={checkAgain}
-          >
-            <ArrowsClockwiseIcon size={16} aria-hidden="true" />
-            Check again
-          </Button>
+          setup && (
+            <Button
+              variant="prominent"
+              nativeButton={false}
+              role="link"
+              aria-label={`${presetLabel} setup guide`}
+              render={
+                <a href={setup.setupUrl} target="_blank" rel="noreferrer" />
+              }
+            >
+              <ArrowSquareOutIcon size={18} aria-hidden="true" />
+              Setup guide
+            </Button>
+          )
         }
       >
         <div className={styles.catalog}>
@@ -373,53 +418,69 @@ export function AgentSettings({
             className={styles.catalogSidebar}
           >
             <p className="text-label text-secondary">
-              {hermes?.available ? "Installed" : "Setup"}
+              {selected?.available ? "Installed" : "Setup"}
             </p>
-            <NavigationItem
-              label="Hermes Agent"
-              selected
-              icon={<TerminalWindowIcon size={24} aria-hidden="true" />}
-            />
+            {harnessPresets.map((preset) => (
+              <NavigationItem
+                key={preset.id}
+                label={
+                  options?.find(
+                    (option) => harnessPreset(option.command) === preset,
+                  )?.label ?? preset.label
+                }
+                selected={preset === setup}
+                onClick={() => setSelectedPresetId(preset.id)}
+                icon={<TerminalWindowIcon size={24} aria-hidden="true" />}
+              />
+            ))}
           </nav>
           <section
-            aria-labelledby="hermes-catalog-title"
-            className={`${styles.catalogDetails} space-y-4`}
+            aria-labelledby="preset-catalog-title"
+            className={`${styles.catalogDetails} space-y-6`}
           >
             <div className="flex items-center gap-3">
-              {harnessIcons["Hermes Agent"]}
+              <TerminalWindowIcon size={48} className="shrink-0" />
               <div>
-                <h3 id="hermes-catalog-title" className="text-label">
-                  Hermes Agent
+                <h3 id="preset-catalog-title" className="text-heading">
+                  {presetLabel}
                 </h3>
                 <p className="m-0 text-body-sm text-secondary">
-                  {hermes?.status ? labels[hermes.status] : "Unknown"}
+                  {selected?.status ? labels[selected.status] : "Unknown"}
                 </p>
               </div>
             </div>
-            <p className="text-body-sm text-secondary">
-              A general-purpose AI agent from Nous Research.
-            </p>
             {state.status === "error" && (
               <p role="alert" className="text-body-sm">
                 Couldn’t confirm harnesses. Showing the last check; try Check
                 again.
               </p>
             )}
-            {!hermes && (
+            {!selected && (
               <p role="status" className="text-body-sm">
-                Update the desktop app to check Hermes Agent.
+                Update the desktop app to check {presetLabel}.
               </p>
             )}
-            <p className="text-body-sm">
-              Uses the default model and credentials configured in Hermes.
-              Install and update Hermes yourself.
+            <p className="text-body-sm text-secondary">
+              Model and sign-in are managed in {presetLabel}.
             </p>
-            <HermesSetup />
-            {hermes?.available && (
+            <div className="space-y-3 text-body-sm">
+              <h4 className="text-label">Setup</h4>
+              <p>
+                Install {presetLabel} with ACP support, then follow the setup
+                guide to connect it to Buzz.
+              </p>
+              <details>
+                <summary>Terminal setup</summary>
+                <p className="mt-3 text-secondary">
+                  {setup && <PresetSetupHint hint={setup.setupHint} />}
+                </p>
+              </details>
+            </div>
+            {selected?.available && (
               <PreferenceRow
                 title="Executable"
                 subtitle={
-                  <code className={styles.command}>{hermes.command}</code>
+                  <code className={styles.command}>{selected.command}</code>
                 }
               />
             )}
@@ -450,22 +511,28 @@ export function AgentSettings({
   );
 }
 
-function HermesSetup() {
+function PresetSetup({
+  label,
+  setup,
+}: {
+  label: string;
+  setup: { setupUrl: string; setupHint: string } | undefined;
+}) {
+  if (!setup) return null;
   return (
     <div className="space-y-3 text-body-sm">
       <p>
         Follow the{" "}
         <a
           className="underline"
-          href="https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/"
+          href={setup.setupUrl}
           target="_blank"
           rel="noreferrer"
         >
-          Hermes ACP setup guide
+          {label} setup guide
         </a>{" "}
-        to install Hermes with ACP support. Configure its model and sign-in with{" "}
-        <code>hermes model</code>, then run <code>hermes acp --check</code> in
-        your terminal. Buzz looks for the <code>hermes-acp</code> launcher.
+        for installation instructions.{" "}
+        <PresetSetupHint hint={setup.setupHint} />
       </p>
       <p>Use Check again to refresh the installation status.</p>
     </div>

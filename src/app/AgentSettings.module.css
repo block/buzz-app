@@ -23,7 +23,8 @@
 .catalog {
   display: grid;
   grid-template-columns: 12rem minmax(0, 1fr);
-  gap: var(--space-4);
+  gap: var(--space-6);
+  min-height: 100%;
 }
 
 .catalogSidebar {
@@ -33,13 +34,19 @@
 
 .catalogDetails {
   min-width: 0;
-  max-width: 42rem;
+  padding: var(--space-6);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
 }
 
 @media (max-width: 640px) {
   .catalog {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
+  }
+
+  .catalogDetails {
+    padding: var(--space-4);
   }
 
   .catalogSidebar {

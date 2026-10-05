@@ -135,10 +135,7 @@ pub(crate) fn harness_kind(command: &str) -> Option<&'static str> {
         Some("buzz-agent") => Some("buzz-agent"),
         Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => Some("goose"),
         Some("buzz-pi-acp") => Some("pi"),
-        Some("hermes-acp" | "hermes-acp.exe" | "hermes-acp.cmd" | "hermes-acp.bat") => {
-            Some("hermes")
-        }
-        _ => None,
+        _ => crate::harness_preset(command).map(|preset| preset.id.as_str()),
     }
 }
 

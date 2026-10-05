@@ -160,9 +160,10 @@ xdg-open "buzz://channel/general"
 - Invite links (`buzz://join`, `https://<relay>/invite/<code>`) and remote push
   are not handled; they end in the
   failure notice or, for HTTPS, never reach the app.
-- Git browsing currently uses the authenticated development broker, not packaged
-  desktop transport. Other adapters can still show entity metadata; explicit Git
-  sections report unavailable. PR commit lookups only read the base repository;
+- Git browsing uses the authenticated development broker or, in desktop builds,
+  native NIP-98 signed reads through the system `git` on `PATH` (macOS also checks
+  Homebrew paths). Without `git`, or on other adapters, entity metadata still shows
+  and explicit Git sections report unavailable. PR commit lookups only read the base repository;
   external fork clone URLs are never fetched, so exact fork PR diffs are unavailable.
   No repository editing, issue changes, PR review
   decisions, or merge operations are included.

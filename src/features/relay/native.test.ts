@@ -155,6 +155,27 @@ it("sends combined search operators through packaged native signed HTTP without 
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("routes operator-only filtered message reads over packaged native HTTP", async () => {
+  const transport = await connectNativeTransport(community);
+  const hit = message(viewer, "channel", "recent", 1800000000);
+  respond = () => ({ body: [hit] });
+  const filters = [{
+    kinds: [9, 40002, 40008],
+    authors: [viewer.pubkey],
+    "#h": ["channel"],
+    since: 1700000000,
+    limit: 20,
+  }];
+  await expect(transport.query(filters)).resolves.toEqual([hit]);
+  expect(requests.at(-1)).toMatchObject({
+    community,
+    path: "/query",
+    method: "POST",
+    body: JSON.stringify(filters),
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("reads back expired delivery with strong consistency without re-signing or publishing it", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.writer);

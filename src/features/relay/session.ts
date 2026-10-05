@@ -450,7 +450,10 @@ export function createRelaySession(
       channelTraffic &&
       filters.every(
         (filter) =>
-          filter.search !== undefined &&
+          (filter.search !== undefined ||
+            !!filter.authors?.length ||
+            filter.since !== undefined ||
+            filter.until !== undefined) &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
           filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),

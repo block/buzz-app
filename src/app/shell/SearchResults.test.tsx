@@ -1217,6 +1217,73 @@ it("translates combined operators into a single server-ranked scoped read and op
   }
 });
 
+it("runs operator-only date and author searches without a text predicate", async () => {
+  const relay = keypair(), viewer = keypair(), alice = keypair();
+  const channel = "crew";
+  const before = message(alice, channel, "before the cutoff", 1700000001);
+  const after = message(alice, channel, "after the cutoff", 1800000001);
+  const discovery = [
+    metadata(relay, channel, "Wes"),
+    roster(relay, channel, [viewer.pubkey]),
+  ];
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([profile(alice, { display_name: "Alice" })]);
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve(
+          [before, after].filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(
+      <SearchResults {...props} query="before:2026-10-01" scopedChannelId={channel} />,
+    );
+    expect(await screen.findByRole("option", { name: /before the cutoff/ })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /after the cutoff/ })).toBeNull();
+    expect(reads.at(-1)).toEqual([
+      expect.objectContaining({
+        "#h": [channel],
+        until: Math.floor(new Date(2026, 9, 1).getTime() / 1000) - 1,
+      }),
+    ]);
+    expect(reads.at(-1)?.[0]).not.toHaveProperty("search");
+    mounted.rerender(
+      <SearchResults {...props} query="after:2026-10-01" scopedChannelId={channel} />,
+    );
+    expect(await screen.findByRole("option", { name: /after the cutoff/ })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /before the cutoff/ })).toBeNull();
+    mounted.rerender(<SearchResults {...props} query="from:alice" />);
+    expect(await screen.findByRole("option", { name: /after the cutoff/ })).toBeVisible();
+    expect(reads.at(-1)).toEqual([
+      expect.objectContaining({ authors: [alice.pubkey] }),
+    ]);
+    expect(reads.at(-1)?.[0]).not.toHaveProperty("search");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("never widens a search when a name or channel operator is unresolved", async () => {
   vi.useFakeTimers();
   const relay = keypair(),

@@ -38,6 +38,12 @@ export function useSearchMessages(
     !channelId;
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
+  const hasFilters =
+    parsed.from !== null ||
+    parsed.in !== null ||
+    parsed.since !== null ||
+    parsed.until !== null;
+  const canSearch = !!parsed.text || hasFilters;
   const owner = useMemo(
     () => ({ session, query, channelId, unresolvedChannel, attempt }),
     [session, query, channelId, unresolvedChannel, attempt],
@@ -62,7 +68,7 @@ export function useSearchMessages(
     [session, replace],
   );
   useEffect(() => {
-    if (!parsed.text || unresolvedChannel) return;
+    if (!canSearch || unresolvedChannel) return;
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
     const timer = setTimeout(() => {
@@ -110,8 +116,9 @@ export function useSearchMessages(
         if (channelId && !session.channels.get?.(channelId)) return [];
         const filter: ReadFilter = {
           kinds: [9, 40002, 40008],
-          search: parsed.text,
-          search_mode: "prefix",
+          ...(parsed.text
+            ? { search: parsed.text, search_mode: "prefix" as const }
+            : {}),
           limit: 20,
           ...(channelId ? { "#h": [channelId] } : {}),
           ...(author ? { authors: [author] } : {}),
@@ -175,6 +182,7 @@ export function useSearchMessages(
       controller.abort();
     };
   }, [
+    canSearch,
     session,
     parsed,
     channelId,
@@ -188,7 +196,7 @@ export function useSearchMessages(
     messages: (current?.messages ?? []).filter(
       (message) => !!session.channels.get?.(message.channelId),
     ),
-    loading: !!parsed.text && !unresolvedChannel && !current,
+    loading: canSearch && !unresolvedChannel && !current,
     error: current?.error,
     retry: () => setAttempt((value) => value + 1),
   };

@@ -16,6 +16,8 @@ with `BUZZ_BUILD_BUILDERLAB=1` for the frontend. See
   process's read/replace/compare-and-delete operations. Writes commit or roll
   back under that same lock; the state lock never spans a Keychain prompt.
 - A second login supersedes the first. Cancel/sign-out fence pending writes.
+  Login registers synchronously at IPC dispatch, before its async work is queued,
+  so cancel (including plugin disposal) also covers an attempt not yet polled.
   Once an exchange starts, its spawned finish task survives a lost IPC caller:
   it either persists a verified session or attempts to revoke it. Both displaced
   and canceled minted sessions are revoked. Revocation has a five-second cap;
@@ -58,6 +60,8 @@ bin/pnpm exec vitest run src/bundled/builderlab src/bundled/hosted-communities
 
 The native suite uses a fake HTTP service, real TCP callbacks, the CLI's real
 file-store format and gated/failing storage handles. It never touches Keychain.
+The queued-login integration test dispatches real Tauri commands on an undriven
+current-thread runtime to cover cancellation and supersession before first poll.
 The app ACL test uses a marker handler, without opening windows or resolving
 the real session. Frontend tests mount React and exercise the real adapter with
 controlled IPC responses. No browser journeys are added or removed: the changed

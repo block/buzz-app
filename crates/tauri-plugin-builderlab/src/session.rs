@@ -538,6 +538,11 @@ struct Pending {
     id: u64,
     cancel: Option<oneshot::Sender<()>>,
 }
+pub(crate) struct LoginAttempt {
+    config: Arc<Config>,
+    id: u64,
+    canceled: oneshot::Receiver<()>,
+}
 /// Serialises Buzz's own operations; never holds a session, which lives only in
 /// the shared store.
 struct State {
@@ -602,13 +607,37 @@ impl BuilderlabHost {
             }
         }
     }
-    pub(crate) async fn login(&self, opener: &dyn BrowserOpener) -> Result<Account, String> {
+    pub(crate) fn begin_login(&self) -> Result<LoginAttempt, String> {
         let config = self.config()?;
-        let (cancel, mut canceled) = oneshot::channel();
+        let (cancel, canceled) = oneshot::channel();
         let id = self.begin(Some(cancel))?;
+        Ok(LoginAttempt {
+            config,
+            id,
+            canceled,
+        })
+    }
+    pub(crate) async fn complete_login(
+        &self,
+        attempt: LoginAttempt,
+        opener: &dyn BrowserOpener,
+    ) -> Result<Account, String> {
+        let LoginAttempt {
+            config,
+            id,
+            mut canceled,
+        } = attempt;
+        // Cancel/supersession may have arrived before this task's first poll.
+        if !self.owns(id)? {
+            return Err(CANCELED.into());
+        }
         let result = self.attempt(&config, id, opener, &mut canceled).await;
         self.retire(id);
         result
+    }
+    #[cfg(test)]
+    async fn login(&self, opener: &dyn BrowserOpener) -> Result<Account, String> {
+        self.complete_login(self.begin_login()?, opener).await
     }
     async fn attempt(
         &self,

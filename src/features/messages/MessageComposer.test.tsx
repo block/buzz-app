@@ -6,7 +6,15 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import {
   act,
   cleanup,
@@ -48,6 +56,8 @@ import type {
 import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
+import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
+import { emojiQuery } from "../../bundled/emoji/emoji-query";
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { setRememberAgentsPreference } from "./mention-preferences";
@@ -2719,6 +2729,97 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
     [],
     [],
   );
+});
+
+/** The real Emoji provider; the fixture provider above never publishes an exact match. */
+function mountEmojiTypeahead() {
+  // jsdom has no canvas; previews fall back to the uncentred glyph.
+  const context = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockImplementation(() => null);
+  onTestFinished(() => context.mockRestore());
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "typeahead",
+      key: "buzz.emoji/typeahead",
+      pluginId: "buzz.emoji",
+      revision: "1",
+      title: "Emoji",
+      match: ({ text, start }) => emojiQuery(text, start),
+      component: EmojiCompletion,
+    },
+  ];
+  return mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+}
+// ":" is Shift+; on US layouts, so the typed colon arrives with shiftKey set.
+const colon = (input: ComposerInputElement) =>
+  fireEvent.keyDown(input, { key: ":", shiftKey: true });
+
+it.each([
+  ["hello :-1", "hello 👎"],
+  [":+1", "👍"],
+  ["say :SMILE", "say 😄"],
+])(
+  "replaces an exact shortcode with its emoji on the closing colon: %s",
+  async (typed, expected) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    const label = `:${typed.slice(typed.lastIndexOf(":") + 1).toLowerCase()}:`;
+    await screen.findByRole("option", { name: label });
+    expect(colon(h.input())).toBe(false);
+    expect(h.input()).toHaveValue(expected);
+    expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+      expected.length,
+      expected.length,
+    ]);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  },
+);
+
+it("keeps the typed colon after a partial shortcode and never accepts emoji on Space", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("hello :smil");
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("hello :smil");
+  h.fill("hello :-1");
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(true);
+  expect(h.input()).toHaveValue("hello :-1");
+});
+
+it.each(["at 10:30", "see http"])(
+  "leaves the colon in times and URLs alone: %s",
+  (typed) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    // No syntax match means no provider mounts, so no asynchronous search is pending.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(colon(h.input())).toBe(true);
+    expect(h.input()).toHaveValue(typed);
+  },
+);
+
+it("keeps a shortcode literal inside inline code", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("run :-1");
+  act(() => {
+    h.input().setSelectionRange(0, 7);
+    h.input().toggleFormat("code");
+    h.input().setSelectionRange(7, 7);
+  });
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("run :-1");
 });
 
 it("rejects overlong and over-limit tool edits without changing accepted intent", () => {

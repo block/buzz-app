@@ -172,6 +172,9 @@ function OwnedCompletion({
   const mention = provider.pluginId === "buzz.mentions";
   const channel = provider.pluginId === "buzz.channels";
   const named = mention || channel;
+  // Typing the terminator accepts the provider-verified exact match (spaceId):
+  // plain Space after a name, the closing colon after an emoji shortcode.
+  const terminator = provider.pluginId === "buzz.emoji" ? ":" : " ";
   const popup = useCompletionPosition(
     input,
     compact ? 0.375 : 1,
@@ -283,8 +286,9 @@ function OwnedCompletion({
         current.current.editor.invalidate();
         return true;
       }
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
-        return false;
+      if (event.altKey || event.ctrlKey || event.metaKey) return false;
+      // Shift types ":" on common layouts; other shifted keys keep editing.
+      if (event.shiftKey && event.key !== ":") return false;
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
@@ -296,9 +300,9 @@ function OwnedCompletion({
         }
         return false;
       }
-      if (event.key === " " && result?.spaceId) {
+      if (event.key === terminator && result?.spaceId) {
         const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(exact, " ")) {
+        if (accept(exact, terminator)) {
           event.preventDefault();
           event.stopPropagation();
           return true;

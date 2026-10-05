@@ -8,6 +8,7 @@ import {
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import { CustomEmoji } from "./CustomEmoji";
 import {
+  exactEmoji,
   searchEmoji,
   searchCustomEmoji,
   type EmojiMatch,
@@ -142,6 +143,12 @@ export function EmojiCompletion({
         edit: { text: item.text },
       }));
     };
+    // The host accepts spaceId on the closing colon. Only a settled search can
+    // vouch that the typed name is one shortcode and not a namesake or prefix.
+    const settled = (matches: readonly EmojiMatch[]) => ({
+      items: items(matches),
+      spaceId: exactEmoji(query.query, matches),
+    });
     const retrySearch = () => {
       retry((value) => value + 1);
       if (catalog.status === "error") void session.emoji.refresh();
@@ -155,7 +162,7 @@ export function EmojiCompletion({
         if (!live) return;
         if (withdraw) withdraw();
         withdraw = publish({
-          items: items(matches),
+          ...settled(matches),
           ...(catalog.status === "error"
             ? {
                 status: "Community emoji unavailable; Unicode results shown.",
@@ -168,7 +175,7 @@ export function EmojiCompletion({
         if (!live) return;
         if (withdraw) withdraw();
         withdraw = publish({
-          items: items(searchCustomEmoji(query.query, custom)),
+          ...settled(searchCustomEmoji(query.query, custom)),
           status: "Unicode emoji unavailable. Custom matches shown.",
           retry: retrySearch,
         });

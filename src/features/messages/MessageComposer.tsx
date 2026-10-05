@@ -869,7 +869,8 @@ function Composer({
       valueRef.current.text !== observation.text
     )
       return false;
-    if (key === " ") {
+    // A typed terminator (Space, the closing emoji colon) stays literal in code.
+    if (key === " " || key === ":") {
       const doc = readComposerSnapshot(valueRef.current.document);
       if (
         doc &&

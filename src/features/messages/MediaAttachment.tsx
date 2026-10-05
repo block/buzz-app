@@ -323,7 +323,8 @@ export function MediaAttachment({
   );
 }
 
-function MediaViewer({
+/** The plain fullscreen fallback for surfaces that host no media review. */
+export function MediaViewer({
   title,
   close,
   children,

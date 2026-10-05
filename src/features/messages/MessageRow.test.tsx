@@ -1023,7 +1023,11 @@ it.each([
       });
       // Middle click, drag and copy on the web yield the authenticated source.
       expect(thumbnail).toHaveAttribute("href", source);
-      fireEvent.click(thumbnail, { detail: 1, ...modifiers });
+      // The browser's own new-tab default, which the opener leaves to Cmd, is
+      // also cancelled.
+      expect(fireEvent.click(thumbnail, { detail: 1, ...modifiers })).toBe(
+        false,
+      );
       const dialog = screen.getByRole("dialog", { name: "Image attachment" });
       expect(dialog.querySelector("img")).toHaveAttribute("src", source);
       expect(external).toEqual([]);

@@ -47,6 +47,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   native.commands = [];
   native.connect = () =>
     Promise.resolve({ id: 7, expiresAt: Date.now() / 1000 + 300 });
@@ -225,10 +226,14 @@ it("fails, not rotates, when 30 s or less of the badge remain once connected", a
 it("reports a session denial and closes as a failure", async () => {
   const denied = vi.fn();
   const stop = onEnterpriseSignInRequired(denied);
+  // A denied relay must never fall back to an unbadged webview socket.
+  const browser = vi.fn();
+  vi.stubGlobal("WebSocket", browser);
   native.connect = () => Promise.reject(ENTERPRISE_SIGN_IN_REQUIRED);
   const h = open();
   await vi.waitFor(() => expect(h.events.close).toHaveBeenCalled());
   expect(denied).toHaveBeenCalledOnce();
+  expect(browser).not.toHaveBeenCalled();
   expect(h.events.error).toHaveBeenCalled();
   expect(h.events.close).toHaveBeenCalledWith({ code: 1006 });
   stop();

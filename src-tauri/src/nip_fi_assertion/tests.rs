@@ -434,16 +434,14 @@ async fn a_socket_reconnect_after_a_media_refusal_asks_for_sign_in() {
     assert_eq!(error, SIGN_IN_REQUIRED);
     assert!(owner.session_snapshot().await.unwrap().is_none());
 
-    let error = assertions
-        .get_until(
-            &identity,
-            &relay,
-            true,
-            tokio::time::Instant::now() + DEADLINE,
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error, SIGN_IN_REQUIRED);
+    let badge = assertions.get_until(
+        &identity,
+        &relay,
+        true,
+        tokio::time::Instant::now() + DEADLINE,
+    );
+    let request = crate::relay_socket::badged_request(&relay, badge).await;
+    assert!(matches!(request, Err(error) if error == SIGN_IN_REQUIRED));
     assert_eq!(service.records().len(), 1);
 }
 

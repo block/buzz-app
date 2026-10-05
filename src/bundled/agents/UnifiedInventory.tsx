@@ -1,3 +1,13 @@
+import { createPortal } from "react-dom";
+import type { ReactNode } from "react";
+import { DotsThreeIcon } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { InventoryView } from "./InventoryView";
 import type { ClientSnapshot } from "../../features/communities/service";
@@ -40,7 +50,11 @@ export function UnifiedInventory({
   profileKeys,
   onUseHere,
   onImport,
+  teams,
+  headerActions,
 }: {
+  teams?: ReactNode;
+  headerActions?: HTMLElement | null;
   state: AgentControlState;
   control: AgentControl;
   connection: RelaySnapshot;
@@ -315,26 +329,55 @@ export function UnifiedInventory({
       profileKeys={profileKeys}
       onUseHere={onUseHere}
       onImport={onImport}
+      teams={teams}
     >
       {data.inventoryWarnings?.map((warning) => (
         <p key={warning} role="alert">
           {warning} Retry local discovery by reopening the app.
         </p>
       ))}
-      {(client?.status === "ready" || connection.status === "ready") && (
-        <div className="self-start">
-          <Button
-            disabled={snapshot.status === "loading"}
-            onClick={() => {
-              void library.refresh();
-              void archives.refresh();
-              setRefresh((value) => value + 1);
-            }}
-          >
-            Refresh agents
-          </Button>
-        </div>
-      )}
+      {(client?.status === "ready" || connection.status === "ready") &&
+        (headerActions ? (
+          createPortal(
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    aria-label="Agent page actions"
+                    size="sm"
+                    icon={<DotsThreeIcon size={18} />}
+                  />
+                }
+              />
+              <MenuPopup align="end">
+                <MenuItem
+                  disabled={snapshot.status === "loading"}
+                  onClick={() => {
+                    void library.refresh();
+                    void archives.refresh();
+                    setRefresh((value) => value + 1);
+                  }}
+                >
+                  Refresh agents
+                </MenuItem>
+              </MenuPopup>
+            </MenuRoot>,
+            headerActions,
+          )
+        ) : (
+          <div className="self-start">
+            <Button
+              disabled={snapshot.status === "loading"}
+              onClick={() => {
+                void library.refresh();
+                void archives.refresh();
+                setRefresh((value) => value + 1);
+              }}
+            >
+              Refresh agents
+            </Button>
+          </div>
+        ))}
       {pending && <p role="status">Checking community inventory…</p>}
       {profileErrors.map((community) => (
         <p key={community} role="alert">

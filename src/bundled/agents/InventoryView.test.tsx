@@ -185,6 +185,7 @@ it("renders four exclusive sections with all setups on one exact-key card", asyn
   expect(screen.getAllByRole("article", { name: "Agent Shared" })).toHaveLength(
     1,
   );
+  fireEvent.click(within(card).getByLabelText("Manage Shared"));
   // Each saved setup keeps its own controls, including the one in another community.
   expect(within(card).getAllByRole("button", { name: "Stop" })).toHaveLength(2);
   expect(

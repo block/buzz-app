@@ -1,0 +1,49 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+  min-height: 15.25rem;
+}
+.open,
+.content {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-3);
+  text-align: center;
+  border-radius: inherit;
+}
+.details {
+  border-radius: inherit;
+}
+.open {
+  min-height: 15.25rem;
+  cursor: pointer;
+  list-style: none;
+}
+.open::-webkit-details-marker {
+  display: none;
+}
+.controls {
+  padding: 0 var(--space-4) var(--space-4);
+}
+.open:hover {
+  background: var(--surface-base);
+}
+.portrait {
+  width: 5rem;
+  height: 5rem;
+  flex-shrink: 0;
+}
+.model {
+  margin-top: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

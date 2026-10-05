@@ -599,10 +599,12 @@ it("shows native controls per exact destination and separate read-only discovere
     entry.textContent?.includes("wss://second.example"),
   );
   if (!card) throw Error("Second destination missing");
+  fireEvent.click(screen.getByText(/^Other agents \(/));
   expect(
-    within(
-      screen.getByRole("region", { name: "Library identities" }),
-    ).getByRole("article", { name: "Agent Not imported" }),
+    within(screen.getByRole("region", { name: "Agent library" })).getByRole(
+      "article",
+      { name: "Agent Not imported" },
+    ),
   ).toBeTruthy();
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
@@ -631,7 +633,7 @@ it("shows native controls per exact destination and separate read-only discovere
     screen.getByRole("article", { name: "Agent Not imported" }),
   ).toBeTruthy();
   expect(screen.queryByText("Old Buzz library", { exact: true })).toBeNull();
-  expect(screen.getByText("Add agent", { exact: true })).toBeVisible();
+  expect(screen.getByText("Create agent", { exact: true })).toBeVisible();
   expect(f.calls.some((call) => call.action === "import")).toBe(false);
 });
 for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
@@ -739,6 +741,7 @@ it("checks Start failure and keeps lifecycle controls available", async () => {
     name: "Agent Fixture agent",
   });
   if (!card) throw Error("Missing managed card");
+  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
   expect(
     within(card).getByText("Process running · relay readiness unverified"),
   ).toBeVisible();
@@ -776,6 +779,7 @@ it("retires a card Start failure after the editor starts and stops the agent", a
     name: "Agent Fixture agent",
   });
   if (!card) throw Error("Missing managed card");
+  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
   fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
   await within(card).findByRole("button", { name: "Start" });
   const action = f.host.action;
@@ -802,7 +806,7 @@ it("retires a card Start failure after the editor starts and stops the agent", a
 });
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
-  const add = await screen.findByRole("button", { name: "Add agent" });
+  const add = await screen.findByRole("button", { name: "Create agent" });
   expect(add).toHaveAttribute("aria-haspopup", "dialog");
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(add);
@@ -1020,10 +1024,9 @@ it("keeps the read-only library available when native management is unavailable"
   const card = await screen.findByRole("article", {
     name: "Agent Not imported",
   });
-  expect(
-    within(card).queryByRole("button", { name: /Actions|Start|Edit/ }),
-  ).toBeNull();
-  expect(screen.queryByText("Add agent", { exact: true })).toBeNull();
+  fireEvent.click(screen.getByText(/^Other agents \(/));
+  expect(within(card).queryByRole("button", { name: /Start|Edit/ })).toBeNull();
+  expect(screen.queryByText("Create agent", { exact: true })).toBeNull();
   expect(screen.getByText(/This browser cannot run/)).toBeVisible();
 });
 function expectAIFieldOrder(dialog: HTMLElement) {
@@ -1042,7 +1045,7 @@ function expectAIFieldOrder(dialog: HTMLElement) {
 
 it("shows Harness, Provider and Model in that order when adding an agent", async () => {
   const { f } = setup();
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   expectAIFieldOrder(dialog);
   expect(
@@ -1270,7 +1273,7 @@ it("creates and starts a bundled Goose agent with the selected provider", async 
     });
     fixture.host.publishProfile = async () => structuredClone(fixture.data);
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Goose helper" },
@@ -1357,7 +1360,9 @@ it("keeps the saved agent when Start reports a process failure", async () => {
   });
   const user = userEvent.setup();
   try {
-    await user.click(await screen.findByRole("button", { name: "Add agent" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Create agent" }),
+    );
     const dialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
     await user.click(
@@ -1424,7 +1429,7 @@ it("checks an unconfirmed Start without repeating it", async () => {
     });
   });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  await user.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
   await user.click(
@@ -1455,7 +1460,7 @@ it("shows an unavailable Pi harness without allowing selection", async () => {
       providers: [{ value: "anthropic", label: "Anthropic" }],
     });
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await userEvent.click(
     within(dialog).getByRole("combobox", { name: "Harness" }),
@@ -1486,7 +1491,7 @@ it.each(["Create agent", "Edit agent"] as const)(
     );
     if (dialogName === "Create agent") {
       await userEvent.click(
-        await screen.findByRole("button", { name: "Add agent" }),
+        await screen.findByRole("button", { name: "Create agent" }),
       );
     } else {
       const [card] = await screen.findAllByRole("article", {
@@ -1763,7 +1768,7 @@ for (const stage of ["create", "profile"] as const) {
       const user = userEvent.setup();
       try {
         await user.click(
-          await screen.findByRole("button", { name: "Add agent" }),
+          await screen.findByRole("button", { name: "Create agent" }),
         );
         const dialog = screen.getByRole("dialog", { name: "Create agent" });
         await user.type(within(dialog).getByLabelText("Name"), "New helper");
@@ -1780,6 +1785,7 @@ for (const stage of ["create", "profile"] as const) {
           name: "Agent Fixture agent",
         })[0];
         if (!card) throw Error("Running fixture card missing");
+        await user.click(within(card).getByLabelText("Manage Fixture agent"));
         const stop = within(card).getByRole("button", { name: "Stop" });
         expect(stop).toBeVisible();
         expect(stop).toBeEnabled();
@@ -1796,7 +1802,7 @@ for (const stage of ["create", "profile"] as const) {
           ).toBeDisabled();
         }
         // A later dialog must not be closed by the dismissed operation's callback.
-        await user.click(screen.getByRole("button", { name: "Add agent" }));
+        await user.click(screen.getByRole("button", { name: "Create agent" }));
         const newer = screen.getByRole("dialog", { name: "Create agent" });
         await act(async () => {
           release();
@@ -1847,7 +1853,7 @@ it("blocks creation before native writes when the runtime is missing and preserv
     fixture.host.prepareCreate = prepare;
     fixture.host.commitCreate = commit;
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Calvin" },
@@ -1913,7 +1919,7 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
       });
   });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  await user.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Calvin");
   await user.click(
@@ -2011,6 +2017,7 @@ it.each(["running", "failed"] as const)(
       name: "Agent Fixture agent",
     });
     if (!card) throw Error("Missing managed card");
+    fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => {
       releaseRead = resolve;
@@ -2151,7 +2158,9 @@ for (const mode of ["edit", "create"] as const) {
       fixture.host.publishProfile = async () => structuredClone(fixture.data);
     });
     if (mode === "create") {
-      fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Create agent" }),
+      );
     } else {
       const cards = await screen.findAllByRole("article", {
         name: "Agent Fixture agent",
@@ -2268,7 +2277,7 @@ it("create seeds editable workers while inheriting model and context defaults", 
       return structuredClone(fixture.data);
     });
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Defaults agent" },
@@ -2345,7 +2354,7 @@ for (const platform of ["MacIntel", "Win32"] as const) {
       "Databricks sign-in is not supported on Windows yet. Choose OpenAI for this agent.";
     const add = async () => {
       await user.click(
-        await screen.findByRole("button", { name: "Add agent" }),
+        await screen.findByRole("button", { name: "Create agent" }),
       );
       const dialog = screen.getByRole("dialog");
       fireEvent.change(within(dialog).getByLabelText("Name"), {
@@ -2900,6 +2909,7 @@ it("shows native waiting, recovery Stop and one explicit Retry without polling a
     entry.textContent?.includes(f.agent.relayUrl),
   );
   if (!card) throw Error("Exact destination card missing");
+  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
   expect(
     within(card).getByText("Waiting to start · unlock Keychain if prompted"),
   ).toBeVisible();

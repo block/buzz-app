@@ -41,7 +41,9 @@ export function TemplateLibrary({
   kit,
   catalog,
   active,
+  section = "template",
 }: {
+  section?: "template" | "team";
   session?: RelaySession;
   kit: ChannelKit;
   catalog: ReturnType<typeof useTemplateCatalog>;
@@ -96,22 +98,24 @@ export function TemplateLibrary({
   };
   return (
     <>
-      <Header
-        title="Templates & teams"
-        subtitle="Private to you in this community"
-        actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            loading={state.status === "loading"}
-            onClick={() => {
-              if (active()) catalog.refresh();
-            }}
-          >
-            <ArrowsClockwiseIcon size={16} /> Refresh
-          </Button>
-        }
-      />
+      {section === "template" && (
+        <Header
+          title="Templates"
+          subtitle="Private to you in this community"
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={state.status === "loading"}
+              onClick={() => {
+                if (active()) catalog.refresh();
+              }}
+            >
+              <ArrowsClockwiseIcon size={16} /> Refresh
+            </Button>
+          }
+        />
+      )}
       <div className={styles.library}>
         {(state.status !== "ready" ||
           !catalog.agentsReady ||
@@ -122,11 +126,11 @@ export function TemplateLibrary({
               (state.status === "unavailable"
                 ? "This host does not support saved templates."
                 : state.status !== "ready"
-                  ? "Loading your templates and teams…"
+                  ? `Loading your ${section === "team" ? "teams" : "templates"}…`
                   : "Loading available agents…")}
           </p>
         )}
-        {(["template", "team"] as const).map((type) => {
+        {[section].map((type) => {
           const items = entries.filter(
             (entry) => entry.record.value.type === type,
           );
@@ -140,50 +144,69 @@ export function TemplateLibrary({
                 id={`library-${type}`}
                 title={
                   <>
-                    {type === "template" ? "Channel templates" : "Saved teams"}{" "}
-                    <span className={styles.count}>{items.length}</span>
+                    {type === "template" ? "Channel templates" : "Agent teams"}{" "}
+                    {type === "template" && (
+                      <span className={styles.count}>{items.length}</span>
+                    )}
                   </>
                 }
                 subtitle={
                   type === "template"
                     ? "Agent and canvas presets for new channels."
-                    : "Reusable agent selections for channel setup and @mentions."
+                    : undefined
                 }
                 actions={
-                  <Button
-                    ref={type === "template" ? newTemplate : newTeam}
-                    variant="subtle"
-                    size="sm"
-                    disabled={disabled}
-                    onClick={(event) =>
-                      open(
-                        {
-                          value:
-                            type === "template"
-                              ? {
-                                  type,
-                                  id: crypto.randomUUID(),
-                                  name: "",
-                                  description: "",
-                                  ...emptyLineup(),
-                                }
-                              : {
-                                  type,
-                                  id: crypto.randomUUID(),
-                                  name: "",
-                                  agents: [],
-                                },
-                        },
-                        event.currentTarget,
-                      )
-                    }
-                  >
-                    <PlusIcon size={16} /> New {type}
-                  </Button>
+                  <>
+                    {type === "team" &&
+                      (state.status === "error" || catalog.error) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (active()) catalog.refresh();
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      )}
+                    <Button
+                      ref={type === "template" ? newTemplate : newTeam}
+                      variant="subtle"
+                      size="sm"
+                      disabled={disabled}
+                      onClick={(event) =>
+                        open(
+                          {
+                            value:
+                              type === "template"
+                                ? {
+                                    type,
+                                    id: crypto.randomUUID(),
+                                    name: "",
+                                    description: "",
+                                    ...emptyLineup(),
+                                  }
+                                : {
+                                    type,
+                                    id: crypto.randomUUID(),
+                                    name: "",
+                                    agents: [],
+                                  },
+                          },
+                          event.currentTarget,
+                        )
+                      }
+                    >
+                      <PlusIcon size={16} />{" "}
+                      {type === "team" ? "Create team" : "New template"}
+                    </Button>
+                  </>
                 }
               />
               {items.length > 0 && (
-                <div className={styles.items}>
+                <div
+                  className={type === "team" ? styles.teamGrid : styles.items}
+                >
                   {items.map((entry) => {
                     const value = entry.record.value;
                     if (value.type === "groups") return null;
@@ -385,6 +408,44 @@ function LibraryItem({
       </MenuPopup>
     </MenuRoot>
   );
+  if (value.type === "team") {
+    return (
+      <article className={styles.teamCard} aria-label={value.name}>
+        <button
+          type="button"
+          className={styles.teamOpen}
+          disabled={disabled}
+          onClick={(event) => onEdit(event.currentTarget)}
+          aria-label={`Edit team ${value.name}`}
+        >
+          <span className={styles.teamAvatars} aria-hidden="true">
+            {members.slice(0, 4).map((agent) => (
+              <span key={agent.pubkey} className={styles.teamAvatar}>
+                <Avatar
+                  src={agent.avatar}
+                  alt=""
+                  fallback={agent.name}
+                  shape="squircle"
+                  size="fill"
+                />
+              </span>
+            ))}
+            {!members.length && <UsersIcon size={48} />}
+            {members.length > 4 && (
+              <span className={styles.remainder}>+{members.length - 4}</span>
+            )}
+          </span>
+          <span className={`text-label-sm ${styles.teamName}`}>
+            {value.name}
+          </span>
+          <span className="text-caption text-subtle">
+            {members.length} {members.length === 1 ? "member" : "members"}
+          </span>
+        </button>
+        <div className={styles.teamMenu}>{menu}</div>
+      </article>
+    );
+  }
   return (
     <article className={styles.item} aria-label={value.name}>
       <div className={styles.itemHeading}>

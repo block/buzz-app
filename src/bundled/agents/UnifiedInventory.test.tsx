@@ -299,6 +299,7 @@ it("lists archived identities after all discovery joins in an Archived section w
     name: "Agent Fixture agent",
   });
   expect(within(local).getByText("Archived")).toBeVisible();
+  fireEvent.click(within(local).getByLabelText("Manage Fixture agent"));
   expect(within(local).getByRole("button", { name: "Stop" })).toBeVisible();
   expect(
     within(section).getByRole("article", { name: "Agent Hidden" }),
@@ -318,6 +319,7 @@ it("omits redundant profile text and uses configured names for native WSS setups
   const card = await screen.findByRole("article", {
     name: "Agent Raw local fallback",
   });
+  fireEvent.click(within(card).getByLabelText("Manage Raw local fallback"));
   expect(within(card).queryByText(/^Profile:/)).toBeNull();
   expect(within(card).getByText(npubEncode("cd".repeat(32)))).not.toBeVisible();
   fireEvent.click(
@@ -1083,6 +1085,7 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
     ).toBeNull(),
   );
   const restored = screen.getByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(within(restored).getByLabelText("Manage Fixture agent"));
   expect(within(restored).getByRole("button", { name: "Stop" })).toBeVisible();
   await waitFor(() =>
     expect(

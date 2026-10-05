@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { Dialog } from "@base-ui/react/dialog";
 import type { useIdentityNames } from "../../features/identity-names/react";
 import {
@@ -37,7 +38,9 @@ export function AgentControlPanel({
   editRequest,
   onCloseTarget,
   onOpenHarnesses,
+  headerActions,
 }: {
+  headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -226,30 +229,35 @@ export function AgentControlPanel({
       }}
     />
   ) : null;
+  const createButton = (
+    <Button
+      variant="subtle"
+      size="sm"
+      aria-haspopup="dialog"
+      disabled={localPending}
+      onClick={() =>
+        setAdding({
+          destination: importDestination,
+          owner: createOwner ?? "",
+        })
+      }
+    >
+      <PlusIcon size={16} aria-hidden="true" />
+      Create agent
+    </Button>
+  );
   return (
     <section
       data-buzz-ui=""
       aria-label="Local agent controls"
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      {state.data && (
-        <div className="flex justify-end">
-          <Button
-            variant="primary"
-            aria-haspopup="dialog"
-            disabled={localPending}
-            onClick={() =>
-              setAdding({
-                destination: importDestination,
-                owner: createOwner ?? "",
-              })
-            }
-          >
-            <PlusIcon size={16} aria-hidden="true" />
-            Add agent
-          </Button>
-        </div>
-      )}
+      {state.data &&
+        (headerActions ? (
+          createPortal(createButton, headerActions)
+        ) : (
+          <div className="flex justify-end">{createButton}</div>
+        ))}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}

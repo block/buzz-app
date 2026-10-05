@@ -20,7 +20,7 @@ export function TemplateSettings({
 }) {
   const connection = useRelayConnection(relay);
   return (
-    <section data-buzz-ui="" aria-label="Templates and teams settings">
+    <section data-buzz-ui="" aria-label="Templates settings">
       {connection.status === "ready" ? (
         <Library
           key={`${connection.scope}:${connection.generation}`}
@@ -29,7 +29,7 @@ export function TemplateSettings({
         />
       ) : (
         <>
-          <Header title="Templates & teams" />
+          <Header title="Templates" />
           <p role="status">Choose a connected community to manage templates.</p>
         </>
       )}
@@ -46,6 +46,25 @@ function Library({
   const catalog = useTemplateCatalog(session);
   return (
     <TemplateLibrary
+      session={session}
+      kit={session.channelKit}
+      catalog={catalog}
+      active={active}
+    />
+  );
+}
+
+export function AgentTeams({
+  session,
+  active,
+}: {
+  session: RelaySession;
+  active(): boolean;
+}) {
+  const catalog = useTemplateCatalog(session);
+  return (
+    <TemplateLibrary
+      section="team"
       session={session}
       kit={session.channelKit}
       catalog={catalog}

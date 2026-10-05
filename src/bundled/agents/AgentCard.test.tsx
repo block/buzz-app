@@ -147,6 +147,7 @@ it("re-reads presence after native start or stop until the badge agrees, within 
 it("reserves card-header space for a profile-only menu", () => {
   render(
     <AgentCard
+      layout="row"
       name="A very long relay-only identity name"
       identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
       onViewProfile={() => {}}
@@ -155,9 +156,9 @@ it("reserves card-header space for a profile-only menu", () => {
     </AgentCard>,
   );
 
-  expect(screen.getByRole("heading", { level: 3 }).parentElement).toHaveClass(
-    "pr-6",
-  );
+  expect(
+    screen.getByRole("heading", { level: 3 }).parentElement?.parentElement,
+  ).toHaveClass("pr-6");
 });
 
 it("hands focus from the menu to the opened profile", async () => {
@@ -190,12 +191,12 @@ it("opens identities in a popover and returns focus on Escape", async () => {
   const user = userEvent.setup();
   const pubkey = "ab".repeat(32);
   render(<AgentCard name="Agent" identities={[{ pubkey, name: "Agent" }]} />);
-  const trigger = screen.getByRole("button", { name: "Agent: public key" });
+  const trigger = screen.getByRole("button", { name: "Actions for Agent" });
   expect(screen.queryByText(npubEncode(pubkey))).toBeNull();
   const card = screen.getByRole("article");
   await user.click(trigger);
   const popup = await screen.findByRole("dialog", {
-    name: "Agent public key",
+    name: "Agent identity details",
   });
   expect(card).not.toContainElement(popup);
   expect(screen.getByText(npubEncode(pubkey))).toBeVisible();
@@ -212,4 +213,23 @@ it("keeps the exact identity label and row heading in the final card shell", () 
     "agent-inventory-row",
   );
   expect(screen.getByRole("heading", { level: 4, name: "Solo" })).toBeVisible();
+});
+
+it("keeps archive feedback and the badge visible when tile controls are collapsed", () => {
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      archived
+      archive={{ archived: true, pending: false, onSelect() {} }}
+      feedback={<p role="alert">Archive failed</p>}
+    >
+      <button type="button">Stop</button>
+    </AgentCard>,
+  );
+  expect(screen.getByText("Archived")).toBeVisible();
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.getByText("Stop")).not.toBeVisible();
+  fireEvent.click(screen.getByLabelText("Manage Agent"));
+  expect(screen.getByRole("button", { name: "Stop" })).toBeVisible();
 });

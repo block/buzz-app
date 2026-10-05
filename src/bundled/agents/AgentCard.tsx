@@ -1,3 +1,4 @@
+import styles from "./AgentCard.module.css";
 import { npubEncode } from "nostr-tools/nip19";
 import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import {
@@ -21,7 +22,6 @@ import {
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
-import { Button } from "../../shared/design-system/ui/Button";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -56,8 +56,10 @@ export function AgentCard({
   identityLabel = (identity) => identity.name,
   layout = "tile",
   headingLevel = 3,
+  revealControls = false,
 }: {
   children?: ReactNode;
+  revealControls?: boolean;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
   layout?: "tile" | "row";
   headingLevel?: 3 | 4 | 5;
@@ -83,6 +85,7 @@ export function AgentCard({
   /** Status for a whole-card operation, shown on its own full-width line. */
   feedback?: ReactNode;
 }) {
+  const tile = layout === "tile";
   const Heading = `h${headingLevel}` as "h3" | "h4" | "h5";
   const trigger = useRef<HTMLButtonElement>(null);
   const profileHandoff = useRef(false);
@@ -128,13 +131,61 @@ export function AgentCard({
         : source
           ? (media ?? session?.media)?.(source, "small")
           : undefined;
+  const model = managed
+    ? (managed.launchModel ??
+      (managed.launchModelEnv
+        ? "Custom model"
+        : managed.harness.model || "Default model"))
+    : undefined;
+  const controls = (
+    <div className="flex min-w-0 flex-col gap-3">{children}</div>
+  );
+  const portrait = (
+    <div className={tile ? styles.portrait : "shrink-0"}>
+      <AgentAvatar
+        session={session}
+        agentPubkey={
+          identities.length === 1 ? identities[0]?.pubkey : undefined
+        }
+        alt={name}
+        fallback={name}
+        src={picture ?? null}
+        size={tile ? "fill" : "default"}
+        shape="squircle"
+        statusBadge={presence === "unknown" ? undefined : presence}
+      />
+    </div>
+  );
+  const label = (
+    <div className="min-w-0 max-w-full">
+      <Heading
+        className="m-0 min-w-0 max-w-full truncate text-label-sm"
+        title={name}
+      >
+        {name}
+      </Heading>
+      {archived && (
+        <span className="inline-block max-w-full rounded-full border border-primary px-2 text-caption text-secondary">
+          Archived
+        </span>
+      )}
+      {tile && model && (
+        <p
+          className={`m-0 text-caption text-subtle ${styles.model}`}
+          title={model}
+        >
+          {model}
+        </p>
+      )}
+    </div>
+  );
   return (
     <article
       aria-label={`Agent ${name}`}
       data-agent-pubkey={
         identities.length === 1 ? identities[0]?.pubkey : undefined
       }
-      className={`relative min-w-0 ${layout === "row" ? "agent-inventory-row" : `flex flex-col gap-4 rounded-2xl border border-primary ${children ? "p-4" : "px-4 py-8"}`}`}
+      className={`relative min-w-0 ${tile ? styles.card : "agent-inventory-row"}`}
     >
       {(onEdit || onViewProfile || archive) && (
         <div className="absolute right-2 top-2">
@@ -278,81 +329,58 @@ export function AgentCard({
           </MenuRoot>
         </div>
       )}
-      <div
-        className={
-          children
-            ? `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile || archive ? "pr-6" : ""}`
-            : "flex flex-col items-center gap-6 text-center"
-        }
-      >
-        <div className={children ? "shrink-0" : "size-20 shrink-0"}>
-          <AgentAvatar
-            session={session}
-            agentPubkey={
-              identities.length === 1 ? identities[0]?.pubkey : undefined
-            }
-            alt={name}
-            fallback={name}
-            src={picture ?? null}
-            size={layout === "row" ? "default" : children ? "large" : "fill"}
-            shape="squircle"
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
-        </div>
-        {archived ? (
-          // The badge wraps below the name before the name truncates.
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <Heading
-              className="m-0 min-w-0 max-w-full truncate text-label"
-              title={name}
-            >
-              {name}
-            </Heading>
-            <span className="shrink-0 rounded-full border border-primary px-2 text-caption text-secondary">
-              Archived
-            </span>
-          </div>
-        ) : (
-          <Heading
-            className="m-0 min-w-0 max-w-full truncate text-label"
-            title={name}
-          >
-            {name}
-          </Heading>
-        )}
-      </div>
-      {children && (
+      {tile && children ? (
+        <details className={styles.details} open={revealControls || undefined}>
+          <summary className={styles.open} aria-label={`Manage ${name}`}>
+            {portrait}
+            {label}
+          </summary>
+          <div className={styles.controls}>{controls}</div>
+        </details>
+      ) : (
         <div
           className={
-            layout === "row"
-              ? `agent-inventory-actions flex min-w-0 flex-wrap items-center gap-2 ${onEdit || onViewProfile || archive ? "pr-8" : ""}`
-              : "flex min-w-0 flex-col gap-3"
+            tile
+              ? styles.content
+              : `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile || archive ? "pr-6" : ""}`
           }
+        >
+          {portrait}
+          {label}
+        </div>
+      )}
+      {!tile && children && (
+        <div
+          className={`agent-inventory-actions flex min-w-0 flex-wrap items-center gap-2 ${onEdit || onViewProfile || archive ? "pr-8" : ""}`}
         >
           {children}
         </div>
       )}
       {feedback && (
-        <div className="agent-card-feedback min-w-0">{feedback}</div>
+        <div
+          className={`agent-card-feedback min-w-0 ${tile ? "px-4 pb-4" : ""}`}
+        >
+          {feedback}
+        </div>
       )}
-      {identities.length && !children ? (
-        <div className="-mt-3 flex justify-center">
+      {identities.length &&
+      !children &&
+      !onEdit &&
+      !onViewProfile &&
+      !archive ? (
+        <div className="absolute right-2 top-2">
           <PopoverRoot>
             <PopoverTrigger
               render={
-                <Button
-                  variant="link"
-                  size="xs"
-                  aria-label={`${name}: public key`}
-                >
-                  <span className="text-caption text-subtle underline underline-offset-4">
-                    Public key
-                  </span>
-                </Button>
+                <IconButton
+                  aria-label={`Actions for ${name}`}
+                  size="compact"
+                  icon={<DotsThreeIcon size={18} aria-hidden="true" />}
+                />
               }
             />
             <PopoverPopup align="center">
-              <PopoverTitle>{name} public key</PopoverTitle>
+              <PopoverTitle>{name} identity details</PopoverTitle>
               <ul className="m-0 mt-3 list-none space-y-3 p-0">
                 {identities.map((identity) => (
                   <li key={identity.pubkey}>
@@ -365,8 +393,8 @@ export function AgentCard({
             </PopoverPopup>
           </PopoverRoot>
         </div>
-      ) : !children ? (
-        <p className="m-0 -mt-3 text-center text-caption text-subtle">
+      ) : !children && !identities.length ? (
+        <p className="m-0 mb-6 text-center text-caption text-subtle">
           No linked identity
         </p>
       ) : null}

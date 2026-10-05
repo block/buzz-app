@@ -23,9 +23,15 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- The library shows one tile per exact identity, grouped only by explicit profile
-  links. Each tile discloses its full public key. Profiles with no linked identity
-  appear separately; an archived identity does not become an empty profile.
+- The main individual-agent grid is reserved for native local agents; teams follow
+  it, with old/importable/relay inventory below. Browser-only hosts cannot establish
+  current local custody: their read-only library lives in a collapsed **Other
+  agents** section below teams, not in the individual-agent grid.
+- The compatibility library shows one compact row per exact identity. Identity
+  details are available from its overflow button, not an exposed Public key link.
+  Explicit profile links still supply artwork; names never join identities.
+  Profiles with no linked identity appear separately; an archived identity does
+  not become an empty profile.
 - Only distinct keys with the same displayed name need a short npub suffix. Names
   alone never create a profile group. Suffix collisions extend deterministically using
   the complete inventory, including identities hidden by archive filtering.

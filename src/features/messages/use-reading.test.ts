@@ -330,6 +330,12 @@ it.each(["blur", "scroll", "unmount"] as const)(
     // The read finished and released its durable lease.
     expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
     expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+    // Viewing moved off the write lease; only the current handle reports rows.
+    expect(h.leases[0]?.view).toHaveBeenLastCalledWith(
+      [],
+      expect.any(Function),
+    );
+    expect(h.leases[0]?.view.mock.lastCall?.[1]()).toBe(false);
     // A view-only replacement still reports the row, with no timer of its own.
     const viewing = h.leases[1];
     expect(viewing?.view).toHaveBeenCalledExactlyOnceWith(

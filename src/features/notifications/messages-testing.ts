@@ -32,7 +32,8 @@ import { bindMessageNotifications, notificationAuthorized } from "./messages";
 export const cleanups: (() => unknown)[] = [];
 /** A real relay session with message notifications bound to it. */
 export async function setup(
-  readBarrier: Promise<void> = Promise.resolve(),
+  /** Holds each read-state write; a function is asked once per write. */
+  readBarrier: Promise<void> | (() => Promise<void>) = Promise.resolve(),
   readFrontier?: number,
   remote?: {
     observation: "bounded" | "snapshot";
@@ -152,7 +153,9 @@ export async function setup(
         : {}),
       readStateStorage: {
         async update(change) {
-          await readBarrier;
+          await (typeof readBarrier === "function"
+            ? readBarrier()
+            : readBarrier);
           readState = readJournal(change(readState), viewer.pubkey);
           return readState;
         },

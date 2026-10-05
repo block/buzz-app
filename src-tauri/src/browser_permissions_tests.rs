@@ -66,6 +66,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_export",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",
+        "identity_sign_builderlab_binding",
         "relay_decode_read_state",
         "relay_sign_read_state",
         "relay_publish_read_state",
@@ -157,6 +158,11 @@ fn native_command_permissions_allow_only_main_webview() {
     } else {
         "tauri://localhost"
     };
+    // Window fallback belongs to trusted app UI, never a sibling or remote page.
+    for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
+        assert!(invoke(&guest, "plugin:window|close", origin).is_err());
+    }
+    assert!(invoke(&main, "plugin:window|close", "https://example.org").is_err());
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
     assert!(invoke(&main, "relay_agent_history_decode", local_origin).is_err());
@@ -173,4 +179,5 @@ fn native_command_permissions_allow_only_main_webview() {
             "remote content must not use main grants: {command}"
         );
     }
+    assert!(invoke(&main, "plugin:window|close", local_origin).is_ok());
 }

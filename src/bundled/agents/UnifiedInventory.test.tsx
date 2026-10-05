@@ -24,6 +24,7 @@ import type { ReadTransport } from "../../features/relay/transport";
 import type { RelaySnapshot } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UnifiedInventory } from "./UnifiedInventory";
 const disposals: (() => void)[] = [];
 afterEach(() => {
@@ -120,7 +121,7 @@ function setup(
       onImport={() => {}}
     />
   );
-  const mounted = render(view());
+  const mounted = render(view(), { wrapper: ToastProvider });
   return {
     f,
     library: owned.session.agentLibrary,
@@ -131,6 +132,10 @@ function setup(
     changeScope(scope: string, generation: number) {
       connection = { ...connection, scope, generation };
       mounted.rerender(view());
+    },
+    /** Leaves the view while the app's notice host stays. */
+    leave() {
+      mounted.rerender(null);
     },
   };
 }
@@ -274,7 +279,7 @@ it("retains multiple verified associations and renders inventory keys absent fro
   }
 });
 
-it("filters archived identities after all discovery joins while retaining local controls", async () => {
+it("lists archived identities after all discovery joins in an Archived section with local controls", async () => {
   setup("archived", (f) => {
     f.data.parked = [
       { pubkey: "cd".repeat(32), name: "Hidden", sources: ["installed"] },
@@ -282,12 +287,21 @@ it("filters archived identities after all discovery joins while retaining local 
   });
   await waitFor(() => expect(communityApi.communityRequest).toHaveBeenCalled());
   await screen.findByRole("button", { name: "Stop" });
-  expect(screen.queryByRole("article", { name: "Agent Hidden" })).toBeNull();
+  // Every agent is archived: the section opens instead of first-run text.
   expect(
-    screen.queryByRole("article", { name: "Agent Not imported" }),
-  ).toBeNull();
+    screen.getByText("All your agents are archived in this community."),
+  ).toBeVisible();
+  const section = screen.getByRole("region", { name: "Archived agents" });
   expect(
-    screen.getByRole("article", { name: "Agent Fixture agent" }),
+    within(section).getByRole("button", { name: "Archived (2)" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  const local = within(section).getByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  expect(within(local).getByText("Archived")).toBeVisible();
+  expect(within(local).getByRole("button", { name: "Stop" })).toBeVisible();
+  expect(
+    within(section).getByRole("article", { name: "Agent Hidden" }),
   ).toBeVisible();
 });
 it("omits redundant profile text and uses configured names for native WSS setups in an HTTPS session", async () => {
@@ -922,7 +936,7 @@ it("keeps an archived card until its record deletion succeeds", async () => {
   expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
 });
 
-it("keeps already archived agents hidden while Remove re-reads archives", async () => {
+it("keeps already archived agents out of the active list while Remove re-reads archives", async () => {
   const viewer = keypair();
   const agent = "cd".repeat(32);
   const other = "a1".repeat(32);
@@ -968,6 +982,9 @@ it("keeps already archived agents hidden while Remove re-reads archives", async 
   await waitFor(() =>
     expect(within(group).getAllByRole("article")).toHaveLength(1),
   );
+  expect(
+    screen.getByRole("button", { name: "Archived (1)" }),
+  ).toBeInTheDocument();
   const card = within(group).getByRole("article", {
     name: "Agent Not imported",
   });
@@ -984,3 +1001,408 @@ it("keeps already archived agents hidden while Remove re-reads archives", async 
   );
   expect(relay.deleted).toEqual(new Set([`30177:${viewer.pubkey}:${agent}`]));
 });
+
+function archiveSetup(
+  fail?: Error,
+  archived = false,
+  wrap: (transport: ReadTransport) => Partial<ReadTransport> = (t) => t,
+) {
+  const viewer = keypair();
+  const agent = "cd".repeat(32);
+  // Admin consent lets the viewer archive both the local and relay-only agent.
+  const relay = archiveRelay(viewer, keypair(), [], {
+    [viewer.pubkey]: "admin",
+  });
+  if (fail) relay.script.fail = fail;
+  if (archived) relay.archived.add(agent);
+  const mounted = setup(
+    "connected",
+    (fixture) => {
+      fixture.data.parked = [];
+    },
+    [agent],
+    [],
+    {
+      status: "ready",
+      relayAvailable: true,
+      viewer: viewer.pubkey,
+      profile: { name: "", picture: "", about: "" },
+      selected: "wss://relay.example.test",
+      memberships: [{ id: "wss://relay.example.test", name: "Example" }],
+    },
+    wrap(relay.transport),
+    false,
+    viewer.pubkey,
+  );
+  return { ...mounted, relay, agent, viewer, local: "ab".repeat(32) };
+}
+async function openMenuItem(card: HTMLElement, name: string, item: string) {
+  fireEvent.click(
+    await within(card).findByRole("button", { name: `Actions for ${name}` }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+it("archives a running local agent, moves it to Archived, and Undo restores it", async () => {
+  const { relay, local } = archiveSetup();
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Archive Fixture agent?",
+  });
+  expect(dialog).toHaveTextContent(
+    "This hides Fixture agent from search, mentions, and Add member in Example. It won’t remove the agent from its channels or delete its saved setup.",
+  );
+  expect(dialog).toHaveTextContent(
+    "This agent is running. Archiving won’t stop it.",
+  );
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Archive agent" }),
+  );
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  expect(relay.archived.has(local)).toBe(true);
+  const trigger = within(section).getByRole("button", { name: "Archived (1)" });
+  // The card left the active list; focus follows it to the collapsed section.
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(
+    screen.getByText("Fixture agent archived in Example"),
+  ).toBeInTheDocument();
+  // Archive changes visibility only: the agent keeps running.
+  expect(relay.published.map((event) => event.kind)).toEqual([9035]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(relay.archived.has(local)).toBe(false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Archived agents" }),
+    ).toBeNull(),
+  );
+  const restored = screen.getByRole("article", { name: "Agent Fixture agent" });
+  expect(within(restored).getByRole("button", { name: "Stop" })).toBeVisible();
+  await waitFor(() =>
+    expect(
+      within(restored).getByRole("button", {
+        name: "Actions for Fixture agent",
+      }),
+    ).toHaveFocus(),
+  );
+});
+
+it("reopens Archived each time the last active agent is archived", async () => {
+  const { relay, local } = archiveSetup(undefined, true);
+  async function archiveLast() {
+    const card = await screen.findByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    await openMenuItem(card, "Fixture agent", "Archive agent");
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Archive agent",
+      }),
+    );
+    await waitFor(() => expect(relay.archived.has(local)).toBe(true));
+    return within(
+      screen.getByRole("region", { name: "Archived agents" }),
+    ).getByRole("button", { name: "Archived (2)" });
+  }
+  const trigger = await archiveLast();
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "true"));
+  // A deliberate collapse holds while every agent stays archived.
+  fireEvent.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(relay.archived.has(local)).toBe(false));
+  const again = await archiveLast();
+  expect(
+    screen.getByText("All your agents are archived in this community."),
+  ).toBeVisible();
+  await waitFor(() => expect(again).toHaveAttribute("aria-expanded", "true"));
+});
+
+it("archives a relay-only agent from its menu and unarchives it without confirmation", async () => {
+  const { relay, agent } = archiveSetup();
+  const group = await screen.findByRole("region", {
+    name: "Relay-only agents",
+  });
+  const card = within(group).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  await openMenuItem(card, "Not imported", "Archive agent");
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Archive agent",
+    }),
+  );
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const archived = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  expect(within(archived).getByText("Archived")).toBeVisible();
+  // Groups sit one heading level below the section's own h2 title.
+  expect(
+    within(section).getByRole("heading", {
+      level: 3,
+      name: "Relay-only agents",
+    }),
+  ).toBeVisible();
+  expect(
+    within(archived).getByRole("heading", { name: "Not imported" }).tagName,
+  ).toBe("H5");
+  // Remove stays available for the extra cleanup it does.
+  expect(
+    within(archived).getByRole("button", { name: "Remove" }),
+  ).toBeVisible();
+  await openMenuItem(archived, "Not imported", "Unarchive agent");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
+  await waitFor(() =>
+    expect(
+      within(
+        screen.getByRole("region", { name: "Relay-only agents" }),
+      ).getByRole("article", { name: "Agent Not imported" }),
+    ).toBeVisible(),
+  );
+  expect(relay.published.map((event) => event.kind)).toEqual([9035, 9036]);
+});
+
+it("keeps a card in place with a retryable error when Archive fails", async () => {
+  const { relay, local } = archiveSetup(Error("restricted: not authorized"));
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Archive agent",
+    }),
+  );
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "Archive failed: restricted: not authorized",
+  );
+  expect(screen.queryByRole("region", { name: "Archived agents" })).toBeNull();
+  delete relay.script.fail;
+  fireEvent.click(within(card).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(relay.archived.has(local)).toBe(true));
+  expect(
+    await screen.findByRole("region", { name: "Archived agents" }),
+  ).toBeInTheDocument();
+});
+
+it("keeps a card in Archived with a retryable error when Unarchive fails", async () => {
+  const { relay, agent } = archiveSetup(undefined, true);
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const card = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  relay.script.fail = Error("restricted: not authorized");
+  await openMenuItem(card, "Not imported", "Unarchive agent");
+  const alert = await within(section).findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Unarchive failed: restricted: not authorized",
+  );
+  // The failed card stays in its starting section with its badge.
+  const failed = within(section).getByRole("article", {
+    name: "Agent Not imported",
+  });
+  expect(within(failed).getByText("Archived")).toBeVisible();
+  expect(
+    screen.getAllByRole("article", { name: "Agent Not imported" }),
+  ).toEqual([failed]);
+  delete relay.script.fail;
+  fireEvent.click(within(failed).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Archived agents" }),
+    ).toBeNull(),
+  );
+});
+
+it("keeps an archived card in Archived while Remove runs and after it fails", async () => {
+  const { relay, agent } = archiveSetup(undefined, true);
+  let release!: () => void;
+  relay.removal.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const card = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  // Moving the card to the active list would unmount Remove and cancel it.
+  await waitFor(() =>
+    expect(
+      within(card).getByRole("button", { name: "Remove" }),
+    ).toHaveAttribute("aria-busy", "true"),
+  );
+  expect(section).toContainElement(card);
+  expect(
+    screen.getAllByRole("article", { name: "Agent Not imported" }),
+  ).toEqual([card]);
+  release();
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "restricted: not authorized",
+  );
+  expect(card).toBeInTheDocument();
+  expect(section).toContainElement(card);
+  expect(
+    screen.getAllByRole("article", { name: "Agent Not imported" }),
+  ).toEqual([card]);
+  delete relay.removal.hold;
+  delete relay.removal.fail;
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  await waitFor(() => expect(card).not.toBeInTheDocument());
+  expect(relay.archived.has(agent)).toBe(true);
+});
+
+it("moves an archived card to the active list when Unarchive succeeds after a failed Remove", async () => {
+  const { relay, agent } = archiveSetup(undefined, true);
+  relay.removal.fail = Error("restricted: not authorized");
+  relay.removal.failKind = 5;
+  const section = await screen.findByRole("region", {
+    name: "Archived agents",
+  });
+  fireEvent.click(
+    within(section).getByRole("button", { name: "Archived (1)" }),
+  );
+  const card = await within(section).findByRole("article", {
+    name: "Agent Not imported",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Remove agent",
+    }),
+  );
+  await within(card).findByRole("alert");
+  await openMenuItem(card, "Not imported", "Unarchive agent");
+  await waitFor(() => expect(relay.archived.has(agent)).toBe(false));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Archived agents" }),
+    ).toBeNull(),
+  );
+  const active = within(
+    screen.getByRole("region", { name: "Relay-only agents" }),
+  ).getByRole("article", { name: "Agent Not imported" });
+  expect(within(active).queryByText("Archived")).toBeNull();
+  await openMenuItem(active, "Not imported", "Archive agent");
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+});
+
+it("asks for archive permission again on Refresh agents after a failed read", async () => {
+  let refuse = true;
+  archiveSetup(undefined, false, (transport) => ({
+    ...transport,
+    async query(filters, signal) {
+      if (refuse && filters.some((filter) => filter.kinds?.includes(13534)))
+        throw Error("relay unavailable");
+      return transport.query(filters, signal);
+    },
+  }));
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  fireEvent.click(
+    await within(card).findByRole("button", {
+      name: "Actions for Fixture agent",
+    }),
+  );
+  await screen.findByRole("menu");
+  expect(screen.queryByRole("menuitem", { name: "Archive agent" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  refuse = false;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  // The same mounted card offers Archive once the new read succeeds.
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  expect(
+    await screen.findByRole("alertdialog", { name: "Archive Fixture agent?" }),
+  ).toBeInTheDocument();
+});
+
+it("keeps keyboard focus on the card when Retry fails again", async () => {
+  const { relay } = archiveSetup(Error("restricted: not authorized"));
+  const card = await screen.findByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  await openMenuItem(card, "Fixture agent", "Archive agent");
+  fireEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Archive agent",
+    }),
+  );
+  await within(card).findByRole("alert");
+  let release!: () => void;
+  relay.script.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const retry = within(card).getByRole("button", { name: "Retry" });
+  retry.focus();
+  fireEvent.click(retry);
+  const menu = within(card).getByRole("button", {
+    name: "Actions for Fixture agent",
+  });
+  expect(await within(card).findByText("Archiving…")).toBeInTheDocument();
+  expect(menu).toHaveFocus();
+  release();
+  expect(await within(card).findByRole("alert")).toHaveTextContent(
+    "Archive failed: restricted: not authorized",
+  );
+  expect(menu).toHaveFocus();
+});
+
+for (const end of ["community change", "leaving the page"] as const)
+  it(`closes the Undo notice on ${end}`, async () => {
+    const { relay, local, viewer, changeScope, leave } = archiveSetup();
+    const card = await screen.findByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    await openMenuItem(card, "Fixture agent", "Archive agent");
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Archive agent",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Undo" }),
+    ).toBeInTheDocument();
+    if (end === "leaving the page") leave();
+    else changeScope(`wss://other.example.test:${viewer.pubkey}`, 2);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(),
+    );
+    expect(relay.archived.has(local)).toBe(true);
+  });

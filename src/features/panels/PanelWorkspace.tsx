@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   BrowserIcon,
   TerminalWindowIcon,
@@ -137,6 +137,28 @@ export function PanelWorkspace({
       .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
   ]);
   const active = tabs.find((tab) => tab.id === selected);
+  useLayoutEffect(() => {
+    const close = (event: Event) => {
+      const element = root.current;
+      if (
+        event.defaultPrevented ||
+        !active ||
+        !element?.isConnected ||
+        element.closest('[hidden], [inert], [aria-hidden="true"]') ||
+        !element.getClientRects().length
+      )
+        return;
+      event.preventDefault();
+      // Match the X button, including local detail tabs and focus recovery.
+      // Commit before another native menu request can reuse this selection.
+      flushSync(() => {
+        closingTab.current = active.id;
+        active.close();
+      });
+    };
+    window.addEventListener("buzz:close-active-tab", close);
+    return () => window.removeEventListener("buzz:close-active-tab", close);
+  });
   const previous = useRef<string>(focusOnMount ? undefined : selected);
   const instance = items.find((item) => item.id === selected)?.instance;
   const previousInstance = useRef<object>(focusOnMount ? undefined : instance);

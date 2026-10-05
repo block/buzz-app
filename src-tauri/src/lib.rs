@@ -1,6 +1,8 @@
 mod archive;
 use archive::relay_archive;
 mod browser;
+#[cfg(target_os = "macos")]
+mod close_menu;
 mod oauth_callback;
 use oauth_callback::{
     oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
@@ -33,7 +35,7 @@ use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, IdentityHost,
+    identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
@@ -400,6 +402,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         identity_prepare_remote_agent_authorization,
+        identity_sign_builderlab_binding,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -542,7 +545,10 @@ pub fn run() {
             Ok(())
         });
     #[cfg(target_os = "macos")]
-    let builder = builder.manage(TitleBarFillFrames::default());
+    let builder = builder
+        .manage(TitleBarFillFrames::default())
+        .menu(close_menu::menu)
+        .on_menu_event(close_menu::handle);
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
     let builder = if tauri::is_dev() {

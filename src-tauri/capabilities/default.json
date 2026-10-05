@@ -10,6 +10,7 @@
     "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",
+    "allow-identity-sign-builderlab-binding",
     "allow-relay-decode-read-state",
     "allow-relay-sign-read-state",
     "allow-relay-publish-read-state",
@@ -100,6 +101,7 @@
     "updater:allow-install",
     "core:resources:allow-close",
     "allow-update-restart",
+    "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     {

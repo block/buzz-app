@@ -317,3 +317,108 @@ async fn sidebar_signer_refuses_inconsistent_metadata() {
         .unwrap();
     assert!(host.admit_sidebar(event).await.is_ok());
 }
+
+fn builderlab_challenge() -> serde_json::Value {
+    serde_json::json!({
+        "challenge_id": "550e8400-e29b-41d4-a716-446655440000",
+        "nonce": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234_-7",
+        "verification_code": "123456",
+        "origin": "https://app.builderlab.xyz",
+        "expires_at": "2999-01-01T00:00:00Z"
+    })
+}
+fn parse_challenge(value: serde_json::Value) -> BuilderlabChallenge {
+    serde_json::from_value(value).unwrap()
+}
+
+#[test]
+fn builderlab_binding_signs_the_reference_kind_24243_shape() {
+    let template = parse_challenge(builderlab_challenge())
+        .template(1_700_000_000)
+        .unwrap();
+    let event: Event = serde_json::from_value(fixture().sign(template).unwrap()).unwrap();
+    event.verify().unwrap();
+    assert_eq!(event.kind.as_u16(), 24243);
+    assert_eq!(event.content, "");
+    assert_eq!(event.created_at.as_secs(), 1_700_000_000);
+    assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+    let tags: Vec<Vec<String>> = event.tags.iter().map(|tag| tag.clone().to_vec()).collect();
+    let expected = [
+        ["challenge_id", "550e8400-e29b-41d4-a716-446655440000"],
+        ["nonce", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234_-7"],
+        ["verification_code", "123456"],
+        ["audience", "buzz:nostr-identity"],
+        ["action", "bind_nostr_identity"],
+        ["protocol", "buzz-nostr-identity"],
+        ["version", "1"],
+        ["origin", "https://app.builderlab.xyz"],
+        ["expires_at", "2999-01-01T00:00:00Z"],
+    ]
+    .map(|tag| tag.map(str::to_owned).to_vec());
+    assert_eq!(tags, expected);
+}
+
+#[test]
+fn builderlab_binding_rejects_invalid_or_foreign_challenges() {
+    let now = 1_700_000_000;
+    for (field, value) in [
+        ("challenge_id", "{550e8400-e29b-41d4-a716-446655440000}"),
+        ("challenge_id", "550e8400e29b41d4a716446655440000"),
+        ("nonce", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234_-"),
+        ("nonce", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi01234_+7"),
+        ("verification_code", "12345a"),
+        ("verification_code", "1234567"),
+        ("origin", "https://example.com"),
+        ("origin", "https://app.builderlab.xyz/"),
+        ("expires_at", "2023-11-14T22:13:20Z"),
+        ("expires_at", "not a time"),
+    ] {
+        let mut challenge = builderlab_challenge();
+        challenge[field] = value.into();
+        assert_eq!(
+            parse_challenge(challenge).template(now).err().as_deref(),
+            Some("Invalid Nostr identity challenge"),
+            "{field}={value}"
+        );
+    }
+    let mut extra = builderlab_challenge();
+    extra["kind"] = 1.into();
+    assert!(serde_json::from_value::<BuilderlabChallenge>(extra).is_err());
+}
+
+#[test]
+fn builderlab_binding_reaches_signer_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let invoke = |challenge: serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "identity_sign_builderlab_binding".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "challenge": challenge })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+    };
+    let event: Event = invoke(builderlab_challenge())
+        .unwrap()
+        .deserialize()
+        .unwrap();
+    event.verify().unwrap();
+    assert_eq!(event.kind.as_u16(), 24243);
+    assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+    let mut foreign = builderlab_challenge();
+    foreign["origin"] = "https://example.com".into();
+    assert!(invoke(foreign).is_err());
+}

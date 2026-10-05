@@ -653,6 +653,7 @@ dependencies = [
  "buzz-agent-controller",
  "buzz-credential-store",
  "buzzodz-plugins",
+ "chrono",
  "futures-lite",
  "getrandom 0.3.4",
  "gtk",

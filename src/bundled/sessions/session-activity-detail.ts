@@ -48,6 +48,8 @@ export function sessionActivityDetail(
   if (!turns.size) return { records, trimmed };
   const encoder = new TextEncoder();
   for (const record of snapshot.records) {
+    // Archived executions may reuse a live turn's tuple; they are not live evidence.
+    if (record.historical) continue;
     let raw: unknown;
     try {
       raw = JSON.parse(record.plaintext);

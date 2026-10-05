@@ -92,6 +92,20 @@ it("uses exact outer agent, explicit child turn/channel and every trigger's one 
   expect(select([record(item())], []).records).toHaveLength(0);
   expect(select([], [turn]).records).toHaveLength(0);
 });
+it("excludes archived records sharing a live agent/turn/channel tuple", () => {
+  const historical = { ...record(item(), 10), historical: true };
+  const historicalBatch = {
+    ...record({ kind: "batch", payload: { events: [item()] } }, 11),
+    historical: true,
+  };
+  const live = record(item(), 12);
+  const records = [historical, live, historicalBatch];
+  const result = select(records);
+  expect(result.records.map((record) => record.envelopeId)).toEqual([live.id]);
+  expect(result.trimmed).toBe(0);
+  expect(select([historical, historicalBatch]).records).toHaveLength(0);
+  expect(records).toEqual([historical, live, historicalBatch]);
+});
 it("preserves scalar bytes; independently projects only explicitly scoped valid batch children", () => {
   const raw = ` { "kind":"diagnostic", "turnId":"turn", "channelId":"a", "payload":"<img onerror=alert(1)>" } `;
   expect(select([record(raw)]).records[0]).toMatchObject({

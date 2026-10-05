@@ -95,7 +95,7 @@ export function TemplateLibrary({
     }
   };
   return (
-    <div className={styles.library}>
+    <>
       <Header
         title="Templates & teams"
         subtitle="Private to you in this community"
@@ -112,187 +112,193 @@ export function TemplateLibrary({
           </Button>
         }
       />
-      {(state.status !== "ready" || !catalog.agentsReady || catalog.error) && (
-        <p role="status" className="text-body-sm text-subtle">
-          {state.error ??
-            catalog.error ??
-            (state.status === "unavailable"
-              ? "This host does not support saved templates."
-              : state.status !== "ready"
-                ? "Loading your templates and teams…"
-                : "Loading available agents…")}
-        </p>
-      )}
-      {(["template", "team"] as const).map((type) => {
-        const items = entries.filter(
-          (entry) => entry.record.value.type === type,
-        );
-        return (
-          <section
-            key={type}
-            aria-labelledby={`library-${type}`}
-            className={styles.section}
-          >
-            <InlineHeader
-              id={`library-${type}`}
-              title={
-                <>
-                  {type === "template" ? "Channel templates" : "Saved teams"}{" "}
-                  <span className={styles.count}>{items.length}</span>
-                </>
-              }
-              subtitle={
-                type === "template"
-                  ? "Agent and canvas presets for new channels."
-                  : "Reusable agent selections for channel setup and @mentions."
-              }
-              actions={
-                <Button
-                  ref={type === "template" ? newTemplate : newTeam}
-                  variant="subtle"
-                  size="sm"
-                  disabled={disabled}
-                  onClick={(event) =>
-                    open(
-                      {
-                        value:
-                          type === "template"
-                            ? {
-                                type,
-                                id: crypto.randomUUID(),
-                                name: "",
-                                description: "",
-                                ...emptyLineup(),
-                              }
-                            : {
-                                type,
-                                id: crypto.randomUUID(),
-                                name: "",
-                                agents: [],
-                              },
-                      },
-                      event.currentTarget,
-                    )
-                  }
-                >
-                  <PlusIcon size={16} /> New {type}
-                </Button>
-              }
-            />
-            <div className={styles.items}>
-              {items.map((entry) => {
-                const value = entry.record.value;
-                if (value.type === "groups") return null;
-                return (
-                  <LibraryItem
-                    key={value.id}
-                    value={value}
-                    entries={entries}
-                    agents={catalog.agents}
-                    disabled={disabled}
-                    onEdit={(element) =>
-                      open({ value, eventId: entry.eventId }, element)
-                    }
-                    onDuplicate={(template, element) =>
-                      open(
-                        {
-                          value: {
-                            ...structuredClone(template),
-                            id: crypto.randomUUID(),
-                            name: `${template.name.slice(0, 113).trimEnd()} (copy)`,
-                          },
-                        },
-                        element,
-                      )
-                    }
-                    onDelete={(element) =>
-                      open({ value, eventId: entry.eventId }, element, true)
-                    }
-                  />
-                );
-              })}
-            </div>
-            {!items.length && state.status === "ready" && (
-              <EmptyState
-                level={4}
-                icon={type === "template" ? <FileTextIcon /> : <UsersIcon />}
-                title={
-                  type === "template"
-                    ? "Your next channel starts here"
-                    : "Bring your agents together"
-                }
-                description={
-                  type === "template"
-                    ? "Create a template, or save an existing channel as one from its menu."
-                    : "Create a team to reuse your favorite combination of agents."
-                }
-              />
-            )}
-          </section>
-        );
-      })}
-      {editing && (
-        <ChannelTemplatesDialog
-          session={session}
-          open
-          onOpenChange={(open) => {
-            if (!open) setEditing(undefined);
-          }}
-          kit={kit}
-          agents={catalog.agents}
-          initial={editing.value}
-          expected={editing.eventId}
-          active={active}
-          finalFocus={trigger}
-        />
-      )}
-      <Dialog
-        open={deleteOpen}
-        onOpenChange={(open) => {
-          if (!open) setDeleteOpen(false);
-        }}
-        dismissOnOutsideClick
-        preventClose={busy}
-        initialFocus={cancelDelete}
-        finalFocus={() =>
-          trigger.current?.isConnected
-            ? trigger.current
-            : deleting?.value.type === "team"
-              ? newTeam.current
-              : newTemplate.current
-        }
-        title={`Delete “${deleting?.value.name ?? ""}”?`}
-        description={
-          deleting?.value.type === "team"
-            ? "Only this saved team is deleted. Its agents and their channel memberships stay unchanged. Templates using this team will need a replacement."
-            : "Existing channels stay unchanged. Group defaults using this template will need a replacement."
-        }
-        actions={
-          <>
-            <Button
-              ref={cancelDelete}
-              disabled={busy}
-              onClick={() => setDeleteOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              loading={busy}
-              onClick={() => void remove()}
-            >
-              Delete
-            </Button>
-          </>
-        }
-      >
-        {error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {error}
+      <div className={styles.library}>
+        {(state.status !== "ready" ||
+          !catalog.agentsReady ||
+          catalog.error) && (
+          <p role="status" className="text-body-sm text-subtle">
+            {state.error ??
+              catalog.error ??
+              (state.status === "unavailable"
+                ? "This host does not support saved templates."
+                : state.status !== "ready"
+                  ? "Loading your templates and teams…"
+                  : "Loading available agents…")}
           </p>
         )}
-      </Dialog>
-    </div>
+        {(["template", "team"] as const).map((type) => {
+          const items = entries.filter(
+            (entry) => entry.record.value.type === type,
+          );
+          return (
+            <section
+              key={type}
+              aria-labelledby={`library-${type}`}
+              className={styles.section}
+            >
+              <InlineHeader
+                id={`library-${type}`}
+                title={
+                  <>
+                    {type === "template" ? "Channel templates" : "Saved teams"}{" "}
+                    <span className={styles.count}>{items.length}</span>
+                  </>
+                }
+                subtitle={
+                  type === "template"
+                    ? "Agent and canvas presets for new channels."
+                    : "Reusable agent selections for channel setup and @mentions."
+                }
+                actions={
+                  <Button
+                    ref={type === "template" ? newTemplate : newTeam}
+                    variant="subtle"
+                    size="sm"
+                    disabled={disabled}
+                    onClick={(event) =>
+                      open(
+                        {
+                          value:
+                            type === "template"
+                              ? {
+                                  type,
+                                  id: crypto.randomUUID(),
+                                  name: "",
+                                  description: "",
+                                  ...emptyLineup(),
+                                }
+                              : {
+                                  type,
+                                  id: crypto.randomUUID(),
+                                  name: "",
+                                  agents: [],
+                                },
+                        },
+                        event.currentTarget,
+                      )
+                    }
+                  >
+                    <PlusIcon size={16} /> New {type}
+                  </Button>
+                }
+              />
+              {items.length > 0 && (
+                <div className={styles.items}>
+                  {items.map((entry) => {
+                    const value = entry.record.value;
+                    if (value.type === "groups") return null;
+                    return (
+                      <LibraryItem
+                        key={value.id}
+                        value={value}
+                        entries={entries}
+                        agents={catalog.agents}
+                        disabled={disabled}
+                        onEdit={(element) =>
+                          open({ value, eventId: entry.eventId }, element)
+                        }
+                        onDuplicate={(template, element) =>
+                          open(
+                            {
+                              value: {
+                                ...structuredClone(template),
+                                id: crypto.randomUUID(),
+                                name: `${template.name.slice(0, 113).trimEnd()} (copy)`,
+                              },
+                            },
+                            element,
+                          )
+                        }
+                        onDelete={(element) =>
+                          open({ value, eventId: entry.eventId }, element, true)
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              )}
+              {!items.length && state.status === "ready" && (
+                <EmptyState
+                  level={4}
+                  icon={type === "template" ? <FileTextIcon /> : <UsersIcon />}
+                  title={
+                    type === "template"
+                      ? "Your next channel starts here"
+                      : "Bring your agents together"
+                  }
+                  description={
+                    type === "template"
+                      ? "Create a template, or save an existing channel as one from its menu."
+                      : "Create a team to reuse your favorite combination of agents."
+                  }
+                />
+              )}
+            </section>
+          );
+        })}
+        {editing && (
+          <ChannelTemplatesDialog
+            session={session}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditing(undefined);
+            }}
+            kit={kit}
+            agents={catalog.agents}
+            initial={editing.value}
+            expected={editing.eventId}
+            active={active}
+            finalFocus={trigger}
+          />
+        )}
+        <Dialog
+          open={deleteOpen}
+          onOpenChange={(open) => {
+            if (!open) setDeleteOpen(false);
+          }}
+          dismissOnOutsideClick
+          preventClose={busy}
+          initialFocus={cancelDelete}
+          finalFocus={() =>
+            trigger.current?.isConnected
+              ? trigger.current
+              : deleting?.value.type === "team"
+                ? newTeam.current
+                : newTemplate.current
+          }
+          title={`Delete “${deleting?.value.name ?? ""}”?`}
+          description={
+            deleting?.value.type === "team"
+              ? "Only this saved team is deleted. Its agents and their channel memberships stay unchanged. Templates using this team will need a replacement."
+              : "Existing channels stay unchanged. Group defaults using this template will need a replacement."
+          }
+          actions={
+            <>
+              <Button
+                ref={cancelDelete}
+                disabled={busy}
+                onClick={() => setDeleteOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={busy}
+                onClick={() => void remove()}
+              >
+                Delete
+              </Button>
+            </>
+          }
+        >
+          {error && (
+            <p role="alert" className="text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+        </Dialog>
+      </div>
+    </>
   );
 }
 

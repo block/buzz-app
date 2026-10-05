@@ -105,6 +105,21 @@ need their own validation.
   disabled during capture. Press Ctrl+C to finalize and validate the trace; the
   path, which opens in Instruments. Use `just profile-clean` to remove all generated
   web and desktop captures.
+- `just staging [args...]` / `just production [args...]`: run `just desktop`
+  against the relay URL in `BUZZ_STAGING_RELAY_URL` / `BUZZ_PRODUCTION_RELAY_URL`,
+  read from your shell first, then `.env.local`. The repo supplies no URLs; an
+  unset key stops with an error before launch. Each recipe derives its port from
+  the worktree path plus the relay origin, so staging, production and plain
+  `just desktop` keep separate saved state, and opens the relay's community on
+  first launch (`BUZZ_DEV_OPEN_RELAY=1`). Seeding does not join, accept an
+  invite, or publish a profile, so you must already be a member; the selected
+  community then starts a normal session, which can publish presence. With
+  `BUZZ_DEV_VIEWER` set (e.g. exported from your shell profile) the broker signs
+  with your existing Buzz Keychain account; otherwise the native signer uses the
+  shared debug Keychain item `dev.local.buzz.foundation.identity.debug`, not the
+  installed app's identity, and ports do not isolate it (see
+  [identity](identity.md)). `--port` and other arguments behave as in
+  `just desktop`.
 - `just desktop-bundle [args...]`: bundle a debug desktop app for testing OS deep
   links on macOS, where the OS routes a scheme only to a bundled application. It
   defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
@@ -121,7 +136,7 @@ need their own validation.
   untouched and production builds ignore the variable.
 - To open the default relay's community on a fresh dev port, set
   `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
-  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  the server. It works with the broker and the native signer. Only `1` enables it; a viewer's existing saved choice on that port,
   including Personal space, wins. Production builds ignore the variable. The OG
   `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` name is a **presence-only dev alias**:
   even empty, `0` or `false` enables it when `BUZZ_DEV_OPEN_RELAY` is absent.

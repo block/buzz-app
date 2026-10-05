@@ -102,20 +102,27 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
               assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
             }
-            // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
+            // Without a viewer pin the native signer consumes the seed, so a
+            // dev server still exposes it; a build never does.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
-            process.env.BUZZ_RELAY_URL = '';
             process.env.BUZZ_DEV_VIEWER = '';
-            const shell = await loadConfigFromFile(
-              { command: 'serve', mode: 'development' }, configFile,
-            );
-            assert.equal(shell.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], '""');
-            // A live server with the flag but no relay URL fails at configuration time.
-            process.env.BUZZ_DEV_VIEWER = 'a'.repeat(64);
-            await assert.rejects(
-              loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
-              /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
-            );
+            for (const command of ['serve', 'build']) {
+              const native = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(native.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
+                JSON.stringify(command === 'serve' ? 'https://relay.example.com' : ''));
+            }
+            // A dev server with the flag but no relay URL fails at configuration
+            // time, with or without a viewer pin.
+            process.env.BUZZ_RELAY_URL = '';
+            for (const viewer of ['', 'a'.repeat(64)]) {
+              process.env.BUZZ_DEV_VIEWER = viewer;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+                /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
+              );
+            }
           } finally {
             process.chdir(cwd);
             rmSync(directory, { recursive: true, force: true });

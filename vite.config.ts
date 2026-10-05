@@ -20,9 +20,10 @@ export default defineConfig(async ({ command, mode }) => {
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
   // Opt-in seed: a viewer with no saved client record on this dev origin starts
   // in the default relay's community. The legacy alias is presence-only; an
-  // explicit dev setting wins (only "1" enables it). Builds never see it.
+  // explicit dev setting wins (only "1" enables it). Broker and native dev
+  // sessions both consume it; builds never see it.
   const openRelay =
-    live &&
+    command === "serve" &&
     (env.BUZZ_DEV_OPEN_RELAY !== undefined
       ? env.BUZZ_DEV_OPEN_RELAY === "1"
       : env.BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY !== undefined);

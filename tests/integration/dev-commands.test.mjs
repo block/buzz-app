@@ -18,6 +18,10 @@ import { portForPath } from "../../scripts/worktree-port.mjs";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
 function recipeWithRuntime(failRuntime, name, ...args) {
+  return run({ failRuntime }, name, ...args);
+}
+
+function run({ failRuntime = false, env = {}, envFile }, name, ...args) {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-command-"));
   const callsFile = path.join(directory, "calls.jsonl");
   try {
@@ -37,6 +41,15 @@ function recipeWithRuntime(failRuntime, name, ...args) {
         new URL(`../../scripts/${file}`, import.meta.url),
         path.join(directory, "scripts", file),
       );
+    mkdirSync(path.join(directory, "src/features/communities"), {
+      recursive: true,
+    });
+    copyFileSync(
+      new URL("../../src/features/communities/destination.ts", import.meta.url),
+      path.join(directory, "src/features/communities/destination.ts"),
+    );
+    if (envFile !== undefined)
+      writeFileSync(path.join(directory, ".env.local"), envFile);
     runtimeFixture(directory);
     if (failRuntime) writeFileSync(path.join(directory, "fail-build"), "");
     // Run the real recipes, adapter and preparation; never open a native app.
@@ -44,6 +57,7 @@ function recipeWithRuntime(failRuntime, name, ...args) {
     writeFileSync(
       path.join(directory, "pnpm"),
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+require("node:fs").writeFileSync(process.env.BUZZ_TEST_CALLS + ".env", JSON.stringify(Object.fromEntries(["BUZZ_RELAY_URL", "BUZZ_DEV_OPEN_RELAY", "BUZZ_DEV_VIEWER"].map((key) => [key, process.env[key]]))));
 if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
   if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
 }\n`,
@@ -71,6 +85,7 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
         env: {
           ...process.env,
           BUZZ_TEST_CALLS: callsFile,
+          ...env,
         },
         encoding: "utf8",
         timeout: 10_000,
@@ -81,10 +96,20 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
       ? readFileSync(callsFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
     const built = existsSync(path.join(directory, "build-calls.jsonl"));
+    const launchEnv = existsSync(`${callsFile}.env`)
+      ? JSON.parse(readFileSync(`${callsFile}.env`, "utf8"))
+      : undefined;
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, built, port: portForPath(root) };
+    return {
+      ...result,
+      calls,
+      built,
+      launchEnv,
+      root,
+      port: portForPath(root),
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -349,4 +374,92 @@ test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () 
     "--bundles",
     "dmg",
   ]);
+});
+
+function relayLaunch(options, name, ...args) {
+  const result = run(options, name, ...args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.calls.length, 2);
+  return { ...result, config: JSON.parse(result.calls[1][3]) };
+}
+
+const staging = { BUZZ_STAGING_RELAY_URL: undefined, BUZZ_DEV_VIEWER: "" };
+
+test("staging and production open their relay on a port derived from the worktree and relay", () => {
+  for (const [name, key] of [
+    ["staging", "BUZZ_STAGING_RELAY_URL"],
+    ["production", "BUZZ_PRODUCTION_RELAY_URL"],
+  ]) {
+    const { config, launchEnv, root, port, stdout } = relayLaunch(
+      { env: { [key]: "wss://Relay.example.com/", BUZZ_DEV_VIEWER: "" } },
+      name,
+    );
+    const relayPort = portForPath(`${root}\nhttps://relay.example.com`);
+    assert.notEqual(relayPort, port);
+    assert.deepEqual(config, overlay(relayPort));
+    assert.deepEqual(launchEnv, {
+      BUZZ_RELAY_URL: "wss://Relay.example.com/",
+      BUZZ_DEV_OPEN_RELAY: "1",
+      BUZZ_DEV_VIEWER: "",
+    });
+    assert.match(stdout, /and https:\/\/relay\.example\.com; pass --port/);
+  }
+  const explicit = relayLaunch(
+    { env: { BUZZ_STAGING_RELAY_URL: "wss://relay.example.com" } },
+    "staging",
+    "--port",
+    "1431",
+  );
+  assert.deepEqual(explicit.config, overlay(1431));
+});
+
+test("staging reads .env.local when the shell leaves the key unset, and the shell wins", () => {
+  const envFile = "BUZZ_STAGING_RELAY_URL=wss://file.example.com\n";
+  const fromFile = relayLaunch({ env: staging, envFile }, "staging");
+  assert.equal(fromFile.launchEnv.BUZZ_RELAY_URL, "wss://file.example.com");
+  const fromShell = relayLaunch(
+    {
+      env: { ...staging, BUZZ_STAGING_RELAY_URL: "wss://shell.example.com" },
+      envFile,
+    },
+    "staging",
+  );
+  assert.equal(fromShell.launchEnv.BUZZ_RELAY_URL, "wss://shell.example.com");
+});
+
+test("staging leaves a set viewer pin untouched so the broker serves it", () => {
+  const viewer = "a".repeat(64);
+  const { launchEnv } = relayLaunch(
+    {
+      env: {
+        BUZZ_STAGING_RELAY_URL: "wss://relay.example.com",
+        BUZZ_DEV_VIEWER: viewer,
+      },
+    },
+    "staging",
+  );
+  assert.equal(launchEnv.BUZZ_DEV_VIEWER, viewer);
+});
+
+test("staging stops before preparing or launching when the relay is missing or invalid", () => {
+  for (const [options, message] of [
+    [
+      { env: staging },
+      /Set BUZZ_STAGING_RELAY_URL in your shell or \.env\.local to the relay URL/,
+    ],
+    [
+      { env: staging, envFile: "BUZZ_STAGING_RELAY_URL=\n" },
+      /Set BUZZ_STAGING_RELAY_URL/,
+    ],
+    [
+      { env: { BUZZ_STAGING_RELAY_URL: "ws://relay.example.com/path" } },
+      /BUZZ_STAGING_RELAY_URL: Enter a wss:\/\//,
+    ],
+  ]) {
+    const result = run(options, "staging");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    assert.equal(result.built, false);
+    assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
+  }
 });

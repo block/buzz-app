@@ -18,6 +18,16 @@ web *args: install
 desktop *args: install
     if [ "${1:-}" = "profile" ]; then shift; set -m; node scripts/profile-dev.mjs desktop "$@"; else exec node scripts/desktop-dev.mjs "$@"; fi
 
+# Run desktop against the relay in BUZZ_STAGING_RELAY_URL (shell or .env.local).
+[positional-arguments]
+staging *args: install
+    exec node scripts/desktop-dev.mjs --relay-env BUZZ_STAGING_RELAY_URL "$@"
+
+# Run desktop against the relay in BUZZ_PRODUCTION_RELAY_URL (shell or .env.local).
+[positional-arguments]
+production *args: install
+    exec node scripts/desktop-dev.mjs --relay-env BUZZ_PRODUCTION_RELAY_URL "$@"
+
 # Bundle a debug desktop app for deep-link testing; macOS routes a scheme only to a bundle.
 [positional-arguments]
 desktop-bundle *args: install

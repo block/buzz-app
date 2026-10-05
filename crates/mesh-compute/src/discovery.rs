@@ -431,3 +431,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "discovery_regression_tests.rs"]
+mod regression_tests;

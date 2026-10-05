@@ -1,4 +1,6 @@
+import { TeamMentionAvatars } from "./TeamMentionAvatars";
 import { useEffect, useState } from "react";
+import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -35,6 +37,13 @@ export function MentionCompletion({
     choices,
     roster: draftRoster,
   } = model;
+  const teams = useTeamMentions(
+    session,
+    channelId,
+    inviteAgents,
+    query.query,
+    model,
+  );
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const parentAdmission =
@@ -63,11 +72,17 @@ export function MentionCompletion({
   }, [session, memberKey, attempt, draftRoster]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const admitted = matchesMentionQuery(
-      query.query,
-      [...model.candidates, ...choices].flatMap((c) => [...c.aliases, c.label]),
-    );
+    const admitted =
+      matchesMentionQuery(
+        query.query,
+        [...model.candidates, ...choices].flatMap((c) => [
+          ...c.aliases,
+          c.label,
+        ]),
+      ) ||
+      (teams.names.length > 0 && matchesMentionQuery(query.query, teams.names));
     const matching = admitted ? choices : [];
+    const matchingTeams = admitted ? teams.choices : [];
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
@@ -85,43 +100,65 @@ export function MentionCompletion({
       };
     }
     const withdraw = publish({
-      spaceId: model.spaceId,
-      items: matching.map(({ recipient, label, disabled }) => ({
-        disabled,
-        canSelect: (key) => model.canSelect(recipient.pubkey, key === " "),
-        id: recipient.pubkey,
-        label,
-        detail:
-          disabled ??
-          (members.includes(recipient.pubkey)
-            ? recipient.pubkey
-            : inviteAgents
-              ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
-              : outsideMentionDetail(channel)),
-        preview: (
-          <Avatar
-            alt=""
-            fallback={label}
-            src={session.media(
-              profiles.get(recipient.pubkey)?.picture ??
-                model.directory.people.find(
-                  (person) => person.pubkey === recipient.pubkey,
-                )?.picture ??
-                "",
-              "small",
-            )}
-            size="default"
-            shape={
-              model.candidates.some(
-                (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
-              )
-                ? "squircle"
-                : "circle"
-            }
-          />
-        ),
-        edit: { mention: recipient },
-      })),
+      spaceId: teams.blocksSpace ? undefined : model.spaceId,
+      items: [
+        ...matching
+          .slice(0, 50 - matchingTeams.length)
+          .map(({ recipient, label, disabled }) => ({
+            disabled,
+            canSelect: (key: string) =>
+              (key !== " " || !teams.blocksSpace) &&
+              model.canSelect(recipient.pubkey, key === " "),
+            id: recipient.pubkey,
+            label,
+            detail:
+              disabled ??
+              (members.includes(recipient.pubkey)
+                ? recipient.pubkey
+                : inviteAgents
+                  ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+                  : outsideMentionDetail(channel)),
+            preview: (
+              <Avatar
+                alt=""
+                fallback={label}
+                src={session.media(
+                  profiles.get(recipient.pubkey)?.picture ??
+                    model.directory.people.find(
+                      (person) => person.pubkey === recipient.pubkey,
+                    )?.picture ??
+                    "",
+                  "small",
+                )}
+                size="default"
+                shape={
+                  model.candidates.some(
+                    (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
+                  )
+                    ? "squircle"
+                    : "circle"
+                }
+              />
+            ),
+            edit: { mention: recipient },
+          })),
+        ...matchingTeams.map((team) => ({
+          id: team.id,
+          label: team.name,
+          detail: team.detail,
+          disabled: team.disabled,
+          canSelect: team.canSelect,
+          preview: (
+            <TeamMentionAvatars
+              session={session}
+              recipients={team.recipients}
+            />
+          ),
+          edit: team.disabled
+            ? { text: `@${team.name}` }
+            : { mentions: team.recipients },
+        })),
+      ],
       ...(model.pending
         ? { status: "Loading recipients…" }
         : model.directory.error
@@ -143,12 +180,17 @@ export function MentionCompletion({
                         }
                       : model.directory.loading
                         ? { status: "Searching community…" }
-                        : model.directory.more || model.truncated
+                        : model.directory.more ||
+                            model.truncated ||
+                            matching.length + matchingTeams.length > 50
                           ? {
                               status: "Narrow your search to see more members.",
                             }
-                          : {}),
-      ...(model.directory.error ||
+                          : teams.status
+                            ? { status: teams.status }
+                            : {}),
+      ...((admitted && teams.canRetry) ||
+      model.directory.error ||
       (admitted &&
         (model.archives.status === "error" ||
           agents.status === "error" ||
@@ -159,6 +201,7 @@ export function MentionCompletion({
           missing))
         ? {
             retry: () => {
+              teams.retry();
               model.directory.retry();
               void session.agentChoices.refresh(!!inviteAgents);
               void session.archives?.refresh();
@@ -179,6 +222,7 @@ export function MentionCompletion({
     query.query,
     memberKey,
     model,
+    teams,
     profiles,
     list,
     agents,

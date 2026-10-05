@@ -2219,3 +2219,235 @@ it.each([false, true])(
     }
   },
 );
+
+function teamFixture(
+  agents?: string[],
+  options: {
+    status?: "ready" | "loading" | "error";
+    query?: string;
+    invite?: boolean;
+    dm?: boolean;
+    missingRoster?: boolean;
+  } = {},
+) {
+  const h = setup();
+  let state = {
+    status: options.status ?? "ready",
+    entries: [
+      {
+        eventId: "head",
+        createdAt: 1,
+        record: {
+          version: 1 as const,
+          community: "fixture",
+          deleted: false,
+          value: {
+            type: "team" as const,
+            id: "court",
+            name: "Member Team",
+            agents: agents ?? [h.member, h.key],
+          },
+        },
+      },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  const channelKit: NonNullable<RelaySession["channelKit"]> = {
+    available: true,
+    snapshot: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    ensure() {},
+    async refresh() {},
+    async save() {
+      return "head";
+    },
+  };
+  const list = {
+    ...h.session.channels.list(),
+    channels: h.session.channels.list().channels.map((channel) => {
+      const { members, ...rest } = channel;
+      return {
+        ...rest,
+        ...(members && !options.missingRoster ? { members } : {}),
+        ...(options.dm ? { channelType: "dm" as const } : {}),
+      };
+    }),
+  };
+  const publish = vi.fn();
+  const props = {
+    session: {
+      ...h.session,
+      channelKit,
+      channels: {
+        ...h.session.channels,
+        list: () => list,
+      },
+    },
+    scope: "team-test",
+    inviteAgents: options.invite,
+    channelId: "parent",
+    observation: { revision: 1, text: "@Member", start: 7, end: 7 },
+    query: { start: 0, end: 7, query: options.query ?? "Member" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const choice = () => result()?.items.find((item) => item.id === "team:court");
+  return {
+    ...h,
+    view,
+    choice,
+    result,
+    change() {
+      act(() => {
+        state = {
+          ...state,
+          entries: state.entries.map((entry) => ({
+            ...entry,
+            eventId: "changed-head",
+          })),
+        };
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+it("saved teams resolve exact keys, block automatic Space and revoke a changed catalog choice", async () => {
+  const h = teamFixture();
+  try {
+    await waitFor(() => expect(h.choice()?.disabled).toBeUndefined());
+    await waitFor(() =>
+      expect(h.choice()?.edit.mentions).toEqual([
+        { pubkey: h.member, name: "Member" },
+        { pubkey: h.key, name: "Outside agent" },
+      ]),
+    );
+    expect(h.result()?.spaceId).toBeUndefined();
+    const selected = h.choice();
+    if (!selected) throw new Error("Team missing");
+    expect(selected.canSelect?.("Enter")).toBe(true);
+    h.change();
+    expect(selected.canSelect?.("Enter")).toBe(false);
+    expect(h.choice()?.disabled).toContain("changed");
+  } finally {
+    h.view.unmount();
+    h.library.dispose();
+  }
+});
+it.each([
+  { members: [] },
+  { members: ["c".repeat(64)] },
+  {
+    members: Array.from({ length: 33 }, (_, i) =>
+      i.toString(16).padStart(64, "0"),
+    ),
+  },
+])(
+  "keeps empty, unavailable and oversized teams visible but disabled (%j)",
+  async ({ members }) => {
+    const h = teamFixture(members);
+    try {
+      await waitFor(() => expect(h.choice()?.disabled).toBeTruthy());
+      expect(h.choice()?.canSelect?.("Enter")).toBe(false);
+      expect(h.choice()?.edit.mentions).toBeUndefined();
+    } finally {
+      h.view.unmount();
+      h.library.dispose();
+    }
+  },
+);
+it("archive changes revoke previously published team acceptance", async () => {
+  const h = teamFixture();
+  try {
+    await waitFor(() => expect(h.choice()?.edit.mentions).toHaveLength(2));
+    const selected = h.choice();
+    if (!selected) throw new Error("Team missing");
+    act(() => h.setArchived([h.key]));
+    expect(selected.canSelect?.("Enter")).toBe(false);
+    expect(h.choice()?.disabled).toContain("unavailable");
+  } finally {
+    h.view.unmount();
+    h.library.dispose();
+  }
+});
+
+it.each(["loading", "error"] as const)(
+  "team catalog %s does not publish choices or Retry for ordinary prose",
+  (status) => {
+    const h = teamFixture(undefined, { status, query: " 5pm" });
+    try {
+      expect(h.result()).toEqual({ items: [] });
+    } finally {
+      h.view.unmount();
+      h.library.dispose();
+    }
+  },
+);
+it("team loading has no Retry action and never replaces a people status", async () => {
+  const loading = teamFixture(undefined, { status: "loading" });
+  await waitFor(() =>
+    expect(loading.result()?.status).toBe("Loading saved teams…"),
+  );
+  expect(loading.result()?.retry).toBeUndefined();
+  loading.view.unmount();
+  loading.library.dispose();
+  const missing = teamFixture(undefined, {
+    status: "error",
+    missingRoster: true,
+  });
+  expect(missing.result()?.status).toBe("Channel membership unavailable.");
+  missing.view.unmount();
+  missing.library.dispose();
+});
+it("a longer team name remains an admitted query after a person's exact name plus Space", async () => {
+  const h = teamFixture(undefined, { query: "Member " });
+  try {
+    await waitFor(() => expect(h.choice()?.edit.mentions).toHaveLength(2));
+    expect(h.result()?.items[0]).toMatchObject({
+      id: h.member,
+      label: "Member",
+      edit: { mention: { pubkey: h.member, name: "Member" } },
+    });
+    expect(h.result()?.items[0]?.canSelect?.("Enter")).toBe(true);
+  } finally {
+    h.view.unmount();
+    h.library.dispose();
+  }
+});
+it("team rows never bypass query admission", () => {
+  const h = teamFixture(undefined, { query: "Member Team " });
+  try {
+    expect(h.result()).toEqual({ items: [] });
+  } finally {
+    h.view.unmount();
+    h.library.dispose();
+  }
+});
+it.each([
+  {
+    options: { invite: true },
+    detail: "Adds 1 to session and parent channel when you send",
+  },
+  { options: { dm: true }, detail: "1 not in DM · Will not be notified" },
+  {
+    options: {},
+    detail: "1 not in channel · Choose whether to add when you send",
+  },
+])(
+  "team choice explains destination consequences: $detail",
+  async ({ options, detail }) => {
+    const h = teamFixture(undefined, options);
+    try {
+      await waitFor(() => expect(h.choice()?.detail).toContain(detail));
+    } finally {
+      h.view.unmount();
+      h.library.dispose();
+    }
+  },
+);

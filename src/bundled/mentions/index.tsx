@@ -22,6 +22,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       channelId,
       disabled,
       insertMention,
+      insertMentions,
       inviteAgents,
     }) => (
       <MentionPicker
@@ -31,6 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         disabled={disabled}
         inviteAgents={inviteAgents}
         select={insertMention}
+        selectTeam={insertMentions}
       />
     ),
   });

@@ -701,7 +701,8 @@ whole paragraph. The host owns source offsets, plain-text paste, composition, un
 selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
-Tools receive `insertText`, `insertMention({ pubkey, name })`, `insertResource` and `focus` commands.
+Tools receive `insertText`, `insertMention({ pubkey, name })`,
+`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
 The host serializes successive commands using the latest draft and selection,
@@ -709,6 +710,11 @@ enforces text/recipient limits, and revokes commands on tool removal/replacement
 editor destination/session change, disabled/read-only state and unmount. Names are
 presentation, never recipient resolution. Editing/pasting over an identity span
 removes its intent under the existing draft rules.
+The batch command inserts a saved team as individual recipients in one undoable
+edit. It deduplicates batch keys and rejects the whole edit if any recipient is
+ineligible, or the resulting draft exceeds its text or 32-mention limit. While
+editing an existing message, both mention commands insert identity references
+without changing the original notification recipients.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a project issue or pull request. The host normalizes the label
@@ -751,7 +757,9 @@ still revokes unpublished work, without exposing ARIA controls for a missing lis
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional
-detail/decorative previews and either text or an exact `{ pubkey, name }` mention.
+detail/decorative previews and either text, an exact `{ pubkey, name }` mention,
+or a `mentions` array of up to 32 such recipients. Batch edit primitives are
+copied and frozen before display, and accepted as a single editor transaction.
 The host copies edit/query primitives and caps publications at 50 choices. A
 publication returns its own withdrawal disposer (or `false` after revocation).
 Providers must withdraw synchronously when the data supporting a displayed choice

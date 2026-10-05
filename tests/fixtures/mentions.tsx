@@ -219,6 +219,38 @@ const names = bindNames(owner.session, {
   subscribe: () => () => {},
 });
 const namedSession = { ...owner.session, names };
+if (new URLSearchParams(location.search).has("teams")) {
+  const state = {
+    status: "ready" as const,
+    entries: [
+      {
+        eventId: "team-head",
+        createdAt: 1,
+        record: {
+          version: 1 as const,
+          community: "fixture",
+          deleted: false,
+          value: {
+            type: "team" as const,
+            id: "honeys",
+            name: "The Honey Team",
+            agents: [first.pubkey, second.pubkey],
+          },
+        },
+      },
+    ],
+  };
+  namedSession.channelKit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure() {},
+    async refresh() {},
+    async save() {
+      throw new Error("Read-only fixture");
+    },
+  };
+}
 owner.session.channels.ensureList();
 const context = new Context();
 const disabledCalls: {

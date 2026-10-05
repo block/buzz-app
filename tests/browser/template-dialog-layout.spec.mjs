@@ -43,28 +43,17 @@ test("template dialogs keep headers and optional setup contained across layouts"
       await expect(
         page.getByRole("region", { name: "Templates and teams settings" }),
       ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "No templates or teams yet" }),
-      ).toBeVisible();
-      await page
-        .getByRole("button", { name: "Manage templates & teams", exact: true })
-        .click();
-      const library = page.getByRole("dialog", {
-        name: "Templates & teams",
-        exact: true,
+      const library = page.getByRole("region", {
+        name: "Templates and teams settings",
       });
-      await expect(library).toHaveAccessibleDescription(
-        /Private to you in this community/,
-      );
       await expect(
-        library.getByText("No templates yet", { exact: true }),
+        library.getByText("Your next channel starts here", { exact: true }),
       ).toBeVisible();
+      await expect(
+        library.getByText("Bring your agents together", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await contained(library);
-      await expect(library).toHaveCSS("backdrop-filter", "blur(8px)");
-      await expect(library).toHaveCSS(
-        "background-color",
-        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
-      );
       if (width === 1440)
         await library.screenshot({
           path: info.outputPath(`library-${mode}.png`),
@@ -82,6 +71,14 @@ test("template dialogs keep headers and optional setup contained across layouts"
         editor.getByRole("textbox", { name: "Starting Canvas (Markdown)" }),
       ).toHaveCount(0);
       await contained(editor);
+      await expect(editor).toHaveAccessibleDescription(
+        /existing channels stay unchanged/,
+      );
+      await expect(editor).toHaveCSS("backdrop-filter", "blur(8px)");
+      await expect(editor).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
+      );
       if (width === 1440)
         await editor.screenshot({
           path: info.outputPath(`new-template-${mode}.png`),
@@ -109,16 +106,10 @@ test("template dialogs keep headers and optional setup contained across layouts"
         await editor.screenshot({
           path: info.outputPath(`expanded-template-${mode}-narrow.png`),
         });
-      await editor
-        .getByRole("button", { name: "Back to library", exact: true })
-        .click();
+      await editor.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(
         library.getByRole("button", { name: "New template", exact: true }),
       ).toBeFocused();
-      await library.getByRole("tab", { name: "Teams", exact: true }).click();
-      await expect(
-        library.getByRole("heading", { name: "No teams yet" }),
-      ).toBeVisible();
       await library
         .getByRole("button", { name: "New team", exact: true })
         .click();
@@ -132,6 +123,9 @@ test("template dialogs keep headers and optional setup contained across layouts"
         .getByRole("button", { name: "Close templates", exact: true })
         .click();
       await expect(team).toHaveCount(0);
+      await expect(
+        library.getByRole("button", { name: "New team", exact: true }),
+      ).toBeFocused();
     }
   }
 });

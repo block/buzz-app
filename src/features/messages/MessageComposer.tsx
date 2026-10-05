@@ -645,6 +645,74 @@ function Composer({
       return false;
     return insert(`@${recipient.name} `, recipient);
   }
+  function insertMentions(
+    recipients: readonly MentionRecipient[],
+    range?: CompletionQuery,
+  ) {
+    if (
+      !Array.isArray(recipients) ||
+      !recipients.length ||
+      recipients.some(
+        (person) =>
+          !person ||
+          typeof person.pubkey !== "string" ||
+          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
+          typeof person.name !== "string" ||
+          !person.name.trim(),
+      )
+    )
+      return false;
+    const unique = [
+      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+    ];
+    if (unique.length > 32) {
+      setError("Choose at most 32 recipients");
+      return false;
+    }
+    if (
+      !permitted.current ||
+      editingDisabled ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected ||
+      input.current.disabled ||
+      input.current.readOnly
+    )
+      return false;
+    // Message edits only add references, never new notification intent.
+    if (editing.target)
+      return insert(
+        unique.map((person) => `nostr:${npubEncode(person.pubkey)} `).join(""),
+        undefined,
+        range,
+      );
+    const eligible = new Set(
+      mentionCandidates(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+        unique,
+      ).map((choice) => choice.recipient.pubkey),
+    );
+    if (unique.some((person) => !eligible.has(person.pubkey))) {
+      setError(
+        "A team member is no longer available. Refresh choices before trying again.",
+      );
+      return false;
+    }
+    const text = unique.map((person) => `@${person.name} `).join("");
+    if (!input.current.insertText(text, unique, range)) {
+      setError(
+        "The team would exceed the message length or 32-recipient limit. Nothing was added.",
+      );
+      return false;
+    }
+    completion.invalidate();
+    for (const person of unique)
+      rememberMention(session, channelId, person.pubkey);
+    setError(undefined);
+    return true;
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -677,6 +745,8 @@ function Composer({
       )
         return false;
     }
+    if ("mentions" in edit && edit.mentions)
+      return insertMentions(edit.mentions, query);
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     return (
@@ -1212,6 +1282,7 @@ function Composer({
                   inviteAgents={agentChoices && !editing.target}
                   insertText={(text) => insert(text)}
                   insertMention={insertMention}
+                  insertMentions={insertMentions}
                   insertResource={insertResource}
                   focus={() => input.current?.focus()}
                 />

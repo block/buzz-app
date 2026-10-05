@@ -1590,6 +1590,13 @@ test("a webhook save shows its one-time secret once and asks before leaving it b
   await expect(dialog.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
   expect(await page.evaluate(() => window.workflowFixture.calls.take)).toBe(1);
   expect(await dialog.textContent()).not.toContain(secretValue);
+  // The dialog opens over the still-open editor, and Base UI moves focus into it
+  // on the next animation frame. Until then Escape reaches the editor and closes it.
+  await expect
+    .poll(() =>
+      dialog.evaluate((node) => node.contains(document.activeElement)),
+    )
+    .toBe(true);
   // Dismissing before revealing or copying asks first; going back keeps the dialog.
   await page.keyboard.press("Escape");
   const confirm = page.getByRole("alertdialog", {

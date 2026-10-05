@@ -11,7 +11,13 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
 export async function buildApp(
-  { developmentReact, pluginFixtures, companionFixture, agentManagement },
+  {
+    developmentReact,
+    pluginFixtures,
+    companionFixture,
+    agentManagement,
+    pairingFixture,
+  },
   use,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
@@ -24,6 +30,21 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
+        ...(pairingFixture
+          ? [
+              {
+                name: "pairing-fixture",
+                transform(code, id) {
+                  if (id !== join(root, "src/bundled/pairing/index.tsx"))
+                    return;
+                  return code.replace(
+                    'import { PairingSettings } from "./PairingSettings";',
+                    `import { PairingFixture as PairingSettings } from ${JSON.stringify(join(root, "tests/browser/pairing-fixture.tsx"))};`,
+                  );
+                },
+              },
+            ]
+          : []),
         ...(pluginFixtures || companionFixture
           ? [
               {

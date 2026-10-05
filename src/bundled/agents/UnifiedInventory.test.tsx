@@ -1085,6 +1085,37 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
   );
 });
 
+it("reopens Archived each time the last active agent is archived", async () => {
+  const { relay, local } = archiveSetup(undefined, true);
+  async function archiveLast() {
+    const card = await screen.findByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    await openMenuItem(card, "Fixture agent", "Archive agent");
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Archive agent",
+      }),
+    );
+    await waitFor(() => expect(relay.archived.has(local)).toBe(true));
+    return within(
+      screen.getByRole("region", { name: "Archived agents" }),
+    ).getByRole("button", { name: "Archived (2)" });
+  }
+  const trigger = await archiveLast();
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "true"));
+  // A deliberate collapse holds while every agent stays archived.
+  fireEvent.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(relay.archived.has(local)).toBe(false));
+  const again = await archiveLast();
+  expect(
+    screen.getByText("All your agents are archived in this community."),
+  ).toBeVisible();
+  await waitFor(() => expect(again).toHaveAttribute("aria-expanded", "true"));
+});
+
 it("archives a relay-only agent from its menu and unarchives it without confirmation", async () => {
   const { relay, agent } = archiveSetup();
   const group = await screen.findByRole("region", {

@@ -51,6 +51,7 @@ export function AgentCard({
   onDelete,
   archive,
   archived = false,
+  feedback,
   children,
   identityLabel = (identity) => identity.name,
   layout = "tile",
@@ -79,6 +80,8 @@ export function AgentCard({
       }
     | undefined;
   archived?: boolean;
+  /** Status for a whole-card operation, shown on its own full-width line. */
+  feedback?: ReactNode;
 }) {
   const Heading = `h${headingLevel}` as "h3" | "h4" | "h5";
   const trigger = useRef<HTMLButtonElement>(null);
@@ -322,12 +325,15 @@ export function AgentCard({
         <div
           className={
             layout === "row"
-              ? `flex min-w-0 flex-wrap items-center gap-2 ${onEdit || onViewProfile || archive ? "pr-8" : ""}`
+              ? `agent-inventory-actions flex min-w-0 flex-wrap items-center gap-2 ${onEdit || onViewProfile || archive ? "pr-8" : ""}`
               : "flex min-w-0 flex-col gap-3"
           }
         >
           {children}
         </div>
+      )}
+      {feedback && (
+        <div className="agent-card-feedback min-w-0">{feedback}</div>
       )}
       {identities.length && !children ? (
         <div className="-mt-3 flex justify-center">

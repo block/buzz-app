@@ -177,6 +177,33 @@ export function InventoryIdentityCard({
             }
           : undefined
       }
+      feedback={
+        archiveRun && (
+          <>
+            {!archiveRun.error && (
+              <p role="status" className="m-0 text-body-sm text-secondary">
+                {archiveRun.action === "archive"
+                  ? "Archiving…"
+                  : "Unarchiving…"}
+              </p>
+            )}
+            {archive && archiveRun.error && (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p role="alert" className="m-0 text-body-sm text-danger">
+                  {archiveRun.action === "archive" ? "Archive" : "Unarchive"}{" "}
+                  failed: {archiveRun.error}
+                </p>
+                <Button
+                  size="compact"
+                  onClick={() => archive.request(archiveRun.action)}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+          </>
+        )
+      }
     >
       {setups.map((agent) => (
         <ManagedAgentActions
@@ -273,25 +300,6 @@ export function InventoryIdentityCard({
             </p>
           ))}
       </div>
-      {archiveRun && !archiveRun.error && (
-        <p role="status" className="m-0 text-body-sm text-secondary">
-          {archiveRun.action === "archive" ? "Archiving…" : "Unarchiving…"}
-        </p>
-      )}
-      {archive && archiveRun?.error && (
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {archiveRun.action === "archive" ? "Archive" : "Unarchive"} failed:{" "}
-            {archiveRun.error}
-          </p>
-          <Button
-            size="compact"
-            onClick={() => archive.request(archiveRun.action)}
-          >
-            Retry
-          </Button>
-        </div>
-      )}
       {confirming && archive && (
         <AgentArchiveDialog
           name={row.displayName}

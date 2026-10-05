@@ -142,6 +142,7 @@ export function InventoryView({
     Record<string, ImportSource>
   >({});
   const [archivedOpen, setArchivedOpen] = useState<boolean>();
+  const [wasAllArchived, setWasAllArchived] = useState(false);
   const root = useRef<HTMLElement>(null);
   // A confirmed change moves the card; focus follows it to its new place.
   const focus = archive?.focus;
@@ -165,6 +166,12 @@ export function InventoryView({
       decision: inventoryDecision(row, destination),
     });
   const allArchived = !active.length && !!archived.length;
+  // Entering the all-archived state reopens the section, even after an
+  // earlier collapse; a collapse made while in that state still holds.
+  if (allArchived !== wasAllArchived) {
+    setWasAllArchived(allArchived);
+    if (allArchived) setArchivedOpen(undefined);
+  }
   const archivedExpanded = archivedOpen ?? allArchived;
   // Inside the Archived section, groups sit one heading level below its title.
   function renderGroups(entries: InventoryEntry[], nested = false) {

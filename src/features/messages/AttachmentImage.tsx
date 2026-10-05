@@ -11,7 +11,6 @@ import styles from "./Messages.module.css";
 
 export function AttachmentImage({
   attachment,
-  url,
   source,
   cached = false,
   onOpenReview,
@@ -21,7 +20,6 @@ export function AttachmentImage({
   thumbnail?: boolean;
   label?: string;
   attachment: Attachment;
-  url: string;
   source: string | undefined;
   cached?: boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
@@ -67,15 +65,15 @@ export function AttachmentImage({
         className={styles.attachmentImage}
         data-thumbnail={thumbnail || undefined}
         style={style}
-        href={url}
+        href={source}
         target="_blank"
         rel="noreferrer"
         aria-label={label}
         data-media-preview=""
         onClick={(event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-          // An unprevented `_blank` click reaches the desktop opener, which
-          // launches the browser on the raw URL without the app's credentials.
+          // Every activation stays in-app, modifiers included: the desktop
+          // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
+          // intent, and no browser tab holds the app's credentials.
           event.preventDefault();
           prepareReviewEntrance(event);
           if (onOpenReview) onOpenReview(attachment, 0);

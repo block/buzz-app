@@ -568,7 +568,6 @@ export const MessageRow = memo(function MessageRow({
                   <AttachmentImage
                     key={url}
                     attachment={{ ...attachment, url }}
-                    url={url}
                     source={source}
                     cached={cached}
                     thumbnail

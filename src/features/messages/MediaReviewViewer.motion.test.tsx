@@ -94,7 +94,6 @@ function setup(
         {kind === "image" ? (
           <AttachmentImage
             attachment={attachment}
-            url={attachment.url}
             source={attachment.url}
             onOpenReview={() => {
               opener.current = document.activeElement as HTMLElement;

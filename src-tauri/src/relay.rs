@@ -155,9 +155,12 @@ fn git_repository(community: &str, repository: &str) -> Result<Url> {
     let origin = origin(community)?;
     let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
     let segments: Vec<_> = url.path().split('/').skip(1).collect();
+    // The relay's rule: strip one optional `.git`, then 1–64 of [A-Za-z0-9._-],
+    // no leading dot and no "..".
     let name = |value: &str| {
+        let value = value.strip_suffix(".git").unwrap_or(value);
         !value.is_empty()
-            && value.len() <= 68
+            && value.len() <= 64
             && !value.starts_with('.')
             && !value.contains("..")
             && value

@@ -2195,6 +2195,10 @@ fn git_authorization_covers_only_this_communitys_repositories() {
     for repository in [
         format!("https://relay.test/git/{owner}/plugins"),
         format!("https://relay.test/git/{owner}/plugins.git"),
+        format!("https://relay.test/git/{owner}/plugins."),
+        format!("https://relay.test/git/{owner}/plugins..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(64)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(64)),
     ] {
         assert_eq!(
             git_repository("https://relay.test/", &repository)
@@ -2213,6 +2217,11 @@ fn git_authorization_covers_only_this_communitys_repositories() {
         format!("https://relay.test/git/{owner}/plugins#x"),
         format!("https://relay.test/git/{owner}/.hidden"),
         format!("https://relay.test/git/{owner}/a..b"),
+        format!("https://relay.test/git/{owner}/a..b.git"),
+        format!("https://relay.test/git/{owner}/.git"),
+        format!("https://relay.test/git/{owner}/..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(65)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(65)),
         format!("https://relay.test/git/{}/plugins", "A".repeat(64)),
         format!("https://relay.test/api/{owner}/plugins"),
         format!("https://relay.test/git/{owner}/plugins/info/refs"),

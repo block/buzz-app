@@ -138,6 +138,8 @@ function setup({
     position,
     disconnected,
     mutation: () => mutation(),
+    /** A completed dwell hands viewing to a fresh view-only lease after it. */
+    dwelled: () => leases.at(-2),
     setVisibility: (next: DocumentVisibilityState) => {
       visibility = next;
     },
@@ -231,7 +233,7 @@ it("only the owning selected tab earns dwell; inactive and restored content does
   vi.advanceTimersByTime(299);
   expect(h.leases.at(-1)?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
-  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   h.mutation();
   const pending = h.leases.at(-1);
   pane.setAttribute("inert", "");
@@ -253,7 +255,7 @@ it("focus moving from the list to its composer keeps reading; another surface's 
   vi.advanceTimersByTime(100);
   h.composer.focus();
   vi.advanceTimersByTime(300);
-  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
   h.setRows([row("next", 100, 200)]);
   h.mutation();
   const pending = h.leases.at(-1);
@@ -266,7 +268,7 @@ it("focus moving from the list to its composer keeps reading; another surface's 
   expect(h.reading).toHaveBeenCalledTimes(allocated);
   h.composer.focus();
   vi.advanceTimersByTime(300);
-  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith(["next"]);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["next"]);
 });
 it("captures the cancellable lease before dwell and disposes it on hidden/unmount", () => {
   const h = setup();
@@ -320,6 +322,37 @@ it("active content reflow cannot revoke dwell already queued for durability", as
   }
   expect(h.leases[0]?.dispose).toHaveBeenCalledTimes(1);
 });
+it.each(["blur", "scroll", "unmount"] as const)(
+  "rows stay viewed after their dwell read settles until %s",
+  async (end) => {
+    const h = setup();
+    await vi.advanceTimersByTimeAsync(300);
+    // The read finished and released its durable lease.
+    expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+    expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+    // Viewing moved off the write lease; only the current handle reports rows.
+    expect(h.leases[0]?.view).toHaveBeenLastCalledWith(
+      [],
+      expect.any(Function),
+    );
+    expect(h.leases[0]?.view.mock.lastCall?.[1]()).toBe(false);
+    // A view-only replacement still reports the row, with no timer of its own.
+    const viewing = h.leases[1];
+    expect(viewing?.view).toHaveBeenCalledExactlyOnceWith(
+      ["visible"],
+      expect.any(Function),
+    );
+    expect(viewing?.view.mock.calls[0]?.[1]()).toBe(true);
+    expect(viewing?.dispose).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.leases).toHaveLength(2);
+    expect(viewing?.observe).not.toHaveBeenCalled();
+    if (end === "blur") window.dispatchEvent(new Event("blur"));
+    if (end === "scroll") h.element.dispatchEvent(new Event("scroll"));
+    if (end === "unmount") h.unmount();
+    expect(viewing?.dispose).toHaveBeenCalledOnce();
+  },
+);
 it("focus leaving the reading surface cancels pending evidence", () => {
   const h = setup();
   h.outside.focus();
@@ -355,7 +388,7 @@ it("membership activity cannot abort acknowledgment of a visible message below i
   h.setRows([row("membership", 10, 50), row("conversation", 100, 200)]);
   h.mutation();
   vi.advanceTimersByTime(300);
-  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith([
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
     "conversation",
   ]);
 });
@@ -414,7 +447,7 @@ it("bottom dwell catches up through the newest row, including a tall clipped row
   await vi.advanceTimersByTimeAsync(299);
   expect(h.leases.at(-1)?.catchUp).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
-  expect(h.leases.at(-1)?.catchUp).toHaveBeenCalledExactlyOnceWith(
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
     "bottom",
     "thread",
   );
@@ -427,10 +460,10 @@ it("a historical viewport or a bottom reached only at dwell end cannot catch up"
   await vi.advanceTimersByTimeAsync(299);
   h.element.scrollTop = 500;
   await vi.advanceTimersByTimeAsync(1);
-  expect(h.leases.at(-1)?.catchUp).not.toHaveBeenCalled();
+  expect(h.dwelled()?.catchUp).not.toHaveBeenCalled();
   h.mutation();
   await vi.advanceTimersByTimeAsync(300);
-  expect(h.leases.at(-1)?.catchUp).toHaveBeenCalledExactlyOnceWith(
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
     "visible",
     undefined,
   );

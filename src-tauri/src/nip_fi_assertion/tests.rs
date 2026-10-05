@@ -405,6 +405,49 @@ async fn session_denial_refuses_the_exact_shared_session() {
 }
 
 #[tokio::test]
+async fn a_socket_reconnect_after_a_media_refusal_asks_for_sign_in() {
+    let service = FixtureServer::spawn(FixtureReply::Status {
+        status: StatusCode::UNAUTHORIZED,
+        code: "session_expired",
+    })
+    .await;
+    let discovery = FixtureServer::spawn(FixtureReply::Discovery(required_document(
+        "https://ignored.example/v1/identity/assertions",
+    )))
+    .await;
+    let _environment = BuilderLabEnv::new(&service.base);
+    let home = TempDir::new().unwrap();
+    let owner = owner(&home);
+    save(&owner, "media-refusal", "fixture-cli-session").await;
+    let assertions = fixture_assertions(owner.clone(), &discovery);
+    let identity = IdentityHost::fixture();
+    let relay = Url::parse("wss://relay.example/query").unwrap();
+
+    // Media authorization loses the adapter refusal as a local 401. The next
+    // native socket setup must still ask for sign-in, not return `None` and
+    // let the webview open an unbadged connection.
+    let media = client().unwrap().get("http://media.example/image");
+    let error = assertions
+        .attach(&identity, &relay, media)
+        .await
+        .unwrap_err();
+    assert_eq!(error, SIGN_IN_REQUIRED);
+    assert!(owner.session_snapshot().await.unwrap().is_none());
+
+    let error = assertions
+        .get_until(
+            &identity,
+            &relay,
+            true,
+            tokio::time::Instant::now() + DEADLINE,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, SIGN_IN_REQUIRED);
+    assert_eq!(service.records().len(), 1);
+}
+
+#[tokio::test]
 async fn a_refused_snapshot_cannot_construct_or_send_a_badge_request() {
     let service = FixtureServer::spawn(FixtureReply::IssueForRequest).await;
     let _environment = BuilderLabEnv::new(&service.base);

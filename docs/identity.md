@@ -168,6 +168,7 @@ itself, so neither the assertion nor the session token reaches JavaScript. A
 relay requiring federated identity always needs the assertion. With no usable
 session (never saved, or removed after an earlier refusal), socket setup and
 protected HTTP require sign-in instead of falling back to an unbadged request.
+A refusal during media fetch is mapped to a plain HTTP 401 by the native handler.
 Frames are delivered only after JavaScript starts the socket, and every ended
 connection releases its native stream. Only 401
 `session_required`/`session_expired` clear the session and reopen sign-in, and

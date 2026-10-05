@@ -52,8 +52,7 @@ test("search arrows traverse the conversation action and recent activity, Enter 
     .getByRole("group", { name: "Channels" })
     .getByRole("option", { name: /Alpha/ });
   await expect(alpha).toBeVisible();
-  await input.press("ArrowDown");
-  await input.press("ArrowDown");
+  // Typed text selects its best match, so Enter needs no arrow keys.
   await expect(input).toBeFocused();
   await expect(alpha).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute(
@@ -96,7 +95,7 @@ test("changing search scope returns focus to the input without clearing the quer
   const input = global.getByRole("combobox", { name: "Search Buzz" });
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("hello");
-  await page.keyboard.press("ArrowDown");
+  // Typed text selects the first result; no conversation is named "hello".
   await expect(
     global
       .getByRole("group", { name: "This conversation" })
@@ -311,4 +310,33 @@ test("keyboard selection follows its action while recent conversations arrive ab
     holding = false;
     for (const resolve of held.splice(0)) resolve();
   }
+});
+
+test("a resting pointer does not steal the typed selection when results move under it", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Search Buzz").click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+  const rows = dialog.getByRole("option");
+  // Hover waits for the row to stop moving as the dialog opens and recent
+  // activity loads, so the measured position is where the row stays.
+  await rows.nth(2).hover({ position: { x: 20, y: 10 } });
+  const box = await rows.nth(2).boundingBox();
+  const y = box.y + 10;
+  await page.mouse.move(box.x + 30, y);
+  await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
+  await input.fill("a");
+  const alpha = dialog
+    .getByRole("group", { name: "Channels" })
+    .getByRole("option", { name: /Alpha/ });
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
+  // WebKit replays the resting position when rows move; that is not a hover.
+  await page.mouse.move(box.x + 30, y);
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
+  await page.mouse.move(box.x + 40, y);
+  await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
+  await expect(alpha).toHaveAttribute("aria-selected", "false");
 });

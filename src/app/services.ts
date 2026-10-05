@@ -13,6 +13,8 @@ import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
+import { bindSearchUsage } from "./shell/search-usage";
+import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -86,6 +88,15 @@ export function createServices() {
   // the join dialog, never in navigation or the native queue.
   ctx.effect(() =>
     bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+  );
+  // Search ranks places by how often and how recently they were opened.
+  ctx.effect(() =>
+    bindSearchUsage(navigation, () => {
+      const { selected, viewer } = communities.snapshot();
+      return selected && viewer
+        ? { viewer, communityOrigin: communityDestination(selected).url }
+        : undefined;
+    }),
   );
   if (notifications.indicator.available)
     ctx.effect(() =>

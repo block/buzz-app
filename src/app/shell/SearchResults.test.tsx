@@ -1218,7 +1218,9 @@ it("translates combined operators into a single server-ranked scoped read and op
 });
 
 it("runs operator-only date and author searches without a text predicate", async () => {
-  const relay = keypair(), viewer = keypair(), alice = keypair();
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
   const channel = "crew";
   const before = message(alice, channel, "before the cutoff", 1700000001);
   const after = message(alice, channel, "after the cutoff", 1800000001);
@@ -1256,10 +1258,18 @@ it("runs operator-only date and author searches without a text predicate", async
   };
   try {
     const mounted = render(
-      <SearchResults {...props} query="before:2026-10-01" scopedChannelId={channel} />,
+      <SearchResults
+        {...props}
+        query="before:2026-10-01"
+        scopedChannelId={channel}
+      />,
     );
-    expect(await screen.findByRole("option", { name: /before the cutoff/ })).toBeVisible();
-    expect(screen.queryByRole("option", { name: /after the cutoff/ })).toBeNull();
+    expect(
+      await screen.findByRole("option", { name: /before the cutoff/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: /after the cutoff/ }),
+    ).toBeNull();
     expect(reads.at(-1)).toEqual([
       expect.objectContaining({
         "#h": [channel],
@@ -1268,16 +1278,149 @@ it("runs operator-only date and author searches without a text predicate", async
     ]);
     expect(reads.at(-1)?.[0]).not.toHaveProperty("search");
     mounted.rerender(
-      <SearchResults {...props} query="after:2026-10-01" scopedChannelId={channel} />,
+      <SearchResults
+        {...props}
+        query="after:2026-10-01"
+        scopedChannelId={channel}
+      />,
     );
-    expect(await screen.findByRole("option", { name: /after the cutoff/ })).toBeVisible();
-    expect(screen.queryByRole("option", { name: /before the cutoff/ })).toBeNull();
+    expect(
+      await screen.findByRole("option", { name: /after the cutoff/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: /before the cutoff/ }),
+    ).toBeNull();
     mounted.rerender(<SearchResults {...props} query="from:alice" />);
-    expect(await screen.findByRole("option", { name: /after the cutoff/ })).toBeVisible();
+    expect(
+      await screen.findByRole("option", { name: /after the cutoff/ }),
+    ).toBeVisible();
     expect(reads.at(-1)).toEqual([
       expect.objectContaining({ authors: [alice.pubkey] }),
     ]);
     expect(reads.at(-1)?.[0]).not.toHaveProperty("search");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("offers a bounded from:@ picker with distinct identities and selects an exact author", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    first = keypair(),
+    second = keypair();
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(first, { display_name: "Baxen" }),
+          profile(second, { display_name: "Baxen" }),
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve([
+          message(second, "crew", "chosen author", 1700000010),
+        ]);
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const change = vi.fn();
+  try {
+    const mounted = render(
+      <SearchResults
+        session={owner.session}
+        query="from:@baxen"
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const people = within(screen.getByRole("group", { name: "People" }));
+    expect(await people.findAllByRole("option")).toHaveLength(2);
+    expect(reads).toHaveLength(0);
+    mounted.rerender(
+      <SearchResults
+        session={owner.session}
+        query="from:baxen"
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const ambiguous = within(
+      await screen.findByRole("group", { name: "People" }),
+    );
+    expect(await ambiguous.findAllByRole("option")).toHaveLength(2);
+    expect(reads).toHaveLength(0);
+    fireEvent.click(ambiguous.getAllByRole("option")[1] as HTMLElement);
+    expect(change).toHaveBeenCalledWith(`from:${second.pubkey} `);
+    mounted.rerender(
+      <SearchResults
+        session={owner.session}
+        query={`from:${second.pubkey} `}
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByRole("option", { name: /chosen author/ }),
+    ).toBeVisible();
+    expect(reads.at(-1)).toEqual([
+      expect.objectContaining({ authors: [second.pubkey] }),
+    ]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("shows only the requested date suggestions and inserts local calendar dates", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  const change = vi.fn();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 5, 12));
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="after:"
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const dates = within(screen.getByRole("group", { name: "Dates" }));
+    expect(
+      dates.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      "Today2026-10-05",
+      "Yesterday2026-10-04",
+      "This week2026-10-05",
+      "Last week2026-09-28",
+      "This month2026-10-01",
+    ]);
+    fireEvent.click(dates.getByRole("option", { name: /Last week/ }));
+    expect(change).toHaveBeenCalledWith("after:2026-09-28 ");
   } finally {
     cleanup();
     owner.dispose();
@@ -1320,7 +1463,12 @@ it("never widens a search when a name or channel operator is unresolved", async 
     const users = wire.next();
     expect(users.filters[0]?.kinds).toEqual([0]);
     await act(async () => users.respond([]));
-    expect(wire.pending).toHaveLength(0);
+    expect(
+      wire.pending.filter((request) =>
+        request.filters.some((filter) => filter.kinds?.includes(9)),
+      ),
+    ).toHaveLength(0);
+    for (const request of wire.pending.splice(0)) request.respond([]);
     rerender(
       <SearchResults
         session={owner.session}

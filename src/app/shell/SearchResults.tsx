@@ -1,8 +1,9 @@
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
+import { foldProfiles } from "../../features/relay/profiles";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
@@ -72,6 +73,49 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
+  const [authorSuggestions, setAuthorSuggestions] = useState<{
+    query: string;
+    candidates: readonly { pubkey: string; name: string }[];
+  }>();
+  // Completing from:@ uses signed profiles and confirmed channel membership.
+  // A selected identity is stored as its exact key, never as an ambiguous name.
+  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
+  const authorNeedle = authorPrompt?.[2]?.toLowerCase();
+  const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
+  const showDateChoices =
+    !!datePrompt && !/^\d{4}-\d{2}-\d{2}$/.test(datePrompt[2] ?? "");
+  const datePresets = [
+    ["Today", 0],
+    ["Yesterday", 1],
+    ["This week", 2],
+    ["Last week", 3],
+    ["This month", 4],
+  ] as const;
+  const dateChoices: SearchDestination[] =
+    showDateChoices && datePrompt
+      ? datePresets.map(([label, kind]) => {
+          const day = new Date();
+          day.setHours(0, 0, 0, 0);
+          if (kind === 1) day.setDate(day.getDate() - 1);
+          if (kind === 2 || kind === 3) {
+            day.setDate(
+              day.getDate() - ((day.getDay() + 6) % 7) - (kind === 3 ? 7 : 0),
+            );
+          }
+          if (kind === 4) day.setDate(1);
+          const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+          return {
+            key: `date:${kind}`,
+            label,
+            detail: date,
+            icon: ChatCircleIcon,
+            run: () =>
+              onQueryChange(
+                `${query.slice(0, datePrompt.index)} ${datePrompt[1]}:${date} `.trimStart(),
+              ),
+          };
+        })
+      : [];
   const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
   const names = new Map(
     channels.map((channel) => [
@@ -108,6 +152,98 @@ export function SearchResults({
     scopedChannelId,
     operatorChannelId,
   );
+  const showAmbiguousPicker =
+    !!search.ambiguousAuthor && authorPrompt?.[1] !== "@";
+  useEffect(() => {
+    if (
+      authorNeedle === undefined ||
+      (authorPrompt?.[1] !== "@" && !showAmbiguousPicker)
+    )
+      return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        const members = scopedChannelId
+          ? (session.channels.get?.(scopedChannelId)?.members ?? [])
+          : [];
+        if (members.length)
+          await session.profiles.ensure(members, "foreground");
+        const remote = authorNeedle
+          ? await session.read(
+              [
+                {
+                  kinds: [0],
+                  search: authorNeedle,
+                  search_mode: "prefix",
+                  limit: 40,
+                },
+              ],
+              {
+                signal: controller.signal,
+                priority: "foreground",
+                fresh: true,
+              },
+            )
+          : [];
+        controller.signal.throwIfAborted();
+        const candidates = new Map([
+          ...foldProfiles(remote),
+          ...[...session.profiles.snapshot()].filter(([pubkey]) =>
+            members.includes(pubkey),
+          ),
+        ]);
+        setAuthorSuggestions({
+          query,
+          candidates: [...candidates]
+            .filter(([, profile]) =>
+              profile.name.toLowerCase().startsWith(authorNeedle),
+            )
+            .sort(
+              ([left], [right]) =>
+                Number(members.includes(right)) -
+                Number(members.includes(left)),
+            )
+            .slice(0, 12)
+            .map(([pubkey, profile]) => ({ pubkey, name: profile.name })),
+        });
+      })().catch(() => {
+        if (!controller.signal.aborted)
+          setAuthorSuggestions({ query, candidates: [] });
+      });
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    session,
+    scopedChannelId,
+    query,
+    authorNeedle,
+    showAmbiguousPicker,
+    authorPrompt?.[1],
+  ]);
+  const authorChoices: SearchDestination[] =
+    authorPrompt &&
+    (authorPrompt[1] === "@" || showAmbiguousPicker) &&
+    authorSuggestions?.query === query
+      ? authorSuggestions.candidates.map(({ pubkey, name }) => ({
+          key: `author:${pubkey}`,
+          label: resolveName(
+            pubkey,
+            name,
+            scopedChannelId
+              ? session.channels.get?.(scopedChannelId)?.members
+              : undefined,
+          ),
+          detail: pubkey.slice(0, 12),
+          icon: ChatCircleIcon,
+          run: () =>
+            onQueryChange(
+              `${query.slice(0, authorPrompt.index)} from:${pubkey} `.trimStart(),
+            ),
+        }))
+      : [];
   const publicChannels = usePublicChannelSearch(
     session,
     scopedChannelId ? "" : parsed.text,
@@ -278,30 +414,20 @@ export function SearchResults({
     input.current?.focus();
     retry();
   };
-  return (
-    <SearchChoices
-      query={query}
-      onQueryChange={onQueryChange}
-      input={input}
-      label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-      placeholder={
-        scopedChannelId
-          ? "Search messages…"
-          : "Search pages, conversations and messages…"
-      }
-      scope={
-        scopedChannelId && onScopeChange
-          ? {
-              label:
-                names.get(scopedChannelId) ??
-                session.channels.get?.(scopedChannelId)?.name ??
-                "Conversation",
-              onRemove: () => onScopeChange(),
-            }
-          : undefined
-      }
-      groups={
-        scopedChannelId
+  const groups =
+    authorPrompt?.[1] === "@" || showAmbiguousPicker
+      ? [
+          {
+            label: "People",
+            destinations: authorChoices,
+            empty: authorChoices.length
+              ? undefined
+              : "No matching people. Try a different name.",
+          },
+        ]
+      : showDateChoices
+        ? [{ label: "Dates", destinations: dateChoices }]
+        : scopedChannelId
           ? [
               {
                 label: "Most relevant",
@@ -381,8 +507,30 @@ export function SearchResults({
                       ? undefined
                       : messageEmpty,
                 },
-              ]
+              ];
+  return (
+    <SearchChoices
+      query={query}
+      onQueryChange={onQueryChange}
+      input={input}
+      label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+      placeholder={
+        scopedChannelId
+          ? "Search messages…"
+          : "Search pages, conversations and messages…"
       }
+      scope={
+        scopedChannelId && onScopeChange
+          ? {
+              label:
+                names.get(scopedChannelId) ??
+                session.channels.get?.(scopedChannelId)?.name ??
+                "Conversation",
+              onRemove: () => onScopeChange(),
+            }
+          : undefined
+      }
+      groups={groups}
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

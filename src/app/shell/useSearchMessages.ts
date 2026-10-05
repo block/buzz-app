@@ -21,6 +21,7 @@ type Result = {
   owner: object;
   messages: readonly SearchMessage[];
   error?: string;
+  ambiguousAuthor?: boolean;
 };
 
 /** Finite, ranked results belong to this open palette, not a retained event view. */
@@ -72,38 +73,64 @@ export function useSearchMessages(
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
     const timer = setTimeout(() => {
-      void (async () => {
+      void (async (): Promise<{
+        events: Awaited<ReturnType<typeof session.read>>;
+        ambiguousAuthor?: boolean;
+      }> => {
         let author: string | undefined;
         if (parsed.from) {
           if (isHexPubkey(parsed.from)) {
             author = parsed.from.toLowerCase();
           } else {
             const handle = normalizeFromHandle(parsed.from).toLowerCase();
-            if (!handle) return [];
-            // The same signed kind-0 index used by the base user typeahead.
-            // Exact names only: a hit in a profile's bio is not an identity match.
-            const candidates = await session.read(
-              [
-                {
-                  kinds: [0],
-                  search: handle,
-                  search_mode: "prefix",
-                  limit: 40,
-                },
-              ],
-              {
-                signal: controller.signal,
-                priority: "foreground",
-                fresh: true,
-              },
+            if (!handle) return { events: [] };
+            const knownMembers = channelId
+              ? (session.channels.get?.(channelId)?.members ?? [])
+              : [];
+            if (knownMembers.length) {
+              await session.profiles.ensure(knownMembers, "foreground");
+              controller.signal.throwIfAborted();
+            }
+            const scoped = knownMembers.filter(
+              (pubkey) =>
+                session.profiles
+                  .snapshot()
+                  .get(pubkey)
+                  ?.name.trim()
+                  .toLowerCase() === handle,
             );
-            const profiles = foldProfiles(candidates);
-            author = [...profiles].find(
-              ([pubkey, profile]) =>
-                profile.name.trim().toLowerCase() === handle ||
-                pubkey === handle,
-            )?.[0];
-            if (!author) return [];
+            if (scoped.length === 1) {
+              author = scoped[0];
+            } else if (scoped.length > 1) {
+              return { events: [], ambiguousAuthor: true };
+            } else {
+              // The signed kind-0 index is prefix-based and limited. A match
+              // outside its first page is unknown; duplicate names are ambiguous.
+              const candidates = await session.read(
+                [
+                  {
+                    kinds: [0],
+                    search: handle,
+                    search_mode: "prefix",
+                    limit: 40,
+                  },
+                ],
+                {
+                  signal: controller.signal,
+                  priority: "foreground",
+                  fresh: true,
+                },
+              );
+              const matches = [...foldProfiles(candidates)].filter(
+                ([pubkey, profile]) =>
+                  profile.name.trim().toLowerCase() === handle ||
+                  pubkey === handle,
+              );
+              if (matches.length !== 1)
+                return { events: [], ambiguousAuthor: matches.length > 1 };
+              author = matches[0]?.[0];
+            }
+            if (!author) return { events: [] };
           }
         }
         // Revalidate public previews on every scoped read. Joined members are
@@ -113,7 +140,8 @@ export function useSearchMessages(
             signal: controller.signal,
             priority: "foreground",
           });
-        if (channelId && !session.channels.get?.(channelId)) return [];
+        if (channelId && !session.channels.get?.(channelId))
+          return { events: [] };
         const filter: ReadFilter = {
           kinds: [9, 40002, 40008],
           ...(parsed.text
@@ -125,13 +153,14 @@ export function useSearchMessages(
           ...(parsed.since !== null ? { since: parsed.since } : {}),
           ...(parsed.until !== null ? { until: parsed.until } : {}),
         };
-        return session.read([filter], {
+        const events = await session.read([filter], {
           signal: controller.signal,
           priority: "foreground",
           fresh: true,
         });
+        return { events };
       })()
-        .then((events) => {
+        .then(({ events, ambiguousAuthor }) => {
           if (controller.signal.aborted) return;
           const messages = events.flatMap((event): SearchMessage[] => {
             const destinations = event.tags.filter(([name]) => name === "h");
@@ -166,7 +195,11 @@ export function useSearchMessages(
               },
             ];
           });
-          replace({ owner, messages });
+          replace({
+            owner,
+            messages,
+            ...(ambiguousAuthor ? { ambiguousAuthor } : {}),
+          });
         })
         .catch((error: unknown) => {
           if (!controller.signal.aborted)
@@ -198,6 +231,7 @@ export function useSearchMessages(
     ),
     loading: canSearch && !unresolvedChannel && !current,
     error: current?.error,
+    ambiguousAuthor: current?.ambiguousAuthor,
     retry: () => setAttempt((value) => value + 1),
   };
 }

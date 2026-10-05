@@ -1584,6 +1584,24 @@ export function createUnread({
         allowed(channelId) &&
         (reads.localUnread(channelId) ?? 0) <= manualRevision;
       handles.add(dispose);
+      // Reading a DM reads all of it, through the newest retained message,
+      // and ends a manual unread on it. A DM is all for the reader, so there
+      // is no backlog to keep. Returns false outside DMs.
+      const readDm = async () => {
+        if (!isDm(channelId)) return false;
+        indexEvidence();
+        const cut = (byChannel.get(channelId) ?? []).reduce(
+          (newest, { event }) => Math.max(newest, event.created_at),
+          -1,
+        );
+        if (
+          cut >= 0 &&
+          ((reads.state().frontiers[channelId] ?? -1) < cut ||
+            reads.localUnread(channelId))
+        )
+          await reads.read(channelId, cut, valid, true, [channelId]);
+        return true;
+      };
       return Object.freeze({
         dispose,
         view(ids: readonly string[], visible: () => boolean) {
@@ -1602,7 +1620,7 @@ export function createUnread({
           });
         },
         async catchUp(id: string, rootId?: string) {
-          if (!valid()) return;
+          if (!valid() || (await readDm())) return;
           const target = rootId
             ? { kind: "thread" as const, channelId, rootId }
             : { kind: "channel" as const, channelId };
@@ -1634,6 +1652,14 @@ export function createUnread({
                 event.created_at,
               );
           const frontiers = reads.state().frontiers;
+          const current = () =>
+            valid() &&
+            requireMessage(target, id) === event &&
+            (!rootId ||
+              (reads.localUnread(`thread:${rootId}`) ?? 0) <= manualRevision);
+          // Reaching the live bottom of a channel ends a manual unread on the
+          // channel. Unseen mentions, replies and marked messages stay unread.
+          const endManual = !rootId && !!reads.localUnread(channelId);
           // A broader mark already covering the cut makes this one redundant.
           if (
             Math.max(
@@ -1641,20 +1667,21 @@ export function createUnread({
               frontiers[channelId] ?? -1,
               rootId ? (frontiers[`thread:${rootId}`] ?? -1) : -1,
             ) >= cut
-          )
+          ) {
+            if (endManual)
+              await reads.clearLocalUnread(channelId, [channelId], current);
             return;
+          }
           await reads.read(
             key,
             cut,
-            () =>
-              valid() &&
-              requireMessage(target, id) === event &&
-              (!rootId ||
-                (reads.localUnread(`thread:${rootId}`) ?? 0) <= manualRevision),
+            current,
+            endManual,
+            endManual ? [channelId] : undefined,
           );
         },
         async observe(ids: readonly string[]) {
-          if (!valid() || ids.length > 128) return;
+          if (!valid() || ids.length > 128 || (await readDm())) return;
           for (const id of ids) {
             if (!valid() || observed.has(id)) continue;
             const target = {

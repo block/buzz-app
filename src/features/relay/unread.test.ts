@@ -464,7 +464,8 @@ it("late DM metadata updates an existing attention selector without expiring rea
   expect(h.snapshot()).not.toBe(before);
   expect(changed).toHaveBeenCalledTimes(1);
   await reading.observe([row.id]);
-  expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBe(11);
+  // Reading a DM reads all of it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 11 });
 });
 
 it.each(["lowercase", "uppercase reply", "uppercase root", "last valid"])(
@@ -2132,27 +2133,74 @@ it("bottom catch-up preserves mentions, broadcasts, participating threads and la
   lease.dispose();
 });
 
-it("ordinary catch-up never clears DM attention", async () => {
+it.each(["catchUp", "observe"] as const)(
+  "reading a DM (%s) reads all of it and ends its manual unread",
+  async (step) => {
+    const h = setup();
+    h.grant("room");
+    const first = message(h.alice, "room", "first", 11);
+    const reply = message(h.alice, "room", "reply", 14, [
+      ["e", first.id, "", "reply"],
+    ]);
+    const row = message(h.alice, "room", "direct", 12);
+    h.emit([
+      first,
+      reply,
+      row,
+      signed(h.relay, {
+        kind: 39000,
+        created_at: 20,
+        content: "",
+        tags: [
+          ["d", "room"],
+          ["name", "DM"],
+          ["t", "dm"],
+        ],
+      }),
+    ]);
+    await h.session.unread.markUnreadLocal(h.target);
+    const lease = h.session.unread.reading("room");
+    if (step === "catchUp") await lease.catchUp(row.id);
+    else await lease.observe([row.id]);
+    // One channel mark through the newest message, replies included.
+    expect(h.journal()?.state.frontiers).toEqual({ room: 14 });
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 0,
+      attentionCount: 0,
+      manual: "none",
+    });
+    lease.dispose();
+  },
+);
+
+it("bottom catch-up ends a manual channel unread but keeps marked messages", async () => {
   const h = setup();
   h.grant("room");
-  const row = message(h.alice, "room", "direct", 11);
-  h.emit([
-    row,
-    signed(h.relay, {
-      kind: 39000,
-      created_at: 20,
-      content: "",
-      tags: [
-        ["d", "room"],
-        ["name", "DM"],
-        ["t", "dm"],
-      ],
-    }),
-  ]);
+  const marked = message(h.alice, "room", "marked", 11);
+  const bottom = message(h.alice, "room", "bottom", 12);
+  h.emit([marked, bottom]);
+  const markedTarget = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: marked.id,
+  };
+  await h.session.unread.markUnreadLocal(markedTarget);
+  await h.session.unread.markUnreadLocal(h.target);
   const lease = h.session.unread.reading("room");
-  await lease.catchUp(row.id);
-  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  // Reading rows away from the bottom keeps the manual unread.
+  await lease.observe([bottom.id]);
+  expect(h.snapshot().manual).toBe("local-only");
+  await lease.catchUp(bottom.id);
+  expect(h.journal()?.state.frontiers).toMatchObject({ "activity:room": 12 });
+  expect(h.journal()?.localUnread).not.toHaveProperty("room");
+  expect(h.session.unread.snapshot(markedTarget).manual).toBe("local-only");
   lease.dispose();
+  // Already caught up: reaching the bottom again still ends a new manual unread.
+  await h.session.unread.markUnreadLocal(h.target);
+  const again = h.session.unread.reading("room");
+  await again.catchUp(bottom.id);
+  expect(h.journal()?.localUnread).not.toHaveProperty("room");
+  again.dispose();
 });
 
 it("thread bottom catch-up clears only its thread and preserves local and remote manual intent", async () => {

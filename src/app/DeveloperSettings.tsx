@@ -70,11 +70,13 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
       setSaving(false);
     }
   }
+  const brokerAvailable = import.meta.env.VITE_BUZZ_LIVE === "1";
   const [stats, setStats] = useState<BrokerStats>();
   const [clearing, setClearing] = useState(false);
   const [status, setStatus] = useState<string>();
 
   useEffect(() => {
+    if (!brokerAvailable) return;
     let alive = true;
     async function poll() {
       const next = await fetchStats();
@@ -108,39 +110,41 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
         subtitle="Activity and diagnostics for this session."
       />
       <div className="grid grid-cols-1 gap-section-gap">
-        <section aria-labelledby="broker-activity-title">
-          <InlineHeader
-            id="broker-activity-title"
-            title="Broker activity"
-            subtitle="Running totals from the local relay broker. Updates every 5 seconds."
-          />
-          <SettingsGroup layout="form">
-            {stats ? (
-              <dl className={styles.metrics}>
-                {(
-                  [
-                    ["Queries", stats.queries],
-                    ["Errors", stats.errors],
-                    ["Media", stats.media],
-                    ["Connections", stats.connects],
-                  ] as const
-                ).map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="text-body-sm text-muted">{label}</dt>
-                    <dd className="m-0 text-heading tabular-nums">
-                      {Number.isFinite(value) ? value.toLocaleString() : "–"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p role="status" className="m-0 text-body-sm text-muted">
-                Broker stats aren’t available. Start the development relay
-                broker on this origin to view them.
-              </p>
-            )}
-          </SettingsGroup>
-        </section>
+        {brokerAvailable && (
+          <section aria-labelledby="broker-activity-title">
+            <InlineHeader
+              id="broker-activity-title"
+              title="Broker activity"
+              subtitle="Running totals from the local relay broker. Updates every 5 seconds."
+            />
+            <SettingsGroup layout="form">
+              {stats ? (
+                <dl className={styles.metrics}>
+                  {(
+                    [
+                      ["Queries", stats.queries],
+                      ["Errors", stats.errors],
+                      ["Media", stats.media],
+                      ["Connections", stats.connects],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-body-sm text-muted">{label}</dt>
+                      <dd className="m-0 text-heading tabular-nums">
+                        {Number.isFinite(value) ? value.toLocaleString() : "–"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p role="status" className="m-0 text-body-sm text-muted">
+                  Broker stats aren’t available. Start the development relay
+                  broker on this origin to view them.
+                </p>
+              )}
+            </SettingsGroup>
+          </section>
+        )}
         {clientMetrics.enabled && <ClientMetricsPanel />}
         <div className="space-y-2">
           <InlineHeader title="Runtime settings" />

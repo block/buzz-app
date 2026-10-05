@@ -1,3 +1,4 @@
+import { projectSidebarRecord } from "./sidebar-registers.ts";
 import type { RelayEvent } from "./events.ts";
 import type { RelayReader } from "./reader.ts";
 
@@ -7,7 +8,7 @@ export const SIDEBAR_COORDINATES = [
   "channel-mutes",
   "channel-sort",
 ] as const;
-export type SidebarPreferences = Readonly<{
+export type SidebarGroups = Readonly<{
   sections: readonly Readonly<{
     id: string;
     name: string;
@@ -15,9 +16,6 @@ export type SidebarPreferences = Readonly<{
     order: number;
   }>[];
   assignments: Readonly<Record<string, string>>;
-  starred: readonly string[];
-  sort?: Readonly<Record<string, SidebarSortMode>>;
-  muted: readonly string[];
 }>;
 export type SidebarSortMode = "alpha" | "recent";
 export type SidebarSortMutator = (
@@ -30,11 +28,32 @@ export type SidebarMuteMutator = (
   intent: Readonly<{ channelId: string; muted: boolean }>,
   signal: AbortSignal,
 ) => Promise<readonly string[]>;
+export type SidebarPreferences = SidebarGroups &
+  Readonly<{
+    starred: readonly string[];
+    muted: readonly string[];
+    sort?: Readonly<Record<string, SidebarSortMode>>;
+    /** Presentation source only; never serialized into legacy preferences. */
+    groupSource?: "personal";
+  }>;
+export type SidebarAssignmentIntent = Readonly<{
+  channelId: string;
+  sectionId?: string;
+  createSection?: Readonly<{ id: string; name: string }>;
+}>;
+export type SidebarAssignmentMutator = (
+  intent: SidebarAssignmentIntent,
+  signal: AbortSignal,
+  source?: "personal",
+) => Promise<SidebarGroups>;
+export type SidebarStarMutator = (
+  intent: Readonly<{ channelId: string; starred: boolean }>,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
 export type SidebarDecoder = (
   events: readonly RelayEvent[],
   signal: AbortSignal,
 ) => Promise<SidebarPreferences>;
-
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid sidebar preferences");
@@ -66,7 +85,7 @@ export function projectSidebarPreferences(
     muted: [],
   };
   if (sections !== undefined) {
-    const data = object(sections);
+    const data = projectSidebarRecord("channel-sections", object(sections));
     if (
       data.version !== 1 ||
       !Array.isArray(data.sections) ||
@@ -121,7 +140,7 @@ export function projectSidebarPreferences(
     }
   }
   if (sort !== undefined) {
-    const data = object(sort);
+    const data = projectSidebarRecord("channel-sort", object(sort));
     if (data.version !== 1) throw new Error("Unsupported sidebar sort");
     const entries = Object.entries(object(data.groups));
     if (entries.length > 104) throw new Error("Sidebar sort budget exceeded");

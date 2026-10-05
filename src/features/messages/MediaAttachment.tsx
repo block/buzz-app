@@ -1,21 +1,23 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { prepareReviewEntrance } from "./use-review-entrance";
+import { useMediaCorners } from "./use-media-corners";
+import { VideoPlayer, VideoControls } from "./VideoPlayer";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
-import {
-  ArrowsOutIcon,
-  PauseIcon,
-  PlayIcon,
-  XIcon,
-} from "../../shared/design-system/icons/index";
+import { ArrowsOutIcon, XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
-import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 
@@ -28,6 +30,8 @@ type MediaAttachmentProps = {
   attachment: Attachment;
   media(url: string): string | undefined;
   mode?: "inline" | "thread";
+  imageDescription?: string;
+  preload?: "auto" | "metadata" | "none";
   seekTo?: number;
   seekRequest?: number;
   onPlayback?(playback: MediaPlayback): void;
@@ -38,36 +42,53 @@ function useVideoPosition(
   video: RefObject<HTMLVideoElement | null>,
   seekTo: number | undefined,
   seekRequest: number | undefined,
+  active: boolean,
 ) {
-  useEffect(() => {
+  const wasActive = useRef(active);
+  useLayoutEffect(() => {
     // A monotonically increasing request lets the same timecode seek again.
     void seekRequest;
-    if (seekTo === undefined || !video.current) return;
+    const recovered = active && !wasActive.current;
+    wasActive.current = active;
+    const element = video.current;
+    if (!element) return;
+    if (!active) {
+      element.pause();
+      return;
+    }
+    // Recovery restores the same paused position, not an old seek intent.
+    if (recovered || seekTo === undefined) return;
     const seek = () => {
-      if (!video.current) return;
-      video.current.currentTime = Math.max(0, seekTo);
-      void video.current.play().catch(() => {});
+      element.currentTime = Math.max(0, seekTo);
+      void element.play().catch(() => {});
     };
-    if (video.current.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
-    else video.current.addEventListener("loadedmetadata", seek, { once: true });
-  }, [seekTo, seekRequest, video]);
+    if (element.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
+    else element.addEventListener("loadedmetadata", seek, { once: true });
+    return () => element.removeEventListener("loadedmetadata", seek);
+  }, [seekTo, seekRequest, video, active]);
 }
 
 export function MediaAttachment({
   attachment,
   media,
   mode = "inline",
+  imageDescription = "Attachment preview",
+  preload = "auto",
   seekTo,
   seekRequest,
   onPlayback,
   onOpenReview,
 }: MediaAttachmentProps) {
+  const active = useConversationPresentation();
+  const corners = useMediaCorners();
   const source = media(attachment.url);
   const preview = attachment.previewUrl
     ? media(attachment.previewUrl)
     : undefined;
   const video = useRef<HTMLVideoElement>(null);
+  const expandedVideo = useRef<HTMLVideoElement>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
+  if (!active && viewerOpen) setViewerOpen(false);
   const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
@@ -85,7 +106,7 @@ export function MediaAttachment({
       } as CSSProperties)
     : undefined;
   const visiblePreview = preview ?? capturedPreview;
-  useVideoPosition(video, seekTo, seekRequest);
+  useVideoPosition(video, seekTo, seekRequest, active);
 
   if (!source)
     return (
@@ -109,28 +130,43 @@ export function MediaAttachment({
     return (
       <>
         <button
+          ref={corners}
           className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
           style={previewStyle}
           type="button"
           aria-label="Open image fullscreen"
-          onClick={() =>
-            onOpenReview ? onOpenReview(attachment, 0) : setViewerOpen(true)
-          }
+          data-image-preview=""
+          data-media-preview=""
+          onClick={(event) => {
+            prepareReviewEntrance(event);
+            if (onOpenReview) onOpenReview(attachment, 0);
+            else setViewerOpen(true);
+          }}
         >
-          <img
-            src={source}
-            alt="Attachment preview"
-            loading="lazy"
-            onLoad={(event) =>
-              setMeasuredDimensions({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight,
-              })
-            }
-            onError={() => setFailed(true)}
-          />
+          <span className={styles.mediaPreviewPixels}>
+            <img
+              src={source}
+              alt={imageDescription}
+              loading="lazy"
+              onLoad={(event) =>
+                setMeasuredDimensions({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+              onError={() => setFailed(true)}
+            />
+          </span>
+          <svg
+            className={styles.imageOutline}
+            data-image-outline=""
+            aria-hidden="true"
+          >
+            <path />
+          </svg>
         </button>
-        {viewerOpen &&
+        {active &&
+          viewerOpen &&
           createPortal(
             <MediaViewer
               title="Image attachment"
@@ -139,7 +175,7 @@ export function MediaAttachment({
               <img
                 className={styles.mediaViewerImage}
                 src={source}
-                alt="Attachment preview"
+                alt={imageDescription}
               />
             </MediaViewer>,
             document.body,
@@ -161,7 +197,7 @@ export function MediaAttachment({
       className={styles.mediaVideo}
       src={source}
       poster={visiblePreview}
-      preload="auto"
+      preload={preload}
       playsInline
       style={previewStyle}
       onLoadedData={(event) => {
@@ -215,70 +251,68 @@ export function MediaAttachment({
   return (
     <>
       <div
+        ref={corners}
         className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+        data-video-preview=""
+        data-media-preview=""
+        data-started={started || undefined}
         data-playing={playing ? "true" : undefined}
         style={previewStyle}
       >
-        {visiblePreview && !started && (
-          <img
-            className={styles.mediaPoster}
-            src={visiblePreview}
-            alt=""
-            aria-hidden="true"
-          />
-        )}
-        {videoElement}
-        <span className={styles.mediaPlay}>
-          <IconButton
-            size="compact"
-            variant="solid"
-            shape="round"
-            type="button"
-            aria-label={playing ? "Pause video" : "Play video"}
-            onClick={() => {
-              if (!video.current) return;
-              if (video.current.paused) void video.current.play();
-              else video.current.pause();
-            }}
-            icon={playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
-          />
-        </span>
-        <span className={styles.mediaTime}>{formatMediaTime(currentTime)}</span>
-        <span className={styles.mediaExpand}>
-          <IconButton
-            size="compact"
-            variant="solid"
-            shape="round"
-            type="button"
-            aria-label="Open video fullscreen"
-            onClick={() => {
-              video.current?.pause();
-              if (onOpenReview) onOpenReview(attachment, currentTime);
-              else setViewerOpen(true);
-            }}
-            icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
-          />
-        </span>
+        <div
+          className={`${styles.mediaPreviewPixels} dark`}
+          data-color-mode="dark"
+        >
+          {visiblePreview && !started && (
+            <img
+              className={styles.mediaPoster}
+              src={visiblePreview}
+              alt=""
+              aria-hidden="true"
+            />
+          )}
+          {videoElement}
+          {active && <VideoControls videoRef={video} inline />}
+          <span className={styles.mediaExpand}>
+            <IconButton
+              size="compact"
+              variant="media"
+              type="button"
+              aria-label="Open video fullscreen"
+              onClick={(event) => {
+                prepareReviewEntrance(event);
+                video.current?.pause();
+                if (onOpenReview) onOpenReview(attachment, currentTime);
+                else setViewerOpen(true);
+              }}
+              icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
+            />
+          </span>
+        </div>
+        <svg
+          className={styles.imageOutline}
+          data-image-outline=""
+          aria-hidden="true"
+        >
+          <path />
+        </svg>
       </div>
-      {viewerOpen &&
+      {active &&
+        viewerOpen &&
         createPortal(
           <MediaViewer
             title="Video attachment"
             close={() => setViewerOpen(false)}
           >
-            {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
-            <video
-              className={styles.mediaViewerVideo}
-              src={source}
-              controls
-              autoPlay
-              playsInline
-              onLoadedMetadata={(event) => {
-                event.currentTarget.currentTime = currentTime;
-              }}
-              onTimeUpdate={(event) => {
-                const seconds = event.currentTarget.currentTime;
+            <VideoPlayer
+              source={source}
+              poster={visiblePreview}
+              videoRef={expandedVideo}
+              initialTime={currentTime}
+              onError={() => setFailed(true)}
+              onTime={(seconds) => {
                 setCurrentTime(seconds);
+                if (video.current) video.current.currentTime = seconds;
                 onPlayback?.({ attachmentUrl: attachment.url, seconds });
               }}
             />
@@ -312,24 +346,27 @@ function MediaViewer({
       }}
     >
       <section
-        className={styles.mediaViewer}
+        className={`${styles.mediaViewer} dark`}
+        data-color-mode="dark"
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <div className={styles.mediaViewerDragRegion} data-tauri-drag-region />
-        <span className={styles.mediaViewerClose}>
-          <IconButton
-            size="compact"
-            variant="solid"
-            shape="round"
-            ref={closeButton}
-            type="button"
-            aria-label="Close fullscreen viewer"
-            onClick={close}
-            icon={<XIcon size={20} aria-hidden="true" />}
+        <div className={styles.mediaViewerHeading} data-tauri-drag-region>
+          <PanelHeader
+            title={<PanelHeaderLabel title={title} />}
+            actions={
+              <IconButton
+                size="compact"
+                ref={closeButton}
+                type="button"
+                aria-label="Close fullscreen viewer"
+                onClick={close}
+                icon={<XIcon size={20} aria-hidden="true" />}
+              />
+            }
           />
-        </span>
+        </div>
         {children}
       </section>
     </div>

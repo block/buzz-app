@@ -124,7 +124,7 @@
   --blue-8: #5eb1ef;
   --blue-9: #0090ff;
   --blue-10: #0588f0;
-  --blue-11: #0d74ce;
+  --blue-11: #0b5fa8;
   --blue-12: #113264;
 
   /* cyan */
@@ -170,7 +170,7 @@
   --purple-7: #664282;
   --purple-8: #8457aa;
   --purple-9: #8e4ec6;
-  --purple-10: #9a5cd0;
+  --purple-10: #975acc;
   --purple-11: #d19dff;
   --purple-12: #ecd9fa;
 
@@ -227,7 +227,7 @@
   --blue-8: #2870bd;
   --blue-9: #0090ff;
   --blue-10: #3b9eff;
-  --blue-11: #70b8ff;
+  --blue-11: #83c4ff;
   --blue-12: #c2e6ff;
 
   /* cyan */
@@ -285,24 +285,34 @@
      Keep these current. A step whose comment disagrees with its
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
+  --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
+  --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
+  --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
+  --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
   --neutral-1: #ffffff; /* bg-panel, bg-float, bg-chrome-selected */
   /* The first real compact control established this stop. Project Orbit's
      search field reads as #f5f5f6 over its panel. Its one blue-channel step
      is a deliberately cool near-neutral, not a warm tint; use it directly
      rather than preserve an exploratory #f9f9f9 stop or recreate it with
      alpha. */
-  --neutral-2: #f0f0f0; /* quiet compact controls, callouts, and grouping */
+  --neutral-quiet-hover: #f1f1f2; /* hover between quiet fill and selection */
+  --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
   --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
   --neutral-5: #cccccc; /* unused in light; float + selected, dark */
   --neutral-6: #b3b3b3; /* border-primary in dark mode             */
   --neutral-7: #959595; /* no readers                              */
   --neutral-8: #808080; /* text-disabled                           */
-  --neutral-9: #666666; /* text-tertiary                           */
+  --neutral-9: #5f5f5f; /* metadata also clears AA on pressed fills */
+  --neutral-avatar-on-white: #525252; /* Fixed foreground for a fixed white avatar. */
   --neutral-10: #525252; /* text-secondary                         */
   --neutral-11: #191919; /* inverse fill, paired with neutral-1    */
   --neutral-action-pressed: #525252;
-  --neutral-12: #000000; /* text-primary                           */
+  --neutral-12: #000000; /* prominent controls and focus boundary   */
+
+  /* Backdrop interaction fills let the shell gradient show through. */
+  --backdrop-hover-fill: rgb(0 0 0 / 6%);
+  --backdrop-pressed-fill: rgb(0 0 0 / 10%);
 
   /* --- Glass. A translucency ramp of fills. ---------------- */
   --glass-1: #ffffff5c; /* barely there   */
@@ -310,6 +320,14 @@
   --glass-3: #ffffff9e; /* default glass  */
   --glass-4: #ffffffc7; /* glass hovered  */
   --glass-5: #ffffffe0; /* nearly solid   */
+
+  /* Media glass stays dark over video pixels in either app mode. */
+  --media-glass-fill: rgb(0 0 0 / 35%);
+  --image-rim: oklch(0 0 0 / 0.1);
+  --media-canvas-fill: #000000;
+  --media-glass-rim: rgb(255 255 255 / 10%);
+  --media-glass-foreground: #ffffff;
+  --media-track-fill: rgb(255 255 255 / 16%);
 
   /* --- Backdrop treatments. Named visual values, not colours.
      These treatments only exist in the mode where their names are true. The
@@ -357,18 +375,21 @@
   --space-8: 2rem;
   --space-16: 4rem;
 
-  /* --- Corner. Four shapes, each with a distinct job. ------- */
-  --corner-row: 0.625rem;
+  /* --- Corner. Containers stop at 20px; pills/circles are separate shapes. */
+  --corner-row: 0.5rem;
   --corner-control: 0.75rem;
-  --corner-panel: 1.5rem;
+  --corner-container: 1rem;
+  --corner-panel: 1.25rem;
   --corner-round: 9999rem;
 
   /* --- Time. State is quick; geometry settles deliberately. - */
   --time-immediate: 0ms;
   --time-fast: 120ms;
   --time-state: 150ms;
+  --time-panel-enter: 180ms;
   --time-settle: 220ms;
   --ease-state: ease;
+  --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
@@ -380,6 +401,10 @@
      are deliberately tighter at the bottom. A documented divergence, not drift:
      if these ever want to be palette steps, the palette's gray ramp is what
      should change. */
+  --neutral-navigation-quiet: #232323;
+  --image-rim: oklch(1 0 0 / 0.1);
+  --neutral-raised: #282828;
+  --neutral-quiet-hover: #2e2e2e;
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -405,6 +430,9 @@
      `--accent-tint` resolves to the dark purple ramp with nothing restated.
      This block used to hold 50 hand-picked values, which is where the accent
      tint and a hand-picked categorical purple drifted apart. */
+
+  --backdrop-hover-fill: rgb(255 255 255 / 10%);
+  --backdrop-pressed-fill: rgb(255 255 255 / 16%);
 
   --glass-1: #1c1c1c5c;
   --glass-2: #1c1c1c85;
@@ -466,6 +494,8 @@
    ============================================================ */
 
 :root {
+  --art-terminal-start: var(--orange-9);
+  --art-terminal-end: var(--amber-9);
   --gradient-1: var(--gradient-sky-field);
   --gradient-2: var(--gradient-peach-field);
   --gradient-3: var(--gradient-blue-hour);
@@ -488,7 +518,9 @@
   --surface-popover: var(--neutral-1);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
-  --text-standard: var(--neutral-12);
+  --text-navigation: var(--neutral-navigation-text);
+  --text-navigation-unread: var(--neutral-navigation-unread);
+  --text-standard: var(--neutral-standard-text);
   --text-subtle: var(--neutral-10);
   --text-metadata: var(--neutral-9);
   --text-inverse: var(--neutral-1);
@@ -496,11 +528,24 @@
   --text-danger: var(--red-12);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
+  --status-online: var(--green-11);
+  --status-availability-online: var(--green-10);
+  --status-avatar-online: var(--green-10);
+  --status-avatar-online-border: var(--green-11);
+  --status-away: var(--amber-10);
+  --status-offline: var(--neutral-8);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
-  --text-link: var(--blue-12);
-  --affordance-link-hover: var(--blue-4);
+  --text-link: var(--blue-11);
+  --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
   --scrollbar-thumb: var(--neutral-8);
+  --scrollbar-thumb-quiet: color-mix(
+    in srgb,
+    var(--border-standard) 90%,
+    transparent
+  );
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
@@ -509,10 +554,19 @@
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
   --affordance-subtle: var(--neutral-2);
-  --affordance-subtle-hover: var(--neutral-3);
+  --affordance-subtle-hover: var(--neutral-quiet-hover);
+  --affordance-backdrop-hover: var(--backdrop-hover-fill);
+  --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
   --affordance-subtle-pressed: var(--neutral-4);
-  --affordance-panel-hover: var(--neutral-3);
-  --affordance-floating-hover: var(--neutral-3);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-panel-hover: var(--neutral-2);
+  --affordance-floating-hover: var(--neutral-2);
+  --affordance-popover-selected: var(--neutral-2);
+  --affordance-floating-control: var(--affordance-subtle);
+  --affordance-floating-control-hover: var(--affordance-subtle-hover);
+  --affordance-floating-control-pressed: var(--affordance-subtle-pressed);
+  --affordance-floating-selected: var(--affordance-subtle-pressed);
+  --border-floating-control: var(--border-prominent);
   --affordance-selected: var(--neutral-3);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -531,9 +585,11 @@
 .dark {
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
-  --surface-popover: var(--neutral-5);
+  --surface-popover: var(--neutral-raised);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --text-navigation: var(--neutral-11);
+  --text-navigation-unread: var(--neutral-12);
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-11);
   --text-metadata: var(--neutral-10);
@@ -542,11 +598,24 @@
   --text-danger: var(--red-12);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
+  --status-online: var(--green-11);
+  --status-availability-online: var(--green-10);
+  --status-avatar-online: var(--green-10);
+  --status-avatar-online-border: var(--green-11);
+  --status-away: var(--amber-10);
+  --status-offline: var(--neutral-10);
+  --text-categorical-purple: var(--purple-12);
+  --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
-  --text-link: var(--blue-12);
-  --affordance-link-hover: var(--blue-4);
+  --text-link: var(--blue-11);
+  --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
   --scrollbar-thumb: var(--neutral-9);
+  --scrollbar-thumb-quiet: color-mix(
+    in srgb,
+    var(--border-standard) 90%,
+    transparent
+  );
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
@@ -554,11 +623,19 @@
   --affordance-prominent: var(--neutral-12);
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
-  --affordance-subtle: var(--neutral-5);
-  --affordance-subtle-hover: var(--neutral-6);
-  --affordance-subtle-pressed: var(--neutral-7);
+  --affordance-subtle: var(--neutral-4);
+  --affordance-subtle-hover: var(--neutral-quiet-hover);
+  --affordance-backdrop-hover: var(--backdrop-hover-fill);
+  --affordance-backdrop-pressed: var(--backdrop-pressed-fill);
+  --affordance-subtle-pressed: var(--neutral-5);
   --affordance-panel-hover: var(--neutral-4);
-  --affordance-floating-hover: var(--neutral-7);
+  --affordance-floating-hover: var(--neutral-5);
+  --affordance-popover-selected: var(--neutral-6);
+  --affordance-floating-control: var(--neutral-6);
+  --affordance-floating-control-hover: var(--neutral-7);
+  --affordance-floating-control-pressed: var(--neutral-8);
+  --affordance-floating-selected: var(--neutral-6);
+  --border-floating-control: var(--neutral-9);
   --affordance-selected: var(--neutral-5);
   --affordance-disabled: var(--neutral-3);
   --affordance-danger: var(--red-3);
@@ -617,6 +694,15 @@
      globals.css are the only legitimate readers: they pair each fill
      with its blur, rim, and lift so a material cannot arrive in
      pieces.                                                   */
+  /* Media controls use one dark material in both app modes so video remains
+     visible through a stable fill and its paired icons remain white. */
+  --bg-media-glass: var(--media-glass-fill);
+  --border-image: var(--image-rim);
+  --bg-media-canvas: var(--media-canvas-fill);
+  --bg-media-track: var(--media-track-fill);
+  --border-media-glass: var(--media-glass-rim);
+  --text-on-media: var(--media-glass-foreground);
+
   --bg-glass-primary: var(--glass-2);
   --bg-glass-primary-hover: var(--glass-3);
   --bg-glass-secondary: var(--glass-4);
@@ -642,7 +728,7 @@
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
-  --size-panel-header: 3.5rem;
+  --size-panel-header: 2.5rem;
   --size-control-sm: 2rem;
   --size-control: 2.5rem;
   --size-control-lg: 3.25rem;
@@ -655,16 +741,26 @@
   --size-resize-seam: 0.875rem;
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
+  --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
+  /* Independent icon controls use an even contour on all four corners. */
+  --radius-icon-button: 0.625rem;
+  /* Half the large (52px) action height; smaller controls clamp naturally. */
+  --radius-capsule: 1.625rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */
-  --radius-chip: 0.375rem;
+  --radius-chip: 0.25rem;
+  /* Profile refinements: emphasized availability. */
+  --weight-profile-status: 600;
+  --text-avatar-fallback: var(--neutral-avatar-on-white);
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
+  --duration-panel-enter: var(--time-panel-enter);
   --duration-settle: var(--time-settle);
   --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
+  --easing-enter: var(--ease-enter);
   --easing-settle: var(--ease-settle);
 
   --text-on-accent: #ffffff;
@@ -702,8 +798,15 @@
 :root[data-color-mode="dark"],
 .dark {
   --bg-panel: var(--surface-panel);
+  --border-image: var(--image-rim);
   --bg-float: var(--surface-popover);
   --bg-scrim: #000000a6;
+  /* Rebind material aliases locally: a scoped .dark surface otherwise inherits
+     the light root's already-computed glass fills. */
+  --bg-glass-primary: var(--glass-2);
+  --bg-glass-primary-hover: var(--glass-3);
+  --bg-glass-secondary: var(--glass-4);
+  --bg-glass-secondary-hover: var(--glass-5);
   --border-control: var(--border-prominent);
   --bg-chrome-selected: var(--neutral-5);
 
@@ -730,12 +833,17 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --text-color-navigation: var(--text-navigation);
+  --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
   --color-surface-base: var(--surface-base);
   --color-surface-panel: var(--surface-panel);
   --color-surface-popover: var(--surface-popover);
   --color-surface-inset: var(--surface-inset);
   --color-surface-inverse: var(--surface-inverse);
+  --text-color-on-media: var(--text-on-media);
+  --border-color-media-glass: var(--border-media-glass);
+  --border-color-image: var(--border-image);
   --text-color-standard: var(--text-standard);
   --text-color-subtle: var(--text-subtle);
   --text-color-metadata: var(--text-metadata);
@@ -744,9 +852,12 @@
   --text-color-danger: var(--text-danger);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);
+  --text-color-categorical-purple: var(--text-categorical-purple);
+  --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
   --border-color-prominent: var(--border-prominent);
+  --border-color-floating-control: var(--border-floating-control);
   --border-color-focus: var(--border-focus);
   --border-color-danger: var(--border-danger);
   --border-color-warning: var(--border-warning);
@@ -756,8 +867,18 @@
   --color-affordance-subtle: var(--affordance-subtle);
   --color-affordance-subtle-hover: var(--affordance-subtle-hover);
   --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
+  --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
   --color-affordance-panel-hover: var(--affordance-panel-hover);
   --color-affordance-floating-hover: var(--affordance-floating-hover);
+  --color-affordance-popover-selected: var(--affordance-popover-selected);
+  --color-affordance-floating-control: var(--affordance-floating-control);
+  --color-affordance-floating-control-hover: var(
+    --affordance-floating-control-hover
+  );
+  --color-affordance-floating-control-pressed: var(
+    --affordance-floating-control-pressed
+  );
+  --color-affordance-floating-selected: var(--affordance-floating-selected);
   --color-affordance-selected: var(--affordance-selected);
   --color-affordance-disabled: var(--affordance-disabled);
   --color-affordance-danger: var(--affordance-danger);

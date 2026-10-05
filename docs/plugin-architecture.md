@@ -52,7 +52,8 @@ features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
 features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
-bundled/bestie/         builtin companion panel and its snake launcher
+bundled/bestie/         builtin Bestie page
+bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes one channel sidebar beside independently mounted pages. It reuses
@@ -76,10 +77,12 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
-contribution when its Cordis scope ends.
+contribution when its Cordis scope ends. `primary: true` gives a page a row in the
+shell's page navigation. Pages without it are still listed in search and reachable
+by deep link or from another page; Channels and Sessions are bundled examples.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
@@ -100,7 +103,22 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
+### Bundled defaults
+
+All 21 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
+Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Projects, Agents, Workflows, Sessions, Hosted communities, and Community admin are
+on by default, but optional. Both browser and native catalogs declare that policy.
+
+Saved enabled/disabled flags win over defaults (except required Channels). There
+is no migration or forced reset: a browser profile that previously saved its full
+plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
+overrides. Default-on does not promise platform support: Terminal contributes UI
+only on macOS/Linux desktop; Hosted communities still requires its development
+broker backend. Disabling Community admin removes its Invite to community shortcut.
+
+Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
 signed metadata through the session reader and reports navigation completion only
 after destination content is presented. Git browsing uses a narrow host-owned,
@@ -128,8 +146,20 @@ personal groups and the existing + creation buttons, independently of this plugi
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
 under Settings → Communities. It manages Block-hosted relays through a Builderlab
 account: browser sign-in, binding the local Buzz identity (a locally signed kind
-24243 challenge), and create/archive/unarchive/transfer. Joining stays in the
-existing Add a community dialog; the card only copies the new relay address. Its
+24243 challenge), and create/archive/unarchive/transfer. A server-declared,
+default-off capability also exposes owner deletion for archived communities. The
+card persists the bound four-field request before admission. A fresh request can
+terminate on a known structured pre-admission code and HTTP status pair;
+ambiguous first responses stay pending until an explicit same-UUID delete replay.
+Only a tuple-bound non-aborted 202 confirms progress; an aborted 202 ends recovery
+without claiming deletion. The card displays valid server quota when available;
+without it, Create remains available and the server enforces its owner limit.
+`can_create: false` alone disables Create; usage is informational and is never
+estimated from visible rows. One origin-wide pending slot is
+re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
+so exactly simultaneous contexts remain a documented client-side race;
+it never signs deletion or infers acceptance from a missing list row. Joining
+stays in the existing Add a community dialog; the card only copies the new relay address. Its
 `/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
 which keeps the session credential and signing key in Node. Packaged builds ship no
 broker, so this plugin cannot sign in or manage communities there until a native
@@ -139,21 +169,27 @@ backend exists.
 one optional composition provider. With zero or multiple active providers, no
 optional controls are selected. This host-matched preview is not a workflow API:
 The sidebar owns creation form/draft data and final dispatch; the session owns signing,
-membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
+membership, Canvas writes, exact receipts and setup completion notices. Settings and
 provider components must check `active()` before accepting delayed work or starting
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
 
-Disabling preserves saved group default references but does not apply them to new
-intent. Accepted drafts remain visibly summarized, with an explicit Clear action;
+Normal Create selects a saved template without a customization disclosure or raw
+setup dump. Templates & teams settings retain lineup/Canvas editing. Disabling
+preserves saved group default references but does not apply them to new intent.
+Accepted drafts get a compact summary and Clear action only when the provider is
+unavailable or fails;
 re-enable does not overwrite edits or automatically apply an unresolved old default.
-Frozen setup stays visible/resumable without any template/agent catalog. Disabling
-is not cancellation of already accepted writes. Group-only and Canvas-only setup
+Accepted setup runs independently of the template/agent catalogs after admission.
+Failures preserve frozen setup receipts and Outbox delivery evidence; dismissing a
+completion notice only hides that notice. There is no template Resume, automatic
+resend or startup continuation. Disabling is not cancellation of already accepted
+writes. Group-only and Canvas-only setup
 require no agent-library readiness; real agent selections still receive fresh host
 validation. Template-specific library demand belongs to mounted plugin controls;
 shared group/catalog storage remains session-owned.
 
 Colocated regressions cover app registration, exact-contribution revocation,
-accepted-draft retention and session/outbox recovery. They are not live cross-window
+accepted-draft retention, completion notices and preserved delivery evidence. They are not live cross-window
 or packaged/native acceptance; validation results and remaining gates belong in the
 pull request. Updating the native bundled catalog requires a desktop rebuild/restart;
 frontend hot reload alone cannot add the entry.
@@ -201,7 +237,8 @@ not cross-version capability negotiation.
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
 it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
-side panel, with add/check/uncheck, one optional assignee per item, automatic
+side panel, grouping items as To do, Doing and Done, with add, a per-item Doing
+toggle, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
 tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
@@ -211,14 +248,20 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ## Todos
 
 - [ ] Review the plan
+- [/] Build the preview
 - [x] Share the preview
 ```
 
+`[/]` marks Doing, the common Markdown convention for an in-progress task;
+ordinary Markdown renders it as plain text. Canvases without it keep their
+existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
+
 Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Checkbox edits change one
-source byte; additions insert below the heading without rewriting other content.
+quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+change one source byte; additions insert below the heading without rewriting other
+content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
-the convenience UI, not the saved list: Channel settings → Canvas remains editable.
+the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 
 An optional terminal suffix records assignment as ordinary Markdown:
 ` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated
@@ -238,14 +281,52 @@ Task actions pause while saving; the new-item input stays editable and retains
 its text when the save finishes. If the loaded Canvas was written in the current second,
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
-on reopen. Save uses the existing session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
-optimistic head comparison and exact confirmation. This is **not atomic concurrency
-control**; simultaneous saves can overwrite edits. Detected conflicts retain the
-local draft and require reviewing the saved Canvas. Refresh confirms before discarding
+on reopen. Save uses the existing session Canvas/outbox contract, including its
+24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
+reads and exact signed-event recovery. Canvas reads default to strong consistency
+for editor/Todos bases and setup preconditions. Setup delivery and its separate
+exact-ID confirmation both use writer-backed reads; unknown seed outcomes are
+checked without automatically replaying the seed. Template copies explicitly opt
+out and remain replica-eligible; Channel Settings no longer reads a Canvas preview.
+Editor/Todos saves carry `expected-revision=<loaded
+head id>` (or `none` when absent); template seeds carry `none`. On relays supporting
+Canvas compare-and-swap, stale preconditions are refused atomically before mutation.
+A proven conflict keeps the local draft and dismisses only that rejected outbox
+operation so a reviewed save can proceed. Unknown outcomes remain in Outbox and
+block replacement; exact signed retries keep their original precondition. The
+post-write different-head check remains conservative and also retains the draft.
+
+**Compatibility gate:** deploy with a relay supporting Canvas revision preconditions
+([block/buzz#6780](https://github.com/block/buzz/pull/6780)) for atomic protection.
+An older relay may ignore the tag; strong reads and client head comparison alone
+cannot prevent concurrent overwrite. The client does not upgrade the relay.
+Detected conflicts require reviewing the saved Canvas. Refresh confirms before discarding
 edits. Local recovery drafts are partitioned by community/viewer/channel; if browser
 storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
+
+**Canvas history:** Channel actions → View canvas → History lazily reads retained
+kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+`until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
+revision is visible; older pages remain replica-eligible. The current marker uses
+the editor's strong-read head, not list position. Refresh history rechecks the
+head without replacing the editor draft. Author labels use the shared profile
+directory, with public-key fallbacks; previews are read-only Markdown source.
+
+Restore requires explicit confirmation and publishes the selected content as a
+new signed revision through the existing Canvas save/outbox owner. Its precondition
+is the displayed head, never the historical revision or a silently substituted
+newer head. Clean editors adopt the confirmed result. Edited or stale recovered
+drafts keep their content and original base until explicit reload; browsing and
+cancelling never replace drafts. Restore inherits Save's delivery confirmation,
+which may automatically replay the exact signed event with its original
+`expected-revision`. It never creates a fresh event or substitutes a newer
+precondition to retry. If confirmation ultimately fails or remains uncertain,
+the dialog retains drafts and shows the error without starting another restore.
+Empty revisions can be restored; revisions exceeding the existing 24 KiB save
+limit remain previewable but cannot be restored here. No diff viewer or new
+delivery owner is introduced.
 
 ### Top-bar launchers and the companion slot
 
@@ -271,10 +352,11 @@ while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
-so this mechanism does not promise persistent agent sessions or drafts. Bestie
-currently supplies art and truthful not-connected copy, with no send control or
-agent API. Both browser and Rust native/CLI catalogs list it as independently
-enabled by the normal bundled policy; saved disabled flags still win.
+so this mechanism does not promise persistent agent sessions or drafts. The bundled
+Bestie page currently supplies art and truthful not-connected copy, with no send
+control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
+keep it bundled but off by default; saved enabled or disabled flags still win.
+Enable it under Settings → Plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
@@ -295,6 +377,44 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+External plugins can declare host access in `manifest.json`:
+
+```json
+{
+  "host": {
+    "commands": [{ "id": "status", "program": "example-cli", "args": ["status"] }],
+    "networkOrigins": ["https://api.example.com"]
+  }
+}
+```
+
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
+`ctx.host.request({ url, method, headers, body })`. Command calls name a declared
+ID; the program and arguments come only from the installed manifest. Native
+execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
+UTF-8 stdout. The direct command invocation has a five-second deadline;
+cancellation or timeout kills its process group on Unix or its job process tree
+on Windows. Failure returns `null`. The app
+also searches standard Homebrew binary directories when a macOS GUI launch has a
+limited PATH and passes that search path to the command.
+Plugins parse and retain their own credentials; the host has no provider registry
+or credential store.
+
+Requests use the native HTTPS client, so an external plugin can declare an exact
+origin without changing the renderer CSP. URLs must use a declared origin; redirects
+are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
+body and 8 KiB of headers; responses return status, up to 64 headers totaling
+16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
+has a 30-second deadline. Browser calls cannot use these native operations.
+Existing bundled GitHub requests retain their first-party renderer fetch and CSP
+entry.
+
+The import preview lists declarations and marks added or changed access on updates.
+The install/update action accepts that displayed version; an enabled update may run
+immediately. These declarations help review and catch mistakes. Plugins share the
+main WebView and can invoke app commands directly, so the declarations do not
+isolate a malicious plugin. Load only trusted plugin code.
+
 ### Loading from folders and repositories
 
 Desktop Settings → Plugins loads a folder with the native folder picker, or an
@@ -306,12 +426,14 @@ folders. Choose one and explicitly install/update; the same preview can install
 another plugin without fetching again. New plugins stay disabled. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. The UI warns before
-that action. Installed artifacts do not watch/pull the source. Plugins installed from
-a folder keep the selected folder path for Settings → Plugins → Reload while disabled;
+that action and shows declared host access, including changes. Installed artifacts do
+not watch/pull the source. Plugins installed from a folder keep the selected folder
+path for Settings → Plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Enabled plugins must be disabled before reload so memory-only plugin state, such
-as credentials, is not discarded by replacing the running module. Git installs and older
-installs without saved folder metadata must be imported again.
+same. Reload rejects changed host declarations; use Load from folder to review and
+install that revision. Enabled plugins must be disabled before reload so memory-only
+plugin state, such as credentials, is not discarded by replacing the running module.
+Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;
@@ -363,6 +485,15 @@ has not finished; it does not claim that arbitrary plugin code has stopped. Plug
 replacement still waits for the predecessor's actual cleanup, even after a timeout.
 React owns only subscriptions and presentation state.
 
+Catalog polling observes external `buzzodz` writes once per second. Its ten-second
+watchdog bounds the caller's wait, not native lock acquisition: one pending catalog
+read retains ownership until it actually settles. Retry cannot launch a replacement
+while that read is pending. Recovery remains available, but is a separate management
+operation and still needs the native registry lock. A timed-out management operation
+keeps controls busy until actual settlement; late results are not applied. A fresh
+poll reconciles the eventual stored state. Disposal stops polling/publication, not
+an already-running native operation.
+
 Relay consumers use `session.channels` for channel views,
 `session.profiles` for shared identities, and `session.read` for
 finite filtered event reads, and `session.unread` for shared observed badges and
@@ -396,6 +527,9 @@ attempt, and late completion cannot acknowledge a replacement attempt.
 
 Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
 optional versioned JSON routes, and account/community-bound conversations.
+Conversation targets may include `panel: "members"` to restore that channel’s
+Members dialog without replacing its channel/message identity. Unknown panel
+values are rejected; this is presentation state, never mutation or confirmation state.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
 An explicit `scope: null` restores Personal space; omitted page scope leaves the
@@ -424,22 +558,21 @@ into versioned route parameters. These are host-matched preview types through
 `@buzz/author`, not a cross-version runtime compatibility promise.
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
-`targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
-sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
-recognize the Buzz link forms `buzz://channel/<id>`, `buzz://channel/<id>/<event>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links use the
-receiving conversation's community and viewer; `buzz://open` locators retain their
-community and use the recipient's viewer. Both pass through existing navigation
-admission and session ownership checks. Message targets open their
+Messages recognize the Buzz link forms `buzz://channel/<id>`,
+`buzz://channel/<id>/<event>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links carry
+no community: they bind to the receiving conversation's community and viewer and
+pass through existing navigation admission and session ownership checks. The app
+has no link form of its own; any other `buzz://` host is rejected everywhere,
+staying plain text in messages. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
 validated target/completion lifecycle; notification clicks
 ([notifications](notifications.md)) and OS-delivered deep links on desktop
 ([OS deep links](deep-links.md)) do. The OS ingress accepts only the Buzz link
-forms and binds them to the selected community; any other OS link, `buzz://open`
-included, fails `invalid-target` through the same failure notice rather than being
-dropped.
+forms and binds them to the selected community; any other OS link fails
+`invalid-target` through the same failure notice rather than being dropped.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the
@@ -504,12 +637,35 @@ unambiguous signed person/agent mentions share the inline hover styling. Names i
 ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` components. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
+`conversation.format` returns the host's date labels, so plugin text reads like
+the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
+"Yesterday at 9:05 AM"), `dayGroupLabel(seconds)` for day dividers ("Today",
+"Monday"), `fullTimestamp(seconds)` for the full hover date, and
+`relativeTimestamp(seconds)` for link previews ("5 minutes ago"). They use the
+current locale and time zone; all but `fullTimestamp` take an optional `now`
+for tests. They compute the label when called. `conversation.ui.Message` and
+the host's day dividers re-render at local midnight; a plugin that shows these
+labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+`conversation.ui.Thread({ session, scope, channelId, channelName, messageId })`
+renders the existing `ThreadPanel` without its side-panel header, close control
+or Escape dismissal; the page owns the surrounding header and placement. The
+host supplies the rest of the Channels thread behavior: contribution renderers,
+message management (edit, delete, mark read/unread, and a notice above the
+thread to retry or discard a failed edit or deletion), session-channel
+recipients, Buzz link navigation, and one modal at a time for a registered panel
+or media review. The page passes its current ready session and stable
+community/viewer scope; retargeting disposes the old thread and its modal. As in
+Channels, showing a thread is one visit to its channel for unread state, and
+that visit lasts across threads of the same channel. The page holds no second
+message reader, cache or outbox.
+Exact message links still navigate to Channels rather than the page's route.
 
 ### Composer ownership and mention tools
 
@@ -533,7 +689,7 @@ whole paragraph. The host owns source offsets, plain-text paste, composition, un
 selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
-Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
+Tools receive `insertText`, `insertMention({ pubkey, name })`, `insertResource` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
 The host serializes successive commands using the latest draft and selection,
@@ -541,6 +697,18 @@ enforces text/recipient limits, and revokes commands on tool removal/replacement
 editor destination/session change, disabled/read-only state and unmount. Names are
 presentation, never recipient resolution. Editing/pasting over an identity span
 removes its intent under the existing draft rules.
+
+`insertResource({ uri, label })` inserts a host-owned inline reference to plugin
+content, such as a project issue or pull request. The host normalizes the label
+(single line, at most 120 code points), requires a navigation-safe URI, and sends
+exactly one ordinary Markdown link, `[escaped label](uri)`. No tags, recipients or
+access grants are added; the receiving agent sees the link. It returns `true` only
+when the draft accepted the atom, otherwise the host's user-facing reason (code,
+another link, 32 resources, or message length), which the tool should show in place.
+The atom is removed whole, restores without its plugin, and copies as its Markdown.
+If later edits or restore would stop it from sending as that link (a preceding `!`,
+surrounding backticks, code/link formatting), the host turns it into the ordinary
+text that will actually be sent, as it does for broken mention intent.
 
 **User intent outlives the tool that created it.** Disabling Mentions removes its
 chooser, not selected recipients, their inline chips and avatar removal controls,
@@ -557,7 +725,7 @@ are not runtime capability negotiation or cross-version compatibility promises.
 
 ### Composer completion providers
 
-Emoji and Mentions each register a separate `registerCompletion` contribution.
+Emoji, Mentions and Channels each register a separate `registerCompletion` contribution.
 The host observes focused, enabled textarea text and collapsed UTF-16 selection,
 then chooses the valid syntax match closest to the caret (greatest range start),
 with `order` and contribution key breaking ties. This lets a later emoji trigger
@@ -600,6 +768,18 @@ bounded background enrichment through the shared profile directory, not per-key
 network reads or a separate identity cache. Multi-word filtering stays in the
 provider so a delayed name can appear without another editor event.
 
+Channels filters the session's confirmed joined stream/forum roster locally, including
+private channels but excluding archived, cached, read-only and unnamed entries.
+`#` opens at most 20 choices, ranked exact, prefix, then substring with alphabetical
+ties; namesakes include their channel IDs. No typing-driven reads or public-channel
+discovery are added. Empty ready results hide the popup; loading and explicit
+error/retry states remain visible. Selection rechecks current membership and name,
+then inserts an escaped, ID-backed Markdown link without notification recipients.
+The shared editor host checks raw Markdown and rich code/link/literal ranges only
+after a Channels syntax match, keeping suggestions in prose (including headings).
+Ordinary typing skips that extra context scan. Popup positioning and keyboard/IME
+behavior remain host-owned; no new completion API or editor command is introduced.
+
 This is the same host-matched preview as toolbar tools, not version negotiation or
 a sandbox. Inline mention pills remain outside this completion implementation.
 
@@ -617,7 +797,7 @@ Plugins can render the host-provided [`browser.View` component](browser.md) insi
 
 The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare
 `inject = ["shortcuts"]` and call `ctx.shortcuts.register(shortcut)`; their bindings
-use the same matching/dispatch rules as host-owned Settings and text sizing.
+use the same matching/dispatch rules as host-owned Settings and interface sizing.
 There is no OS-wide hotkey registration, native accelerator API, or command bus.
 
 ```ts
@@ -666,7 +846,7 @@ assigns deliberate values to its actions (for example, a primary action starts
 at `10`), leaving gaps for related actions to be added later. Equal orders use
 the stable namespaced contribution key (`pluginId/shortcutId`), then title, as
 presentation tie-breakers. The core Buzz host category uses the same metadata
-and a host-owned functional sequence: navigation, text sizing, search/settings,
+and a host-owned functional sequence: navigation, interface sizing, search/settings,
 then development-only actions. Host rows use their bare IDs for tie-breaking.
 Presentation order does not affect dispatch precedence, and
 shortcuts with duplicate titles remain separate rows because registry keys—not

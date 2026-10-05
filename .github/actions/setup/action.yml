@@ -1,45 +1,47 @@
 name: Setup pinned tools and dependencies
-description: Hermit and frozen pnpm install; optionally provision pinned browsers.
+description: Hermit and frozen pnpm install; optionally verify the pinned browser image.
 inputs:
   browsers:
-    description: Install Chromium and WebKit plus Linux system libraries
+    description: Verify preinstalled browsers and libraries in the pinned CI image
     default: "false"
+  browser-engine:
+    description: Browser engine to verify (all, chromium or webkit)
+    default: "all"
 runs:
   using: composite
   steps:
     - name: Cache Hermit packages
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ~/.cache/hermit/pkg
+        path: ${{ runner.os == 'macOS' && '~/Library/Caches/hermit/pkg' || '~/.cache/hermit/pkg' }}
         # Cache contents depend on which tools this job actually provisions.
         # A faster JS-only job must not freeze an incomplete cache for Rust jobs.
         key: hermit-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('bin/**') }}
     - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+    - name: Verify pinned tool entry points
+      shell: bash
+      run: |
+        ./bin/node --version
+        ./bin/pnpm --version
     - name: Resolve pnpm store
       id: pnpm
       shell: bash
-      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      run: |
+        store=$(./bin/pnpm store path --silent)
+        test -n "$store"
+        echo "path=$store" >> "$GITHUB_OUTPUT"
     - name: Cache pnpm store
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm.outputs.path }}
         key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'bin/.pnpm-*.pkg') }}
         restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
     - name: Install locked dependencies
       shell: bash
-      run: pnpm install --frozen-lockfile
-    - name: Resolve installed Playwright version
-      if: inputs.browsers == 'true'
-      id: playwright
-      shell: bash
-      run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
-    - name: Cache Playwright engines
-      if: inputs.browsers == 'true'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-      with:
-        path: ~/.cache/ms-playwright
-        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-chromium-webkit
-    - name: Install pinned browser engines and libraries
+      run: ./bin/pnpm install --frozen-lockfile
+    - name: Verify pinned browser image
       if: inputs.browsers == 'true'
       shell: bash
-      run: pnpm exec playwright install --with-deps chromium webkit
+      env:
+        PLAYWRIGHT_ENGINE: ${{ inputs.browser-engine }}
+      run: ./bin/node scripts/check-browser-image.mjs

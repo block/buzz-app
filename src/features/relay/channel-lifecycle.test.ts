@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { assert, describe, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -11,10 +14,12 @@ import {
   validateLifecycleTemplate,
 } from "./channel-lifecycle-protocol";
 import type { ReadFilter, RelayEvent } from "./events";
+import type { ReadOptions } from "./reader";
 
 const key = new Uint8Array(32).fill(2);
 const relayKey = new Uint8Array(32).fill(3);
-const other = getPublicKey(new Uint8Array(32).fill(4));
+const agentKey = new Uint8Array(32).fill(4);
+const other = getPublicKey(agentKey);
 const viewer = getPublicKey(key);
 const relayAuthor = getPublicKey(relayKey);
 const id = "11111111-1111-4111-8111-111111111111";
@@ -53,27 +58,34 @@ function harness(role = "owner", type = "stream", owners = 1) {
   ];
   let visible: RelayEvent[] = [];
   let active = true;
-  const read = vi.fn(async (filters: readonly ReadFilter[]) => {
-    if (filters[0]?.kinds?.[0] === 30622) return visible;
-    return events.filter((event) =>
-      filters.some(
-        (filter) =>
-          filter.kinds?.includes(event.kind) &&
-          (!filter["#p"] ||
-            event.tags.some(
-              ([key, value]) =>
-                key === "p" && filter["#p"]?.includes(value ?? ""),
-            )),
-      ),
-    );
-  });
+  const read = vi.fn(
+    async (filters: readonly ReadFilter[], _options?: ReadOptions) => {
+      if (filters[0]?.kinds?.[0] === 30622) return visible;
+      return events.filter((event) =>
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(event.kind) &&
+            (!filter.authors || filter.authors.includes(event.pubkey)) &&
+            (!filter["#p"] ||
+              event.tags.some(
+                ([key, value]) =>
+                  key === "p" && filter["#p"]?.includes(value ?? ""),
+              )),
+        ),
+      );
+    },
+  );
   const sign = vi.fn(async (event: EventTemplate) =>
     finalizeEvent(structuredClone(event), key),
   );
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9002)
       events = [
-        metadata(true),
+        metadata(
+          event.tags.some(
+            ([key, value]) => key === "archived" && value === "true",
+          ),
+        ),
         ...events.filter((event) => event.kind !== 39000),
       ];
     if (event.kind === 9008)
@@ -132,6 +144,41 @@ function harness(role = "owner", type = "stream", owners = 1) {
   };
 }
 
+it.each(["archive", "delete", "leave", "hide"] as const)(
+  "confirms %s while ordinary reads still see pre-write state",
+  async (action) => {
+    const h = harness("owner", action === "hide" ? "dm" : "stream", 2);
+    const replica = h.getEvents();
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    h.read.mockImplementation(async (filters, options) => {
+      if (filters.every((filter) => filter.consistency === "strong"))
+        return currentRead(filters, options);
+      if (filters[0]?.kinds?.[0] === 30622) return [];
+      return replica.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    });
+    try {
+      await h.owner.capability.refreshVisibility();
+      expect(h.read.mock.calls[0]?.[0][0]).not.toHaveProperty("consistency");
+      await h.owner.capability.run(action, id);
+      for (const [filters] of h.read.mock.calls.slice(1, 3))
+        for (const filter of filters)
+          expect(filter).not.toHaveProperty("consistency");
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.read.mock.calls.at(-1)?.[0][0]?.consistency).toBe("strong");
+      if (action === "hide")
+        expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+      else if (action === "archive")
+        expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+      else expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
 describe("type and role boundaries", () => {
   it.each([
     ["owner", "stream", 1, true, true, false, false],
@@ -166,6 +213,7 @@ describe("type and role boundaries", () => {
         ]),
       ]);
       expect(await h.owner.capability.load(id)).toMatchObject({
+        canUnarchive: false,
         canArchive: false,
         canDelete: false,
         canLeave: true,
@@ -218,7 +266,7 @@ describe("type and role boundaries", () => {
       lifecycleSettings(h.getEvents(), id, viewer, relayAuthor),
     ).toThrow("Malformed");
   });
-  it.each(["archive", "delete", "leave"] as const)(
+  it.each(["archive", "unarchive", "delete", "leave"] as const)(
     "cannot %s a DM",
     async (action) => {
       const h = harness("owner", "dm");
@@ -254,21 +302,25 @@ describe("type and role boundaries", () => {
       ),
       ...h.getEvents().slice(1),
     ]);
+    // Deliberately bypass the fixture's author filtering to exercise the guard.
+    h.read.mockResolvedValueOnce(h.getEvents());
     await expect(h.owner.capability.load(id)).rejects.toThrow("authority");
     h.owner.dispose();
   });
 });
 
-it.each(["archive", "delete", "leave", "hide"] as const)(
+it.each(["archive", "unarchive", "delete", "leave", "hide"] as const)(
   "confirms %s without granting it to the message outbox",
   async (action) => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     try {
       const h = harness("owner", action === "hide" ? "dm" : "stream", 2);
+      if (action === "unarchive")
+        h.setEvents([h.metadata(true), ...h.getEvents().slice(1)]);
       await h.owner.capability.run(action, id);
       expect(h.publish).toHaveBeenCalledOnce();
       expect(h.sign.mock.calls[0]?.[0]).toEqual(lifecycleTemplate(action, id));
-      if (action === "archive")
+      if (action === "archive" || action === "unarchive")
         expect(h.acceptDiscovery).toHaveBeenCalledOnce();
       else if (action !== "hide") expect(h.removed).toHaveBeenCalledWith(id);
       else {
@@ -285,6 +337,7 @@ it.each(["archive", "delete", "leave", "hide"] as const)(
         expect(h.read.mock.calls.at(-1)?.[0]).toEqual([
           {
             kinds: [39002],
+            consistency: "strong",
             authors: [relayAuthor],
             "#d": [id],
             "#p": [viewer],
@@ -531,6 +584,26 @@ it("session replacement during publication cannot apply a late completion", asyn
   expect(h.removed).not.toHaveBeenCalled();
   expect(h.acceptDiscovery).not.toHaveBeenCalled();
 });
+it("retiring a caller during publication keeps the outcome uncertain without replay", async () => {
+  const h = harness();
+  const caller = new AbortController();
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  h.publish.mockImplementationOnce(async () => {
+    started.resolve();
+    await gate.promise;
+  });
+  const result = expect(
+    h.owner.capability.run("delete", id, caller.signal),
+  ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+  await started.promise;
+  caller.abort();
+  gate.resolve();
+  await result;
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.removed).not.toHaveBeenCalled();
+  h.owner.dispose();
+});
 it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
   const h = harness();
   await h.owner.capability.run("delete", id);
@@ -575,4 +648,778 @@ it.each([
     hidden: [],
   });
   h.owner.dispose();
+});
+
+function ownerTag(target = other, ownerKey = key, conditions = "") {
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${target}:${conditions}`)
+    .digest();
+  return [
+    "auth",
+    getPublicKey(ownerKey),
+    conditions,
+    bytesToHex(schnorr.sign(digest, ownerKey)),
+  ];
+}
+function agentProfile(tags = [ownerTag()], created_at = 200) {
+  return finalizeEvent(
+    {
+      kind: 0,
+      created_at,
+      tags,
+      content: JSON.stringify({ name: "Agent", ownerPubkey: viewer }),
+    },
+    agentKey,
+  );
+}
+function ownedAgent(role = "admin") {
+  const h = harness(role, "stream", 2);
+  h.setEvents([...h.getEvents(), agentProfile()]);
+  return h;
+}
+
+describe("channel owner-agent Delete eligibility", () => {
+  it.each(["admin", "member"])(
+    "a %s owning an active owner-agent can delete without gaining other roles",
+    async (role) => {
+      const h = ownedAgent(role);
+      expect(await h.owner.capability.load(id)).toMatchObject({
+        canDelete: true,
+        canArchive: role === "admin",
+        canLeave: true,
+        canHide: false,
+      });
+      h.read.mockClear();
+      await h.owner.capability.run("delete", id);
+      expect(h.sign).toHaveBeenCalledOnce();
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+        pubkey: viewer,
+        kind: 9008,
+        tags: [["h", id]],
+      });
+      const ownershipReads = h.read.mock.calls.filter(
+        ([filters]) => filters[0]?.kinds?.[0] === 0,
+      );
+      expect(ownershipReads).toHaveLength(2);
+      for (const [filters, options] of ownershipReads) {
+        expect(filters).toEqual([{ kinds: [0], authors: [other], limit: 1 }]);
+        expect(options).toMatchObject({ fresh: true, priority: "foreground" });
+      }
+      expect(h.removed).toHaveBeenCalledWith(id);
+      h.owner.dispose();
+    },
+  );
+  it.each([
+    ["missing profile", () => []],
+    ["display owner only", () => [agentProfile([])]],
+    ["foreign owner", () => [agentProfile([ownerTag(other, relayKey)])]],
+    [
+      "forged signature",
+      () => [agentProfile([["auth", viewer, "", "0".repeat(128)]])],
+    ],
+    ["wrong target", () => [agentProfile([ownerTag(relayAuthor)])]],
+    ["duplicate tags", () => [agentProfile([ownerTag(), ownerTag()])]],
+    [
+      "malformed conditions",
+      () => [agentProfile([ownerTag(other, key, "kind=x")])],
+    ],
+    [
+      "wrong kind condition",
+      () => [agentProfile([ownerTag(other, key, "kind=9")])],
+    ],
+    [
+      "exclusive lower bound",
+      () => [agentProfile([ownerTag(other, key, "created_at>200")])],
+    ],
+    [
+      "exclusive upper bound",
+      () => [agentProfile([ownerTag(other, key, "created_at<200")])],
+    ],
+    [
+      "newer profile without ownership evidence",
+      () => [agentProfile(), agentProfile([], 201)],
+    ],
+  ] as const)("%s grants no Delete path", async (_name, profiles) => {
+    const h = ownedAgent();
+    h.setEvents([
+      ...h.getEvents().filter((event) => event.kind !== 0),
+      ...profiles(),
+    ]);
+    expect((await h.owner.capability.load(id)).canDelete).toBe(false);
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "no longer permitted",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
+  it.each(["admin", "member"])(
+    "owning a channel %s agent does not grant Delete",
+    async (role) => {
+      const h = ownedAgent();
+      h.setEvents(
+        h
+          .getEvents()
+          .map((event) =>
+            event.kind === 39001
+              ? h.record(39001, [
+                  ["d", id],
+                  ["p", viewer, "admin"],
+                  ...(role === "admin" ? [["p", other, role]] : []),
+                ])
+              : event,
+          ),
+      );
+      expect((await h.owner.capability.load(id)).canDelete).toBe(false);
+      expect(
+        h.read.mock.calls.some(([filters]) => filters[0]?.kinds?.[0] === 0),
+      ).toBe(false);
+      h.owner.dispose();
+    },
+  );
+  it("does not bypass viewer membership", async () => {
+    const h = ownedAgent("member");
+    h.setEvents(
+      h.getEvents().map((event) =>
+        event.kind === 39002
+          ? h.record(39002, [
+              ["d", id],
+              ["p", other],
+            ])
+          : event,
+      ),
+    );
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "no longer a channel member",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
+  it.each(["before signing", "before publication"])(
+    "rereads profile evidence %s",
+    async (when) => {
+      const h = ownedAgent();
+      expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+      const replaceProfile = () =>
+        h.setEvents(
+          h
+            .getEvents()
+            .map((event) => (event.kind === 0 ? agentProfile([], 201) : event)),
+        );
+      if (when === "before signing") replaceProfile();
+      else
+        h.sign.mockImplementationOnce(async (event) => {
+          replaceProfile();
+          return finalizeEvent(event, key);
+        });
+      await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+        "no longer permitted",
+      );
+      expect(h.sign).toHaveBeenCalledTimes(when === "before signing" ? 0 : 1);
+      expect(h.publish).not.toHaveBeenCalled();
+      h.owner.dispose();
+    },
+  );
+  it("rereads the agent's channel role after signing", async () => {
+    const h = ownedAgent();
+    h.sign.mockImplementationOnce(async (event) => {
+      h.setEvents(
+        h.getEvents().map((entry) =>
+          entry.kind === 39001
+            ? h.record(39001, [
+                ["d", id],
+                ["p", viewer, "admin"],
+                ["p", other, "admin"],
+              ])
+            : entry,
+        ),
+      );
+      return finalizeEvent(event, key);
+    });
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "no longer permitted",
+    );
+    expect(h.publish).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
+  it("rejects a profile response outside the requested owner coordinates", async () => {
+    const h = ownedAgent();
+    h.read.mockResolvedValueOnce(
+      h.getEvents().filter((event) => event.kind !== 0),
+    );
+    h.read.mockResolvedValueOnce([
+      finalizeEvent(
+        { kind: 0, created_at: 200, tags: [ownerTag(viewer)], content: "" },
+        key,
+      ),
+    ]);
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "Delete check unavailable",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
+  it("failed profile reads fail closed and a new load can recover", async () => {
+    const h = ownedAgent();
+    h.read.mockResolvedValueOnce(
+      h.getEvents().filter((event) => event.kind !== 0),
+    );
+    h.read.mockRejectedValueOnce(new Error("profile unavailable"));
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "Delete check unavailable",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+    h.owner.dispose();
+  });
+  it.each(["admin", "member"])(
+    "profile failure preserves %s base actions and offers a fresh check",
+    async (role) => {
+      const h = ownedAgent(role);
+      h.read.mockResolvedValueOnce(h.getEvents().filter((e) => e.kind !== 0));
+      h.read.mockRejectedValueOnce(new Error("profile unavailable"));
+      expect(await h.owner.capability.load(id)).toMatchObject({
+        canArchive: role === "admin",
+        canLeave: true,
+        canDelete: false,
+        deleteUnavailable: true,
+      });
+      await h.owner.capability.run(role === "admin" ? "archive" : "leave", id);
+      expect(h.publish).toHaveBeenCalledOnce();
+      h.owner.dispose();
+    },
+  );
+  it("the optional profile deadline preserves base actions", async () => {
+    const h = ownedAgent();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const optional = new AbortController();
+    timeout.mockImplementation((ms) =>
+      ms === 5000 ? optional.signal : new AbortController().signal,
+    );
+    const started = deferred<void>();
+    h.read.mockResolvedValueOnce(h.getEvents().filter((e) => e.kind !== 0));
+    h.read.mockImplementationOnce(async (_filters, options) => {
+      started.resolve();
+      return new Promise((_, reject) =>
+        options?.signal?.addEventListener(
+          "abort",
+          () => reject(options.signal?.reason),
+          { once: true },
+        ),
+      );
+    });
+    try {
+      const result = h.owner.capability.load(id);
+      await started.promise;
+      optional.abort(new DOMException("Timed out", "TimeoutError"));
+      expect(await result).toMatchObject({
+        canUnarchive: false,
+        canArchive: true,
+        canLeave: true,
+        canDelete: false,
+        deleteUnavailable: true,
+      });
+      // A new attempt gets a new deadline, not the already-aborted test signal.
+      timeout.mockRestore();
+      expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+    } finally {
+      timeout.mockRestore();
+      h.owner.dispose();
+    }
+  });
+  it("profile provenance does not override a conflicting relay ownership decision", async () => {
+    const h = ownedAgent();
+    expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+    h.publish.mockRejectedValueOnce(
+      new PublishRejected("Only the channel owner can delete"),
+    );
+    await expect(h.owner.capability.run("delete", id)).rejects.toBeInstanceOf(
+      PublishRejected,
+    );
+    expect(h.removed).not.toHaveBeenCalled();
+    expect(h.acceptDiscovery).not.toHaveBeenCalled();
+    expect(h.publish).toHaveBeenCalledOnce();
+    // A definitive denial does not poison the busy guard or automatically replay.
+    await h.owner.capability.run("leave", id);
+    expect(h.publish).toHaveBeenCalledTimes(2);
+    h.owner.dispose();
+  });
+  it("accepts conditions satisfied by the profile, not the current clock or Delete kind", async () => {
+    const h = ownedAgent();
+    h.setEvents([
+      ...h.getEvents().filter((e) => e.kind !== 0),
+      agentProfile([
+        ownerTag(other, key, "kind=0&created_at>199&created_at<201"),
+      ]),
+    ]);
+    expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+    h.owner.dispose();
+  });
+  it.each(["clear", "dispose", "cancel", "caller", "access"] as const)(
+    "%s fences an ownership read even if the reader ignores abort",
+    async (action) => {
+      const h = ownedAgent();
+      const gate = deferred<RelayEvent[]>();
+      const started = deferred<void>();
+      const caller = new AbortController();
+      h.read.mockResolvedValueOnce(
+        h.getEvents().filter((event) => event.kind !== 0),
+      );
+      h.read.mockImplementationOnce(() => {
+        started.resolve();
+        return gate.promise;
+      });
+      const result = h.owner.capability.run("delete", id, caller.signal);
+      await started.promise;
+      if (action === "caller") caller.abort();
+      else if (action === "access") h.deny();
+      else h.owner[action]();
+      gate.resolve([agentProfile()]);
+      await expect(result).rejects.toThrow();
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      h.owner.dispose();
+    },
+  );
+  it("checks every co-owner in bounded exact-author batches", async () => {
+    const h = ownedAgent("member");
+    const others = [5, 6, 7, 8].map((seed) =>
+      getPublicKey(new Uint8Array(32).fill(seed)),
+    );
+    h.setEvents([
+      h.metadata(),
+      h.record(39001, [
+        ["d", id],
+        ...[...others, other].map((pubkey) => ["p", pubkey, "owner"]),
+      ]),
+      h.record(39002, [
+        ["d", id],
+        ...[viewer, ...others, other].map((pubkey) => ["p", pubkey]),
+      ]),
+      agentProfile(),
+    ]);
+    expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+    expect(h.read.mock.calls.map(([filters]) => filters.length)).toEqual([
+      3, 4, 1,
+    ]);
+    h.owner.dispose();
+  });
+  it("does not add profile reads to direct-owner or DM checks, or other commands", async () => {
+    for (const type of ["stream", "dm"]) {
+      const h = harness("owner", type, 2);
+      await h.owner.capability.load(id);
+      expect(h.read).toHaveBeenCalledOnce();
+      h.owner.dispose();
+    }
+    for (const action of ["archive", "leave"] as const) {
+      const h = ownedAgent();
+      await h.owner.capability.run(action, id);
+      expect(
+        h.read.mock.calls.some(([filters]) => filters[0]?.kinds?.[0] === 0),
+      ).toBe(false);
+      h.owner.dispose();
+    }
+  });
+});
+
+describe("direct-owner and archived Delete boundaries", () => {
+  it("does not bypass direct-owner membership", async () => {
+    const h = harness();
+    h.setEvents(
+      h.getEvents().map((event) => {
+        if (event.kind === 39001)
+          return h.record(39001, [
+            ["d", id],
+            ["p", other, "owner"],
+          ]);
+        if (event.kind === 39002)
+          return h.record(39002, [
+            ["d", id],
+            ["p", other],
+          ]);
+        return event;
+      }),
+    );
+    await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+      "no longer a channel member",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    h.owner.dispose();
+  });
+  it.each(["before signing", "before publication"])(
+    "rereads direct ownership %s",
+    async (when) => {
+      const h = harness("owner", "stream", 2);
+      expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+      const demote = () =>
+        h.setEvents(
+          h
+            .getEvents()
+            .map((event) => (event.kind === 39001 ? h.roles("admin") : event)),
+        );
+      if (when === "before signing") demote();
+      else
+        h.sign.mockImplementationOnce(async (event) => {
+          demote();
+          return finalizeEvent(event, key);
+        });
+      await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+        "no longer permitted",
+      );
+      expect(h.sign).toHaveBeenCalledTimes(when === "before signing" ? 0 : 1);
+      expect(h.publish).not.toHaveBeenCalled();
+      h.owner.dispose();
+    },
+  );
+  it.each(["owner", "admin", "member"])(
+    "archived %s cannot Delete until restored",
+    async (role) => {
+      const h = harness(role, "stream", 2);
+      h.setEvents([...h.getEvents(), agentProfile()]);
+      const metadata = (archived: boolean) =>
+        h.setEvents(
+          h
+            .getEvents()
+            .map((event) =>
+              event.kind === 39000 ? h.metadata(archived) : event,
+            ),
+        );
+      metadata(true);
+      expect(await h.owner.capability.load(id)).toMatchObject({
+        canDelete: false,
+        canUnarchive: role !== "member",
+        canArchive: false,
+        canLeave: true,
+      });
+      await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+        "no longer permitted",
+      );
+      expect(h.sign).not.toHaveBeenCalled();
+      metadata(false);
+      expect((await h.owner.capability.load(id)).canDelete).toBe(true);
+      h.owner.dispose();
+    },
+  );
+  it.each(["owner", "admin"])(
+    "archiving during signing prevents %s Delete publication",
+    async (role) => {
+      const h = ownedAgent(role);
+      h.sign.mockImplementationOnce(async (event) => {
+        h.setEvents(
+          h
+            .getEvents()
+            .map((record) =>
+              record.kind === 39000 ? h.metadata(true) : record,
+            ),
+        );
+        return finalizeEvent(event, key);
+      });
+      await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+        "no longer permitted",
+      );
+      expect(h.sign).toHaveBeenCalledOnce();
+      expect(h.publish).not.toHaveBeenCalled();
+      h.owner.dispose();
+    },
+  );
+  it.each(["clear", "dispose", "cancel", "caller", "access"] as const)(
+    "%s fences permission reads even when the host ignores abort",
+    async (action) => {
+      const h = harness();
+      const gate = deferred<RelayEvent[]>(),
+        started = deferred<void>();
+      const caller = new AbortController();
+      h.read.mockImplementationOnce(() => {
+        started.resolve();
+        return gate.promise;
+      });
+      const result = h.owner.capability.run("delete", id, caller.signal);
+      await started.promise;
+      if (action === "caller") caller.abort();
+      else if (action === "access") h.deny();
+      else h.owner[action]();
+      gate.resolve(h.getEvents());
+      await expect(result).rejects.toThrow();
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      h.owner.dispose();
+    },
+  );
+});
+
+describe("Unarchive", () => {
+  function archived(role = "owner", type = "stream") {
+    const h = harness(role, type);
+    h.setEvents([h.metadata(true), ...h.getEvents().slice(1)]);
+    return h;
+  }
+  it.each(["owner", "admin", "member"])(
+    "uses the viewer's own %s role",
+    async (role) => {
+      const h = archived(role);
+      try {
+        expect(await h.owner.capability.load(id)).toMatchObject({
+          canArchive: false,
+          canUnarchive: role !== "member",
+          canDelete: false,
+        });
+        if (role === "member") {
+          await expect(h.owner.capability.run("unarchive", id)).rejects.toThrow(
+            "no longer permitted",
+          );
+          expect(h.sign).not.toHaveBeenCalled();
+        } else {
+          await h.owner.capability.run("unarchive", id);
+          expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+            ["h", id],
+            ["archived", "false"],
+          ]);
+          expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+          expect(h.removed).not.toHaveBeenCalled();
+          expect(await h.owner.capability.load(id)).toMatchObject({
+            canArchive: true,
+            canUnarchive: false,
+          });
+        }
+        expect(
+          h.read.mock.calls
+            .flatMap(([filters]) => filters)
+            .some((f) => f.kinds?.includes(0)),
+        ).toBe(false);
+      } finally {
+        h.owner.dispose();
+      }
+    },
+  );
+  it.each(["stream", "forum", "dm"])(
+    "restores only ordinary archived channels (%s)",
+    async (type) => {
+      const h = archived("admin", type);
+      try {
+        expect((await h.owner.capability.load(id)).canUnarchive).toBe(
+          type !== "dm",
+        );
+        if (type === "dm") {
+          await expect(h.owner.capability.run("unarchive", id)).rejects.toThrow(
+            "no longer permitted",
+          );
+          expect(h.sign).not.toHaveBeenCalled();
+        } else {
+          await h.owner.capability.run("unarchive", id);
+          expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+        }
+      } finally {
+        h.owner.dispose();
+      }
+    },
+  );
+  it.each(["role", "archive state", "signer"])(
+    "rechecks %s before publication",
+    async (change) => {
+      const h = archived();
+      try {
+        h.sign.mockImplementationOnce(async (event) => {
+          if (change === "role")
+            h.setEvents([
+              h.metadata(true),
+              h.roles("member"),
+              ...h.getEvents().slice(2),
+            ]);
+          if (change === "archive state")
+            h.setEvents([h.metadata(false), ...h.getEvents().slice(1)]);
+          if (change === "signer") event.tags[1] = ["archived", "true"];
+          return finalizeEvent(event, key);
+        });
+        await expect(h.owner.capability.run("unarchive", id)).rejects.toThrow(
+          change === "signer" ? "Signer changed" : "no longer permitted",
+        );
+        expect(h.publish).not.toHaveBeenCalled();
+      } finally {
+        h.owner.dispose();
+      }
+    },
+  );
+  it("accepts explicit false readback as well as the relay's omitted tag", async () => {
+    const h = archived();
+    try {
+      h.publish.mockImplementationOnce(async () =>
+        h.setEvents([
+          h.record(39000, [
+            ["d", id],
+            ["t", "stream"],
+            ["archived", "false"],
+          ]),
+          ...h.getEvents().slice(1),
+        ]),
+      );
+      await h.owner.capability.run("unarchive", id);
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+      expect(h.removed).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it.each(["missing", "archived", "malformed"])(
+    "does not treat %s readback as restored",
+    async (result) => {
+      vi.useFakeTimers();
+      const h = archived();
+      try {
+        h.publish.mockImplementationOnce(async () => {
+          if (result === "missing") h.setEvents(h.getEvents().slice(1));
+          if (result === "malformed")
+            h.setEvents([
+              h.record(39000, [
+                ["d", id],
+                ["archived", "unknown"],
+              ]),
+              ...h.getEvents().slice(1),
+            ]);
+        });
+        const run = expect(
+          h.owner.capability.run("unarchive", id),
+        ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+        await vi.runAllTimersAsync();
+        await run;
+        expect(h.publish).toHaveBeenCalledOnce();
+        expect(h.acceptDiscovery).not.toHaveBeenCalled();
+        expect(h.removed).not.toHaveBeenCalled();
+      } finally {
+        h.owner.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+  it("keeps rejection retryable and uncertain delivery non-replayable", async () => {
+    const h = archived();
+    try {
+      h.publish.mockRejectedValueOnce(
+        new PublishRejected("permission revoked"),
+      );
+      await expect(
+        h.owner.capability.run("unarchive", id),
+      ).rejects.toBeInstanceOf(PublishRejected);
+      h.publish.mockRejectedValueOnce(new Error("connection lost"));
+      await expect(
+        h.owner.capability.run("unarchive", id),
+      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+      expect(h.removed).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+  it.each([
+    [
+      ["archived", "false"],
+      ["name", "rename"],
+    ],
+    [
+      ["archived", "false"],
+      ["archived", "true"],
+    ],
+    [["archived", "false", "extra"]],
+    [["archived", "invalid"]],
+  ])("does not broaden the metadata command: %j", (...tags) => {
+    expect(() =>
+      validateLifecycleTemplate({
+        kind: 9002,
+        content: "",
+        created_at: 1,
+        tags: [["h", id], ...tags],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("join from a public preview", () => {
+  function preview(tags: string[][] = [["public"]]) {
+    const h = harness("member");
+    const metadata = h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["name", "fixture"],
+      ...tags,
+    ]);
+    const roster = (...members: string[]) =>
+      h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
+    h.setEvents([metadata, roster(other)]);
+    // Nonmember previews never satisfy member-action access.
+    h.deny();
+    h.publish.mockImplementation(async (event: RelayEvent) => {
+      if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
+    });
+    return { ...h, metadata, roster };
+  }
+
+  it("publishes kind 9021 and applies the confirmed roster", async () => {
+    const h = preview();
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 9021, content: "", tags: [["h", id]] }),
+        expect.anything(),
+      );
+      expect(h.publish).toHaveBeenCalledOnce();
+      const [accepted] = h.acceptDiscovery.mock.lastCall ?? [];
+      expect(accepted).toHaveLength(1);
+      expect(accepted?.[0]).toMatchObject({ kind: 39002 });
+      expect(accepted?.[0]?.tags).toContainEqual(["p", viewer]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("applies an existing membership without signing", async () => {
+    const h = preview();
+    h.setEvents([h.metadata, h.roster(viewer)]);
+    try {
+      await h.owner.capability.run("join", id);
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it.each([
+    [[]],
+    [[["public"], ["private"]]],
+    [[["public"], ["hidden"]]],
+    [[["public"], ["archived", "true"]]],
+  ])("refuses metadata %j before signing", async (tags) => {
+    const h = preview(tags);
+    try {
+      await expect(h.owner.capability.run("join", id)).rejects.toThrow(
+        "Only active public channels can be joined.",
+      );
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("reports an accepted but unconfirmed join, then a retry confirms it", async () => {
+    const h = preview();
+    h.publish.mockImplementationOnce(async () => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = expect(
+        h.owner.capability.run("join", id),
+      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      await vi.advanceTimersByTimeAsync(2500);
+      await pending;
+      vi.useRealTimers();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
+      await h.owner.capability.run("join", id);
+      expect(h.publish).toHaveBeenCalledTimes(2);
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      h.owner.dispose();
+    }
+  });
 });

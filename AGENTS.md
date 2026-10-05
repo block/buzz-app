@@ -94,9 +94,7 @@ Self-review before handoff; seek independent review for risky changes before
 integration. Report what changed, evidence tied to the checked snapshot, and
 remaining risks or deferred checks. Green CI is evidence, not proof of user behavior.
 
-Keep reviews convergent: consolidate actionable findings and clear exit criteria.
-Block on concrete correctness, security, or agreed-contract defects; unrelated
-hardening is follow-up. Reopen scope only when new evidence warrants it.
+Review by the rules in [Reviewing](#reviewing).
 
 ## Choose tests by behavior
 
@@ -137,7 +135,7 @@ Tests must control the ordering they assert, not depend on runner speed.
   applied layout, or observed event. Visible initial content does not prove that
   background work finished. Register event observers before triggering actions.
 - Wait for observable conditions with retrying assertions, not fixed sleeps or
-  immediate snapshots of asynchronous effects. Negative assertions need a
+  immediate snapshots of asynchronous effects (lint rejects `waitForTimeout`). Negative assertions need a
   completion barrier proving the work that could violate them has finished.
   Scope selectors to the semantic content being tested, not unrelated UI.
 - When elapsed time is the behavior under test (expiry, debounce, retry), use a
@@ -162,6 +160,46 @@ DCO. Audit **every commit against the PR base**, including after rebases or
 cherry-picks. Preserve valid trailers; add only certifications you can make.
 After repairs, verify the hosted **DCO Check** at the new head.
 
+## Before opening a PR
+
+Open work in progress as a draft PR. Mark it ready for review only when this
+checklist holds for the current change. Scale it to what changed:
+documentation-only changes need content, link, and diff checks plus human
+confirmation, not app runs.
+
+1. **Agent review ran** under [Reviewing](#reviewing), and its recommended
+   blockers were fixed or explicitly declined by the human author. Optional
+   suggestions do not gate readiness.
+2. **An agent exercised the changed behavior.** Client changes: the affected flow
+   in the app, using the native app or a device when the behavior needs it
+   (browser or headless Playwright counts only for what it can exercise). Relay
+   changes: a local relay, exercising the changed events or endpoints. CLI or
+   tooling changes: the affected command or workflow. The human may skip this
+   step, for example for a small change or while iterating.
+3. **A human then tested it themselves**: in the app, against the local relay
+   (through the app or `curl`), or by running the changed command. Agent testing
+   does not substitute. Agents give the human exact steps and what working looks
+   like, then wait for explicit confirmation. Never mark this step done yourself.
+4. **Add `buzz-review-completed` to the PR description** once steps 1–3 hold. It
+   attests the checklist, and automated reviewers may skip review because of it.
+   If later edits change behavior, remove it and return the PR to draft until the
+   affected steps are redone.
+
+## Reviewing
+
+- Before reviewing, read block/buzz's [`VISION.md` and `VISION_*.md` docs](https://github.com/block/buzz) for the affected surface, the relevant design docs under `docs/`, and the PR's stated goal and linked
+  issue. Review the change against what it is trying to do.
+- Judge the change against the 9/10 bar in [Engineering standard](#engineering-standard). A score below 9 names the concrete defect and the fix.
+- Recommend blocking only for concrete correctness, security, or agreed-contract
+  defects with a realistic failure scenario: state the defect, how it fails, and
+  the fix. Label everything else (nits, wording, speculative hardening,
+  out-of-scope improvements) as optional.
+- Put all findings in the first review. Later reviews check prior blockers and
+  defects the fixes introduced; reopen other areas only on new evidence of a
+  material defect.
+- Agents post reviews as comments, never Request Changes. Humans decide which
+  findings must be fixed.
+
 ## Before pushing
 
 - Use the agreed feature worktree and pinned `bin/` tools. Follow
@@ -180,4 +218,4 @@ After repairs, verify the hosted **DCO Check** at the new head.
   Resolve relevant failures before declaring readiness; obtain required reviewer
   and code-owner approval. This preflight is not automatic permission to merge.
 
-Icons use Phosphor only, through `src/shared/design-system/icons`. Add individual exports as needed; icon and weight choices belong to the designer. The local lint and design checks enforce this import boundary.
+Icons use Tabler only, through `src/shared/design-system/icons`. Add individual exports as needed; icon and weight choices belong to the designer. The local lint and design checks enforce this import boundary.

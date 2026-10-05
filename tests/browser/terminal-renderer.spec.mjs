@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("real xterm retains output across detach, handles input and resize, and does not reserve absent shortcuts", async ({
   page,
@@ -14,8 +15,7 @@ test("real xterm retains output across detach, handles input and resize, and doe
     plugins: [react()],
     server: { host: "127.0.0.1", port: 0 },
   });
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
@@ -30,34 +30,46 @@ test("real xterm retains output across detach, handles input and resize, and doe
     await button("Paint terminal").click();
     await page.clock.runFor(50); // Let xterm parse/paint, then hold the welcome open.
     await expect(splash).toBeVisible();
-    await expect(splash.locator('[data-layer="head"]')).not.toHaveCount(0);
-    await page.evaluate(() => document.fonts.ready);
-    const rightEdge = await splash.evaluate((element) => {
-      const xs = [];
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const text = walker.currentNode;
-        for (let i = 0; i < text.length; i++) {
-          if (!"▜▐▟".includes(text.textContent[i])) continue;
-          const range = document.createRange();
-          range.setStart(text, i);
-          range.setEnd(text, i + 1);
-          xs.push(range.getBoundingClientRect().x);
+    const art = splash.locator("canvas");
+    await expect(art).toBeVisible();
+    // Canvas rendering and CSS color resolution require real browser engines.
+    const assertArtColors = async () => {
+      const pixels = await art.evaluate((canvas) => {
+        const { data } = canvas
+          .getContext("2d")
+          .getImageData(0, 0, canvas.width, canvas.height);
+        let warm = 0,
+          neutral = 0,
+          coloredOutsideWord = 0;
+        const colors = new Set();
+        for (let i = 0; i < data.length; i += 4) {
+          const [r, g, b] = data.slice(i, i + 3);
+          const y = Math.floor(i / 4 / canvas.width);
+          if (r - b > 10) {
+            warm++;
+            colors.add(`${r},${g},${b}`);
+            if (y < canvas.height * 0.1 || y > canvas.height * 0.9)
+              coloredOutsideWord++;
+          } else if (r === g && g === b && r > 40 && r < 240) neutral++;
         }
-      }
-      return xs;
-    });
-    expect(rightEdge.length).toBeGreaterThan(5);
-    expect(Math.max(...rightEdge) - Math.min(...rightEdge)).toBeLessThan(1);
-
-    const colors = await splash
-      .locator('[data-layer="head"]')
-      .evaluateAll((nodes) =>
-        nodes.map((node) => getComputedStyle(node).color),
-      );
-    expect(new Set(colors).size).toBeGreaterThan(8);
-    await expect(splash).toHaveCSS("--splash-lightness", "72%");
-    await expect(splash).toHaveCSS("--splash-chroma", "0.12");
+        return { warm, neutral, coloredOutsideWord, colors: colors.size };
+      });
+      expect(pixels.warm).toBeGreaterThan(100);
+      expect(pixels.colors).toBeGreaterThan(8);
+      expect(pixels.coloredOutsideWord).toBe(0);
+    };
+    await assertArtColors();
+    await expect(splash).toHaveCSS("--splash-field-opacity", "0.15");
+    const beforeMotion = await art.evaluate((canvas) => canvas.toDataURL());
+    await page.clock.runFor(100);
+    expect(await art.evaluate((canvas) => canvas.toDataURL())).not.toBe(
+      beforeMotion,
+    );
+    await button("Paint terminal").focus();
+    await splash.click();
+    await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    await expect(splash).toBeVisible();
+    await expect(input).toHaveText('""');
     await page.screenshot({
       path: test.info().outputPath("buzzterm-light.png"),
     });
@@ -136,8 +148,8 @@ test("real xterm retains output across detach, handles input and resize, and doe
     await expect
       .poll(() => xterm.evaluate((el) => getComputedStyle(el).backgroundColor))
       .not.toBe(lightBackground);
-    await expect(splash).toHaveCSS("--splash-lightness", "80%");
-    await expect(splash).toHaveCSS("--splash-chroma", "0.16");
+    await expect(splash).toHaveCSS("--splash-field-opacity", "0.25");
+    await assertArtColors();
     await assertAnsiContrast();
     expect(await assertSystemAppearance()).toBe(12);
     await page.screenshot({
@@ -203,8 +215,12 @@ test("real xterm retains output across detach, handles input and resize, and doe
     await button("Paint terminal").click();
     await page.clock.runFor(50);
     await expect(splash).toBeVisible();
-    await expect(splash).toHaveCSS("animation-name", "none");
+    const reducedFrame = await art.evaluate((canvas) => canvas.toDataURL());
+    await splash.click();
     await page.clock.runFor(2000);
+    expect(await art.evaluate((canvas) => canvas.toDataURL())).toBe(
+      reducedFrame,
+    );
     await expect(splash).toBeVisible();
     await page.clock.runFor(1000);
     await expect(splash).toHaveCount(0); // 3s, not the old 4.5s.
@@ -218,13 +234,14 @@ test("real xterm retains output across detach, handles input and resize, and doe
     await page.clock.pauseAt(new Date("2026-01-01T03:00:00Z"));
     await button("Paint terminal").click();
     await page.clock.runFor(50);
-    await expect(splash).toHaveText("buzz term");
+    await expect(art).toBeVisible();
+    await assertArtColors();
     await button("Toggle mount").click();
     await button("Toggle theme").click();
     await button("Toggle mount").click();
     await expect(splash).toHaveCount(0);
     await page.clock.resume();
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -241,8 +258,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     plugins: [react()],
     server: { host: "127.0.0.1", port: 0 },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
@@ -255,7 +271,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(launcher).toHaveCSS("padding-left", "0px");
     await expect(launcher).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await launcher.hover();
-    await expect(launcher).toHaveCSS("background-color", "rgb(232, 232, 232)");
+    await expect(launcher).toHaveCSS("background-color", "rgb(241, 241, 242)");
     await launcher.click();
     const drawer = page.getByRole("region", { name: "Terminal drawer" });
     await expect(drawer.locator(".xterm-rows")).toContainText(
@@ -264,8 +280,8 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await page.evaluate(() => {
       window.retainedTerminal = document.querySelector(".xterm");
     });
-    await expect(launcher).toHaveAttribute("aria-pressed", "true");
-    await expect(launcher).toHaveAttribute("data-icon-variant", "tint");
+    await expect(launcher).toHaveAttribute("aria-expanded", "true");
+    await expect(launcher).toHaveAttribute("data-icon-variant", "ghost");
     await page.mouse.move(0, 0);
     const expectToken = async (node, property, token) => {
       const value = await node.evaluate(
@@ -281,8 +297,8 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
       );
       await expect(node).toHaveCSS(property, value);
     };
-    await expectToken(launcher, "color", "--purple-12");
-    await expectToken(launcher, "background-color", "--purple-3");
+    await expectToken(launcher, "color", "--text-standard");
+    await expectToken(launcher, "background-color", "--interaction-pressed");
     const restart = button("Restart");
     await expect(restart).toHaveClass("buzz-button");
     await expect(restart).toHaveCSS("border-top-width", "0px");
@@ -316,6 +332,8 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(hide).toHaveCSS("outline-width", "2px");
     for (const mode of ["light", "dark"]) {
       if (mode === "dark") await button("Toggle theme").click();
+      await expectToken(launcher, "color", "--text-standard");
+      await expectToken(launcher, "background-color", "--interaction-pressed");
       for (const width of [1280, 800, 390]) {
         await page.setViewportSize({ width, height: 844 });
         await expect(hide).toBeInViewport();
@@ -341,10 +359,10 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
             await page.evaluate(() => window.terminalPanel.releaseClose());
           }
           await page.clock.runFor(50);
-          await expect(splash.locator('[data-layer="head"]')).toHaveCount(151);
+          await expect(splash.locator("canvas")).toBeVisible();
           const bounds = await splash.evaluate((el) => {
             const frame = el.getBoundingClientRect();
-            const art = el.querySelector("pre").getBoundingClientRect();
+            const art = el.querySelector("canvas").getBoundingClientRect();
             return (
               art.top >= frame.top - 1 &&
               art.bottom <= frame.bottom + 1 &&
@@ -373,7 +391,8 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     });
     await hide.click();
     await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveAttribute("aria-pressed", "false");
+    await expect(launcher).toHaveAttribute("aria-expanded", "false");
+    await expect(launcher).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await launcher.click();
     expect(
       await page.evaluate(
@@ -426,7 +445,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await page.screenshot({
       path: test.info().outputPath("terminal-short-200.png"),
     });
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -442,8 +461,7 @@ test("real xterm replies survive scope switches while stale input and retired wr
     plugins: [react()],
     server: { host: "127.0.0.1", port: 0 },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-session.html`;
@@ -538,7 +556,7 @@ test("real xterm replies survive scope switches while stale input and retired wr
       if (operation === "end")
         await page.evaluate(() => window.terminalSession.dispose());
     }
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -563,8 +581,7 @@ test("focused terminal follows rebind, restore and reset without swallowing the 
     plugins: [react()],
     server: { host: "127.0.0.1", port: 0 },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     await page.goto(
@@ -656,7 +673,7 @@ test("focused terminal follows rebind, restore and reset without swallowing the 
     expect(await page.evaluate(() => window.terminalPanel.toggles())).toBe(2);
     expect(await page.evaluate(() => window.terminalPanel.written())).toBe("");
     await page.evaluate(() => window.terminalPanel.dispose());
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

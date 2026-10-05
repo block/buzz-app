@@ -2,7 +2,9 @@
 
 .popup {
   @apply popover-surface;
-  --completion-highlight: var(--affordance-selected);
+  --floating-inset: var(--space-1h);
+  /* Active completion follows the pointer/keyboard, not a saved selection. */
+  --completion-highlight: var(--affordance-popover-selected);
   position: fixed;
   display: flex;
   flex-direction: column;
@@ -11,7 +13,7 @@
   padding: var(--space-1h);
 }
 .list {
-  max-height: 280px;
+  max-height: 17.5rem;
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
@@ -22,23 +24,14 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1h) var(--space-2);
-  border-radius: var(--radius-chip);
+  border-radius: var(--floating-inner-radius);
   cursor: pointer;
 }
 .option[aria-selected="true"] {
   background: var(--completion-highlight);
 }
-.popup[data-compact] {
-  --completion-container-radius: var(--radius-card);
-  --completion-inset: var(--space-1h);
-  border-radius: var(--completion-container-radius);
-}
 .popup[data-compact] .option {
   justify-content: flex-start;
-  border-radius: calc(
-    var(--completion-container-radius) -
-    var(--completion-inset)
-  );
 }
 .popup[data-compact] .option:is(:hover, [aria-selected="true"]) {
   background: var(--completion-highlight);
@@ -48,15 +41,10 @@
   line-height: 1;
   transform: translateY(var(--emoji-optical-offset, 0));
 }
-@media (max-width: 900px) {
-  .popup[data-compact] {
-    --completion-container-radius: var(--radius-card-compact);
-  }
-}
 .preview {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 1.75rem;
+  height: 1.75rem;
   display: grid;
   place-items: center;
   font-size: var(--text-heading);
@@ -100,7 +88,7 @@
 /* Inline mention suggestions share the toolbar picker's surface and row rhythm.
    The editor retains focus and owns the listbox's active descendant. */
 .popup[data-mention] {
-  border-radius: var(--radius-panel);
+  --floating-inset: var(--space-3);
   padding: var(--space-3);
 }
 .popup[data-mention] .list {
@@ -110,7 +98,6 @@
 }
 .popup[data-mention] .option {
   padding: var(--space-2);
-  border-radius: var(--radius-row);
 }
 .popup[data-mention] .preview {
   width: var(--size-control-sm);
@@ -135,4 +122,21 @@
   white-space: nowrap;
   font-family: var(--font-mono);
   color: var(--text-metadata);
+}
+.option[aria-disabled="true"] {
+  color: var(--text-subtle);
+  cursor: not-allowed;
+}
+
+.popup[data-channel] .list {
+  max-height: 320px;
+}
+.acceptKey {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-chip);
+  background: var(--surface-inset);
+  color: var(--text-subtle);
+  font-family: inherit;
+  font-size: var(--text-caption);
 }

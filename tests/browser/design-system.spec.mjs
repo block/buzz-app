@@ -12,8 +12,11 @@ test("shared tokens reach app controls without history or chip overrides", async
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Increase interface size", exact: true })
+    .click();
   const reset = page.getByRole("button", {
-    name: "Reset text size",
+    name: "Reset interface size",
     exact: true,
   });
   await expect(reset).toBeVisible();
@@ -90,12 +93,13 @@ test("shared tokens reach app controls without history or chip overrides", async
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
         --text-standard: rgb(10, 20, 30);
-        --text-label: 19px;
-        --space-6: 29px;
+        --text-label-sm: 19px;
+        --space-4: 29px;
         --surface-popover: rgb(23, 45, 67);
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
         --radius-panel: 19px;
+        --radius-container: 17px;
         --layer-popover: 1234;
       }`,
     });
@@ -119,10 +123,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         const surface = page.locator(`#probe-${name}`);
         await expect(surface).toHaveCSS("background-color", "rgb(23, 45, 67)");
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
-        await expect(surface).toHaveCSS(
-          "border-radius",
-          name === "buzz-popover-popup" ? "19px" : "13px",
-        );
+        await expect(surface).toHaveCSS("border-radius", "17px");
         await expect(
           name === "buzz-popover-popup"
             ? page.locator("#probe-positioner")

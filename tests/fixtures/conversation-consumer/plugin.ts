@@ -30,6 +30,11 @@ export function apply(ctx: Context) {
         "Test-only consumer of the shared session, composer and message UI.",
       ),
       h(
+        "p",
+        { title: ui.format.fullTimestamp(Date.now() / 1000) },
+        `Consumer dates ${ui.format.dayGroupLabel(Date.now() / 1000)}, ${ui.format.itemTimestamp(Date.now() / 1000 - 86_400)}, ${ui.format.relativeTimestamp(Date.now() / 1000 - 300)}`,
+      ),
+      h(
         "label",
         null,
         "Consumer channel",
@@ -119,6 +124,7 @@ export function apply(ctx: Context) {
   ctx.pages.register({
     id: "main",
     title: "Test conversation consumer",
+    primary: true,
     component: function Consumer() {
       const connection = React.useSyncExternalStore(
         relay.subscribe,

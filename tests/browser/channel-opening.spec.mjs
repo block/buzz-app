@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -51,23 +52,23 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
   });
   // A visible pre-establishment head is not a warm, verified cache. A signed
   // missed message proves the catch-up reached the UI, not merely the broker.
-  const establish = async (channel) => {
-    expect(heads(app, channel)).toHaveLength(1);
-    const missed = app.append(
-      "primary",
-      channel,
-      "Startup catch-up marker",
-      false,
-    );
-    app.relay.releaseEose(channel);
-    await expect(
-      page.locator(`[data-message-id="${missed.id}"]`),
-    ).toBeVisible();
-    expect(heads(app, channel)).toHaveLength(2);
-  };
   try {
     await open(page, app);
-    await establish("alpha");
+    expect(heads(app, "alpha")).toHaveLength(1);
+    const missed = Object.fromEntries(
+      ["alpha", "beta"].map((channel) => [
+        channel,
+        app.append("primary", channel, "Startup catch-up marker", false),
+      ]),
+    );
+    // Alpha and Beta may share one wire and therefore one EOSE. Release both
+    // holds; Alpha catches up, while the still-unopened Beta remains cold.
+    app.relay.releaseEose("alpha");
+    app.relay.releaseEose("beta");
+    await expect(
+      page.locator(`[data-message-id="${missed.alpha.id}"]`),
+    ).toBeVisible();
+    expect(heads(app, "alpha")).toHaveLength(2);
     await expect.poll(() => labelReads().length).toBe(1);
     expect(labelReads()[0].filter.authors).toHaveLength(500);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
@@ -103,7 +104,10 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     expect(heads(app, "beta").length).toBeGreaterThan(0);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
-    await establish("beta");
+    await expect(
+      page.locator(`[data-message-id="${missed.beta.id}"]`),
+    ).toBeVisible();
+    expect(heads(app, "beta")).toHaveLength(1);
     const before = submittedHeads.length;
     const warmTimings = [];
     const targetMs = 100;
@@ -190,9 +194,7 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
         });
     }
     expect(submittedHeads).toHaveLength(before);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     const diagnostics = page
       .locator("summary")
       .filter({ hasText: /^Relay timings$/ });
@@ -303,7 +305,10 @@ test.describe("large thread opening", () => {
         history.getByText("Distinct author reply 299", { exact: true }),
       ).toBeInViewport();
       await page
-        .getByRole("button", { name: "Close thread", exact: true })
+        .getByRole("button", {
+          name: /^Close (?:thread|Thread tab)$/,
+          exact: true,
+        })
         .click();
       await expect(history).toHaveCount(0);
     }

@@ -3,16 +3,17 @@ import type { Appearance } from "../shared/theme/service";
 
 /** Host actions use the same binding/dispatch rules as plugins, without fake plugin ownership. */
 // Settings presents the host category in functional sections: navigation,
-// text sizing, search/settings, then development-only actions.
+// interface sizing, search/settings, then app reload.
 export const HOST_SHORTCUT_ORDER = {
-  navigationBack: 10,
-  navigationForward: 20,
+  home: 10,
+  navigationBack: 20,
+  navigationForward: 30,
   textSizeIncrease: 40,
   textSizeDecrease: 50,
   textSizeReset: 60,
   search: 70,
   settings: 80,
-  development: 90,
+  reload: 90,
 } as const;
 
 export function registerAppShortcuts(
@@ -35,7 +36,7 @@ export function registerAppShortcuts(
       [
         [
           "font-increase",
-          "Increase text size",
+          "Increase interface size",
           HOST_SHORTCUT_ORDER.textSizeIncrease,
           [
             { key: "=", mod: true },
@@ -47,14 +48,14 @@ export function registerAppShortcuts(
         ],
         [
           "font-decrease",
-          "Decrease text size",
+          "Decrease interface size",
           HOST_SHORTCUT_ORDER.textSizeDecrease,
           { key: "-", mod: true },
           () => appearance.setFontScale(appearance.snapshot().fontScale - 0.1),
         ],
         [
           "font-reset",
-          "Reset text size",
+          "Reset interface size",
           HOST_SHORTCUT_ORDER.textSizeReset,
           { key: "0", mod: true },
           () => appearance.setFontScale(1),
@@ -73,19 +74,17 @@ export function registerAppShortcuts(
       }),
     ),
   ];
-  if (import.meta.env.DEV) {
-    remove.push(
-      shortcuts.registerHost({
-        id: "development-reload",
-        title: "Reload development app",
-        binding: { key: "r", mod: true },
-        order: HOST_SHORTCUT_ORDER.development,
-        allowInEditable: true,
-        allowInModal: true,
-        run: () => window.location.reload(),
-      }),
-    );
-  }
+  remove.push(
+    shortcuts.registerHost({
+      id: "app-reload",
+      title: "Reload Buzz",
+      binding: { key: "r", mod: true },
+      order: HOST_SHORTCUT_ORDER.reload,
+      allowInEditable: true,
+      allowInModal: true,
+      run: () => window.location.reload(),
+    }),
+  );
   return () => {
     for (const dispose of remove) dispose();
   };
@@ -96,6 +95,15 @@ export function registerNavigationShortcuts(
   navigation: import("../features/navigation/controller").Navigation,
 ) {
   const remove = [
+    shortcuts.registerHost({
+      id: "home",
+      title: "Home",
+      order: HOST_SHORTCUT_ORDER.home,
+      binding: { key: "a", mod: true, shift: true },
+      allowInEditable: true,
+      run: () =>
+        navigation.open({ version: 1, kind: "home" }).then(() => undefined),
+    }),
     shortcuts.registerHost({
       id: "navigation-back",
       title: "Go back",

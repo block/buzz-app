@@ -5,13 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#e7f0ef" />
     <script src="/appearance-init.js"></script>
+    <link rel="stylesheet" href="/src/app/startup.css" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Buzz Foundation</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="buzz-launch" class="buzz-launch" role="status" aria-label="Opening Buzz">
+      <picture>
+        <source media="(prefers-reduced-motion: reduce)" srcset="/buzz-mark.svg" />
+        <img src="/buzz-loading-mark.svg" alt="Buzz" width="72" height="72" />
+      </picture>
+    </div>
+    <div id="root" inert aria-hidden="true"></div>
+    <div id="buzz-toast-root" inert aria-hidden="true"></div>
+    <script src="/launch-init.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

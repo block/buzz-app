@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { test, expect } from "./fixture.mjs";
@@ -217,7 +218,10 @@ test("profiles primary actions through production broker and built app", async (
       ),
     });
     await page
-      .getByRole("button", { name: "Close thread", exact: true })
+      .getByRole("button", {
+        name: /^Close (?:thread|Thread tab)$/,
+        exact: true,
+      })
       .click();
   }
   await settle(page, app);
@@ -303,7 +307,9 @@ test("profiles primary actions through production broker and built app", async (
       ),
     )
     .toBe(true);
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .click();
   const reconnectAt = performance.now();
   app.relay.disconnect("primary");
   await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
@@ -338,9 +344,7 @@ test("profiles primary actions through production broker and built app", async (
   // Finite-fetch quiescence excludes reading dwell and the five-second sync
   // timer. Establish the same explicit mark-through outcome on both arms, then
   // observe durable reconciliation. This is outside the primary-action timings.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {

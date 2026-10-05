@@ -1,15 +1,420 @@
 import { expect, test, type Locator } from "@playwright/test";
+import { watchPageErrors } from "../../browser/page-errors.mjs";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
-import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
+import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
 const viewer = "/tests/fixtures/design-system.html";
+
+test("floating fills nest with their painted owner across themes, widths and text scales", async ({
+  page,
+}) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["light", "dark"]) {
+      for (const scale of [1, 1.5]) {
+        await page.goto(`${viewer}#/design/components/popover`);
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        await page.evaluate((scale) => {
+          document.documentElement.style.fontSize = `${16 * scale}px`;
+        }, scale);
+        for (const [label, size, radius] of [
+          ["Account actions", "compact", 8],
+          ["Recent activity", "wide", 16],
+        ] as const) {
+          const trigger = page.getByRole("button", {
+            name: label,
+            exact: true,
+          });
+          await trigger.click();
+          const popup = page.locator(
+            `.buzz-popover-popup[data-size="${size}"]`,
+          );
+          await expect(popup).toHaveCSS("border-radius", `${radius * scale}px`);
+          const row = popup.locator(".navigation-item").first();
+          await row.hover();
+          const geometry = await popup.evaluate((element) => {
+            const child = element.querySelector(".navigation-item");
+            if (!child) throw new Error("List popover has no row");
+            const outer = getComputedStyle(element);
+            const inner = getComputedStyle(child);
+            const bounds = element.getBoundingClientRect();
+            return {
+              outer: Number.parseFloat(outer.borderTopLeftRadius),
+              inset:
+                Number.parseFloat(outer.paddingLeft) +
+                Number.parseFloat(outer.borderLeftWidth),
+              corners: [
+                inner.borderTopLeftRadius,
+                inner.borderTopRightRadius,
+                inner.borderBottomLeftRadius,
+                inner.borderBottomRightRadius,
+              ],
+              left: bounds.left,
+              right: bounds.right,
+            };
+          });
+          for (const corner of geometry.corners) {
+            expect(Number.parseFloat(corner)).toBeCloseTo(
+              Math.max(0, geometry.outer - geometry.inset),
+              4,
+            );
+          }
+          expect(geometry.left).toBeGreaterThanOrEqual(0);
+          expect(geometry.right).toBeLessThanOrEqual(width);
+          await page.keyboard.press("Escape");
+          await expect(popup).toHaveCount(0);
+          await expect(trigger).toBeFocused();
+        }
+      }
+    }
+  }
+});
+
+test("badge motion centered pill scales with its avatar and reverses without jumping", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
+  await page.goto("/tests/fixtures/design-system/thinking-avatar.html");
+  const card = page.getByRole("article", {
+    name: "Centered Start pill",
+    exact: true,
+  });
+  const ink = card.locator(".badge-pill-ink");
+  const root = card.locator(".badge-pill-root");
+  const dots = card.locator(".badge-pill-dots");
+  const artwork = card.locator(".badge-motion-artwork");
+  const restMask = await artwork.getAttribute("style");
+  const notch = card.locator(".badge-pill-notch");
+  const checkJoins = async () => {
+    const path = await notch.getAttribute("d");
+    expect(path?.match(/ C /g)).toHaveLength(2);
+    expect(path).not.toMatch(/NaN|Infinity/);
+    await expect(artwork).toHaveAttribute("style", restMask ?? "");
+  };
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(150);
+  await checkJoins();
+  await expect(dots).toHaveCSS("opacity", "1");
+  await expect(root).toHaveAttribute("data-phase", "morphing");
+  const middle = await ink.getAttribute("style");
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  expect(await ink.getAttribute("style")).toBe(middle);
+  await page.clock.runFor(150);
+  await expect(dots).toHaveCSS("opacity", "0");
+  await expect(root).toHaveAttribute("data-phase", "morphing");
+  await page.clock.runFor(170);
+  await expect(root).toHaveAttribute("data-phase", "available");
+  await expect(artwork).toHaveAttribute("style", restMask ?? "");
+  await expect(ink).toHaveCSS("width", "22px");
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(320);
+  await checkJoins();
+  const metrics = await card.locator(".badge-pill-measure").evaluate((el) => ({
+    width: (el as HTMLElement).offsetWidth,
+    height: (el as HTMLElement).offsetHeight,
+  }));
+  const actual = await ink.boundingBox();
+  expect(actual?.width).toBeCloseTo(metrics.width, 0);
+  expect(actual?.height).toBeCloseTo(metrics.height, 0);
+  await expect(ink).toHaveCSS("left", "44px");
+  await expect(ink).toHaveCSS("top", "88px");
+  const dot = card.locator(".badge-pill-dots i").first();
+  const dotWidth = (await dot.boundingBox())?.width ?? 0;
+  expect(dotWidth).toBeGreaterThan(0);
+  // Exercise actual renderer sizing, including a profile portrait.
+  for (const size of [24, 32, 40, 80, 88, 256]) {
+    await page
+      .getByRole("combobox", { name: "Avatar size" })
+      .selectOption(String(size));
+    await page.clock.runFor(320);
+    const scaled = await ink.boundingBox();
+    const detailScale = (size / 88) * Math.sqrt(Math.min(1, 88 / size));
+    expect(scaled?.width).toBeCloseTo(metrics.width * detailScale, 0);
+    expect(scaled?.height).toBeCloseTo(metrics.height * detailScale, 0);
+    expect((await dot.boundingBox())?.width).toBeCloseTo(
+      dotWidth * detailScale,
+      1,
+    );
+    const avatar = await artwork.boundingBox();
+    expect((scaled?.y ?? 0) + (scaled?.height ?? 0) / 2).toBeCloseTo(
+      (avatar?.y ?? 0) + size,
+      0,
+    );
+    await checkJoins();
+    await card.getByRole("button", { name: "Available", exact: true }).click();
+    await page.clock.runFor(320);
+    const restingBadge = await ink.boundingBox();
+    expect(restingBadge?.width).toBeCloseTo(size / 4, 1);
+    expect((restingBadge?.x ?? 0) + (restingBadge?.width ?? 0) / 2).toBeCloseTo(
+      (avatar?.x ?? 0) + size * 0.85,
+      1,
+    );
+    expect(
+      (restingBadge?.y ?? 0) + (restingBadge?.height ?? 0) / 2,
+    ).toBeCloseTo((avatar?.y ?? 0) + size * 0.85, 1);
+    await checkJoins();
+    await card.getByRole("button", { name: "Thinking", exact: true }).click();
+    await page.clock.runFor(320);
+  }
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  await page.clock.runFor(20);
+  await expect(root).toHaveAttribute("data-phase", "available");
+});
+
+test("status badges keep avatar sizes and show a clear cutout in both modes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const badges = page.locator(
+    '.buzz-avatar-status[data-shape="circle"][data-status]',
+  );
+  await expect(badges).toHaveCount(5);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, online" }),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, away" }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: "Morgan Martin, offline" }),
+  ).toHaveCount(1);
+  for (const [index, size] of [24, 32, 40].entries()) {
+    const badge = badges.nth(index);
+    const avatar = badge.locator(".buzz-avatar");
+    const dot = badge.locator(".buzz-avatar-status-dot");
+    await expect(avatar).toHaveCSS("width", `${size}px`);
+    await expect(avatar).toHaveCSS("height", `${size}px`);
+    await expect(dot).toHaveCSS("width", `${size / 4}px`);
+    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
+    const placement = await badge.evaluate((el) => {
+      const art = el.querySelector(".buzz-avatar")?.getBoundingClientRect();
+      const point = el
+        .querySelector(".buzz-avatar-status-dot")
+        ?.getBoundingClientRect();
+      if (!art || !point) throw new Error("Status avatar parts are missing");
+      return [
+        point.x + point.width / 2 - art.x,
+        point.y + point.height / 2 - art.y,
+      ];
+    });
+    expect(placement[0]).toBeCloseTo(size * 0.85, 1);
+    expect(placement[1]).toBeCloseTo(size * 0.85, 1);
+  }
+  const plain = page
+    .locator(".component-specimen")
+    .filter({ hasText: "large · no badge" })
+    .locator(".buzz-avatar");
+  await expect(plain).toHaveCSS("mask-image", "none");
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const [index, size] of [24, 32, 40].entries()) {
+      await expect(badges.nth(index).locator(".buzz-avatar")).toHaveCSS(
+        "width",
+        `${size}px`,
+      );
+    }
+  }
+
+  const large = badges.nth(2);
+  await expect(large.locator("img")).toHaveAttribute("data-loaded", "true");
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    for (const [status, color] of Object.entries(
+      mode === "light"
+        ? {
+            online: "rgb(33, 131, 88)",
+            away: "rgb(255, 186, 24)",
+            offline: "rgb(128, 128, 128)",
+          }
+        : {
+            online: "rgb(61, 214, 140)",
+            away: "rgb(255, 214, 10)",
+            offline: "rgb(164, 164, 164)",
+          },
+    )) {
+      const dot = page
+        .locator(
+          `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+        )
+        .first();
+      await expect(dot).toHaveCSS("background-color", color);
+      await expect(dot).toHaveCSS("background-image", "none");
+      await expect(dot).toHaveCSS("box-shadow", "none");
+    }
+    // Only Online retains an outline. Away and Offline expose solid fills. Check
+    // the actual CSS paint stack in the browser, including squircle masks.
+    for (const status of ["online", "away", "offline"]) {
+      const dots = page.locator(
+        `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+      );
+      const centers = await dots.evaluateAll((elements) =>
+        elements.map((element) => {
+          const outer = getComputedStyle(element);
+          const inner = getComputedStyle(element, "::after");
+          return {
+            content: inner.content,
+            inset: inner.inset,
+            color: inner.backgroundColor,
+            mask: inner.maskImage,
+            outerMask: outer.maskImage,
+          };
+        }),
+      );
+      for (const center of centers) {
+        if (status !== "online") {
+          expect(center.content).toBe("none");
+        } else {
+          expect(center.content).toBe('""');
+          expect(center.inset).toBe("1px");
+          expect(center.mask).toBe(center.outerMask);
+          expect(center.color).toBe(
+            mode === "light" ? "rgb(43, 154, 102)" : "rgb(51, 176, 116)",
+          );
+        }
+      }
+    }
+    await large.scrollIntoViewIfNeeded();
+    const box = await large.boundingBox();
+    if (!box) throw new Error("Large status avatar is not visible");
+    const clip = {
+      x: Math.floor(box.x),
+      y: Math.floor(box.y),
+      width: Math.ceil(box.x + box.width) - Math.floor(box.x),
+      height: Math.ceil(box.y + box.height) - Math.floor(box.y),
+    };
+    const png = await page.screenshot({ clip });
+    const paint = await page.evaluate(
+      async ({ base64, box, clip }) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas context is unavailable");
+        context.drawImage(image, 0, 0);
+        const pixel = (x: number, y: number) =>
+          [
+            ...context.getImageData(
+              Math.floor(box.x - clip.x + x),
+              Math.floor(box.y - clip.y + y),
+              1,
+              1,
+            ).data,
+          ].slice(0, 3);
+        return {
+          background: pixel(39, 39),
+          gap: pixel(28, 34),
+          dot: pixel(34, 34),
+          artwork: pixel(18, 20),
+        };
+      },
+      { base64: png.toString("base64"), box, clip },
+    );
+    const difference = (a: number[], b: number[]) =>
+      Math.max(...a.map((value, index) => Math.abs(value - (b[index] ?? 0))));
+    expect(difference(paint.gap, paint.background), `${mode} gap`).toBeLessThan(
+      12,
+    );
+    expect(
+      difference(paint.dot, mode === "light" ? [43, 154, 102] : [51, 176, 116]),
+      `${mode} rendered step-10 center`,
+    ).toBeLessThan(3);
+    expect(
+      difference(paint.dot, paint.background),
+      `${mode} dot`,
+    ).toBeGreaterThan(30);
+    expect(
+      difference(paint.artwork, paint.background),
+      `${mode} artwork`,
+    ).toBeGreaterThan(30);
+  }
+});
+
+test("agent status badges follow the squircle while keeping the artwork size", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const badges = page.locator(
+    '.buzz-avatar-status[data-shape="squircle"][data-status]',
+  );
+  await expect(badges).toHaveCount(5);
+  for (const [index, size] of [24, 32, 40].entries()) {
+    const avatar = badges.nth(index).locator(".buzz-avatar");
+    await expect(avatar).toHaveCSS("width", `${size}px`);
+    await expect(avatar).toHaveCSS("height", `${size}px`);
+    await expect(avatar).toHaveCSS("mask-image", /^url\(/);
+    await expect(
+      badges.nth(index).locator(".buzz-avatar-status-dot"),
+    ).toHaveCSS("width", `${size / 4}px`);
+    await expect(
+      badges.nth(index).locator(".buzz-avatar-status-dot"),
+    ).toHaveCSS("mask-image", /^url\(/);
+  }
+  for (const status of ["online", "away", "offline"]) {
+    await expect(
+      page.getByRole("img", { name: `Agent artwork, ${status}` }),
+    ).toHaveCount(status === "online" ? 3 : 1);
+  }
+  const plain = page
+    .locator(".component-specimen")
+    .filter({ hasText: 'shape="squircle"' })
+    .first()
+    .locator(".buzz-avatar");
+  await expect(plain).toHaveCSS("mask-image", /^url\(/);
+  expect(
+    await plain.evaluate((element) => getComputedStyle(element).maskImage),
+  ).not.toBe(
+    await badges
+      .first()
+      .locator(".buzz-avatar")
+      .evaluate((element) => getComputedStyle(element).maskImage),
+  );
+});
+
+test("loaded avatar artwork stays mounted through status changes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const group = page.locator(".component-specimen-group").filter({
+    has: page.getByRole("heading", { name: "Status transitions" }),
+  });
+  const artwork = group.locator(".buzz-avatar img");
+  await expect(artwork).toHaveAttribute("data-loaded", "true");
+  await expect(artwork).toHaveCSS("opacity", "1");
+  await artwork.evaluate((image) =>
+    image.setAttribute("data-test-instance", "retained"),
+  );
+  for (const status of ["online", "away", "offline"] as const) {
+    await group.getByRole("button", { name: `Set ${status}` }).click();
+    await expect(
+      group.getByRole("img", { name: `Live agent artwork, ${status}` }),
+    ).toBeVisible();
+    await expect(artwork).toHaveAttribute("data-test-instance", "retained");
+    await expect(artwork).toHaveAttribute("data-loaded", "true");
+    await expect(artwork).toHaveCSS("opacity", "1");
+  }
+  await group.getByRole("button", { name: "Clear status" }).click();
+  await expect(
+    group.getByRole("img", { name: "Live agent artwork", exact: true }),
+  ).toBeVisible();
+  await expect(artwork).toHaveAttribute("data-test-instance", "retained");
+  await expect(artwork).toHaveAttribute("data-loaded", "true");
+  await expect(artwork).toHaveCSS("opacity", "1");
+});
 
 test("built viewer loads every specimen and foundation without app connections", async ({
   page,
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (r) => {
     if (r.status() >= 400) failures.push(`${r.status()} ${r.url()}`);
   });
@@ -37,10 +442,9 @@ test("built viewer loads every specimen and foundation without app connections",
     "Glass",
     "Motion",
     "Base UI backing",
-    "Foundation alignment",
     "Maintaining the system",
-    "DESIGN.md",
-    "AGENTS.md",
+    "Design guide",
+    "Agent guide",
   ]) {
     await nav.getByRole("link", { name, exact: true }).click();
     await expect(page.locator("main h1")).toBeVisible();
@@ -84,7 +488,7 @@ test("built viewer loads every specimen and foundation without app connections",
   await expect(
     nav.getByRole("link", { name: /Conversation|Agent work/ }),
   ).toHaveCount(0);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 
@@ -145,11 +549,11 @@ test("icon inventory is routed, complete, decorative, and responsive", async ({
   ).toBeVisible();
   await expect(page).toHaveURL(/#\/design\/icons$/);
 
-  const phosphorList = page.getByRole("list", {
-    name: "Available Phosphor icons",
+  const tablerList = page.getByRole("list", {
+    name: "Available Tabler icons",
   });
-  await expect(phosphorList.getByRole("listitem")).toHaveCount(
-    PHOSPHOR_ICONS.length,
+  await expect(tablerList.getByRole("listitem")).toHaveCount(
+    TABLER_ICONS.length,
   );
   await expect(page.getByRole("img")).toHaveCount(0);
   await expect(page.locator("main svg:not([aria-hidden='true'])")).toHaveCount(
@@ -184,106 +588,8 @@ test("icon inventory is routed, complete, decorative, and responsive", async ({
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await expect(phosphorList.getByRole("listitem").first()).toBeVisible();
+    await expect(tablerList.getByRole("listitem").first()).toBeVisible();
   }
-});
-
-test("foundation proposals are independent, local, and usable in both modes", async ({
-  page,
-}) => {
-  await page.goto(`${viewer}#/design/foundation-alignment`);
-  const current = page.getByRole("region", {
-    name: "Current tokens",
-    exact: true,
-  });
-  const proposal = page.getByRole("region", {
-    name: "Selected proposal",
-    exact: true,
-  });
-  const color = page.getByRole("switch", { name: "Status color" });
-  const reading = page.getByRole("switch", { name: "Larger reading text" });
-  const spacing = page.getByRole("switch", { name: "More section space" });
-
-  for (const mode of ["light", "dark"]) {
-    const theme = page.getByRole("button", { name: `Use ${mode} mode` });
-    if (await theme.count()) await theme.click();
-    await expect(proposal.locator("[data-reading]")).toHaveCSS(
-      "font-size",
-      "14px",
-    );
-    await expect(proposal.locator(".alignment-project")).toHaveCSS(
-      "row-gap",
-      "32px",
-    );
-    const neutral = await current
-      .locator("[data-status]")
-      .evaluate((el) => getComputedStyle(el).color);
-    await expect(proposal.locator("[data-status]")).toHaveCSS("color", neutral);
-
-    await color.click();
-    await expect(proposal.locator("[data-status]")).not.toHaveCSS(
-      "color",
-      neutral,
-    );
-    await expect(proposal.locator("[data-reading]")).toHaveCSS(
-      "font-size",
-      "14px",
-    );
-    await expect(proposal.locator(".alignment-project")).toHaveCSS(
-      "row-gap",
-      "32px",
-    );
-    await reading.focus();
-    await page.keyboard.press("Space");
-    await expect(reading).toBeChecked();
-    await expect(proposal.locator("[data-reading]")).toHaveCSS(
-      "font-size",
-      "20px",
-    );
-    await spacing.click();
-    await expect(proposal.locator(".alignment-project")).toHaveCSS(
-      "row-gap",
-      "64px",
-    );
-    await expect(current.locator("[data-reading]")).toHaveCSS(
-      "font-size",
-      "14px",
-    );
-    await expect(current.locator(".alignment-project")).toHaveCSS(
-      "row-gap",
-      "32px",
-    );
-    await expect(current.locator("[data-status]")).toHaveCSS("color", neutral);
-
-    for (const width of [390, 800, 1280]) {
-      await page.setViewportSize({ width, height: 900 });
-      await expect(page.getByRole("table")).toHaveCount(3);
-      await expect(page.getByRole("table").first()).toBeVisible();
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    }
-    await color.click();
-    await reading.click();
-    await spacing.focus();
-    await page.keyboard.press("Space");
-    await expect(spacing).not.toBeChecked();
-  }
-  await proposal
-    .getByRole("button", { name: "Follow project", exact: true })
-    .click();
-  await expect(
-    proposal.getByRole("button", { name: "Following project" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(
-    current.getByRole("button", { name: "Follow project", exact: true }),
-  ).toHaveAttribute("aria-pressed", "false");
-  await page.reload();
-  await expect(color).not.toBeChecked();
-  await expect(reading).not.toBeChecked();
-  await expect(spacing).not.toBeChecked();
 });
 
 test("narrow, intermediate and wide layouts preserve theme and keyboard interaction", async ({
@@ -307,7 +613,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
     ).toBe(true);
   }
   const primary = page.getByRole("button", {
-    name: "prominent lg",
+    name: "prominent md",
     exact: true,
   });
   await primary.click();
@@ -320,7 +626,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle sm", exact: true }),
+    page.getByRole("button", { name: "prominent lg", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -332,7 +638,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle sm", exact: true }),
+    page.getByRole("button", { name: "prominent lg", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -487,7 +793,10 @@ test("built component references retain anatomy and fallback identity", async ({
 
   await page.goto(`${viewer}#/design/components/avatar`);
   await expect(page.getByRole("img", { name: "Cynthia Chen" })).toHaveCount(3);
-  await expect(page.getByRole("img", { name: "Morgan Martin" })).toHaveCount(5);
+  // Five original image examples plus six status/cutout specimens.
+  await expect(page.getByRole("img", { name: "Morgan Martin" })).toHaveCount(
+    11,
+  );
 });
 
 test("a small pane drag settles on release and Escape", async ({ page }) => {
@@ -521,7 +830,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
   page,
 }) => {
   const failures: string[] = [];
-  page.on("pageerror", (e) => failures.push(e.message));
+  const pageErrors = watchPageErrors(page);
   for (const hash of [
     "#/design/components/renamed-away",
     "#/design/colours",
@@ -539,7 +848,7 @@ test("a stale or renamed link explains itself instead of rendering blank", async
       page.getByRole("heading", { name: "Buzz Design System", exact: true }),
     ).toBeVisible();
   }
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
 });
 
 test("switch labels activate the control and busy switches preserve focus", async ({
@@ -806,16 +1115,10 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
         await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
         if (kind === "icon-button") {
           await expect(button).toHaveCSS("width", `${height}px`);
-          await expect
-            .poll(() =>
-              button.evaluate(
-                (el) =>
-                  parseFloat(getComputedStyle(el).borderRadius) >=
-                  el.clientWidth / 2,
-              ),
-            )
-            .toBe(true);
+          await expect(button).toHaveCSS("border-radius", "10px");
         } else {
+          // Half the 52px large height; shorter sizes clamp to their own half-height.
+          await expect(button).toHaveCSS("border-radius", "26px");
           await expect(button).toHaveCSS(
             "padding-left",
             size === "sm" ? "16px" : "24px",
@@ -877,7 +1180,7 @@ test("buttons and icon buttons share size geometry and preserve loading and disa
   }
 });
 
-test("button loading keeps focus and wrapping fits narrow enlarged layouts", async ({
+test("button loading keeps focus and labels stay single-line in constrained layouts", async ({
   page,
   browserName,
 }) => {
@@ -930,25 +1233,47 @@ test("button loading keeps focus and wrapping fits narrow enlarged layouts", asy
       return color;
     }),
   );
+  await page.evaluate(() => document.fonts.ready);
   for (const width of [390, 800, 1280]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.evaluate(() => {
-      document.documentElement.style.fontSize = "200%";
-    });
-    const long = page.getByRole("button", {
-      name: "Allow notifications for this workspace",
-      exact: true,
-    });
-    await expect
-      .poll(() => long.evaluate((el) => el.scrollWidth <= el.clientWidth))
-      .toBe(true);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      )
-      .toBe(true);
+    for (const fontSize of ["100%", "200%"]) {
+      await page.evaluate((size) => {
+        document.documentElement.style.fontSize = size;
+      }, fontSize);
+      for (const name of [
+        "Apply changes",
+        "Allow notifications for this workspace",
+      ]) {
+        const button = page.getByRole("button", { name, exact: true });
+        const label = button.locator(".buzz-button-label");
+        await expect(button).toHaveCSS("flex-shrink", "0");
+        await expect(label).toHaveCSS("white-space", "nowrap");
+        await expect
+          .poll(() =>
+            label.evaluate((el) => {
+              const text = [...el.childNodes].find(
+                (node) =>
+                  node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+              );
+              if (!text) return 0;
+              const range = document.createRange();
+              range.selectNodeContents(text);
+              return range.getClientRects().length;
+            }),
+          )
+          .toBe(1);
+        await expect
+          .poll(() => button.evaluate((el) => el.scrollWidth <= el.clientWidth))
+          .toBe(true);
+      }
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
     await page.evaluate(() => {
       document.documentElement.style.removeProperty("font-size");
     });
@@ -1062,17 +1387,13 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
-  // Every position and grouped choice uses the shared full-round token.
+  // Real painted edges prove concentric nesting, including grouped choices.
   const expectRounded = async (item: Locator) => {
     const radius = await item.evaluate((element) => {
-      // The shared pill token is rem-based; computed corner values are pixels.
-      const rem = Number.parseFloat(
-        getComputedStyle(element).getPropertyValue("--radius-pill"),
-      );
-      const rootSize = Number.parseFloat(
-        getComputedStyle(document.documentElement).fontSize,
-      );
-      return `${rem * rootSize}px`;
+      const popup = element.closest(".buzz-menu-popup");
+      if (!popup) throw new Error("Menu item has no popup owner");
+      const outer = getComputedStyle(popup);
+      return `${Math.max(0, Number.parseFloat(outer.borderTopLeftRadius) - Number.parseFloat(outer.paddingLeft) - Number.parseFloat(outer.borderLeftWidth))}px`;
     });
     for (const corner of [
       "top-left",
@@ -1245,7 +1566,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
 }) => {
   const failures: string[] = [];
   const sockets: string[] = [];
-  page.on("pageerror", (error) => failures.push(error.message));
+  const pageErrors = watchPageErrors(page);
   page.on("response", (response) => {
     if (response.status() >= 400)
       failures.push(`${response.status()} ${response.url()}`);
@@ -1337,7 +1658,7 @@ test("built Messages gallery renders isolated product states and follows viewer 
   ).toBeVisible();
   await page.reload();
   await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
-  expect(failures).toEqual([]);
+  expect([...pageErrors.unexplained(), ...failures]).toEqual([]);
   expect(sockets).toEqual([]);
 });
 
@@ -1452,6 +1773,9 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
   });
   await expect(modal).toBeVisible();
   await expect(region).toHaveCount(1); // Base UI keeps live regions announced during modals.
+  await expect(
+    modal.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("F6");
   await expect
     .poll(() =>
@@ -1642,14 +1966,16 @@ test("popovers return focus and nested popovers close before their dialog", asyn
   await page.keyboard.press("Escape");
   await expect(popup).toHaveCount(0);
   await expect(trigger).toBeFocused();
-  await expect(page.getByRole("status")).toHaveText("Workspace: Design studio");
+  await expect(
+    page.getByRole("status").filter({ hasText: /^Workspace:/ }),
+  ).toHaveText("Workspace: Design studio");
   await trigger.click();
   await expect(input).toHaveValue("Design studio");
   await input.fill("Research studio");
   await popup.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "Workspace: Research studio",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: /^Workspace:/ }),
+  ).toHaveText("Workspace: Research studio");
   const activityTrigger = page.getByRole("button", {
     name: "Recent activity",
     exact: true,
@@ -1886,4 +2212,161 @@ test("menus and popovers reuse the dropdown unblur and placement offset", async 
       await finish();
     }
   }
+});
+
+// Native focus, responsive chrome, and hash-anchor scrolling require a browser.
+test("documentation navigation keeps the article reachable at narrow widths", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto(`${viewer}#/design/design-guide`);
+  const browse = page.getByRole("button", { name: /Browse pages/ });
+  await expect(browse).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("main h1")).toBeInViewport();
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  await page.keyboard.press(tab);
+  await expect(
+    page.getByRole("button", { name: "Skip to content" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("main")).toBeFocused();
+  await expect(page).toHaveURL(/#\/design\/design-guide$/);
+  await browse.click();
+  const nav = page.getByRole("navigation", { name: "Design system" });
+  await nav.getByRole("link", { name: "Glass", exact: true }).click();
+  await expect(browse).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("main")).toBeFocused();
+  await expect(
+    page.getByRole("heading", { name: "Glass", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    nav.getByRole("link", { name: "Color", exact: true }),
+  ).toBeHidden();
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(
+    nav.getByRole("link", { name: "Color", exact: true }),
+  ).toBeVisible();
+  await nav.getByRole("link", { name: "Design guide", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Identity shapes", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/design\/design-guide#identity-shapes$/);
+  await expect(page.locator("#identity-shapes")).toBeInViewport();
+});
+
+// Browser geometry catches document overflow, hidden reference columns, and
+// truncated sample labels that a DOM emulator cannot measure.
+test("documentation tables and token ramps reflow without hiding labels", async ({
+  page,
+}) => {
+  for (const width of [320, 720, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const route of ["design-guide", "color", "glass"]) {
+      await page.goto(`${viewer}#/design/${route}`);
+      await expect(page.locator("main h1")).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(width);
+      if (route === "design-guide") {
+        const table = page.locator(".design-doc-table-scroll").first();
+        if (width === 320) {
+          await expect(
+            page.getByText("Wide tables scroll horizontally.").first(),
+          ).toBeVisible();
+          await table.focus();
+          await page.keyboard.press("ArrowRight");
+          await expect
+            .poll(() => table.evaluate((element) => element.scrollLeft))
+            .toBeGreaterThan(0);
+          await page.keyboard.press("ArrowLeft");
+          await expect
+            .poll(() => table.evaluate((element) => element.scrollLeft))
+            .toBe(0);
+        }
+      }
+      if (route === "glass") {
+        await expect(page.locator(".glass-ramp code")).toHaveCount(5);
+        await expect
+          .poll(() =>
+            page
+              .locator(".glass-ramp code, .glass-ramp span")
+              .evaluateAll(
+                (elements) =>
+                  elements.filter(
+                    (element) => element.scrollWidth > element.clientWidth,
+                  ).length,
+              ),
+          )
+          .toBe(0);
+      }
+    }
+  }
+});
+
+// Real browser focus, responsive geometry, and route-to-section navigation are
+// the browser boundary. Clipboard outcomes and draft retention are unit tested.
+test("documentation code tabs and contents work with keyboard and narrow layouts", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/input`);
+  const tabs = page.getByRole("tablist", { name: "Input states view" });
+  await tabs.getByRole("tab", { name: "Preview", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    tabs.getByRole("tab", { name: "Code", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  const codePanel = page.getByRole("tabpanel", { name: "Code", exact: true });
+  await expect(codePanel).toBeVisible();
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width === 320) {
+      await codePanel.focus();
+      await page.keyboard.press("PageDown");
+      await expect
+        .poll(() => codePanel.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      )
+      .toBe(true);
+  }
+  await page
+    .getByRole("navigation", { name: "Design system", exact: true })
+    .getByRole("link", { name: "Popover", exact: true })
+    .click();
+  const contents = page.getByRole("navigation", {
+    name: "On this page",
+    exact: true,
+  });
+  await contents
+    .getByRole("button", { name: "Placement", exact: true })
+    .click();
+  const heading = page.getByRole("heading", { name: "Placement", exact: true });
+  await expect(heading).toBeFocused();
+  await expect
+    .poll(async () => (await heading.boundingBox())?.y)
+    .toBeLessThan(100);
+  await page
+    .getByRole("navigation", { name: "Design system", exact: true })
+    .getByRole("link", { name: "Button", exact: true })
+    .click();
+  await expect(
+    contents.getByRole("button", { name: "Placement", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    contents.getByRole("button", {
+      name: "Loading and expansion",
+      exact: true,
+    }),
+  ).toBeVisible();
 });

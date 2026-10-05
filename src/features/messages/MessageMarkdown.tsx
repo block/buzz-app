@@ -75,7 +75,12 @@ type ProtectedContent = {
 function protectInlineContent(
   row: Pick<
     ChannelMessage,
-    "content" | "edited" | "attachmentContentRemoved" | "mentions" | "emoji"
+    | "content"
+    | "edited"
+    | "attachmentContentRemoved"
+    | "mentions"
+    | "mentionReferences"
+    | "emoji"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   literalRanges: readonly LiteralRange[],
@@ -105,7 +110,9 @@ function protectInlineContent(
     },
   );
   const used = new Set(
-    [...decoded.matchAll(/\uE000(\d+)\uE001/g)].map((match) => match[1]),
+    [...decoded.matchAll(/[\uE000\uFFFC](\d+)\uE001/g)].map(
+      (match) => match[1],
+    ),
   );
   let nonce = 0;
   while (used.has(String(nonce))) nonce++;
@@ -113,7 +120,18 @@ function protectInlineContent(
   const parts: InlinePart[] = [];
   const token = (part: InlinePart) => {
     parts.push(part);
-    return `${prefix}${parts.length - 1}\uE002`;
+    // Mention edges must keep their punctuation class for emphasis flanking:
+    // @Honey* beside italic ! is punctuation on both sides, not a word. The
+    // wire itself holds no emphasis there for a parser that does not split
+    // out the mention first, since the name's star and the delimiter merge
+    // into one run; the exact signed name was kept over italics that other
+    // clients could read.
+    // U+FFFC is a Unicode symbol, not Markdown syntax. Keep it inside the
+    // nonce-protected token so restoration removes only generated characters.
+    const start = part.target ? `\uFFFC${nonce}\uE001` : prefix;
+    const end =
+      part.target && /[\p{P}\p{S}]$/u.test(part.text) ? "\uFFFC" : "\uE002";
+    return `${start}${parts.length - 1}${end}`;
   };
   let offset = 0;
   const content = profileMentionParts(row, profiles, agents)
@@ -191,15 +209,19 @@ function protectInlineContent(
 }
 
 const placeholderPattern = (protectedContent: ProtectedContent) =>
-  new RegExp(`${protectedContent.prefix}(\\d+)\uE002`, "g");
+  new RegExp(
+    `[\uE000\uFFFC]${protectedContent.prefix.slice(1)}(\\d+)[\uE002\uFFFC]`,
+    "g",
+  );
 
 function inlineProtectionKey(
   row: ChannelMessage,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: typeof emptyReferenceDirectory.agents,
 ) {
-  const mentions = row.mentions.map((id) => [id, profiles?.get(id)?.name]);
-  const mentioned = new Set(row.mentions);
+  const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
+  const mentions = identities.map((id) => [id, profiles?.get(id)?.name]);
+  const mentioned = new Set(identities);
   const agentNames = agents
     .filter((agent) => mentioned.has(agent.pubkey))
     .map((agent) => [agent.pubkey, agent.name]);
@@ -385,11 +407,11 @@ function PreparedMessageMarkdown({
       ? sourceRow
       : { ...sourceRow, content: prepared.content };
   const renderLink = (url: string, label?: string, children?: ReactNode) => {
-    const channel = channelForLink(url, scope, directory.channels);
+    const channel = channelForLink(url, directory.channels);
     return (
       <MessageLink
         url={url}
-        label={label ?? channelLinkLabel(url, scope, directory.channels)}
+        label={label ?? channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
         onOpenLink={onOpenLink}
         session={session}
@@ -455,6 +477,7 @@ function PreparedMessageMarkdown({
             ? { attachmentContentRemoved: true as const }
             : {}),
           mentions: sourceRow.mentions,
+          mentionReferences: sourceRow.mentionReferences ?? [],
           ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
         },
         profiles,

@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import { File as NodeFile } from "node:buffer";
+import { createMemberAdditions } from "../channel-members/operations";
+import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -30,17 +33,26 @@ import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
-import type { ChannelMessage, Profile } from "../relay/contracts";
-import { readView } from "../../shared/view-state";
+import type {
+  ChannelMessage,
+  ChannelSummary,
+  Profile,
+} from "../relay/contracts";
+import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
+import { profileTarget } from "../profiles/target";
 import { setRememberAgentsPreference } from "./mention-preferences";
+import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
+import { entityHref } from "../projects/routes";
+import type { Entity } from "../projects/destinations";
 
 composerDOMFixture();
 
@@ -48,6 +60,14 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+const resourceOwner = "c".repeat(64);
+const resourceRoute = {
+  type: "issue",
+  owner: resourceOwner,
+  dtag: "game",
+  id: "d".repeat(64),
+} as const;
+const resource = { uri: entityHref(resourceRoute), label: "Fix login" };
 
 beforeEach(() => {
   localStorage.clear();
@@ -289,7 +309,14 @@ function mount(
     };
   };
   bindChoices();
-  const tree = () => <MessageComposer {...props} />;
+  let presented = true;
+  const tree = () => (
+    <ConversationPresentation value={presented}>
+      <div hidden={!presented} inert={!presented}>
+        <MessageComposer {...props} />
+      </div>
+    </ConversationPresentation>
+  );
   const view = render(tree(), {
     reactStrictMode: true,
   });
@@ -299,6 +326,10 @@ function mount(
     ...view,
     input,
     messages,
+    present(active: boolean) {
+      presented = active;
+      view.rerender(tree());
+    },
     setRows(next: readonly ChannelMessage[]) {
       rows = next;
     },
@@ -381,6 +412,191 @@ function mount(
     },
   };
 }
+
+it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const query = vi.fn(async () => []);
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+    },
+    {
+      cachedOnly: true,
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: [
+              roster(relay, "channel", [viewer.pubkey]),
+              metadata(relay, "channel", "General"),
+            ],
+          },
+        }),
+        read: async () => [],
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  await owner.restore();
+  writeView("cached-composer", "draft:channel", "!Saved draft");
+  const typing = vi.fn(owner.session.typing.subscribe);
+  const h = mount({
+    session: {
+      ...owner.session,
+      typing: { ...owner.session.typing, subscribe: typing },
+    },
+    scope: "cached-composer",
+  });
+  try {
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.queryByText(/does not support sending/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.focus(h.input());
+    fireEvent(document, new Event("selectionchange"));
+    h.submit();
+    await act(async () => {}); // Flush mounted effects before the negative assertions.
+    expect(h.completionRequests).toEqual([]);
+    expect(typing).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("!Saved draft");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    h.unmount();
+    owner.dispose();
+  }
+});
+
+it("autofocuses each selected conversation once without stealing focus on updates", () => {
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    other.focus();
+    h.retarget({ channelName: "Renamed", autoFocus: false });
+    h.retarget({ autoFocus: true });
+    expect(other).toHaveFocus();
+    h.retarget({ channelId: "another-channel" });
+    expect(h.input()).toHaveFocus();
+    h.retarget({ channelId: "keyboard-navigation" });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("defers initial focus until an inert startup ancestor is revealed", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    expect(h.input()).not.toHaveFocus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(h.input()).toHaveFocus());
+  } finally {
+    document.body.removeAttribute("inert");
+  }
+});
+
+it("does not reclaim startup focus after another control takes it", async () => {
+  document.body.setAttribute("inert", "");
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true });
+    other.focus();
+    document.body.removeAttribute("inert");
+    await waitFor(() => expect(other).toHaveFocus());
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
+    other.remove();
+  }
+});
+
+it("does not take focus from a modal when the conversation mounts behind it", () => {
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  const search = document.createElement("input");
+  dialog.append(search);
+  document.body.append(dialog);
+  try {
+    search.focus();
+    mount({ autoFocus: true });
+    expect(search).toHaveFocus();
+  } finally {
+    dialog.remove();
+  }
+});
+
+it("restores the draft end through StrictMode replay without resetting a deliberate selection on updates", () => {
+  writeView("scope", "draft:channel", "Saved draft");
+  const h = mount({ autoFocus: true });
+  expect(h.input()).toHaveFocus();
+  expect(h.input().selectionStart).toBe("Saved draft".length);
+  expect(h.input().selectionEnd).toBe("Saved draft".length);
+  act(() => h.input().setSelectionRange(1, 4));
+  h.retarget({ channelName: "Renamed" });
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(4);
+  h.retarget({ channelId: "other" });
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).toHaveFocus();
+  expect(h.input().selectionStart).toBe("Saved draft".length);
+});
+
+it("lets an explicit focus restoration in the mount commit win", () => {
+  const h = mount();
+  h.unmount();
+  const target = document.createElement("button");
+  document.body.append(target);
+  function RestoreFocus() {
+    useLayoutEffect(() => target.focus(), []);
+    return null;
+  }
+  try {
+    render(
+      <>
+        <MessageComposer
+          session={h.session}
+          scope="scope"
+          channelId="channel"
+          channelName="General"
+          autoFocus
+        />
+        <RestoreFocus />
+      </>,
+      { reactStrictMode: true },
+    );
+    expect(target).toHaveFocus();
+  } finally {
+    target.remove();
+  }
+});
+
+it("leaves focus alone unless an enabled composer opts into mount focus", () => {
+  const h = mount();
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({
+    channelId: "disabled-channel",
+    disabled: true,
+    autoFocus: true,
+  });
+  expect(h.input()).not.toHaveFocus();
+});
 
 it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
   const h = mount();
@@ -950,6 +1166,123 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
+it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre > code")).not.toBeNull();
+  expect(h.input()).toHaveValue("");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
+  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\nconst answer = 42;\nanswer\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("pre")).toBeNull();
+});
+
+it("opens a bullet as `- ` is typed, continues it with Shift+Enter and sends the list on Enter", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("first");
+  expect(h.input()).toHaveValue("first");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}second{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first\n- second",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+  expect(h.input().querySelector("ul")).toBeNull();
+});
+
+it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
+  const h = mount();
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/plain" ? "```\ncode\n```" : "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue("```\ncode\n```");
+  await h.user.keyboard("{Enter}");
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "```\ncode\n```",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  await h.user.keyboard(
+    "Hello!{Shift>}{Enter}{Enter}{/Shift}acascac{Shift>}{Enter}{/Shift}a**a** _a_{Shift>}{Enter}{/Shift}- acacs{Shift>}{Enter}{Enter}{/Shift}",
+  );
+  expect(h.input().querySelector("pre code")).toHaveTextContent("Hello!");
+  expect(h.input().querySelector("strong")).toHaveTextContent("a");
+  expect(h.input().querySelector("em")).toHaveTextContent("a");
+  expect(h.input().querySelector("ul > li")).toHaveTextContent("acacs");
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 11; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nacascac\naa a\nacacs\n");
+    expect(h.input().innerHTML, label).toBe(html);
+    expect(h.messages.send, label).not.toHaveBeenCalled();
+  }
+});
+
 it("prefixes thread replies with the selected media time and clears it after send", async () => {
   const clearMediaTime = vi.fn();
   const h = mount({
@@ -1455,12 +1788,14 @@ it("revokes captured tool commands after retargeting, disabling and unmounting",
   act(() => {
     expect(channel.insertText("stale")).toBe(false);
     expect(channel.insertMention(first)).toBe(false);
+    expect(channel.insertResource(resource)).not.toBe(true);
   });
   expect(h.input()).toHaveValue("");
   const thread = h.commands();
   h.retarget({ disabled: true });
   act(() => {
     expect(thread.insertText("disabled")).toBe(false);
+    expect(thread.insertResource(resource)).not.toBe(true);
   });
   h.retarget({ disabled: false });
   act(() => {
@@ -1554,8 +1889,9 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       members: ["d".repeat(64)],
     };
     const listeners = new Set<() => void>();
-    // A Sessions parent invitation is a different operation, even for the same recipient.
+    // An acknowledged old invitation does not replace this explicit addition.
     const invitation: OutgoingEvent = {
+      acknowledged: true,
       delivery: "failed",
       event: {
         id: "c".repeat(64),
@@ -1578,7 +1914,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
             ...input,
             pubkey: "d".repeat(64),
             id: "e".repeat(64),
-            created_at: 1,
+            created_at: Math.floor(Date.now() / 1000),
           },
           delivery: "sending",
         },
@@ -1588,15 +1924,22 @@ for (const threadRootId of [undefined, "f".repeat(64)])
     const list = { status: "ready", channels: [channel] };
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: vi.fn(async () => {
-        if (operations[0]?.delivery === "accepted")
-          channel.members = [...channel.members, first.pubkey];
-        return [];
-      }),
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: {
+        refreshMembership: vi.fn(async () => {
+          if (operations[0]?.delivery === "accepted")
+            channel.members = [...channel.members, first.pubkey];
+          return channel;
+        }),
+      },
       outbox: {
         supports: () => true,
         send: add,
         retry,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
         snapshot: () => operations,
         subscribe: (fn: () => void) => {
           listeners.add(fn);
@@ -1604,21 +1947,40 @@ for (const threadRootId of [undefined, "f".repeat(64)])
         },
       },
     });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
+    });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       expect(add).not.toHaveBeenCalled();
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
-      expect(add).toHaveBeenCalledWith({
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", "channel"],
-          ["p", first.pubkey],
-          ["role", "bot"],
-        ],
-      });
-      expect(screen.getByText("Adding agent to this channel…")).toBeVisible();
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
+      expect(add).toHaveBeenCalledWith(
+        {
+          kind: 9000,
+          content: "",
+          tags: [
+            ["h", "channel"],
+            ["p", first.pubkey],
+            ["role", "bot"],
+          ],
+        },
+        { key: `member-add:channel:${first.pubkey}`, value: "1" },
+      );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(h.messages.reply).not.toHaveBeenCalled();
       await act(async () => {
@@ -1680,19 +2042,49 @@ it.each([false, true])(
       : [];
     Object.assign(h.session, {
       channels: { list: () => list, subscribeList: () => () => {} },
-      read: async () => [],
-      outbox: { supports: () => true, send: add, snapshot: () => operations },
+      viewer: "d".repeat(64),
+      archives: { state: () => "not-archived" },
+      workSessions: { refreshMembership: async () => list.channels[0] },
+      outbox: {
+        supports: () => true,
+        send: add,
+        snapshot: () => operations,
+        ready: async () => {},
+        recover: async () => {},
+        acknowledge: async () => {},
+      },
+    });
+    Object.assign(h.session, {
+      memberAdditions: createMemberAdditions(
+        new AbortController().signal,
+        (channelId, key, intent) =>
+          addChannelMember(
+            h.session,
+            channelId,
+            key,
+            new AbortController().signal,
+            intent,
+          ),
+        vi.fn(),
+      ),
     });
     try {
       fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
       fireEvent.submit(screen.getByRole("form"));
       await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      await act(async () => {});
       expect(screen.getByRole("alert")).toHaveTextContent(
-        expired ? "Open Outbox" : "Cannot add agent",
+        expired ? "addition expired" : "Cannot add agent",
       );
-      expect(h.input().value).toBe("@Honey ");
+      expect(
+        (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement)
+          .value,
+      ).toBe("@Honey ");
       expect(h.messages.send).not.toHaveBeenCalled();
       if (expired) expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await act(async () => {});
       expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
     } finally {
       control.dispose();
@@ -2029,6 +2421,7 @@ it("keeps retry submission available while a new-session draft is locked", () =>
       submit,
     },
   });
+  expect(document.querySelector("[data-reserve-typing]")).toBeNull();
   expect(h.input()).toHaveAttribute("aria-disabled", "true");
   const send = screen.getByRole("button", { name: "Send message" });
   expect(send).toBeEnabled();
@@ -2226,7 +2619,7 @@ it("keeps inline recipient identity and source stable through directory collisio
 });
 
 it.each([false, true])(
-  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  "asks before mentioning a removed person in an untyped channel without enrolling anyone (mixed native=%s)",
   async (mixed) => {
     const viewer = keypair(),
       relay = keypair();
@@ -2282,12 +2675,17 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      // An ordinary removed recipient must reject synchronously. Awaiting an
-      // async act here would hide a transient enrollment lock on the composer.
+      // An untyped channel is an ordinary channel: a removed recipient is now
+      // outside it, so the sender chooses. Nothing enrolls or sends meanwhile.
       h.submit();
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "no longer a channel member",
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        mixed
+          ? "Honey, Honey are not in this channel."
+          : "Honey is not in this channel.",
+      );
+      await userEvent.setup().keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
       expect(sign).not.toHaveBeenCalled();
@@ -2448,6 +2846,27 @@ it.each(["bullet_list", "ordered_list", "code_block"] as const)(
   },
 );
 
+it("saves an edited fenced message on Enter instead of opening a block from its closing fence", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage({ content: "```js\ncode\n```" })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("```js\ncode\n```");
+  act(() => {
+    h.input().setSelectionRange(10, 10);
+    h.input().insertText("!");
+    const end = h.input().value.length;
+    h.input().setSelectionRange(end, end);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+  expect(h.input().querySelector("pre")).toBeNull();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "```js\ncode!\n```",
+    "c".repeat(64),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
   const h = mount({}, undefined, first.pubkey);
   const row = editableMessage();
@@ -2516,21 +2935,74 @@ it.each(["changed", "deleted"])(
   },
 );
 
-it("does not publish blank or unchanged content and preserves attachment source", () => {
-  const h = mount({}, undefined, first.pubkey);
-  const sourceContent =
-    "Caption\n\n[report.pdf](https://files.test/report.pdf)";
-  h.setRows([editableMessage({ content: "Caption", sourceContent })]);
-  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-  expect(h.input()).toHaveValue(sourceContent);
-  h.fill(" ");
-  h.submit();
-  expect(screen.getByText("Editing message")).toBeVisible();
-  h.fill(sourceContent);
-  h.submit();
-  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
-  expect(h.messages.edit).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "does not publish blank or unchanged content and preserves attachment source (mention: %s)",
+  (mention) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setProfiles(
+      new Map([[second.pubkey, { id: second.pubkey, name: "Honey" }]]),
+    );
+    const caption = mention ? "@Honey Caption" : "Caption";
+    const sourceContent = `${caption}\n\n[report.pdf](https://files.test/report.pdf)`;
+    h.setRows([
+      editableMessage({
+        content: caption,
+        sourceContent,
+        mentions: mention ? [second.pubkey] : [],
+      }),
+    ]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    const seed = h.input().value;
+    expect(seed).toBe(
+      mention
+        ? sourceContent.replace(
+            "@Honey",
+            `[@Honey](${profileTarget(second.pubkey)})`,
+          )
+        : sourceContent,
+    );
+    h.fill(" ");
+    h.submit();
+    expect(screen.getByText("Editing message")).toBeVisible();
+    h.fill(seed);
+    fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+    expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+    expect(h.input()).toHaveValue("");
+    expect(h.messages.edit).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["changed", "deleted"])(
+  "keeps an unchanged mention edit open when the target is %s",
+  (state) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setProfiles(
+      new Map([[second.pubkey, { id: second.pubkey, name: "Honey" }]]),
+    );
+    const row = editableMessage({
+      content: "@Honey hello",
+      mentions: [second.pubkey],
+    });
+    h.setRows([row]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    const seed = h.input().value;
+    h.setRows(
+      state === "deleted"
+        ? []
+        : [{ ...row, content: "Another client edited this" }],
+    );
+    h.submit();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      state === "deleted"
+        ? "no longer available"
+        : "changed while you were editing",
+    );
+    expect(screen.getByText("Editing message")).toBeVisible();
+    expect(h.input()).toHaveValue(seed);
+    expect(h.messages.edit).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   { shiftKey: true },
@@ -2574,6 +3046,54 @@ it("does not replace a nonempty draft and confines channel/thread targets to the
   h.retarget({ channelId: "other", threadRootId: "another", editMessages: [] });
   expect(h.input()).toHaveValue("");
   expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "renders preserved mention links as chips when editing (already edited: %s)",
+  (edited) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setProfiles(
+      new Map([[second.pubkey, { id: second.pubkey, name: "Honey" }]]),
+    );
+    const link = `[@Honey](${profileTarget(second.pubkey)})`;
+    const content = `${edited ? link : "@Honey"} whats your name`;
+    h.setRows([
+      editableMessage({
+        content,
+        mentions: [second.pubkey],
+        ...(edited ? { edited: true as const } : {}),
+      }),
+    ]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveTextContent("Honey whats your name");
+    expect(h.input().textContent).not.toContain("nostr:");
+    expect(h.input().value).toBe(`${link} whats your name`);
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).not.toBeInTheDocument();
+    act(() => h.commands().insertText("?"));
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledWith(
+      "c".repeat(64),
+      `${link} whats your name?`,
+      "c".repeat(64),
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  (link: string) => `\`${link}\``,
+  (link: string) => `\`\`\`\n${link}\n\`\`\``,
+  () => "[@Honey](nostr:npub1invalid)",
+  () => "@Honey without signed identity",
+])("keeps literal or unbound edit text unchanged", (source) => {
+  const h = mount({}, undefined, first.pubkey);
+  const content = source(`[@Honey](${profileTarget(second.pubkey)})`);
+  h.setRows([editableMessage({ content })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input().textContent).toBe(content);
+  expect(h.input().querySelector(".inline-chip")).toBeNull();
 });
 
 it("inserts mention links without new notification recipients during edits", () => {
@@ -2653,6 +3173,51 @@ it("does not reopen a target with an unresolved edit after closing it", () => {
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).toHaveValue("");
   expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+});
+
+it("keeps the draft but blocks new messages while archived, then re-enables it on restore", async () => {
+  const h = mount();
+  let channel: ChannelSummary = { id: "channel", name: "General" };
+  let list = { status: "ready" as const, channels: [channel] };
+  const listeners = new Set<() => void>();
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        get: () => channel,
+        list: () => list,
+        subscribeList: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    },
+  });
+  h.fill("Draft survives archive");
+  const archive = (archived: true | undefined) =>
+    act(() => {
+      channel = {
+        id: "channel",
+        name: "General",
+        ...(archived ? { archived } : {}),
+      };
+      list = { ...list, channels: [channel] };
+      for (const listener of listeners) listener();
+    });
+  archive(true);
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  archive(undefined);
+  expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+  expect(h.input()).toHaveValue("Draft survives archive");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
 it.each(["archived", "readOnly"] as const)(
@@ -2781,8 +3346,7 @@ it("uses the full channel choice set for one selected chip and follows membershi
     providers = [
       {
         ...createAgentDirectory(),
-        resolve: () => "Alternative",
-        qualifier: () => undefined,
+        scope: () => () => ({ name: "Alternative" }),
       },
     ];
     policyChanged();
@@ -2803,4 +3367,1122 @@ it("uses the full channel choice set for one selected chip and follows membershi
   );
   h.unmount();
   names.dispose();
+});
+
+it("sends someone outside a DM as a reference without asking", async () => {
+  const h = mount();
+  const add = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    // A writer that could add members still cannot add anyone to a DM.
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(add).not.toHaveBeenCalled();
+});
+
+it("does not ask about outside recipients in a session media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without session
+  // mode, so the session rule must come from the channel type.
+  const h = mount({ threadRootId: "f".repeat(64) });
+  const add = vi.fn();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey, second.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  // The first person leaves the session after being named.
+  channel.members = [second.pubkey];
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+  expect(add).not.toHaveBeenCalled();
+});
+
+for (const channelType of ["stream", "forum"] as const)
+  it.each([undefined, "f".repeat(64)])(
+    `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
+    async (threadRootId) => {
+      const h = mount(threadRootId ? { threadRootId } : {});
+      const add = vi.fn();
+      const list = {
+        status: "ready",
+        channels: [
+          {
+            id: "channel",
+            channelType,
+            members: ["d".repeat(64), second.pubkey],
+          },
+        ],
+      };
+      Object.assign(h.session, {
+        channels: { list: () => list, subscribeList: () => () => {} },
+        memberAdditions: { add },
+        outbox: { ...h.session.outbox, supports: (kind: number) => kind === 9 },
+      });
+      act(() => {
+        h.commands().insertMention(first);
+        h.commands().insertMention(second);
+      });
+      fireEvent.submit(screen.getByRole("form"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // block/buzz parity: without permission, Invite is absent, not disabled.
+      expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "Honey is not in this channel. You cannot add people to this channel. You can still send without inviting them.",
+      );
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+      await act(async () => {});
+      const send = threadRootId ? h.messages.reply : h.messages.send;
+      expect(send).toHaveBeenCalledOnce();
+      expect(send.mock.calls[0]?.[threadRootId ? 3 : 2]).toEqual([
+        second.pubkey,
+      ]);
+      expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+it.each(["close", "escape"])(
+  "%s preserves the captured draft and returns focus without adding or sending",
+  async (action) => {
+    const h = mount();
+    const add = vi.fn();
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    const input = h.input();
+    fireEvent.submit(screen.getByRole("form"));
+    // block/buzz parity: one send action, one invite action, and no Cancel.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Do nothing" })).toHaveFocus(),
+    );
+    if (action === "close")
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    else await userEvent.setup().keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(input).toHaveValue("@Honey ");
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(add).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["retry", "unmount", "retarget", "disabled", "suspended"])(
+  "waits for confirmed addition and handles %s without duplicate sends",
+  async (outcome) => {
+    const h = mount();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async () => {
+      await gate;
+    });
+    if (outcome === "retry")
+      add.mockRejectedValueOnce(new Error("Membership not confirmed"));
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    try {
+      if (outcome === "retry") {
+        await screen.findByRole("alert");
+        expect(h.messages.send).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      }
+      expect(screen.getByRole("button", { name: "Do nothing" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Inviting…" })).toBeDisabled();
+      if (outcome === "unmount") h.unmount();
+      else if (outcome === "retarget") h.retarget({ channelId: "other" });
+      else if (outcome === "disabled") h.retarget({ disabled: true });
+      else if (outcome === "suspended") {
+        h.present(false);
+        expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      }
+    } finally {
+      await act(async () => release());
+    }
+    if (outcome === "suspended") {
+      h.present(true);
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      expect(h.input()).toHaveValue("@Honey ");
+    }
+    expect(add).toHaveBeenCalledTimes(outcome === "retry" ? 2 : 1);
+    expect(h.messages.send).toHaveBeenCalledTimes(outcome === "retry" ? 1 : 0);
+  },
+);
+
+it("disabled completion keeps the highlighted key and consumes Enter without sending", async () => {
+  const h = mount();
+  h.input().focus();
+  h.fill("!Honey");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No completion request");
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        { id: second.pubkey, label: "Second Honey", edit: { mention: second } },
+      ],
+    });
+  });
+  fireEvent.keyDown(h.input(), { key: "ArrowDown" });
+  act(() => {
+    publish({
+      items: [
+        { id: first.pubkey, label: "First Honey", edit: { mention: first } },
+        {
+          id: second.pubkey,
+          label: "Second Honey",
+          edit: { mention: second },
+          disabled: "Archived",
+        },
+      ],
+    });
+  });
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("option", { name: "Second Honey" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.input()).toHaveValue("!Honey");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("rejects a known archived recipient at send entry without clearing the draft", () => {
+  const h = mount();
+  let archived = false;
+  const snapshot = { status: "ready" as const, archived: [] as string[] };
+  h.retarget({
+    session: {
+      ...h.session,
+      archives: {
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        state: () => (archived ? "archived" : "not-archived"),
+        ensure: async () => {},
+        refresh: async () => {},
+        writable: false,
+        consent: vi.fn(),
+        request: vi.fn(),
+      },
+    },
+  });
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+  });
+  archived = true;
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(`@${first.name} `);
+  expect(
+    screen.getByText(
+      "A selected recipient is archived. Remove it before sending.",
+    ),
+  ).toBeVisible();
+});
+
+it("sends a resource between mentions and keeps both after a failed send", () => {
+  const h = mount();
+  act(() => {
+    const { insertMention, insertResource } = h.commands();
+    expect(insertMention(first)).toBe(true);
+    expect(insertResource(resource)).toBe(true);
+    expect(insertMention(second)).toBe(true);
+  });
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  h.submit();
+  expect(h.input()).toHaveTextContent("Resource: Fix login");
+  h.submit();
+  expect(h.messages.send.mock.calls.at(-1)?.slice(1, 3)).toEqual([
+    `@Honey [Fix login](${resource.uri}) @Honey `,
+    [first.pubkey, second.pubkey],
+  ]);
+});
+
+describe("project resource picker", () => {
+  const empty: readonly never[] = [];
+  const repository = {
+    type: "repo",
+    owner: resourceOwner,
+    dtag: "game",
+    address: `30617:${resourceOwner}:game`,
+    name: "Game repo",
+    description: "",
+    event: {} as never,
+  } satisfies Entity;
+  const project = {
+    ...repository,
+    type: "project",
+    dtag: "proj",
+    address: `30621:${resourceOwner}:proj`,
+    name: "Proj",
+  } satisfies Entity;
+  const item = {
+    id: resourceRoute.id,
+    kind: 1621,
+    pubkey: resourceOwner,
+    created_at: 5,
+    content: "Fix login",
+    tags: [
+      ["a", repository.address],
+      ["subject", "Fix login"],
+    ],
+  };
+  const row = /^Fix login, Issue in Game repo$/;
+  function picker(
+    home: () => Promise<unknown> = () =>
+      Promise.resolve({ status: "home", project }),
+  ) {
+    const h = mount({ extensions: undefined });
+    let release: (() => void) | undefined;
+    let fail: (() => void) | undefined;
+    const validations: AbortSignal[] = [];
+    const load = vi.fn(
+      (route: { type: string; tab?: string }, signal: AbortSignal) => {
+        if (route.type === "project")
+          return Promise.resolve({
+            items: route.tab === "prs" ? [] : [item],
+            repositories: [repository],
+            truncated: route.tab === "prs",
+          });
+        validations.push(signal);
+        return new Promise((resolve, reject) => {
+          release = () => resolve({});
+          fail = () => reject(new Error("offline"));
+        });
+      },
+    );
+    const homes = vi.fn(home);
+    Object.assign(h.session as object, { projects: { home: homes, load } });
+    const tools: readonly Contribution<ComposerTool>[] = [
+      {
+        id: "resources",
+        key: "projects/resources",
+        pluginId: "projects",
+        revision: "1",
+        title: "Issues and pull requests",
+        component: ResourcePicker,
+      },
+    ];
+    h.retarget({
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => empty, subscribe: () => () => {} },
+        completions: { snapshot: () => empty, subscribe: () => () => {} },
+      },
+    });
+    return {
+      h,
+      homes,
+      validations,
+      release: async () => {
+        await act(async () => {
+          release?.();
+        });
+      },
+      fail: async () => {
+        await act(async () => {
+          fail?.();
+        });
+      },
+      async open() {
+        const trigger = await screen.findByRole("button", {
+          name: "Add issue or pull request",
+        });
+        await waitFor(() => expect(trigger).not.toBeDisabled());
+        await h.user.click(trigger);
+        return trigger;
+      },
+    };
+  }
+
+  it("validates the chosen row, inserts it, closes and leaves focus in the draft", async () => {
+    const p = picker();
+    await p.open();
+    expect(
+      await screen.findByText(/Some issues or pull requests may be missing/),
+    ).toBeVisible();
+    const choice = await screen.findByRole("button", { name: row });
+    expect(choice).toHaveTextContent("Issue · Game repo");
+    // Synthetic coverage checks the guard, not native IME behavior.
+    const search = screen.getByRole("searchbox");
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+      fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      expect(p.validations).toHaveLength(0);
+    }
+    // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
+    await p.h.user.keyboard("{ArrowDown}");
+    expect(choice).toHaveFocus();
+    await p.h.user.click(screen.getByRole("searchbox"));
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+    await p.release();
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    expect(p.h.input()).toHaveTextContent("Resource: Fix login");
+    expect(p.h.input()).toHaveFocus();
+    p.h.submit();
+    expect(p.h.messages.send.mock.calls[0]?.[1]).toBe(
+      `[Fix login](${resource.uri}) `,
+    );
+  });
+
+  it("keeps focus in the popover while a clicked row is checked", async () => {
+    const p = picker();
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    expect(screen.getByRole("button", { name: row })).toBeDisabled();
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByText("Checking the chosen item…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await p.fail();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not check this item",
+    );
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.queryByText("Checking the chosen item…")).toBeNull();
+  });
+
+  it("keeps a rejected insertion in the popover with the host reason", async () => {
+    const p = picker();
+    p.h.fill("`ab`");
+    p.h.input().setSelectionRange(2, 2);
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    await p.release();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Links can't be added inside code or other Markdown here",
+    );
+    expect(screen.getByRole("button", { name: row })).toBeVisible();
+    expect(p.h.input()).toHaveValue("`ab`");
+  });
+
+  it("drops a pending choice when the composer is disabled and re-enabled", async () => {
+    const p = picker();
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    p.h.retarget({ disabled: true });
+    p.h.retarget({ disabled: false });
+    expect(p.validations[0]?.aborted).toBe(true);
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    await p.release();
+    expect(p.h.input()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("drops a pending choice on send instead of landing it in the next draft", async () => {
+    const p = picker();
+    p.h.fill("first message");
+    await p.open();
+    await p.h.user.click(await screen.findByRole("button", { name: row }));
+    await p.h.user.click(screen.getByRole("button", { name: /^Send/ }));
+    expect(p.h.messages.send.mock.calls[0]?.[1]).toBe("first message");
+    expect(p.validations[0]?.aborted).toBe(true);
+    await p.release();
+    expect(p.h.input()).toHaveValue("");
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+  });
+
+  it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
+    const none = picker(() => Promise.resolve({ status: "none" }));
+    await waitFor(() => expect(none.homes).toHaveBeenCalled());
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: "Add issue or pull request" }),
+    ).toBeNull();
+    cleanup();
+    let resolveHome: ((value: unknown) => void) | undefined;
+    const ambiguous = picker(() =>
+      resolveHome
+        ? new Promise((resolve) => {
+            resolveHome = resolve;
+          })
+        : Promise.resolve({ status: "ambiguous" }),
+    );
+    await ambiguous.open();
+    expect(
+      await screen.findByText(/belongs to more than one project/),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: row })).toBeNull();
+    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    resolveHome = () => {};
+    await ambiguous.h.user.click(
+      screen.getByRole("button", { name: "Retry project" }),
+    );
+    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    await act(async () => {
+      resolveHome?.({ status: "home", project });
+    });
+    expect(await screen.findByRole("button", { name: row })).toBeVisible();
+    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
+    cleanup();
+    const failed = picker(() => Promise.reject(new Error("offline")));
+    await failed.open();
+    const retry = await screen.findByRole("button", { name: "Retry project" });
+    const reads = failed.homes.mock.calls.length;
+    await failed.h.user.click(retry);
+    await waitFor(() =>
+      expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
+    );
+  });
+});
+
+it("keeps a composed message unchanged through caret keys at its end and refuses a Right Arrow committed as text in either form", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "Hello!");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}world");
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  const html = h.input().innerHTML;
+  for (let i = 0; i < 3; i++) await h.user.keyboard("{ArrowRight}");
+  for (const key of [
+    "ArrowLeft",
+    "ArrowUp",
+    "ArrowDown",
+    "Shift",
+    "Meta",
+    "Escape",
+  ])
+    await h.user.keyboard(`{${key}}`);
+  // jsdom does not model Home and End on a contenteditable element.
+  for (const key of ["Home", "End"]) {
+    fireEvent.keyDown(h.input(), { key, code: key });
+    fireEvent.keyUp(h.input(), { key, code: key });
+  }
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // The desktop build committed Right Arrow's raw keyboard-layout translation
+  // U+001D; AppKit's function-key character for the key is U+F703. Neither
+  // has a glyph, so each assertion names its form rather than the character.
+  for (const [label, character] of [
+    ["Right Arrow's layout translation U+001D", "\u001D"],
+    ["Right Arrow's function-key character U+F703", "\uF703"],
+  ] as const) {
+    let prevented = false;
+    act(() => {
+      h.input().focus();
+      prevented = !h.input().dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: character,
+        }),
+      );
+    });
+    expect(prevented, label).toBe(true);
+    expect(h.input(), label).toHaveValue("Hello!\nworld");
+    expect(h.input().innerHTML, label).toBe(html);
+  }
+  // The keydown such a press arrives as: `key` is the control character while
+  // `code` and the legacy key code still name Right Arrow. It is claimed before
+  // the native path can type it, and neither sends nor edits the message.
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(h.input(), {
+      key: "\u001D",
+      code: "ArrowRight",
+      keyCode: 39,
+    });
+  });
+  expect(prevented).toBe(true);
+  expect(h.input()).toHaveValue("Hello!\nworld");
+  expect(h.input().innerHTML).toBe(html);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("retires composer transients and revoked insert commands without replacing the editor or draft", async () => {
+  const h = mount();
+  h.fill("retained draft");
+  const editor = h.input();
+  const commands = h.commands();
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+  const focus = vi.spyOn(editor, "focus");
+  h.present(false);
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "First Honey", hidden: true }),
+  ).toBeNull();
+  act(() => {
+    expect(commands.insertText("late picker selection")).toBe(false);
+  });
+  h.present(true);
+  act(() => {
+    expect(commands.insertText("retired command after recovery")).toBe(false);
+  });
+  expect(h.input()).toBe(editor);
+  expect(editor).toHaveValue("retained draft");
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  await act(() => Promise.resolve());
+  expect(focus).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("restores the retained editor when the Link dialog closes normally", async () => {
+  const h = mount();
+  const editor = h.input();
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(editor).toHaveFocus());
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it("keeps a local attachment and its editor alive while presentation is suspended", async () => {
+  const h = mount();
+  let finish!: (value: {
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+    sha256: string;
+  }) => void;
+  const gate = new Promise<{
+    name: string;
+    url: string;
+    type: string;
+    size: number;
+    sha256: string;
+  }>((resolve) => {
+    finish = resolve;
+  });
+  let signal!: AbortSignal;
+  const upload = vi.fn(
+    (_file: File, _channel: string, current: AbortSignal) => {
+      signal = current;
+      return gate;
+    },
+  );
+  h.retarget({ session: { ...h.session, attachments: { upload } } });
+  const editor = h.input();
+  h.fill("kept with upload");
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: { files: [new NodeFile(["notes"], "notes.txt")] },
+  });
+  h.present(false);
+  expect(upload).not.toHaveBeenCalled();
+  expect(editor.isConnected).toBe(true);
+  expect(editor).toHaveValue("kept with upload");
+
+  h.present(true);
+  expect(h.input()).toBe(editor);
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Send a message to General" }),
+  );
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  try {
+    expect(signal.aborted).toBe(false);
+  } finally {
+    await act(async () =>
+      finish({
+        name: "notes.txt",
+        url: "https://relay.test/media/notes.txt",
+        type: "text/plain",
+        size: 5,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "kept with upload",
+    [],
+    [
+      {
+        name: "notes.txt",
+        url: "https://relay.test/media/notes.txt",
+        type: "text/plain",
+        size: 5,
+        sha256: "a".repeat(64),
+      },
+    ],
+  );
+  expect(signal.aborted).toBe(false);
+  expect(upload).toHaveBeenCalledOnce();
+});
+
+it("dismisses completion observations without reopening them on recovery", async () => {
+  const h = mount();
+  act(() => h.input().focus());
+  h.fill("!query");
+  h.publish(h.completionRequests.length - 1, "Completed choice");
+  expect(screen.getByText("Completed choice")).toBeInTheDocument();
+  const editor = h.input();
+  h.present(false);
+  expect(document.body.textContent).not.toContain("Completed choice");
+  h.present(true);
+  expect(h.input()).toBe(editor);
+  expect(editor).toHaveValue("!query");
+  expect(document.body.textContent).not.toContain("Completed choice");
+});
+
+it.each([undefined, "root"])(
+  "notifies draft retirement only after accepted %s cleanup persists, retrying without Send",
+  async (threadRootId) => {
+    const retired = vi.fn();
+    const h = mount({
+      ...(threadRootId ? { threadRootId } : {}),
+      onDraftSaved: retired,
+    });
+    h.fill("Accepted once");
+    const key = threadRootId
+      ? `draft:channel:thread:${threadRootId}`
+      : "draft:channel";
+    const stored = `buzz-view.v1:${JSON.stringify(["scope", key])}`;
+    const setItem = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key === stored) throw Error("no space");
+        setItem.call(this, key, value);
+      });
+    try {
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.onSend).toHaveBeenCalledOnce();
+      expect(retired).not.toHaveBeenCalled();
+      expect(h.input()).toHaveValue("");
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
+      fireEvent.submit(screen.getByRole("form"));
+      expect(
+        threadRootId ? h.messages.reply : h.messages.send,
+      ).toHaveBeenCalledOnce();
+    } finally {
+      fail.mockRestore();
+    }
+    await h.user.click(
+      screen.getByRole("button", { name: "Retry draft cleanup" }),
+    );
+    expect(retired).toHaveBeenCalledExactlyOnceWith(
+      threadRootId ? "reply-id" : "channel-id",
+    );
+    expect(h.onSend).toHaveBeenCalledOnce();
+    expect(readView("scope", key, "")).toMatchObject({ text: "" });
+  },
+);
+
+it.each([false, true])(
+  "allows successive sends with no saved revision while writes fail (remembered agent: %s)",
+  async (remembered) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const key = 'buzz-view.v1:["scope","draft:channel"]';
+    const original = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === key) throw Error("full");
+        original.call(this, name, value);
+      });
+    try {
+      h.fill("First message");
+      if (remembered)
+        await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledOnce();
+      expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
+      expect(h.input()).not.toHaveAttribute("contenteditable", "false");
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).not.toBeInTheDocument();
+      expect(localStorage.getItem(key)).toBeNull();
+      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 1);
+      if (remembered) {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Could not save this draft",
+        );
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeEnabled();
+        // Keep the actual inline recipient while appending new work.
+        await h.user.keyboard("Second message");
+      } else h.fill("Second message");
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledTimes(2);
+      expect(h.messages.send.mock.calls[1]?.[1]).toContain("Second message");
+      expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+        remembered ? [first.pubkey] : [],
+      );
+      expect(localStorage.getItem(key)).toBeNull();
+      expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
+      // Failed absence-only cleanup must not leave a session recovery lock.
+      h.retarget({ channelId: "other" });
+      h.retarget({ channelId: "channel" });
+      h.fill("After remount");
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
+
+it.each([false, true])(
+  "still saves the replacement of an absent draft when writes recover (remembered: %s)",
+  async (remembered) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("full");
+      });
+    try {
+      h.fill("Previously unsaved text");
+      if (remembered)
+        await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+      expect(
+        localStorage.getItem('buzz-view.v1:["scope","draft:channel"]'),
+      ).toBeNull();
+      h.messages.send.mockImplementationOnce(() => {
+        fail.mockRestore();
+        return "accepted";
+      });
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(readView("scope", "draft:channel", "missing")).toMatchObject({
+        text: remembered ? "@Honey " : "",
+      });
+      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      fail.mockRestore();
+    }
+  },
+);
+
+it.each(["captured", "cleanup"])(
+  "retains accepted recovery when the %s saved revision is unreadable",
+  async (unreadable) => {
+    const key = 'buzz-view.v1:["scope","draft:channel"]';
+    let blocked = unreadable === "captured";
+    const getItem = Storage.prototype.getItem;
+    const read = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, name) {
+        if (name === key && blocked) throw Error("unreadable");
+        return getItem.call(this, name);
+      });
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw Error("full");
+      });
+    try {
+      const retired = vi.fn();
+      const h = mount({ onDraftSaved: retired });
+      h.fill("Accepted but storage cannot be verified");
+      h.messages.send.mockImplementationOnce(() => {
+        blocked = true;
+        return "accepted";
+      });
+      await h.user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(h.messages.send).toHaveBeenCalledOnce();
+      expect(retired).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
+      await h.user.click(
+        screen.getByRole("button", { name: "Retry draft cleanup" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Retry draft cleanup" }),
+      ).toBeVisible();
+      expect(h.messages.send).toHaveBeenCalledOnce();
+    } finally {
+      read.mockRestore();
+      write.mockRestore();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a newer saved revision when accepted cleanup races a replacement (event: %s)",
+  async (notify) => {
+    const retired = vi.fn();
+    const h = mount({ onDraftSaved: retired });
+    h.fill("Send this body");
+    h.messages.send.mockImplementationOnce(() => {
+      const key = 'buzz-view.v1:["scope","draft:channel"]';
+      localStorage.setItem(key, JSON.stringify("Newer saved work"));
+      if (notify)
+        window.dispatchEvent(
+          new StorageEvent("storage", { storageArea: localStorage, key }),
+        );
+      return "accepted";
+    });
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.onSend).toHaveBeenCalledExactlyOnceWith("accepted");
+    expect(retired).not.toHaveBeenCalled();
+    expect(readView("scope", "draft:channel", "")).toBe("Newer saved work");
+    expect(h.input()).toHaveValue("Newer saved work");
+  },
+);
+
+it("compares before local edits and Send even if the storage event has not arrived", async () => {
+  const h = mount();
+  h.fill("Local body");
+  localStorage.setItem(
+    'buzz-view.v1:["scope","draft:channel"]',
+    JSON.stringify("Saved elsewhere"),
+  );
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  h.fill("Continue local edits");
+  expect(readView("scope", "draft:channel", "")).toBe("Saved elsewhere");
+  await h.user.click(screen.getByRole("button", { name: "Load saved draft" }));
+  expect(h.input()).toHaveValue("Saved elsewhere");
+});
+
+it("keeps the original draft after synchronous outbox rejection without a persistence callback", async () => {
+  const retired = vi.fn();
+  const h = mount({ onDraftSaved: retired });
+  h.fill("Rejected body");
+  h.messages.send.mockImplementationOnce(() => {
+    throw Error("outbox full");
+  });
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.onSend).not.toHaveBeenCalled();
+  expect(retired).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("Rejected body");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "Rejected body",
+  });
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+it("does not restore accepted cleanup over a replacement made while the composer was closed", async () => {
+  const h = mount();
+  h.fill("Already accepted");
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(
+      screen.getByRole("button", { name: "Retry draft cleanup" }),
+    ).toBeVisible();
+  } finally {
+    fail.mockRestore();
+  }
+  const session = h.session;
+  h.unmount();
+  writeView("scope", "draft:channel", "A replacement draft");
+  const reopened = mount({ session });
+  expect(reopened.input()).toHaveValue("A replacement draft");
+  expect(
+    screen.queryByRole("button", { name: "Retry draft cleanup" }),
+  ).not.toBeInTheDocument();
+});
+
+it("leaves active message-edit content alone and reconciles the draft on return", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("An edit, not a draft");
+  act(() => writeView("scope", "draft:channel", "Draft saved elsewhere"));
+  expect(h.input()).toHaveValue("An edit, not a draft");
+  expect(readView("scope", "draft:channel", "")).toBe("Draft saved elsewhere");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  expect(h.input()).toHaveValue("Draft saved elsewhere");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("does not apply ordinary draft reconciliation to submission-owned recovery", () => {
+  const submit = vi.fn();
+  const h = mount({
+    submission: {
+      draftKey: "session-retry",
+      recoveredDraft: { text: "Durable operation", recipients: [] },
+      locked: true,
+      disabled: false,
+      submit,
+    },
+  });
+  act(() => writeView("scope", "session-retry", "Disposable view state"));
+  expect(h.input()).toHaveValue("Durable operation");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(submit).toHaveBeenCalledExactlyOnceWith({
+    text: "Durable operation",
+    recipients: [],
+  });
+  expect(
+    screen.queryByRole("button", { name: "Load saved draft" }),
+  ).not.toBeInTheDocument();
+});
+
+it("rechecks the saved revision after held session admission before submitting", async () => {
+  const h = mount();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  const library = { status: "ready", identities: [first] };
+  let release = () => {};
+  const refreshMembership = vi.fn(
+    () =>
+      new Promise<typeof channel>((resolve) => {
+        release = () => resolve(channel);
+      }),
+  );
+  h.retarget({
+    sessionConversation: true,
+    session: {
+      ...h.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+      },
+      workSessions: { refreshMembership, addAgents: vi.fn() },
+    } as unknown as RelaySession,
+  });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  h.submit();
+  await waitFor(() => expect(refreshMembership).toHaveBeenCalledOnce());
+  try {
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    // Event delivery can lag a synchronous read in another page.
+    localStorage.setItem(
+      'buzz-view.v1:["scope","draft:channel"]',
+      JSON.stringify("New work during admission"),
+    );
+  } finally {
+    await act(async () => release());
+  }
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("changed elsewhere");
+  expect(readView("scope", "draft:channel", "")).toBe(
+    "New work during admission",
+  );
+});
+
+it("locks a nonempty remembered-agent follow-up until accepted draft cleanup succeeds", async () => {
+  const retired = vi.fn();
+  const h = mount({ onDraftSaved: retired });
+  vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+    new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
+  );
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const fail = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw Error("full");
+  });
+  try {
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("form"));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(retired).not.toHaveBeenCalled();
+  } finally {
+    fail.mockRestore();
+  }
+  await h.user.click(
+    screen.getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(readView("scope", "draft:channel", "")).toMatchObject({
+    text: "@Honey ",
+  });
+  expect(retired).toHaveBeenCalledOnce();
+  expect(h.messages.send).toHaveBeenCalledOnce();
 });

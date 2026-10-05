@@ -1,3 +1,4 @@
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
@@ -8,32 +9,43 @@ test.use({
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 
-test("automatic history starts before the top in a production broker session", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await expect(
-    page.getByRole("button", { name: "Retry live updates", exact: true }),
-  ).toHaveCount(0);
-  await history(page).hover();
-  for (let i = 0; i < 100 && !app.pending.length; i++) {
-    await page.mouse.wheel(0, -450);
-    await page.waitForTimeout(40);
-    if (
-      await history(page)
-        .getByRole("button", { name: "Loading older…", exact: true })
-        .count()
-    )
-      break;
-  }
-  await expect.poll(() => app.pending.length).toBe(1);
-  const top = await history(page).evaluate((e) => e.scrollTop);
-  app.report.measurements.push({ automaticRequestTop: top });
-  expect(top).toBeGreaterThan(1000);
-  app.pending.shift().release();
-  await settle(page);
-});
+const tall = test.extend({ tallMessages: true });
+
+tall(
+  "automatic history starts before the top in a production broker session",
+  async ({ page, app }) => {
+    await open(page, app);
+    await expect(
+      page.getByRole("button", { name: "Retry live updates", exact: true }),
+    ).toHaveCount(0);
+    await history(page).hover();
+    for (let i = 0; i < 100 && !app.pending.length; i++) {
+      const before = await history(page).evaluate((e) => e.scrollTop);
+      await page.mouse.wheel(0, -450);
+      // Each wheel step must land (scroll moves or the older page is
+      // requested) before the next one.
+      await expect
+        .poll(
+          async () =>
+            app.pending.length > 0 ||
+            (await history(page).evaluate((e) => e.scrollTop)) < before,
+        )
+        .toBe(true);
+      if (
+        await history(page)
+          .getByRole("button", { name: "Loading older…", exact: true })
+          .count()
+      )
+        break;
+    }
+    await expect.poll(() => app.pending.length).toBe(1);
+    const top = await history(page).evaluate((e) => e.scrollTop);
+    app.report.measurements.push({ automaticRequestTop: top });
+    expect(top).toBeGreaterThan(1000);
+    app.pending.shift().release();
+    await settle(page);
+  },
+);
 
 test("returning to the top continues history loading on wheel without a button", async ({
   page,
@@ -78,18 +90,12 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   // Remounting Channels captures the normal reading anchor in localStorage.
   // Reload gives a new session/finite head but preserves that user-owned anchor.
   await page.reload();
   app.pending.shift().release();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(history(page)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry live updates", exact: true }),
@@ -144,9 +150,8 @@ test.describe("quota retry without threshold-driven continuation", () => {
     await settle(page);
     expect(cursors()).toHaveLength(count);
     expect(browserCursors).toHaveLength(count);
-    await expect
-      .poll(() => performance.now())
-      .toBeGreaterThan(app.relay.rejected[0].until + 50);
+    // Only the broker lane holds older-page retries; it reopens at this bound.
+    await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
     await history(page)
       .getByRole("button", { name: "Load older messages", exact: true })
       .click();

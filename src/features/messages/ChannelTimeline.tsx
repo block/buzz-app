@@ -5,21 +5,67 @@ import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
+import { continuesMessageGroup } from "./message-grouping";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
-import { useReading } from "./use-reading";
+import { readingPositioned, useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { JumpToLatestButton } from "./JumpToLatestButton";
 
-const EDGE_HEIGHT = 56;
+// Native upward scrolling can start on a focused message link or button.
+// Inner scrollports own the key while they can move. At their top boundary,
+// native keyboard chaining differs by engine/OS, even with CSS containment.
+// Admit a candidate there; only observed history movement can leave follow.
+function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.defaultPrevented) return false;
+  const modified = event.altKey || event.ctrlKey || event.metaKey;
+  // ArrowUp includes native Command/Option/Control+Up variants; Control+Home
+  // is the Windows/Linux start chord. These are intent candidates: only an
+  // observed upward history scroll can actually leave bottom follow.
+  const upward =
+    event.key === "ArrowUp" ||
+    (!modified &&
+      (["PageUp", "Home"].includes(event.key) ||
+        (event.key === " " && event.shiftKey))) ||
+    (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey);
+  if (!upward) return false;
+  let target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target || !event.currentTarget.contains(target)) return false;
+  while (target && target !== event.currentTarget) {
+    if (
+      target.matches(
+        "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='listbox'], [role='slider'], [role='spinbutton']",
+      ) ||
+      (event.key === " " && target.matches("button, [role='button']"))
+    )
+      return false;
+    const style = getComputedStyle(target);
+    if (
+      ["auto", "scroll", "overlay"].includes(style.overflowY) &&
+      target.scrollTop > 0
+    )
+      return false;
+    target = target.parentElement;
+  }
+  return target === event.currentTarget;
+}
+
 type ReadingPosition = {
   offset: number;
   bottom: boolean;
@@ -73,10 +119,19 @@ export type ChannelTimelineProps = {
   scope: string;
   viewer?: string | undefined;
   queries: RelaySession;
+  /** A parent keyed by connection generation can preserve its timeline on cache promotion. */
+  continuityKey?: string | undefined;
   window: ChannelWindow;
+  launchPending?: boolean | undefined;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** One inline exact visit: focus the verified mounted row, without a page navigation. */
+  inlineTarget?:
+    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | undefined;
+  /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
+  transient?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -87,6 +142,7 @@ export type ChannelTimelineProps = {
     messageId: string,
     attachment: Attachment,
     seconds: number,
+    hasComments?: boolean,
   ): void;
 };
 
@@ -94,7 +150,11 @@ export type ChannelTimelineProps = {
 export function ChannelTimeline(props: ChannelTimelineProps) {
   return (
     <Timeline
-      key={messageViewKey(props.queries, props.scope, props.channelId)}
+      key={
+        props.continuityKey
+          ? JSON.stringify([props.continuityKey, props.scope, props.channelId])
+          : messageViewKey(props.queries, props.scope, props.channelId)
+      }
       {...props}
     />
   );
@@ -106,32 +166,52 @@ function Timeline({
   viewer,
   queries,
   window,
+  launchPending,
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  inlineTarget,
+  transient = false,
   navigation,
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
-    readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
+    transient
+      ? null
+      : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
-  const restoredAnchor = useRef<string | undefined>(undefined);
+  const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
-  const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
+  const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
     () => geometrySignature(window.rows, profiles, resolveName),
     [window.rows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
-  const focusedIndex = rows.findIndex((row) => row.id === focusedMessageId);
+  const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedIds((ids) => new Set(ids).add(id));
+    return () =>
+      setPinnedIds((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
+  }, []);
+  const keptIndices = rows.flatMap((row, index) =>
+    row.id === focusedMessageId || pinnedIds.has(row.id) ? [index] : [],
+  );
   const scroller = useRef<HTMLElement>(null);
+  const edge = useRef<HTMLDivElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
   const latest = useRef({ signature, width });
   latest.current = { signature, width };
@@ -141,8 +221,12 @@ function Timeline({
   const edges = useRef<{
     first?: string | undefined;
     last?: string | undefined;
-  }>({});
+    ids: ReadonlySet<string>;
+  }>({ ids: new Set() });
   const intent = useRef(0);
+  const upwardGesture = useRef<false | "candidate" | "moving">(false);
+  const gestureFrame = useRef<number | undefined>(undefined);
+  const touchY = useRef<number | undefined>(undefined);
   const measuredPosition = useRef<{
     offset: number;
     height: number;
@@ -153,6 +237,8 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
     (element: HTMLElement) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -161,22 +247,64 @@ function Timeline({
       const renderedAnchor = anchor
         ? rows.find(
             (row) =>
-              row.id === anchor ||
-              row.membershipRows?.some((member) => member.id === anchor),
+              row.id === anchor.id ||
+              row.membershipRows?.some((member) => member.id === anchor.id),
           )?.id
         : undefined;
       const position = positionAt(element, renderedAnchor);
+      // A removed saved row cannot keep a restoration alive once a visible row
+      // replaces it. A temporarily unmounted row is still pending measurement.
+      if (anchor && !renderedAnchor && position.anchor)
+        restoredAnchor.current = undefined;
+      // A settled standalone row no longer needs correction. Membership groups
+      // retain the logical anchor even when their representative is in place.
+      if (
+        anchor &&
+        position.anchor?.id === renderedAnchor &&
+        position.anchor?.y === anchor.y &&
+        element.scrollHeight - element.clientHeight - element.scrollTop > 1 &&
+        !rows.some((row) =>
+          row.membershipRows?.some((member) => member.id === anchor.id),
+        )
+      )
+        restoredAnchor.current = undefined;
+      // Virtua can emit the restoration scroll before mounting its visible
+      // range. An anchorless observation must not erase the saved reading intent.
+      // A reader gesture clears restoredAnchor before recording a new position.
+      if (anchor && !position.anchor) return;
+      // Cold estimates can leave too little height to reach the saved row/Y.
+      // A bottom clamp with that row still below its target is restoration,
+      // not reader intent. Reachable positions and new gestures remain free.
+      if (
+        anchor &&
+        position.anchor &&
+        position.anchor.id === renderedAnchor &&
+        position.anchor.y > anchor.y + 1 &&
+        element.scrollHeight - element.clientHeight - element.scrollTop <= 1
+      )
+        return;
       const previous = measuredPosition.current;
-      // List shrinkage can clamp scrollTop upward without reader movement. An
-      // upward offset beyond that clamp is input, including later events from
-      // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+      // Reflow can move the offset twice: the browser clamps a shrinking list,
+      // then Virtua corrects its measured rows. That combined movement can exceed
+      // the height delta, so a contracting list is not evidence of reader input.
+      // Explicit upward input wins even when shrink and reader movement share
+      // one observation. A link-opening click is not directional scroll intent.
       const movedUp =
         previous &&
-        element.clientWidth === previous.width &&
-        element.clientHeight === previous.viewport &&
-        element.scrollTop <
-          previous.offset + Math.min(0, element.scrollHeight - previous.height);
-      if (previous && follow.current && !movedUp) position.bottom = true;
+        (upwardGesture.current ||
+          (element.clientWidth === previous.width &&
+            element.clientHeight === previous.viewport &&
+            element.scrollHeight >= previous.height)) &&
+        element.scrollTop < previous.offset;
+      // One smooth key scroll or scrollbar drag can cross several frames.
+      // Keep observed upward movement until scrollend or a newer intent, even
+      // when its first event has not left the near-bottom threshold yet.
+      if (movedUp) upwardGesture.current = "moving";
+      if (follow.current && !movedUp && (previous || !userScrolled.current))
+        position.bottom = true;
+      // Restoration can scroll before Virtua measures rows beneath the anchor,
+      // briefly reaching the estimated bottom. Only reader input may follow.
+      if (restoredAnchor.current) position.bottom = false;
       savedPosition.current = position;
       follow.current = position.bottom;
       measuredPosition.current = {
@@ -188,15 +316,38 @@ function Timeline({
     },
     [rows],
   );
+  const updateJumpToLatest = useCallback((element: HTMLElement) => {
+    const bottom =
+      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+    setShowJumpToLatest(!bottom);
+    if (bottom) setNewMessageCount(0);
+  }, []);
+  const jumpToLatest = useCallback(() => {
+    if (!handle.current || !rows.length) return;
+    intent.current++;
+    follow.current = true;
+    restoredAnchor.current = undefined;
+    userScrolled.current = false;
+    upwardGesture.current = false;
+    scroller.current?.focus({ preventScroll: true });
+    setShowJumpToLatest(false);
+    setNewMessageCount(0);
+    handle.current.scrollToIndex(rows.length - 1, {
+      align: "end",
+    });
+  }, [rows.length]);
+  const inlineSignal = inlineTarget?.signal;
   const targetId =
-    navigation?.target.kind === "conversation"
+    inlineTarget?.messageId ??
+    (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
-      : undefined;
+      : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
     intent.current++;
     follow.current = false;
+    upwardGesture.current = false;
     restoredAnchor.current = undefined;
     settled.current = false;
     handle.current.scrollToIndex(targetIndex, { align: "center" });
@@ -206,14 +357,24 @@ function Timeline({
   }, [navigation]);
   const exactRevealed = useMessageReveal({
     scroller,
+    focus: !(
+      navigation?.target.kind === "conversation" &&
+      navigation.target.panel === "members"
+    ),
     settled,
     messageId: targetId,
-    signal: navigation?.signal,
+    signal: inlineSignal ?? navigation?.signal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     complete: completeTarget,
   });
-  useReading({ session: queries, channelId, scroller, settled });
+  useReading({
+    session: queries,
+    channelId,
+    scroller,
+    settled,
+    latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
+  });
   const prepend =
     !!edges.current.first &&
     edges.current.first !== rows[0]?.id &&
@@ -227,12 +388,17 @@ function Timeline({
       latest.current.signature,
       measured,
     );
-    let measuredSize = { width: 0, height: 0 };
+    let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
-      const next = { width: element.clientWidth, height: element.clientHeight };
+      const next = {
+        width: element.clientWidth,
+        height: element.clientHeight,
+        edgeHeight: edge.current?.getBoundingClientRect().height ?? 0,
+      };
       if (
         next.width === measuredSize.width &&
-        next.height === measuredSize.height
+        next.height === measuredSize.height &&
+        next.edgeHeight === measuredSize.edgeHeight
       )
         return;
       measuredSize = next;
@@ -242,10 +408,16 @@ function Timeline({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    if (edge.current) observer.observe(edge.current);
     return () => {
+      if (gestureFrame.current !== undefined)
+        cancelAnimationFrame(gestureFrame.current);
+      gestureFrame.current = undefined;
+      upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
-      writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      if (!transient)
+        writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -256,19 +428,75 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope]);
+  }, [channelId, geometry, scope, transient]);
+  // A reveal completes when its scroll runs. Until then it stays pending under
+  // the intent that scheduled it: a row update that cancels its frame (an echo,
+  // an edit, an older-history prepend) reschedules it, while any newer intent
+  // (reader input, jump to latest, a message target) retires it for good.
+  const revealed = useRef<string | undefined>(undefined);
+  const pendingReveal = useRef<{ id: string; intent: number } | undefined>(
+    undefined,
+  );
   useLayoutEffect(() => {
+    if (
+      pendingReveal.current &&
+      pendingReveal.current.intent !== intent.current
+    ) {
+      revealed.current = pendingReveal.current.id;
+      pendingReveal.current = undefined;
+    }
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
-    edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
+    const revealIndex =
+      revealMessageId && revealed.current !== revealMessageId
+        ? rows.findIndex(
+            (row) =>
+              row.id === revealMessageId ||
+              row.membershipRows?.some(
+                (member) => member.id === revealMessageId,
+              ),
+          )
+        : -1;
+    const previousIds = edges.current.ids;
+    const arrivals = prepend
+      ? 0
+      : rows.filter((row) => !previousIds.has(row.id)).length;
+    edges.current = {
+      first: rows[0]?.id,
+      last: rows.at(-1)?.id,
+      ids: new Set(rows.map((row) => row.id)),
+    };
     if (
-      (targetId && navigation && exactRevealed.current !== navigation.signal) ||
+      arrivals > 0 &&
+      previousIds.size > 0 &&
+      !follow.current &&
+      (!targetId ||
+        exactRevealed.current === (inlineSignal ?? navigation?.signal))
+    ) {
+      setNewMessageCount((count) => count + arrivals);
+    }
+    if (
+      (targetId &&
+        (inlineSignal || navigation) &&
+        exactRevealed.current !== (inlineSignal ?? navigation?.signal)) ||
       !size.width ||
       !size.height ||
       !rows.length ||
-      (settled.current && (!follow.current || prepend))
+      (revealIndex < 0 && settled.current && (!follow.current || prepend))
     )
       return;
+    // A send supersedes saved reading intent before the first scroll event.
+    // This effect also retains its height observer through late measurements.
+    if (revealIndex >= 0 && revealMessageId) {
+      intent.current++;
+      pendingReveal.current = { id: revealMessageId, intent: intent.current };
+      follow.current = true;
+      restoredAnchor.current = undefined;
+      savedPosition.current = { offset: 0, bottom: true };
+      measuredPosition.current = null;
+      userScrolled.current = false;
+      upwardGesture.current = false;
+    }
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
@@ -288,8 +516,9 @@ function Timeline({
                 row.membershipRows?.some((member) => member.id === anchor.id),
             )
           : -1;
-        if (anchor && index >= 0) {
-          restoredAnchor.current = rows[index]?.id;
+        const row = rows[index];
+        if (anchor && row) {
+          restoredAnchor.current = { id: row.id, y: anchor.y };
           handle.current.scrollToIndex(index, {
             align: "start",
             offset: -anchor.y,
@@ -297,7 +526,14 @@ function Timeline({
         } else handle.current.scrollTo(restore.offset);
         follow.current = false;
       } else if (follow.current) {
-        handle.current.scrollToIndex(rows.length - 1, { align: "end" });
+        handle.current.scrollToIndex(
+          revealIndex >= 0 ? revealIndex : rows.length - 1,
+          { align: "end" },
+        );
+        if (revealIndex >= 0) {
+          revealed.current = revealMessageId;
+          pendingReveal.current = undefined;
+        }
       }
     };
     let frame = requestAnimationFrame(() => {
@@ -307,6 +543,7 @@ function Timeline({
           recordPosition(scroller.current);
         if (!restore && !follow.current) {
           settled.current = true;
+          readingPositioned(scroller.current);
           return;
         }
         restorePosition();
@@ -322,6 +559,15 @@ function Timeline({
           observer = new MutationObserver(() => {
             if (list.style.height === height) return;
             height = list.style.height;
+            // Capture a native clamp while its shrink is still observable.
+            // Another append can grow the list before the queued scroll event.
+            if (
+              !restore &&
+              measuredPosition.current &&
+              intent.current === scheduledIntent &&
+              scroller.current
+            )
+              recordPosition(scroller.current);
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(restorePosition);
           });
@@ -332,10 +578,25 @@ function Timeline({
         }
       }
       settled.current = true;
+      readingPositioned(scroller.current);
+      if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
+      // A row refresh can arrive before the first deferred measurement or
+      // cancel its correction. Keep restoration until newer reader input.
+      if (restore && !follow.current && intent.current === scheduledIntent) {
+        // Carry the original geometry with the resolved membership identity.
+        savedPosition.current =
+          restore.anchor && restoredAnchor.current
+            ? {
+                ...restore,
+                anchor: { ...restore.anchor, id: restoredAnchor.current.id },
+              }
+            : restore;
+        settled.current = false;
+      }
     };
   }, [
     rows,
@@ -344,30 +605,11 @@ function Timeline({
     recordPosition,
     targetId,
     navigation,
+    inlineSignal,
     exactRevealed,
+    updateJumpToLatest,
+    revealMessageId,
   ]);
-  const revealed = useRef<string | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (!width || !revealMessageId || revealed.current === revealMessageId)
-      return;
-    const index = rows.findIndex(
-      (row) =>
-        row.id === revealMessageId ||
-        row.membershipRows?.some((member) => member.id === revealMessageId),
-    );
-    if (index < 0) return;
-    // A local send is explicit navigation intent, even when reading older messages.
-    // Wait for the optimistic row and virtualizer to mount before revealing it.
-    const frame = requestAnimationFrame(() => {
-      if (!handle.current) return;
-      follow.current = true;
-      restoredAnchor.current = undefined;
-      userScrolled.current = false;
-      handle.current.scrollToIndex(index, { align: "end" });
-      revealed.current = revealMessageId;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [revealMessageId, rows, width]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -405,11 +647,27 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
-  const gesture = () => {
+  const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
     intent.current++;
-    if (scroller.current) recordPosition(scroller.current);
     userScrolled.current = true;
+    if (scroller.current) recordPosition(scroller.current);
+    upwardGesture.current = upward ? "candidate" : false;
+    if (gestureFrame.current !== undefined)
+      cancelAnimationFrame(gestureFrame.current);
+    gestureFrame.current = undefined;
+    if (upward)
+      gestureFrame.current = requestAnimationFrame(() => {
+        gestureFrame.current = undefined;
+        // Input is only a candidate: an inner scrollport can consume it without
+        // moving history or emitting scrollend. Sample native movement before
+        // retiring the candidate so input+shrink still wins in this observation,
+        // even when the browser has not delivered its scroll event yet.
+        if (upwardGesture.current && scroller.current)
+          recordPosition(scroller.current);
+        if (upwardGesture.current === "candidate")
+          upwardGesture.current = false;
+      });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
@@ -417,12 +675,28 @@ function Timeline({
   return (
     <section
       ref={scroller}
+      data-message-scroller
       className={styles.feed}
       data-channel-timeline={channelId}
-      onWheel={gesture}
-      onTouchMove={gesture}
-      onKeyDown={gesture}
-      onPointerDown={gesture}
+      data-buzz-launch-pending={launchPending ? "settling" : undefined}
+      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
+      onTouchStart={(event) => {
+        touchY.current = event.touches[0]?.clientY;
+      }}
+      onTouchMove={(event) => {
+        const next = event.touches[0]?.clientY;
+        gesture(
+          next !== undefined &&
+            touchY.current !== undefined &&
+            next > touchY.current,
+        );
+        touchY.current = next;
+      }}
+      onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
+      onPointerDown={() => gesture()}
+      onScrollEnd={() => {
+        upwardGesture.current = false;
+      }}
       onFocus={(event) => {
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
@@ -446,11 +720,12 @@ function Timeline({
           element.clientHeight === size.height
         ) {
           recordPosition(element);
+          updateJumpToLatest(element);
         }
         loadNearTop(element);
       }}
     >
-      <div className={styles.edge}>
+      <div ref={edge} className={styles.edge}>
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
@@ -469,24 +744,28 @@ function Timeline({
           </Button>
         ) : null}
       </div>
+      <JumpToLatestButton
+        visible={showJumpToLatest}
+        newMessageCount={newMessageCount}
+        onClick={jumpToLatest}
+      />
       {width > 0 && (
         <Virtualizer
           ref={handle}
           scrollRef={scroller}
           shift={prepend}
           bufferSize={1600}
-          // Reflow must not evict the focused control and drop keyboard focus.
-          keepMounted={focusedIndex < 0 ? [] : [focusedIndex]}
+          // Reflow must not evict the focused control or a row's open report.
+          keepMounted={keptIndices}
           as="ol"
           item="li"
-          startMargin={EDGE_HEIGHT}
+          startMargin={size.edgeHeight}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {rows.map((row, index) => {
             const day =
               index === 0
-                ? queries.channels.get?.(channelId)?.channelType !== "dm" ||
-                  window.hasMore
+                ? true
                 : new Date(
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
@@ -505,6 +784,11 @@ function Timeline({
               />
             ) : (
               <MessageRow
+                layout={
+                  continuesMessageGroup(rows[index - 1], row)
+                    ? "continuation"
+                    : "timeline"
+                }
                 session={queries}
                 scope={scope}
                 key={row.id}
@@ -520,6 +804,7 @@ function Timeline({
                 onOpenThread={onOpenThread}
                 {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                 retry={queries.outbox?.retry}
+                keepMounted={keepRowMounted}
                 day={day}
               />
             );

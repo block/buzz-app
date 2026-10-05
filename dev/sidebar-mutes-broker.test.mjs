@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
+import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarMute } from "./sidebar-mutes.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
@@ -72,7 +73,11 @@ async function harness({ connected = true } = {}) {
       calls.push({ url: String(url), body });
       expect(new URL(url).pathname).toBe("/query");
       if (queryFailure) return queryFailure;
-      const head = heads.get(body[0]["#d"][0]);
+      // Model an empty stale replica: only strong reads observe the writer head.
+      const head =
+        body[0].consistency === "strong"
+          ? heads.get(body[0]["#d"][0])
+          : undefined;
       return Response.json(head ? [head] : []);
     },
   }).configureServer({
@@ -144,7 +149,13 @@ it("real broker Mute roundtrip signs scoped requests and confirms before project
     "/query",
   ]);
   expect(h.calls[0].body).toEqual([
-    { kinds: [30078], authors: [h.viewer], "#d": ["channel-mutes"], limit: 1 },
+    {
+      kinds: [30078],
+      authors: [h.viewer],
+      "#d": ["channel-mutes"],
+      limit: 1,
+      consistency: "strong",
+    },
   ]);
   expect(
     await h.transport.writeSidebarMute(
@@ -158,6 +169,9 @@ it("real broker Mute roundtrip signs scoped requests and confirms before project
     signal,
   );
   expect(h.calls.filter((call) => call.url === "socket:EVENT")).toHaveLength(2);
+  const queries = h.calls.filter(({ url }) => url.endsWith("/query"));
+  expect(queries).toHaveLength(5);
+  for (const { body } of queries) expect(body).toEqual(h.calls[0].body);
 });
 it("refuses invalid intent and foreign origins without upstream requests", async () => {
   const h = await harness();
@@ -179,7 +193,7 @@ it.each(["query", "oversized", "rejection", "disconnect", "conflict"])(
     if (failure === "query")
       h.failQuery(new Response("failed", { status: 503 }));
     if (failure === "oversized")
-      h.failQuery(new Response(`[${" ".repeat(270000)}]`));
+      h.failQuery(new Response(`[${" ".repeat(SIDEBAR_HEAD_BYTES)}]`));
     if (["rejection", "disconnect"].includes(failure))
       h.failPublication(failure);
     if (failure === "conflict") h.conflict();

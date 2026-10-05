@@ -3,7 +3,6 @@ import "@testing-library/jest-dom/vitest";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import { composerDOMFixture } from "../messages/composer-testing";
 
-composerDOMFixture();
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -35,6 +34,8 @@ import { NewMessage } from "./NewMessage";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
 import { createRelayProfiler } from "../relay/profiling";
 import { readView, writeView } from "../../shared/view-state";
+
+composerDOMFixture();
 
 const viewer = keypair(),
   other = keypair(),
@@ -148,6 +149,7 @@ function setup(
       <NewMessage
         session={owner.session}
         scope={scope}
+        onOpened={vi.fn()}
         onStarted={onStarted}
         extensions={extensions}
       />,
@@ -585,8 +587,9 @@ it.each(["picker", "completion"])(
     expect(
       second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
     ).not.toBeInTheDocument();
-    if (path === "picker") await t.user.keyboard("{Escape}");
-    else await t.user.keyboard(" ");
+    // Dismiss the suggestions without replacing the existing mention in jsdom.
+    await t.user.keyboard("{Escape}");
+    expect(composer()).toHaveTextContent("@Zoe");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(

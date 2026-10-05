@@ -1,3 +1,4 @@
+import { canonicalDetailsName } from "./channel-details-protocol";
 import { sessionDescription } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
@@ -15,8 +16,14 @@ export function createWorkSessions(
   signal: AbortSignal,
   receipts?: Pick<Outbox, "snapshot" | "subscribe">,
   confirmCreation?: (id: string) => Promise<boolean>,
-  agentKeys?: () => readonly string[],
+  /** Forward-looking agent choices plus the base archive rule for admissions. */
+  agents?: {
+    selectable: () => readonly string[];
+    archived: (pubkey: string) => boolean;
+  },
   relayAuthor?: string,
+  /** Signed roster discovery, including channels this viewer cannot open. */
+  discovery: RelayReader = reader,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -35,13 +42,19 @@ export function createWorkSessions(
     id: string,
     active?: () => boolean,
     addition = false,
+    retry = true,
   ) {
     const check = () => {
       if (active?.() === false)
         throw new DOMException("Channel addition cancelled", "AbortError");
     };
     check();
-    const source = writer(addition);
+    // Recipe and Canvas saves share delivery, not channel-creation authority.
+    if (signal.aborted || !outbox)
+      throw new Error(
+        "The community connection cannot confirm this operation.",
+      );
+    const source = addition ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {
@@ -49,7 +62,10 @@ export function createWorkSessions(
         check();
         return;
       }
-      const events = await reader.read([{ ids: [id], limit: 1 }], { signal });
+      const events = await reader.read(
+        [{ ids: [id], limit: 1, consistency: "strong" }],
+        { signal },
+      );
       if (events.some((event) => event.id === id)) {
         check();
         return;
@@ -75,8 +91,13 @@ export function createWorkSessions(
         // by a stale roster. The verified reader applies signed discovery first.
         const events = await reader.read(
           [
-            { kinds: [39000, 39002], "#d": [channelId], limit: 2 },
-            { ids: [id], limit: 1 },
+            {
+              kinds: [39000, 39002],
+              "#d": [channelId],
+              limit: 2,
+              consistency: "strong",
+            },
+            { ids: [id], limit: 1, consistency: "strong" },
           ],
           { signal },
         );
@@ -91,6 +112,16 @@ export function createWorkSessions(
         }
       }
       check();
+      if (!retry) {
+        const events = await reader.read(
+          [{ ids: [id], limit: 1, consistency: "strong" }],
+          { signal },
+        );
+        if (events.some((event) => event.id === id)) return;
+        throw new Error(
+          existing.error ?? "The operation could not be confirmed.",
+        );
+      }
       if (active) source.retry(id, active);
       else source.retry(id);
     }
@@ -142,6 +173,15 @@ export function createWorkSessions(
     });
     check();
   }
+  /** Resolves once the channel list shows `id` with the expected membership.
+   * Admission never comes from the command's acknowledgment: the list must
+   * carry a relay-signed roster. When discovery has already made the list
+   * ready, that evidence arrives by an exact one-channel read first: the
+   * store's `resolve` (metadata and roster) for a channel the list lacks, or
+   * its `refreshRoster` (roster only) for a channel it already carries, such
+   * as one an agent was just added to. Otherwise, or when that read leaves the
+   * gate unsatisfied, the full viewer-roster discovery runs. All three apply
+   * through the same discovery path. */
   async function refresh(
     id: string,
     expected: {
@@ -152,12 +192,18 @@ export function createWorkSessions(
     sessionOnly = true,
   ) {
     writer(!sessionOnly);
+    let settled = false;
+    // Aborted once the gate decides, so a still-running exact read releases
+    // its reader slot instead of holding it until the connection closes.
+    const exact = new AbortController();
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
+        settled = true;
         unsubscribe();
         clearTimeout(timer);
         signal.removeEventListener("abort", abort);
+        exact.abort();
         error ? reject(error) : resolve();
       };
       const abort = () => done(new Error("The community connection changed."));
@@ -198,7 +244,41 @@ export function createWorkSessions(
       if (signal.aborted) abort();
       else inspect(false); // An earlier roster error does not decide this retry.
     });
-    channels.refreshList?.();
+    // The gate may time out or abort while a read is in flight; its rejection
+    // stays observed here and is rethrown below.
+    const gate = wait.catch(() => {});
+    // The exact read extends a list discovery has already made ready. Any other
+    // status (idle, loading, error) needs the full pass to become ready at all,
+    // and that pass carries the new channel; the store's exact reads would
+    // otherwise commit a ready list holding only this channel and, after a
+    // failed initial discovery, hide the error the user still needs to retry.
+    if (!settled && channels.list().status === "ready") {
+      // A channel the ready list carries is one the store authorizes. Its
+      // `resolve` skips such ids (they carry cached-denial semantics), so a
+      // member addition re-reads that one roster through `refreshRoster`; a
+      // channel the list lacks (just created) is admitted by `resolve`'s exact
+      // metadata-and-roster read.
+      const listed = channels
+        .list()
+        .channels.some((channel) => channel.id === id);
+      await Promise.race([
+        gate,
+        (async () => {
+          try {
+            const options = {
+              signal: AbortSignal.any([signal, exact.signal]),
+              consistency: "strong" as const,
+            };
+            await (listed
+              ? channels.refreshRoster?.(id, options)
+              : channels.resolve?.([id], options));
+          } catch {
+            // A failed or stale exact read leaves the decision to discovery.
+          }
+        })(),
+      ]);
+    }
+    if (!settled) channels.refreshList?.({ consistency: "strong" });
     await wait;
   }
   async function refreshMembership(id: string) {
@@ -206,7 +286,15 @@ export function createWorkSessions(
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(
-      [{ kinds: [39002], authors: [relayAuthor], "#d": [id], limit: 1 }],
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
       { signal, fresh: true, priority: "foreground" },
     );
     const channel =
@@ -226,6 +314,76 @@ export function createWorkSessions(
         "Could not refresh channel membership. Retry to continue.",
       );
     return channel;
+  }
+  /** Channel IDs whose relay-signed roster lists `pubkey`, as far as this viewer
+   * may read. Throws rather than return a possibly truncated set. */
+  async function memberChannels(pubkey: string, caller: AbortSignal) {
+    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    const limit = 500;
+    const events = await discovery.read(
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#p": [pubkey],
+          limit,
+          consistency: "strong",
+        },
+      ],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    if (events.length >= limit)
+      throw new Error("Too many channels to confirm. Retry later.");
+    const ids = new Set<string>();
+    for (const event of events) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (
+        id &&
+        event.kind === 39002 &&
+        event.pubkey === relayAuthor &&
+        event.tags.some(([name, value]) => name === "p" && value === pubkey)
+      )
+        ids.add(id);
+    }
+    return [...ids];
+  }
+  /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
+   * when no roster is readable, so missing evidence never counts as absence. */
+  async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
+    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    const events = await discovery.read(
+      [
+        {
+          kinds: [39002],
+          authors: [relayAuthor],
+          "#d": [id],
+          limit: 1,
+          consistency: "strong",
+        },
+      ],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    const roster = events.find(
+      (event) =>
+        event.kind === 39002 &&
+        event.pubkey === relayAuthor &&
+        event.tags.some(([name, value]) => name === "d" && value === id),
+    );
+    if (!roster)
+      throw new Error(
+        "Could not refresh channel membership. Retry to continue.",
+      );
+    return roster.tags.some(
+      ([name, value]) => name === "p" && value === pubkey,
+    );
   }
   async function addAgents(
     id: string,
@@ -253,12 +411,21 @@ export function createWorkSessions(
       !["stream", "forum", "session"].includes(parent.channelType ?? "")
     )
       throw new Error("Refresh the parent channel before adding agents.");
-    const known = new Set(agentKeys?.() ?? []);
+    // Archive state applies to every new admission, even for parent members;
+    // unknown archive state fails open to the library/parent-member rule.
+    if (unique.some((key) => agents?.archived(key)))
+      throw new Error("This agent is archived. Choose another agent.");
+    const known = new Set(agents?.selectable() ?? []);
     if (unique.some((key) => !parent.members?.includes(key) && !known.has(key)))
       throw new Error("Choose an agent from your agent library.");
     // Parent metadata organizes the UI; both channels keep their own rosters.
     const targets = parentId !== id ? [parentId, id] : [parentId];
+    // Each target's additions are published and acknowledged in turn, parent
+    // first. Their roster confirmations then run together: one exact read per
+    // target, concurrently, rather than a serial gate after every command.
+    const confirmations: [string, string[]][] = [];
     for (const targetId of targets) {
+      const added: string[] = [];
       for (const key of unique) {
         if (active?.() === false)
           throw new DOMException("Channel addition cancelled", "AbortError");
@@ -310,9 +477,15 @@ export function createWorkSessions(
         await delivered(operation, active, true);
         if (active?.() === false)
           throw new DOMException("Channel addition cancelled", "AbortError");
-        await refresh(targetId, { member: key }, false);
+        added.push(key);
       }
+      if (added.length) confirmations.push([targetId, added]);
     }
+    await Promise.all(
+      confirmations.map(([targetId, members]) =>
+        refresh(targetId, { members }, false),
+      ),
+    );
     if (original?.channelType === "session")
       await refresh(id, {
         members: unique,
@@ -323,16 +496,19 @@ export function createWorkSessions(
     available,
     addAgents,
     refreshMembership,
+    memberChannels,
+    listsMember,
     createChannel(
       id: string,
       title: string,
       visibility: "open" | "private",
       description?: string,
       ttlSeconds?: number,
+      active?: () => boolean,
     ) {
       writer();
       identifier(id);
-      const name = title.trim();
+      const name = canonicalDetailsName(title);
       const about = description?.trim();
       if (!name || [...name].length > 120)
         throw new Error("Use a channel name between 1 and 120 characters.");
@@ -347,18 +523,22 @@ export function createWorkSessions(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid temporary channel duration.");
-      return writer().send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", name],
-          ["visibility", visibility],
-          ["channel_type", "stream"],
-          ...(about ? [["about", about]] : []),
-          ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
-        ],
-      });
+      return writer().send(
+        {
+          kind: 9007,
+          content: "",
+          tags: [
+            ["h", id],
+            ["name", name],
+            ["visibility", visibility],
+            ["channel_type", "stream"],
+            ...(about ? [["about", about]] : []),
+            ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
+          ],
+        },
+        undefined,
+        active,
+      );
     },
     create(id: string, title: string, parentId?: string) {
       writer();
@@ -391,7 +571,7 @@ export function createWorkSessions(
         );
       if (!/^[0-9a-f]{64}$/.test(pubkey))
         throw new Error("Choose a valid participant.");
-      if (!new Set(agentKeys?.() ?? []).has(pubkey))
+      if (!new Set(agents?.selectable() ?? []).has(pubkey))
         throw new Error("Choose an agent from your agent library.");
       return writer().send({
         kind: 9000,

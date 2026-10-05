@@ -12,6 +12,7 @@ import type { PageNavigation } from "../navigation/service";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
+import { useMessageEditScope } from "../messages/MessageEditScope";
 import { MessageRow } from "../messages/MessageRow";
 import { useMessageReveal } from "../messages/use-message-reveal";
 import { useReading } from "../messages/use-reading";
@@ -60,7 +61,16 @@ export function SessionMessageTarget(props: Props) {
     }
   }, [session, channelId, messageId, navigation]);
   return (
-    <div className={styles.timeline}>
+    <div
+      className={styles.timeline}
+      data-buzz-launch-pending={
+        failed !== navigation &&
+        !navigation.signal.aborted &&
+        owned?.request !== navigation
+          ? "required"
+          : undefined
+      }
+    >
       <div className={styles.targetNavigation}>
         <span>Selected message</span>
         <Button type="button" onClick={props.onLatest}>
@@ -97,6 +107,24 @@ function SelectedMessage({
     view.snapshot,
     view.snapshot,
   );
+  const editor = useMessageEditScope();
+  useEffect(() => {
+    if (!editor) return;
+    // Read the exact owner's current projection at edit time, not a captured row
+    // or a timeline insertion. Aborted/deleted targets must stay unavailable.
+    const exactRows = () => {
+      const current = view.snapshot();
+      return !navigation.signal.aborted &&
+        current.targetStatus === "ready" &&
+        current.target
+        ? [current.target]
+        : [];
+    };
+    editor.exactRows = exactRows;
+    return () => {
+      if (editor.exactRows === exactRows) editor.exactRows = undefined;
+    };
+  }, [editor, view, navigation]);
   const target =
     snapshot.targetStatus === "ready" ? snapshot.target : undefined;
   const rows = useMemo(() => (target ? [target] : []), [target]);
@@ -125,12 +153,27 @@ function SelectedMessage({
   useEffect(() => {
     if (target)
       void session.profiles
-        .ensure([target.authorId, ...target.mentions], "background")
+        .ensure(
+          [
+            target.authorId,
+            ...target.mentions,
+            ...(target.mentionReferences ?? []),
+          ],
+          "background",
+        )
         .catch(() => {});
   }, [session, target]);
   return (
     <section
       ref={scroller}
+      data-message-scroller
+      data-buzz-launch-pending={
+        !target &&
+        snapshot.targetStatus !== "unavailable" &&
+        snapshot.targetStatus !== "error"
+          ? "required"
+          : undefined
+      }
       className={messages.feed}
       aria-label="Selected session message"
     >

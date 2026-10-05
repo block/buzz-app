@@ -3,7 +3,9 @@ import {
   type MemoryReader,
   type MemoryListing,
 } from "../agents/memory";
-import { brokerUpload, type AttachmentUpload } from "./attachments";
+import { publicationRefusal } from "../developer/traffic";
+import { avatarSource } from "../../shared/avatar-source";
+import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
@@ -19,9 +21,11 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  type SidebarAssignmentMutator,
+  type SidebarStarMutator,
   type SidebarSortMutator,
-  type SidebarMuteMutator,
   type SidebarDecoder,
+  type SidebarMuteMutator,
   type SidebarPreferences,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
@@ -35,6 +39,7 @@ import {
   presenceText,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
+import { clientMetrics } from "../developer/client-metrics";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import {
   subscribeRelayTraffic,
@@ -65,6 +70,11 @@ export interface RelayWriter {
 export interface ReadTransport {
   readonly projectGit?: ProjectGit;
   readonly readAgentMemories?: MemoryReader;
+  /** Session-scoped owner proof, not an arbitrary signing capability. */
+  readonly authorizeAgentLog?: (
+    target: { id: string; pubkey: string; relayUrl: string },
+    nonce: string,
+  ) => Promise<string>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -74,6 +84,11 @@ export interface ReadTransport {
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
+  /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
+  readonly channelDetails?: RelayWriter;
+  readonly memberAdministration?: RelayWriter;
+  /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
+  readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Explicit relay-advertised session command support. */
@@ -90,7 +105,12 @@ export interface ReadTransport {
     requestId: string,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
-  /** Broker-only, complete bounded presence read. null is a local admission skip. */
+  /** Demand-scoped verified ephemeral events on the session-owned socket. */
+  observePresence?(
+    authors: readonly string[],
+    receive: (event: RelayEvent) => void,
+  ): () => void;
+  /** Complete bounded presence read. null is a local admission skip. */
   presenceSnapshot?(
     authors: readonly string[],
     signal: AbortSignal,
@@ -99,6 +119,9 @@ export interface ReadTransport {
     "online" | "away" | "offline" | "unknown"
   > | null>;
   readonly writeSidebarMute?: SidebarMuteMutator;
+  /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
+  readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -135,6 +158,7 @@ export function mediaUrl(
   relayOrigin: string | undefined,
   size?: "small",
 ): string | undefined {
+  if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
     const media =
       size === "small"
@@ -147,6 +171,12 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
+  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
+  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
+  /** Native hosts sign and send `PUT /upload` for these exact bytes. */
+  upload?(file: File, signal: AbortSignal): Promise<Response>;
+  /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
+  media?(url: string): string;
 }
 
 /** The host's explicit HTTP base wins; otherwise translate the ws(s) relay URL's scheme. */
@@ -180,10 +210,78 @@ async function parseEvents(
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    events.push(...raw.slice(index, index + 12).map(verify));
+    const started = performance.now();
+    const batch = raw.slice(index, index + 12).map(verify);
+    clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
+    events.push(...batch);
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
+}
+
+/** Development metrics: one record per finite read, never per event.
+ * `sized` passes the decoded response body through and records its length. */
+async function measureQuery<T>(
+  session: string,
+  priority: "foreground" | "background",
+  read: (sized: (text: string) => string) => Promise<T>,
+): Promise<T> {
+  const started = performance.now();
+  let bytes = 0;
+  let ok = false;
+  try {
+    const result = await read((text) => {
+      bytes = text.length;
+      return text;
+    });
+    ok = true;
+    return result;
+  } finally {
+    clientMetrics.query(session, {
+      ms: performance.now() - started,
+      bytes,
+      priority,
+      ok,
+    });
+  }
+}
+/** Report live route state to development metrics before the session sees it. */
+function measuredLive(
+  session: string,
+  callbacks: LiveCallbacks,
+): LiveCallbacks {
+  return {
+    ...callbacks,
+    state(snapshot) {
+      clientMetrics.live(session, snapshot);
+      callbacks.state(snapshot);
+    },
+  };
+}
+
+/** Binds the presence owner to the existing session stream, including startup ordering. */
+function presenceObservation() {
+  let traffic: LiveSubscription | undefined;
+  let authors: readonly string[] = [];
+  let listener: ((event: RelayEvent) => void) | undefined;
+  return {
+    receive: (event: RelayEvent) => listener?.(event),
+    attach(value: LiveSubscription) {
+      traffic = value;
+      traffic.watchPresence?.(authors);
+    },
+    observe(keys: readonly string[], receive: (event: RelayEvent) => void) {
+      authors = keys;
+      listener = receive;
+      traffic?.watchPresence?.(authors);
+      return () => {
+        if (listener !== receive) return;
+        listener = undefined;
+        authors = [];
+        traffic?.watchPresence?.(authors);
+      };
+    },
+  };
 }
 
 async function parsePresence(
@@ -277,6 +375,9 @@ export async function connectBrokerTransport(
     attachmentUploads?: boolean;
     directMessages?: boolean;
     channelLifecycle?: boolean;
+    channelDetails?: boolean;
+    memberAdministration?: boolean;
+    identityArchives?: boolean;
     relayUrl?: string;
     relayHttpUrl?: string;
     live?: boolean;
@@ -286,8 +387,11 @@ export async function connectBrokerTransport(
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
+    sidebarPreferenceWrites?: boolean;
+    sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
+    agentLogProof?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -305,11 +409,36 @@ export async function connectBrokerTransport(
       "Relay broker session is malformed",
     );
   let traffic: LiveSubscription | undefined;
+  const presence = presenceObservation();
   const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
   const publicationHeaders = () => ({
     "Content-Type": "application/json",
     // Matched development frontend/host: publication requires the existing owner.
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
+  /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
+  const routeWriter = (route: string): RelayWriter => ({
+    async sign(template: EventTemplate, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-sign`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(template),
+        signal,
+      });
+      if (!response.ok) throw new Error((await readApiFailure(response)).error);
+      return eventDto(await response.json());
+    },
+    async publish(event: RelayEvent, signal: AbortSignal) {
+      const response = await fetch(`${endpoint}/${route}-publish`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: publicationHeaders(),
+        body: JSON.stringify(event),
+        signal,
+      });
+      return acceptPublish(response, event.id);
+    },
   });
   return {
     profiling,
@@ -318,6 +447,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.presence && session.live
       ? {
+          observePresence: presence.observe,
           async presenceSnapshot(
             authors: readonly string[],
             signal: AbortSignal,
@@ -361,7 +491,14 @@ export async function connectBrokerTransport(
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
-            traffic = subscribeBrokerTraffic(endpoint, callbacks);
+            traffic = subscribeBrokerTraffic(
+              endpoint,
+              measuredLive(endpoint, {
+                ...callbacks,
+                presence: presence.receive,
+              }),
+            );
+            presence.attach(traffic);
             return traffic;
           },
         }
@@ -424,6 +561,37 @@ export async function connectBrokerTransport(
               signal,
             }),
           ),
+        }
+      : {}),
+    ...(session.agentLogProof === true && community
+      ? {
+          authorizeAgentLog: async (
+            target: { id: string; pubkey: string; relayUrl: string },
+            nonce: string,
+          ) => {
+            if (
+              !session.relayUrl ||
+              relayOrigin(target.relayUrl) !== relayOrigin(session.relayUrl)
+            )
+              throw new Error("Log authorization unavailable");
+            const response = await fetch(`${endpoint}/agent-log-proof`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...target, nonce }),
+            });
+            if (!response.ok) throw new Error("Log authorization unavailable");
+            const value: unknown = await response.json();
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("signature" in value) ||
+              typeof value.signature !== "string" ||
+              !/^[0-9a-f]{128}$/.test(value.signature)
+            )
+              throw new Error("Log authorization unavailable");
+            return value.signature;
+          },
         }
       : {}),
     ...(session.agentMemories === true && community
@@ -577,29 +745,31 @@ export async function connectBrokerTransport(
             requestId: string,
             priority: "foreground" | "background",
           ) {
-            const response = await fetch(`${endpoint}/query`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Buzz-Read-Priority": priority,
-              },
-              body: JSON.stringify(
-                readSnapshotFilter(session.viewer as string),
-              ),
-              signal,
-            });
-            if (!response.ok)
-              throw new Error(
-                `Read-state snapshot failed (${response.status})`,
+            return measureQuery(endpoint, priority, async (sized) => {
+              const response = await fetch(`${endpoint}/query`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Buzz-Read-Priority": priority,
+                },
+                body: JSON.stringify(
+                  readSnapshotFilter(session.viewer as string),
+                ),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Read-state snapshot failed (${response.status})`,
+                );
+              recordServerTiming(response, profiling, requestId);
+              return parseReadSnapshot(
+                JSON.parse(sized(await readSnapshotText(response))),
+                session.viewer as string,
+                session.readStateCommunity as string,
+                signal,
               );
-            recordServerTiming(response, profiling, requestId);
-            return parseReadSnapshot(
-              JSON.parse(await readSnapshotText(response)),
-              session.viewer as string,
-              session.readStateCommunity as string,
-              signal,
-            );
+            });
           },
         }
       : {}),
@@ -653,37 +823,62 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.channelDetails === true
+      ? { channelDetails: routeWriter("channel-details") }
+      : {}),
+    ...(session.memberAdministration === true
+      ? { memberAdministration: routeWriter("member-administration") }
+      : {}),
     ...(session.channelLifecycle === true
+      ? { channelLifecycle: routeWriter("channel-lifecycle") }
+      : {}),
+    ...(session.identityArchives === true
+      ? { identityArchive: routeWriter("identity-archive") }
+      : {}),
+    ...(session.sidebarPreferenceWrites
       ? {
-          channelLifecycle: {
-            async sign(template: EventTemplate, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-sign`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(template),
-                  signal,
-                },
-              );
-              if (!response.ok)
-                throw new Error((await readApiFailure(response)).error);
-              return eventDto(await response.json());
-            },
-            async publish(event: RelayEvent, signal: AbortSignal) {
-              const response = await fetch(
-                `${endpoint}/channel-lifecycle-publish`,
-                {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: publicationHeaders(),
-                  body: JSON.stringify(event),
-                  signal,
-                },
-              );
-              return acceptPublish(response, event.id);
-            },
+          async writeSidebarAssignment(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-assignment`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as SidebarPreferences;
+            const groups = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return {
+              sections: groups.sections,
+              assignments: groups.assignments,
+            };
+          },
+        }
+      : {}),
+    ...(session.sidebarStarWrites
+      ? {
+          async writeSidebarStar(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-star`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(undefined, await result.json())
+              .starred;
           },
         }
       : {}),
@@ -722,24 +917,30 @@ export async function connectBrokerTransport(
     ...(session.channelActivity
       ? {
           async channelActivity(channelIds, signal) {
-            const result = await fetch(`${endpoint}/channel-activity`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Buzz-Read-Priority": "background",
-              },
-              body: JSON.stringify(
-                channelIds.map((channelId) => ({
-                  kinds: [9, 40002, 40008, 45001, 45003],
-                  "#h": [channelId],
-                  limit: 1,
-                })),
-              ),
-              signal,
+            return measureQuery(endpoint, "background", async (sized) => {
+              const result = await fetch(`${endpoint}/channel-activity`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Buzz-Read-Priority": "background",
+                },
+                body: JSON.stringify(
+                  channelIds.map((channelId) => ({
+                    kinds: [9, 40002, 40008, 45001, 45003],
+                    "#h": [channelId],
+                    limit: 1,
+                  })),
+                ),
+                signal,
+              });
+              if (!result.ok) throw httpReadError(result.status);
+              return parseEvents(
+                JSON.parse(sized(await result.text())),
+                verify,
+                signal,
+              );
             });
-            if (!result.ok) throw httpReadError(result.status);
-            return parseEvents(await result.json(), verify, signal);
           },
         }
       : {}),
@@ -750,33 +951,34 @@ export async function connectBrokerTransport(
         session.relayUrl,
         size,
       ),
-    async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await fetch(`${endpoint}/query`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Buzz-Read-Priority": priority,
-        },
-        body: JSON.stringify(filters),
-        signal: signal ?? null,
-      });
-      if (!result.ok) {
-        const failure = await readApiFailure(result);
-        throw new ReadError(
-          result.status === 401 || result.status === 403
-            ? "denied"
-            : "unavailable",
-          failure.error,
-          result.status,
-          failure.retryAfterMs,
+    query: (filters, signal, requestId = "read", priority = "foreground") =>
+      measureQuery(endpoint, priority, async (sized) => {
+        const result = await fetch(`${endpoint}/query`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Buzz-Read-Priority": priority,
+          },
+          body: JSON.stringify(filters),
+          signal: signal ?? null,
+        });
+        if (!result.ok) {
+          const failure = await readApiFailure(result);
+          throw new ReadError(
+            result.status === 401 || result.status === 403
+              ? "denied"
+              : "unavailable",
+            failure.error,
+            result.status,
+            failure.retryAfterMs,
+          );
+        }
+        recordServerTiming(result, profiling, requestId);
+        return profiling.measureAsync("read.verify", requestId, async () =>
+          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
         );
-      }
-      recordServerTiming(result, profiling, requestId);
-      return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), verify, signal),
-      );
-    },
+      }),
   };
 }
 
@@ -785,6 +987,32 @@ const hex = (buffer: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 const signedAdmissions = createHostAdmission();
+/** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
+export function admittedSignedWorkflowRead(
+  origin: string,
+  viewer: string,
+  request: () => Promise<Response>,
+  signal: AbortSignal,
+): Promise<Response> {
+  const lane = signedAdmissions(relayOrigin(origin), viewer).api;
+  return lane.prepare(() =>
+    admitSignedRequest(origin, viewer, request, signal),
+  );
+}
+
+export const admitSignedRequest = (
+  origin: string,
+  viewer: string,
+  request: () => Promise<Response>,
+  signal?: AbortSignal,
+  priority: "foreground" | "background" = "foreground",
+) =>
+  admittedApiRequest(
+    signedAdmissions(relayOrigin(origin), viewer).api,
+    request,
+    signal,
+    priority,
+  );
 /** NIP-98 signed reads for a host that owns a signer (Tauri, NIP-07). Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
   signer: Signer,
@@ -796,8 +1024,52 @@ export async function connectSignedTransport(
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
+  const presence = presenceObservation();
+  const upload = signer.upload?.bind(signer);
   return {
     profiling,
+    ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
+    observePresence: presence.observe,
+    async presenceSnapshot(authors, signal) {
+      const filters = [{ kinds: [20001], authors, limit: authors.length }];
+      if (!presenceFilter(filters)) throw new Error("Invalid presence demand");
+      const lane = principal().api;
+      const release = lane.tryPresence();
+      if (!release) return null;
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      try {
+        const response = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          bounded,
+          profiling,
+          "presence",
+          lane,
+          "background",
+          true,
+        );
+        if (!response.ok) {
+          const failure = await readApiFailure(response);
+          if (failure.quota === "api" && failure.retryAfterMs !== undefined)
+            lane.pause(failure.retryAfterMs);
+          throw new ReadError(
+            "unavailable",
+            failure.error,
+            response.status,
+            failure.retryAfterMs,
+          );
+        }
+        return await parsePresence(
+          JSON.parse(await presenceText(response)),
+          authors,
+          relayAuthor,
+          bounded,
+        );
+      } finally {
+        release();
+      }
+    },
     subscribe: (callbacks) => {
       const owner = principal();
       owner.streams++;
@@ -807,7 +1079,10 @@ export async function connectSignedTransport(
           httpOrigin.replace(/^http/, "ws"),
           (event) => signer.signEvent(event),
           viewer,
-          callbacks,
+          measuredLive(httpOrigin, {
+            ...callbacks,
+            presence: presence.receive,
+          }),
           undefined,
           owner.live,
         );
@@ -815,6 +1090,7 @@ export async function connectSignedTransport(
         owner.streams--;
         throw error;
       }
+      presence.attach(traffic);
       let closed = false;
       return {
         ...traffic,
@@ -830,11 +1106,12 @@ export async function connectSignedTransport(
     relayHttpUrl: httpOrigin,
     viewer,
     relayAuthor,
-    media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),
+    media: (url, size) =>
+      mediaUrl(url, signer.media?.bind(signer), httpOrigin, size),
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
-        await acceptPublish(
+        return acceptPublish(
           await signedPost(
             signer,
             `${httpOrigin}/events`,
@@ -852,33 +1129,34 @@ export async function connectSignedTransport(
         );
       },
     },
-    async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await signedPost(
-        signer,
-        `${httpOrigin}/query`,
-        filters,
-        signal,
-        profiling,
-        requestId,
-        principal().api,
-        priority,
-      );
-      if (!result.ok) {
-        const failure = await readApiFailure(result);
-        throw new ReadError(
-          result.status === 401 || result.status === 403
-            ? "denied"
-            : "unavailable",
-          failure.error,
-          result.status,
-          failure.retryAfterMs,
+    query: (filters, signal, requestId = "read", priority = "foreground") =>
+      measureQuery(httpOrigin, priority, async (sized) => {
+        const result = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          signal,
+          profiling,
+          requestId,
+          principal().api,
+          priority,
         );
-      }
-      recordServerTiming(result, profiling, requestId);
-      return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), verify, signal),
-      );
-    },
+        if (!result.ok) {
+          const failure = await readApiFailure(result);
+          throw new ReadError(
+            result.status === 401 || result.status === 403
+              ? "denied"
+              : "unavailable",
+            failure.error,
+            result.status,
+            failure.retryAfterMs,
+          );
+        }
+        recordServerTiming(result, profiling, requestId);
+        return profiling.measureAsync("read.verify", requestId, async () =>
+          parseEvents(JSON.parse(sized(await result.text())), verify, signal),
+        );
+      }),
   };
 }
 
@@ -891,10 +1169,23 @@ async function signedPost(
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
+  optionalPresence = false,
 ) {
+  const dispatch = (request: () => Promise<Response>) =>
+    optionalPresence
+      ? admission.prepare(request)
+      : admittedApiRequest(admission, request, signal, priority);
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
+    const request = signer.request?.bind(signer);
+    if (request)
+      return dispatch(() => {
+        signal?.throwIfAborted();
+        return profiling.measureAsync("http.fetch", id, () =>
+          request(url, body, signal),
+        );
+      });
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
     );
@@ -917,45 +1208,56 @@ async function signedPost(
     // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
-      return await admittedApiRequest(
-        admission,
-        () => {
-          queued();
-          signal?.throwIfAborted();
-          if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
-            throw new ApiNotSent(
-              "Request authentication expired before dispatch; retry available",
-            );
-          return profiling.measureAsync("http.fetch", id, () =>
-            fetch(url, {
-              method: "POST",
-              headers: {
-                Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-                "Content-Type": "application/json",
-              },
-              body,
-              signal: signal ?? null,
-            }),
+      return await dispatch(() => {
+        queued();
+        signal?.throwIfAborted();
+        if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
+          throw new ApiNotSent(
+            "Request authentication expired before dispatch; retry available",
           );
-        },
-        signal,
-        priority,
-      );
+        return profiling.measureAsync("http.fetch", id, () =>
+          fetch(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
+              "Content-Type": "application/json",
+            },
+            body,
+            signal: signal ?? null,
+          }),
+        );
+      });
     } finally {
       queued();
     }
   });
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
-async function acceptPublish(response: Response, id: string) {
+export async function acceptPublish(response: Response, id: string) {
   if (!response.ok) {
+    // The relay answers 409 only for a compare-and-set refusal before mutation,
+    // and the broker relays the socket's equivalent the same way. The fixed
+    // prefix tells the writer to reload and reconcile rather than retry.
+    if (response.status === 409)
+      throw new PublishRejected(
+        "conflict: the relay state changed; reload before writing again",
+      );
     if ([400, 401, 403, 404, 413, 422].includes(response.status))
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
       );
-    // A broker that never reached the relay reports `sent: false`; that message
-    // was not delivered and is safe to mark failed and retry.
-    const body = await readApiFailure(response);
+    // Only proven non-delivery is safe to mark failed. Socket quota reasons are
+    // display-only: keep them distinct from HTTP API quota/cooldown ownership.
+    const body = await readApiFailure(response, (value) => {
+      if (!value || typeof value !== "object") return;
+      const failure = value as { sent?: unknown; error?: unknown };
+      if (
+        failure.sent === false &&
+        typeof failure.error === "string" &&
+        failure.error.startsWith("rate-limited:")
+      )
+        return publicationRefusal(failure.error);
+    });
     if (body.sent === false || body.quota === "api")
       throw new PublishRejected(body.error);
     throw new Error(

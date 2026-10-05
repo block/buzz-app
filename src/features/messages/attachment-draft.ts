@@ -209,6 +209,16 @@ function attachmentDraft(
   return store;
 }
 
+/** A confirmed deletion discards only this session's exact scoped composer files.
+ * A missing store is a no-op; do not allocate a draft merely to clear it. */
+export function clearAttachmentDraft(session: RelaySession, key: string) {
+  const owners = drafts.get(session);
+  const store = owners?.get(key);
+  if (!store) return;
+  store.clear(); // abort uploads before disposing the scoped entry
+  if (owners?.get(key) === store) owners.delete(key);
+}
+
 export function useAttachmentDraft(
   session: RelaySession,
   key: string,

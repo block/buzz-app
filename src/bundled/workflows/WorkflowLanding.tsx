@@ -1,5 +1,12 @@
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
   WorkflowCapability,
@@ -10,17 +17,31 @@ import type {
 } from "../../features/workflows/types";
 import {
   ArrowRightIcon,
+  DotsThreeIcon,
   CalendarIcon,
   ChatCircleIcon,
   GitPullRequestIcon,
   LightningIcon,
+  EyeIcon,
+  PencilSimpleIcon,
+  PlayIcon,
+  TrashIcon,
   PlusIcon,
   SmileyIcon,
   TimerIcon,
   WebhooksLogoIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuIcon,
+} from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { WorkflowDeletionNotices } from "./WorkflowDeletionNotices";
 import { ConfirmAction } from "./ConfirmAction";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
@@ -51,7 +72,7 @@ type DefinitionsSnapshot = ReturnType<
   WorkflowView<WorkflowDefinitions>["snapshot"]
 >;
 
-function workflowOperationLocked(
+export function workflowOperationLocked(
   operations: readonly WorkflowOperation[],
   definition: WorkflowDefinition,
 ) {
@@ -86,16 +107,21 @@ function useLandingDefinitions(
   refreshRequest: number,
   retryRequest: number,
   operationRefreshKey: string,
+  saveReadback: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined,
 ) {
+  // Mount already reads current definitions; only consume subsequent notifications.
+  const observedRefresh = useRef(refreshRequest);
+  const observedReadback = useRef(saveReadback);
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
     let state = { snapshots, paused };
     let channelIds: readonly string[] = [];
-    const queued = new Set<string>();
+    const queued = new Map<string, boolean>();
     const listeners = new Set<() => void>();
     type Read = {
       ids: readonly string[];
+      ifStale: boolean;
       view: WorkflowView<WorkflowDefinitions>;
       stop(): void;
     };
@@ -136,32 +162,37 @@ function useLandingDefinitions(
       data: snapshots[id]?.data ?? EMPTY_DEFINITIONS,
       error: "Workflow read unavailable. Retry; this is not proof of deletion.",
     });
+    const definitionsFor = (id: string, data: WorkflowDefinitions) => ({
+      items: data.items.filter((row) => row.channelId === id),
+      partial: data.partialChannelIds?.includes(id) ?? data.partial,
+    });
+    const hasCopiedData = (data: WorkflowDefinitions | undefined) =>
+      !!data &&
+      (data.items.length > 0 ||
+        data.partial ||
+        (data.partialChannelIds?.length ?? 0) > 0);
     const record = (owned: Read, snapshot: DefinitionsSnapshot) => {
       for (const id of owned.ids) {
+        const previous = snapshots[id]?.data;
         snapshots = {
           ...snapshots,
           [id]: {
             ...snapshot,
             data:
               snapshot.status === "loading" || snapshot.status === "error"
-                ? (snapshots[id]?.data ?? EMPTY_DEFINITIONS)
-                : {
-                    items: snapshot.data.items.filter(
-                      (row) => row.channelId === id,
-                    ),
-                    partial:
-                      snapshot.data.partialChannelIds?.includes(id) ??
-                      snapshot.data.partial,
-                  },
+                ? previous && hasCopiedData(previous)
+                  ? previous
+                  : definitionsFor(id, snapshot.data)
+                : definitionsFor(id, snapshot.data),
           },
         };
       }
     };
     const pause = (owned: Read, snapshot: DefinitionsSnapshot) => {
       paused = true;
-      for (const id of owned.ids) queued.add(id);
+      for (const id of owned.ids) queued.set(id, false);
       if (active) {
-        for (const id of active.ids) queued.add(id);
+        for (const id of active.ids) queued.set(id, false);
         if (active !== owned) release(active);
       }
       active = undefined;
@@ -170,9 +201,9 @@ function useLandingDefinitions(
       record(owned, snapshot);
       emit();
     };
-    const observe = (ids: readonly string[]): Read => {
+    const observe = (ids: readonly string[], ifStale: boolean): Read => {
       const view = capability.definitions(ids);
-      const owned = { ids, view, stop: () => {} };
+      const owned = { ids, ifStale, view, stop: () => {} };
       owned.stop = view.subscribe(() => {
         if (active !== owned && retained !== owned) return;
         const snapshot = view.snapshot();
@@ -194,13 +225,14 @@ function useLandingDefinitions(
         .slice(0, WORKFLOW_CHANNEL_BATCH);
       const first = ids[0];
       if (!first) return;
+      const ifStale = ids.every((id) => queued.get(id));
       for (const id of ids) queued.delete(id);
       let owned: Read;
       try {
-        owned = observe(ids);
+        owned = observe(ids, ifStale);
         active = owned;
         void owned.view
-          .refresh()
+          .refresh({ ifStale: owned.ifStale })
           .catch(() => {
             if (active === owned) pause(owned, failure(first));
           })
@@ -223,7 +255,7 @@ function useLandingDefinitions(
         active = undefined;
         for (const id of ids) {
           snapshots = { ...snapshots, [id]: failure(id) };
-          queued.add(id);
+          queued.set(id, false);
         }
         paused = true;
         emit();
@@ -247,7 +279,8 @@ function useLandingDefinitions(
         if (active?.ids.some((id) => !wanted.has(id))) {
           const previous = active;
           active = undefined;
-          for (const id of previous.ids) if (wanted.has(id)) queued.add(id);
+          for (const id of previous.ids)
+            if (wanted.has(id)) queued.set(id, previous.ifStale);
           release(previous);
         }
         if (retained?.ids.some((id) => !wanted.has(id))) {
@@ -256,9 +289,9 @@ function useLandingDefinitions(
           // Keep copied snapshots subscribed to session invalidation without
           // rereading a completed channel just to replace the observer.
           const replacement = ids[0];
-          if (replacement && !active) retained = observe([replacement]);
+          if (replacement && !active) retained = observe([replacement], true);
         }
-        for (const id of queued) if (!wanted.has(id)) queued.delete(id);
+        for (const id of queued.keys()) if (!wanted.has(id)) queued.delete(id);
         snapshots = Object.fromEntries(
           Object.entries(snapshots).filter(([id]) => wanted.has(id)),
         );
@@ -268,7 +301,7 @@ function useLandingDefinitions(
               ...snapshots,
               [id]: { status: "loading", data: EMPTY_DEFINITIONS },
             };
-            queued.add(id);
+            queued.set(id, true);
           }
         emit();
         readNext();
@@ -281,7 +314,8 @@ function useLandingDefinitions(
       refresh(ids = channelIds, afterPending = false) {
         invalidated = false;
         if (!afterPending) paused = false;
-        for (const id of ids) if (channelIds.includes(id)) queued.add(id);
+        for (const id of ids)
+          if (channelIds.includes(id)) queued.set(id, false);
         // A pending read already satisfies refresh; never cancel and repeat it.
         if (active && !afterPending)
           for (const id of active.ids) queued.delete(id);
@@ -310,7 +344,8 @@ function useLandingDefinitions(
     store.channels(channelIdsKey ? channelIdsKey.split(":") : []);
   }, [channelIdsKey, store]);
   useEffect(() => {
-    void refreshRequest;
+    if (observedRefresh.current === refreshRequest) return;
+    observedRefresh.current = refreshRequest;
     store.refresh();
   }, [refreshRequest, store]);
   useEffect(() => {
@@ -323,12 +358,30 @@ function useLandingDefinitions(
         true,
       );
   }, [operationRefreshKey, store]);
-  return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+  useEffect(() => {
+    // The receipt-triggered read may finish before the saved head is visible.
+    // Verified editor readback must also invalidate the landing’s copied result.
+    if (observedReadback.current === saveReadback) return;
+    observedReadback.current = saveReadback;
+    if (
+      saveReadback &&
+      !store
+        .snapshot()
+        .snapshots[saveReadback.channelId]?.data.items.some(
+          (definition) => definition.revision === saveReadback.revision,
+        )
+    )
+      store.refresh([saveReadback.channelId], true);
+  }, [saveReadback, store]);
+  return {
+    ...useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot),
+    refresh: store.refresh,
+  };
 }
 
 function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
   const Icon = ICONS[kind];
-  return <Icon size={20} weight="bold" aria-hidden="true" />;
+  return <Icon size={20} strokeWidth={2.5} aria-hidden="true" />;
 }
 
 function WorkflowCard({
@@ -340,6 +393,7 @@ function WorkflowCard({
   viewer,
   onError,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
@@ -348,8 +402,24 @@ function WorkflowCard({
   operations: readonly WorkflowOperation[];
   viewer: string;
   onError: (message: string | null) => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onDelete: (definition: WorkflowDefinition) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run",
+  ) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deletion = [...operations]
+    .reverse()
+    .find(
+      (operation) =>
+        operation.action === "delete" &&
+        operation.outcome !== "rejected" &&
+        operation.workflow.id === definition.id &&
+        operation.workflow.owner === definition.owner &&
+        operation.workflow.channelId === definition.channelId,
+    );
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const fields = readWorkflowDocumentFields(definition.yaml);
@@ -363,12 +433,16 @@ function WorkflowCard({
     submitted !== null &&
     definition.revision !== submitted &&
     submittedOperation?.outcome !== "rejected";
-  const toggleDisabled =
-    readonly ||
-    locked ||
-    awaitingReadback ||
-    !fields.editable ||
-    !capability.availability.save;
+  const toggleReason = readonly
+    ? "Only the author can change this workflow."
+    : locked || awaitingReadback
+      ? "Waiting for the submitted change to be resolved."
+      : !fields.editable
+        ? "Correct the YAML before changing the configured state."
+        : !capability.availability.save
+          ? "Saving is unavailable from this host."
+          : undefined;
+  const reasonId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
   const toggle = (next: boolean) => {
@@ -400,6 +474,7 @@ function WorkflowCard({
         <Button
           aria-label={`Open ${name}`}
           data-workflow-card-open=""
+          disabled={!!deletion}
           onClick={() => onOpen(definition, channel)}
           variant="ghost"
         >
@@ -441,16 +516,74 @@ function WorkflowCard({
               )}
             </div>
             <div className="workflow-card-switch">
-              <Switch
-                aria-label={`Enabled in configuration: ${name}`}
-                checked={enabled}
-                disabled={toggleDisabled}
-                onCheckedChange={(next) => {
-                  if (next === enabled) return;
-                  if (next && warning) setConfirmEnable(true);
-                  else toggle(next);
-                }}
-              />
+              {fields.editable && (
+                <Switch
+                  aria-label={`Enabled in configuration: ${name}`}
+                  aria-describedby={toggleReason ? reasonId : undefined}
+                  checked={enabled}
+                  disabled={!!toggleReason}
+                  onCheckedChange={(next) => {
+                    if (next === enabled) return;
+                    if (next && warning) setConfirmEnable(true);
+                    else toggle(next);
+                  }}
+                />
+              )}
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label={`Actions for ${name}`}
+                      size="sm"
+                      icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+                    />
+                  }
+                />
+                <MenuPopup size="compact">
+                  <MenuItem
+                    disabled={!!deletion}
+                    onClick={() => onOpen(definition, channel)}
+                  >
+                    <MenuIcon>
+                      {readonly ? (
+                        <EyeIcon size={14} />
+                      ) : (
+                        <PencilSimpleIcon size={14} />
+                      )}
+                    </MenuIcon>
+                    {readonly ? "View workflow" : "Edit workflow"}
+                  </MenuItem>
+                  <MenuItem
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.trigger
+                    }
+                    onClick={() => onOpen(definition, channel, "run")}
+                  >
+                    <MenuIcon>
+                      <PlayIcon size={14} />
+                    </MenuIcon>
+                    Run now
+                  </MenuItem>
+                  <MenuItem
+                    tone="danger"
+                    disabled={
+                      readonly ||
+                      locked ||
+                      awaitingReadback ||
+                      !capability.availability.delete
+                    }
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    <MenuIcon>
+                      <TrashIcon size={14} />
+                    </MenuIcon>
+                    Delete workflow
+                  </MenuItem>
+                </MenuPopup>
+              </MenuRoot>
             </div>
           </div>
           <h2 className="workflow-card-description text-body-lg">
@@ -460,10 +593,13 @@ function WorkflowCard({
             <div className="workflow-card-identity">
               <strong className="text-standard">#{channel.name}</strong>
               <span>{name}</span>
-              <span>
-                {enabled ? "Configured enabled" : "Configured disabled"}
-              </span>
-              {readonly && <span>Read-only</span>}
+              {deletion && (
+                <span role="status">
+                  {deletion.outcome === "pending"
+                    ? "Deleting…"
+                    : "Deletion unconfirmed"}
+                </span>
+              )}
             </div>
             <time
               dateTime={new Date(definition.createdAt * 1000).toISOString()}
@@ -471,8 +607,32 @@ function WorkflowCard({
               {new Date(definition.createdAt * 1000).toLocaleDateString()}
             </time>
           </div>
+          {!fields.editable && (
+            <span className="text-caption text-secondary">
+              Unreadable configuration
+            </span>
+          )}
+          {toggleReason && (
+            <span id={reasonId} hidden>
+              {toggleReason}
+            </span>
+          )}
         </div>
       </article>
+      {confirmDelete && (
+        <ConfirmAction
+          title="Delete this workflow?"
+          description="The saved workflow may remain visible. Work already running may continue."
+          action="Delete workflow"
+          cancel="Cancel"
+          destructive
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            onDelete(definition);
+          }}
+        />
+      )}
       {confirmEnable && (
         <ConfirmAction
           title={warning?.title ?? "Turn on this workflow?"}
@@ -500,13 +660,19 @@ function WorkflowChannelCards({
   snapshot,
   viewer,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
   operations: readonly WorkflowOperation[];
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onDelete: (definition: WorkflowDefinition) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run",
+  ) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
 
@@ -534,6 +700,7 @@ function WorkflowChannelCards({
             locked={workflowOperationLocked(operations, definition)}
             onError={setError}
             onOpen={onOpen}
+            onDelete={onDelete}
             operations={operations}
             viewer={viewer}
           />
@@ -552,16 +719,24 @@ export function WorkflowLanding({
   capability,
   channels,
   refreshRequest,
+  saveReadback,
   viewer,
   onCreate,
   onOpen,
+  onDelete,
 }: {
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
   refreshRequest: number;
+  saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
   onCreate: () => void;
-  onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
+  onDelete: (definition: WorkflowDefinition) => void;
+  onOpen: (
+    definition: WorkflowDefinition,
+    channel: ChannelSummary,
+    action?: "run",
+  ) => void;
 }) {
   const operations = useSyncExternalStore(
     capability.operations.subscribe,
@@ -572,53 +747,63 @@ export function WorkflowLanding({
   const operationRefreshKey = operations
     .filter(
       (operation) =>
-        operation.action === "save" &&
+        (operation.action === "save" || operation.action === "delete") &&
         (operation.outcome === "unknown" || operation.outcome === "succeeded"),
     )
     .map(
       (operation) =>
-        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}`,
+        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused } = useLandingDefinitions(
+  const { snapshots, paused, refresh } = useLandingDefinitions(
     capability,
     channels,
     refreshRequest,
     retryRequest,
     operationRefreshKey,
+    saveReadback,
   );
   return (
     <>
-      <p className="text-body-sm text-secondary">
-        These switches change configuration, not confirmed runtime state. Saving
-        a disabled configuration does not confirm that automatic runs have
-        stopped or cancel work already running.
-      </p>
-      <p className="text-body-sm text-secondary" role="status">
-        {paused
-          ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
-          : channels.some(
-                (channel) =>
-                  !snapshots[channel.id] ||
-                  snapshots[channel.id]?.status === "loading",
-              )
-            ? "Reading workflows…"
+      <WorkflowDeletionNotices
+        operations={operations}
+        snapshots={snapshots}
+        onCheck={refresh}
+        onDismiss={(operation) =>
+          capability.operations.dismiss(operation.eventId)
+        }
+      />
+      <div className="workflow-page-notice">
+        <p className="text-body-sm text-secondary">
+          Saved configuration only. Turning off does not confirm runs have
+          stopped or cancel active runs.
+        </p>
+        <p className="text-body-sm text-secondary" role="status">
+          {paused
+            ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
             : channels.some(
                   (channel) =>
-                    snapshots[channel.id]?.status === "idle" ||
-                    snapshots[channel.id]?.status === "unavailable",
+                    !snapshots[channel.id] ||
+                    snapshots[channel.id]?.status === "loading",
                 )
-              ? "Workflow data cleared or unavailable. Refresh to check access."
-              : "Workflow scan finished. Lists may be limited by the relay."}
-      </p>
-      {paused && (
-        <Button
-          size="sm"
-          onClick={() => setRetryRequest((request) => request + 1)}
-        >
-          Retry
-        </Button>
-      )}
+              ? "Reading workflows…"
+              : channels.some(
+                    (channel) =>
+                      snapshots[channel.id]?.status === "idle" ||
+                      snapshots[channel.id]?.status === "unavailable",
+                  )
+                ? "Workflow data cleared or unavailable. Refresh to check access."
+                : "Workflows loaded."}
+        </p>
+        {paused && (
+          <Button
+            size="sm"
+            onClick={() => setRetryRequest((request) => request + 1)}
+          >
+            Retry
+          </Button>
+        )}
+      </div>
       <div className="workflow-card-grid">
         <Button
           aria-label="New workflow"
@@ -627,7 +812,7 @@ export function WorkflowLanding({
           onClick={onCreate}
           variant="ghost"
         >
-          <PlusIcon size={28} weight="bold" aria-hidden="true" />
+          <PlusIcon size={28} strokeWidth={2.5} aria-hidden="true" />
         </Button>
         {channels.map((channel) => (
           <WorkflowChannelCards
@@ -635,6 +820,7 @@ export function WorkflowLanding({
             channel={channel}
             key={channel.id}
             onOpen={onOpen}
+            onDelete={onDelete}
             operations={operations}
             snapshot={snapshots[channel.id]}
             viewer={viewer}

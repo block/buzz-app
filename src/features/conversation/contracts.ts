@@ -4,6 +4,8 @@ import type { Contribution } from "../../plugins/contributions";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 
+/** Editor-independent reference to plugin content. Not an access grant or recipient. */
+export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
   session: RelaySession;
   scope: string;
@@ -18,6 +20,10 @@ export type ComposerToolProps = Readonly<{
    * Prose never resolves to identities. Membership is checked by session delivery.
    * Like insertText, this command is revoked with the tool/destination lifetime. */
   insertMention(recipient: Readonly<{ pubkey: string; name: string }>): boolean;
+  /** Atomically insert a host-owned inline resource at the caret. The host validates
+   * the link, escapes the label and sends exactly `[label](uri)` there; the draft
+   * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
+  insertResource(resource: ComposerResource): true | string;
   focus(): void;
 }>;
 export type ReactionToolProps = Readonly<{
@@ -126,9 +132,15 @@ export type CompletionSuggestion = Readonly<{
   /** Decorative presentation only; the host owns option semantics and interaction. */
   preview?: import("react").ReactNode;
   edit: CompletionEdit;
+  /** Keep an installed identity in place after eligibility is revoked. */
+  disabled?: string | undefined;
+  /** Final synchronous evidence check; false never falls through to sending. */
+  canSelect?: ((key: string) => boolean) | undefined;
 }>;
 export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
+  /** Provider-verified unique exact match across its uncapped candidate set. */
+  spaceId?: string | undefined;
   status?: string;
   /** Optional explicit recovery. A new query or disposal revokes this action. */
   retry?: () => void;

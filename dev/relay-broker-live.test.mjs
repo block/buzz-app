@@ -1,3 +1,8 @@
+import {
+  getLogger,
+  logLevel,
+  setLogLevel,
+} from "../src/features/developer/logging.ts";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
@@ -63,13 +68,14 @@ async function harness(
       const socket = {
         readyState: 1,
         send(text) {
-          const [kind, id, filter] = JSON.parse(text);
+          const [kind, id, ...filters] = JSON.parse(text);
+          const filter = filters[0];
           frames.push({ kind, id, at: performance.now(), socket });
           if (kind === "AUTH" && !options.holdAuth)
             queueMicrotask(() => this.receive(["OK", id.id, true]));
           if (kind === "EVENT") publications.push({ event: id, socket });
           if (kind !== "REQ") return;
-          requests.push({ at: performance.now(), id, filter, socket });
+          requests.push({ at: performance.now(), id, filter, filters, socket });
           const refused = requests.length === refuseAt;
           if (!options.holdSetup)
             queueMicrotask(() =>
@@ -136,6 +142,74 @@ async function until(check) {
   }
   throw new Error("Local HTTP fixture did not reach expected state");
 }
+
+test("presence busy skips cross the real broker as null while cooldown keeps its deadline", async () => {
+  const h = await harness();
+  const nativeFetch = globalThis.fetch;
+  const outcomes = [];
+  let traffic;
+  let clock = 0; // Integer milliseconds keep ceil-based admission deadlines exact.
+  try {
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    vi.stubGlobal("fetch", async (input, init) => {
+      const response = await nativeFetch(input, {
+        ...init,
+        headers: {
+          ...init?.headers,
+          ...(init?.method === "POST" ? { Origin: h.base } : {}),
+        },
+      });
+      if (String(input).endsWith("/stream-presence"))
+        outcomes.push(await response.clone().json());
+      return response;
+    });
+    const transport = await connectBrokerTransport(h.base);
+    let snapshot;
+    traffic = transport.subscribe({
+      receive() {},
+      established() {},
+      denied() {},
+      state(value) {
+        snapshot = value;
+      },
+    });
+    await until(() => snapshot?.status === "connected");
+    const first = traffic.publishPresence(
+      "online",
+      new AbortController().signal,
+    );
+    await until(() => h.publications.length === 1);
+    clock += 5100; // Gate elapsed; real receipt timer remains held.
+    expect(
+      await traffic.publishPresence("away", new AbortController().signal),
+    ).toBeNull();
+    expect(outcomes).toEqual([{ accepted: null }]);
+    expect(h.publications).toHaveLength(1);
+    const { event, socket } = h.publications[0];
+    await socket.receive([
+      "OK",
+      event.id,
+      false,
+      "rate-limited: quota exceeded; retry in 3s",
+    ]);
+    expect(await first).toBe(false);
+    expect(
+      await traffic.publishPresence("away", new AbortController().signal),
+    ).toEqual({ retryAfterMs: 4000 });
+    expect(outcomes.at(-1)).toEqual({ accepted: null, retryAfterMs: 4000 });
+    clock += 4000;
+    const next = traffic.publishPresence("away", new AbortController().signal);
+    await until(() => h.publications.length === 2);
+    expect(h.publications[1].event.content).toBe("away");
+    await socket.receive(["OK", h.publications[1].event.id, true, ""]);
+    expect(await next).toBe(true);
+  } finally {
+    traffic?.dispose();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
 
 test("POST replacement and a second stream share server cooldown without pacing healthy starts; response close disposes WS", async () => {
   const h = await harness(1);
@@ -928,12 +1002,31 @@ test("production interest controls preserve socket/global routes and pending wri
 });
 
 test.each([
-  ["restricted: not a member", true],
-  ["error: internal server error", false],
-  ["unknown: failure", false],
+  ["restricted: not a member", true, "Relay request failed (503)"],
+  [
+    "error: internal server error",
+    false,
+    "Relay delivery could not be confirmed (503)",
+  ],
+  ["unknown: failure", false, "Relay delivery could not be confirmed (503)"],
+  [
+    "rate-limited: quota exceeded; retry in 17s",
+    true,
+    "rate-limited: quota exceeded; retry in 17s",
+  ],
+  [
+    "rate-limited: shared admission unavailable",
+    true,
+    "rate-limited: shared admission unavailable",
+  ],
+  [
+    "rate-limited: private-agent-policy\nforged-line",
+    true,
+    "rate-limited: unrecognized reason",
+  ],
 ])(
   "real broker preserves rejection versus uncertain command outcome: %s",
-  async (reason, rejected) => {
+  async (reason, rejected, message) => {
     const h = await harness();
     let traffic;
     try {
@@ -950,6 +1043,12 @@ test.each([
       const error = await result;
       expect(error).toBeInstanceOf(Error);
       expect(error instanceof PublishRejected).toBe(rejected);
+      expect(error.message).toBe(message);
+      expect(h.publications).toHaveLength(1);
+      // A WS refusal must not pause the independent HTTP API admission lane.
+      await expect(
+        transport.query([{ kinds: [0], limit: 1 }]),
+      ).resolves.toEqual([]);
       expect(h.upstream.some((url) => url.endsWith("/events"))).toBe(false);
     } finally {
       traffic?.dispose();
@@ -1277,6 +1376,138 @@ test.each([
   },
 );
 
+test.each([
+  [
+    45010,
+    "conflict: artifact head changed",
+    "failed",
+    "conflict: the relay state",
+  ],
+  [45010, "error: internal server error", "unknown", "could not be confirmed"],
+  [
+    40100,
+    "conflict: canvas head changed",
+    "failed",
+    "conflict: the relay state",
+  ],
+  [40100, "error: internal server error", "unknown", "could not be confirmed"],
+])(
+  "kind %s refusal %s reaches broker/outbox as %s / %s",
+  async (kind, reason, delivery, error) => {
+    const h = await harness();
+    let traffic, owner;
+    try {
+      browserFetch(h.base);
+      const transport = await connectBrokerTransport(h.base);
+      traffic = transport.subscribe(callbacks);
+      await until(() => h.requests.length >= 1);
+      owner = createOutbox(transport.viewer, transport.writer, {
+        load: () => [],
+        save() {},
+      });
+      const id = owner.outbox.send({
+        kind,
+        content: "",
+        tags: [
+          ["h", "00000000-0000-4000-8000-000000000001"],
+          ["expected-revision", "none"],
+        ],
+      });
+      await until(() => h.publications.length === 1);
+      await h.sockets[0].receive(["OK", id, false, reason]);
+      await until(() => owner.outbox.snapshot()[0]?.delivery === delivery);
+      expect(owner.outbox.snapshot()[0].error).toContain(error);
+    } finally {
+      owner?.dispose();
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
+    }
+  },
+);
+
+test("joined batches survive the real HTTP boundary and retirement only rebuilds the affected scope", async () => {
+  const h = await harness();
+  let traffic;
+  try {
+    const fetcher = browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    const established = vi.fn(),
+      receive = vi.fn();
+    traffic = transport.subscribe({ ...callbacks, established, receive });
+    const joined = Array.from(
+      { length: 256 },
+      (_, i) => `c${String(i).padStart(3, "0")}`,
+    );
+    traffic.update([...joined, "preview"], joined);
+    await until(() => established.mock.calls.length === 29);
+    expect(h.requests).toHaveLength(29);
+    const batches = h.requests.filter(
+      (r) => r.filter["#h"] && r.filters.length > 1,
+    );
+    expect(batches.map((r) => r.filters.length)).toEqual([
+      ...Array(25).fill(10),
+      6,
+    ]);
+    for (const r of batches)
+      for (const f of r.filters) {
+        expect(f["#h"]).toHaveLength(1);
+        expect(f.limit).toBe(500);
+      }
+    expect(
+      established.mock.calls
+        .filter(([ids]) => Array.isArray(ids))
+        .map(([ids]) => ids.length),
+    ).toEqual([...Array(25).fill(10), 6]);
+    const old = batches[0];
+    // Host rejects mismatched joined scope before changing any live routes.
+    const malformed = await fetcher(`${h.base}/api/relay/stream-interests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        streamId: traffic.identity(),
+        channels: ["preview"],
+        joined: ["not-present"],
+        interestRevision: 2,
+      }),
+    });
+    expect(malformed.status).toBe(400);
+    await malformed.text();
+    expect(h.requests).toHaveLength(29);
+    const retained = joined.slice(1);
+    traffic.update([...retained, "preview"], retained);
+    await until(() => established.mock.calls.length === 30);
+    expect(h.requests).toHaveLength(30);
+    expect(h.frames.filter((f) => f.kind === "CLOSE").map((f) => f.id)).toEqual(
+      [old.id],
+    );
+    expect(h.requests.at(-1).filters.flatMap((f) => f["#h"])).toEqual(
+      joined.slice(1, 10),
+    );
+    const event = finalizeEvent(
+      {
+        kind: 5,
+        content: "",
+        tags: [["e", "f".repeat(64)]],
+        created_at: 1700000000,
+      },
+      h.key,
+    );
+    await h.sockets[0].receive(["EVENT", old.id, event]);
+    await h.sockets[0].receive(["EVENT", h.requests.at(-1).id, event]);
+    await until(() => receive.mock.calls.length === 1);
+    expect(receive).toHaveBeenCalledExactlyOnceWith([event], {
+      phase: "live",
+      sourceChannels: joined.slice(1, 10),
+    });
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
 test("startup response ABA retires an old wire before applying the latest interests", async () => {
   const h = await harness();
   let traffic, release;
@@ -1475,3 +1706,217 @@ test.each(["disconnect", "close"])(
     }
   },
 );
+
+test.each([
+  [
+    "invalid: policy:nobody — this agent has disabled external channel additions",
+    false,
+    "invalid: policy:nobody — this agent has disabled external channel additions",
+  ],
+  ["error: internal server error", true, "error: internal server error"],
+  [
+    "rate-limited: quota exceeded; retry in 17s",
+    false,
+    "rate-limited: quota exceeded; retry in 17s",
+  ],
+  [
+    "rate-limited: shared admission unavailable",
+    false,
+    "rate-limited: shared admission unavailable",
+  ],
+  [
+    "rate-limited: quota exceeded; retry in 17s\nprivate",
+    false,
+    "rate-limited: unrecognized reason",
+  ],
+  [
+    "invalid: private-agent-policy\nforged-line",
+    false,
+    "invalid: unrecognized reason",
+  ],
+])(
+  "publication diagnostics correlate a membership refusal and expose only safe quota text: %s",
+  async (reason, sent, summary) => {
+    const logger = getLogger("relay-broker");
+    const reporters = [...logger.options.reporters];
+    const previousLevel = logLevel();
+    const lines = [];
+    logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+    setLogLevel("info");
+    const h = await harness();
+    let traffic;
+    try {
+      browserFetch(h.base);
+      const transport = await connectBrokerTransport(h.base);
+      traffic = transport.subscribe(callbacks);
+      await until(() => h.requests.length >= 1 && !!traffic.identity());
+      const event = await transport.writer.sign(
+        {
+          kind: 9000,
+          content: "",
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ["h", "00000000-0000-4000-8000-000000000001"],
+            ["p", "a".repeat(64)],
+          ],
+        },
+        new AbortController().signal,
+      );
+      const result = fetch(`${h.base}/api/relay/publish`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Live-ID": traffic.identity(),
+        },
+        body: JSON.stringify(event),
+      });
+      await until(() => h.publications.length === 1);
+      // An unmatched negative OK must neither finish nor contaminate this operation.
+      await h.sockets[0].receive([
+        "OK",
+        "f".repeat(64),
+        false,
+        "invalid: private-unmatched",
+      ]);
+      await h.sockets[0].receive(["OK", event.id, false, reason]);
+      const response = await result;
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: summary.startsWith("rate-limited:")
+          ? summary
+          : "Socket publication could not be confirmed",
+        ...(!sent ? { sent: false } : {}),
+      });
+      expect(lines).toContain(
+        `publication id=${event.id} kind=9000 stage=socket sent=${sent} reason=Relay publication not confirmed refusal=${summary}`,
+      );
+      const output = lines.join("\n");
+      for (const secret of [
+        event.sig,
+        "a".repeat(64),
+        traffic.identity(),
+        "private",
+        "forged-line",
+      ])
+        expect(output).not.toContain(secret);
+      expect(h.publications).toHaveLength(1);
+    } finally {
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
+      logger.setReporters(reporters);
+      setLogLevel(previousLevel);
+    }
+  },
+);
+
+test("publication diagnostics distinguish missing and mismatched live owner without dispatch", async () => {
+  const logger = getLogger("relay-broker");
+  const reporters = [...logger.options.reporters];
+  const previousLevel = logLevel();
+  const lines = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  setLogLevel("info");
+  const h = await harness();
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    traffic = transport.subscribe(callbacks);
+    await until(() => !!traffic.identity());
+    const event = await outgoing(transport, "private-event-body");
+    for (const [path, liveId, stage] of [
+      ["/api/relay/publish", "missing-owner", "owner-missing"],
+      ["/api/relay/secondary/publish", traffic.identity(), "owner-mismatch"],
+    ]) {
+      const response = await fetch(`${h.base}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Live-ID": liveId,
+        },
+        body: JSON.stringify(event),
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: "Publication socket unavailable",
+        sent: false,
+      });
+      expect(lines).toContain(
+        `publication id=${event.id} kind=9 stage=${stage} sent=false`,
+      );
+    }
+    expect(h.publications).toHaveLength(0);
+    for (const secret of [
+      event.content,
+      event.sig,
+      traffic.identity(),
+      "missing-owner",
+    ])
+      expect(lines.join("\n")).not.toContain(secret);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+    logger.setReporters(reporters);
+    setLogLevel(previousLevel);
+  }
+});
+
+test("publication diagnostics separate local unsent duplicates from lost socket receipts", async () => {
+  const logger = getLogger("relay-broker");
+  const reporters = [...logger.options.reporters];
+  const previousLevel = logLevel();
+  const lines = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  setLogLevel("info");
+  const h = await harness();
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    traffic = transport.subscribe(callbacks);
+    await until(() => h.requests.length >= 1 && !!traffic.identity());
+    const event = await outgoing(transport, "private-event-body");
+    const publish = () =>
+      fetch(`${h.base}/api/relay/publish`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Live-ID": traffic.identity(),
+        },
+        body: JSON.stringify(event),
+      });
+    const first = publish();
+    await until(() => h.publications.length === 1);
+    const duplicate = await publish();
+    expect(duplicate.status).toBe(503);
+    expect(await duplicate.json()).toEqual({
+      error: "Socket publication could not be confirmed",
+      sent: false,
+    });
+    expect(lines).toContain(
+      `publication id=${event.id} kind=9 stage=socket sent=false reason=Publication already in flight`,
+    );
+    h.sockets[0].close();
+    const interrupted = await first;
+    expect(interrupted.status).toBe(503);
+    expect(await interrupted.json()).toEqual({
+      error: "Socket publication could not be confirmed",
+    });
+    expect(lines).toContain(
+      `publication id=${event.id} kind=9 stage=socket sent=true reason=Socket connection interrupted`,
+    );
+    const output = lines.join("\n");
+    expect(output).not.toContain("refusal=");
+    for (const secret of [event.content, event.sig, traffic.identity()])
+      expect(output).not.toContain(secret);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+    logger.setReporters(reporters);
+    setLogLevel(previousLevel);
+  }
+});

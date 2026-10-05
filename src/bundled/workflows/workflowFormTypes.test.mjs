@@ -293,12 +293,16 @@ test("invalid IDs, shapes, and scalar types are refused", () => {
   }
 });
 
-test("step condition capabilities stay in YAML mode", () => {
+test("step conditions are preserved by Form mode", () => {
   const condition = `name: Conditional\ntrigger: { on: message_posted }\nsteps: [{ id: s1, if: trigger_author == "abc", action: send_message, text: hi }]\n`;
 
   const conditionResult = yamlToFormState(condition);
-  assert.equal(conditionResult.ok, false);
-  assert.match(conditionResult.error, /conditions.*YAML editor/);
+  assert.equal(conditionResult.ok, true);
+  assert.equal(
+    yamlToFormState(formStateToYaml(conditionResult.state)).state.steps[0]
+      .condition,
+    conditionResult.state.steps[0].condition,
+  );
 });
 
 test("presents step timeout seconds as durations and serializes them numerically", () => {
@@ -448,7 +452,6 @@ test("webhook triggers carry only `on`, refuse threaded replies and serialize no
 test("unsupported legacy actions remain YAML-only without parsing into form state", () => {
   for (const action of [
     "send_dm",
-    "call_webhook",
     "request_approval",
     "add_reaction",
     "set_channel_topic",
@@ -486,4 +489,42 @@ test("invalid nonblank timeout text survives serialization for validation", () =
       undefined,
     );
   }
+});
+
+test("webhook form preserves omitted method and header insertion order", () => {
+  const yaml = `name: Request\ntrigger:\n  on: webhook\nsteps:\n  - id: request\n    action: call_webhook\n    url: https://example.com/hook\n    headers:\n      Z-First: one\n      A-Second: two\n    body: '{"ready":true}'\n`;
+  const result = yamlToFormState(yaml);
+  assert.equal(result.ok, true);
+  assert.equal(result.state.steps[0].method, undefined);
+  const output = formStateToYaml(result.state);
+  assert.equal(output.includes("method:"), false);
+  assert.ok(output.indexOf("Z-First") < output.indexOf("A-Second"));
+  assert.equal(yamlToFormState(output).state.steps[0].body, '{"ready":true}');
+  for (const extra of [
+    "    future: keep\n",
+    "    headers:\n      X-Count: 5\n",
+  ]) {
+    const unsupported = yamlToFormState(
+      `name: Request\ntrigger:\n  on: webhook\nsteps:\n  - id: request\n    action: call_webhook\n    url: https://example.com/hook\n${extra}`,
+    );
+    assert.equal(unsupported.ok, false);
+  }
+});
+
+test("an explicitly empty step condition survives unrelated Form edits", () => {
+  const yaml = `name: Conditional
+trigger: {on: webhook}
+steps:
+  - id: request
+    action: call_webhook
+    url: "{{trigger_text}}"
+    if: ''
+`;
+  const result = yamlToFormState(yaml);
+  assert.equal(result.ok, true);
+  const output = parseYaml(
+    formStateToYaml({ ...result.state, name: "Renamed" }),
+  );
+  assert.equal(output.steps[0].if, "");
+  assert.equal(output.steps[0].url, "{{trigger_text}}");
 });

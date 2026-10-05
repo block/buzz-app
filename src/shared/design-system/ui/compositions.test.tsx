@@ -310,3 +310,273 @@ test("stable dialog height is opt-in and can return to content sizing", () => {
   rerender(renderDialog());
   expect(screen.getByRole("dialog")).toHaveAttribute("data-height", "content");
 });
+
+test("dialog composition keeps actions accessible and lets an inner layer consume Escape", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  const interceptEscape = vi
+    .fn()
+    .mockReturnValueOnce(true)
+    .mockReturnValue(false);
+  render(
+    <Dialog
+      open
+      title="Editor"
+      onOpenChange={change}
+      onEscape={interceptEscape}
+      headerActions={<Button>Editor menu</Button>}
+      leadingActions={<Button>Change view</Button>}
+      actions={<Button>Save</Button>}
+    >
+      <Field label="Name">
+        <Input />
+      </Field>
+    </Dialog>,
+  );
+  for (const name of ["Editor menu", "Change view", "Save", "Close"])
+    expect(screen.getByRole("button", { name })).toBeVisible();
+  await user.click(screen.getByRole("textbox", { name: "Name" }));
+  await user.keyboard("{Escape}");
+  expect(interceptEscape).toHaveBeenCalledTimes(1);
+  expect(change).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(change).toHaveBeenCalledWith(false);
+});
+
+test("a nested right dialog renders its own dismissal backdrop", () => {
+  render(
+    <Dialog open title="Editor" onOpenChange={() => {}}>
+      <Dialog
+        open
+        placement="right"
+        dismissOnOutsideClick
+        title="Inspector"
+        onOpenChange={() => {}}
+      >
+        <Button>Inspect</Button>
+      </Dialog>
+    </Dialog>,
+  );
+  expect(screen.getByRole("dialog", { name: "Inspector" })).toHaveAttribute(
+    "data-placement",
+    "right",
+  );
+  expect(
+    document.querySelector('.buzz-dialog-backdrop[data-placement="right"]'),
+  ).not.toBeNull();
+});
+
+test("dialog content-owned layout is opt-in and retains the shared body", () => {
+  const props = {
+    open: true,
+    onOpenChange: () => {},
+    title: "Browse",
+    children: <p>Results</p>,
+  };
+  const { rerender } = render(<Dialog {...props} />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flow",
+  );
+  rerender(<Dialog {...props} height="stable" bodyLayout="flex" />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flex",
+  );
+  expect(screen.getByText("Results").parentElement).toHaveClass(
+    "buzz-dialog-body",
+  );
+  rerender(<Dialog {...props} />);
+  expect(screen.getByRole("dialog")).toHaveAttribute(
+    "data-body-layout",
+    "flow",
+  );
+});
+
+test("navigation tabs retain keyboard selection and separate close buttons", async () => {
+  const user = userEvent.setup();
+  const close = vi.fn();
+  function Example() {
+    const [value, setValue] = useState("thread");
+    return (
+      <Tabs
+        value={value}
+        onValueChange={setValue}
+        label="Panel tabs"
+        variant="navigation"
+        items={[
+          {
+            value: "thread",
+            label: "Thread",
+            icon: <span aria-hidden="true">T</span>,
+          },
+          { value: "profile", label: "Ada", onClose: close },
+        ]}
+        renderPanel={(tab) => <p>{tab} content</p>}
+      />
+    );
+  }
+  render(<Example />);
+  const thread = screen.getByRole("tab", { name: "Thread" });
+  expect(thread).toHaveClass("navigation-item");
+  expect(thread).not.toHaveAttribute("aria-current", "page");
+  await user.click(thread);
+  await user.keyboard("{ArrowRight}");
+  const profile = screen.getByRole("tab", { name: "Ada" });
+  expect(profile).toHaveFocus();
+  expect(profile).toHaveAttribute("aria-selected", "false");
+  await user.keyboard("{Enter}");
+  expect(profile).toHaveAttribute("aria-selected", "true");
+  expect(profile).toHaveAttribute("data-selected");
+  expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Ada");
+  const dismiss = screen.getByRole("button", { name: "Close Ada tab" });
+  expect(profile).not.toContainElement(dismiss);
+  await user.click(dismiss);
+  expect(close).toHaveBeenCalledOnce();
+  await user.click(profile);
+  await user.keyboard("{Delete}");
+  expect(close).toHaveBeenCalledTimes(2);
+});
+
+test("centered nested pointer-dismissal owns a backdrop and leaves the parent open", async () => {
+  const user = userEvent.setup();
+  const parent = vi.fn();
+  const child = vi.fn();
+  render(
+    <Dialog open title="Editor" onOpenChange={parent} dismissOnOutsideClick>
+      <Dialog open title="Confirm" onOpenChange={child} dismissOnOutsideClick>
+        <Button>Cancel</Button>
+      </Dialog>
+    </Dialog>,
+  );
+  const popup = screen.getByRole("dialog", { name: "Confirm" });
+  const backdrop = popup.parentElement?.querySelector(".buzz-dialog-backdrop");
+  expect(backdrop).toHaveAttribute("data-outside-dismissal", "true");
+  await user.click(backdrop as Element);
+  expect(child).toHaveBeenCalledExactlyOnceWith(false);
+  expect(parent).not.toHaveBeenCalled();
+});
+
+test("outside dismissal remains opt-in", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  render(
+    <Dialog open title="Editor" onOpenChange={change}>
+      <Button>Save</Button>
+    </Dialog>,
+  );
+  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
+  expect(change).not.toHaveBeenCalled();
+});
+
+test("dialog steps keep one labelled modal and make outgoing controls inert", async () => {
+  const content = (confirm: boolean) => (
+    <Dialog
+      open
+      onOpenChange={() => {}}
+      title={confirm ? "Confirm change" : "Edit notes"}
+      height={confirm ? "content" : "stable"}
+      bodyLayout={confirm ? "flow" : "flex"}
+      description={confirm ? "Applies only after Save." : undefined}
+      step={
+        confirm ? { key: "confirm", scale: 1.05 } : { key: "edit", scale: 0.95 }
+      }
+      actions={<Button>{confirm ? "Continue" : "Save"}</Button>}
+    >
+      {confirm ? <p>Review this change.</p> : <Input aria-label="Note" />}
+    </Dialog>
+  );
+  const view = render(content(false));
+  const popup = screen.getByRole("dialog", { name: "Edit notes" });
+  const outgoing = screen
+    .getByRole("textbox", { name: "Note" })
+    .closest(".buzz-dialog-step");
+  view.rerender(content(true));
+  expect(screen.getByRole("dialog", { name: "Confirm change" })).toBe(popup);
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(document.querySelectorAll(".buzz-dialog-backdrop")).toHaveLength(1);
+  expect(popup).toHaveAccessibleDescription("Applies only after Save.");
+  expect(outgoing).toHaveAttribute("data-height", "stable");
+  expect(outgoing).toHaveAttribute("data-body-layout", "flex");
+  const incoming = screen
+    .getByRole("button", { name: "Continue" })
+    .closest(".buzz-dialog-step");
+  expect(incoming).toHaveAttribute("data-height", "content");
+  expect(incoming).toHaveAttribute("data-body-layout", "flow");
+  expect(outgoing).toHaveAttribute("inert");
+  expect(outgoing).toHaveAttribute("aria-hidden", "true");
+  expect(
+    screen.queryByRole("textbox", { name: "Note" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  // Reverse before the outgoing step has finished; presence must revive it.
+  view.rerender(content(false));
+  expect(screen.getByRole("dialog", { name: "Edit notes" })).toBe(popup);
+  expect(screen.getByRole("textbox", { name: "Note" })).toBeEnabled();
+  expect(outgoing).not.toHaveAttribute("inert");
+  expect(popup).not.toHaveAccessibleDescription();
+  await waitFor(() =>
+    expect(popup.querySelectorAll(".buzz-dialog-step")).toHaveLength(1),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Continue" }),
+  ).not.toBeInTheDocument();
+});
+
+test("compact header spacing is opt-in and follows stepped content", () => {
+  const view = (compact: boolean, step = "form") => (
+    <Dialog
+      open
+      title="Channel"
+      onOpenChange={() => {}}
+      headerGap={compact ? "compact" : "default"}
+      step={{ key: step, scale: 0.95 }}
+    >
+      <p>{step}</p>
+    </Dialog>
+  );
+  const { rerender } = render(view(false));
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-header-gap",
+    "default",
+  );
+  rerender(view(true));
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-header-gap",
+    "compact",
+  );
+  rerender(view(true, "confirmation"));
+  expect(screen.getByText("confirmation").parentElement).toHaveAttribute(
+    "data-header-gap",
+    "compact",
+  );
+});
+
+test("compact footer spacing is opt-in and resets when leaving confirmation", () => {
+  const view = (confirm = false) => (
+    <Dialog
+      open
+      title="Channel"
+      onOpenChange={() => {}}
+      {...(confirm ? { footerGap: "compact" as const } : {})}
+      step={{ key: confirm ? "confirmation" : "form", scale: 0.95 }}
+    >
+      <p>{confirm ? "confirmation" : "form"}</p>
+    </Dialog>
+  );
+  const { rerender } = render(view());
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "default",
+  );
+  rerender(view(true));
+  expect(screen.getByText("confirmation").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "compact",
+  );
+  rerender(view());
+  expect(screen.getByText("form").parentElement).toHaveAttribute(
+    "data-footer-gap",
+    "default",
+  );
+});

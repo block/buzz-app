@@ -1,8 +1,10 @@
 import { getEventHash } from "nostr-tools";
+import { attestedOwner } from "../agents/owner-attestation";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
-import { newer, type RelayEvent } from "./events";
+import { hasTag, newer, type RelayEvent } from "./events";
+import { openMetadata } from "./discovery";
 import {
   DM_VISIBILITY_KIND,
   exactLifecycleTag,
@@ -10,7 +12,7 @@ import {
   lifecycleRecord,
   lifecycleSettings,
   lifecycleTemplate,
-  type ChannelLifecycleAction,
+  type ChannelLifecycleCommand,
   type ChannelLifecycleSettings,
 } from "./channel-lifecycle-protocol";
 
@@ -36,7 +38,7 @@ export interface ChannelLifecycleCapability {
     signal?: AbortSignal,
   ): Promise<ChannelLifecycleSettings>;
   run(
-    action: ChannelLifecycleAction,
+    action: ChannelLifecycleCommand,
     channelId: string,
     signal?: AbortSignal,
   ): Promise<void>;
@@ -107,12 +109,14 @@ export function createChannelLifecycle({
     id: string,
     signal: AbortSignal,
     member = false,
+    strong = false,
   ) {
     if (!reader)
       throw new Error("Channel actions are unavailable on this connection");
     const events = await reader.read(
       kinds.map((kind) => ({
         kinds: [kind],
+        ...(strong ? { consistency: "strong" as const } : {}),
         authors: [relayAuthor],
         "#d": [id],
         limit: 1,
@@ -125,14 +129,75 @@ export function createChannelLifecycle({
       throw new Error("Unexpected channel state response");
     return events;
   }
-  async function load(id: string, signal: AbortSignal) {
+  async function load(id: string, signal: AbortSignal, checkOwnedAgent = true) {
     assertAccess(id);
     const events = await read([39000, 39001, 39002], id, signal);
     assertAccess(id);
-    return lifecycleSettings(events, id, viewer, relayAuthor);
+    const settings = lifecycleSettings(events, id, viewer, relayAuthor);
+    const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
+    if (
+      !reader ||
+      !checkOwnedAgent ||
+      settings.canDelete ||
+      settings.canHide ||
+      (metadata && exactLifecycleTag(metadata, "archived") === "true")
+    )
+      return settings;
+    // lifecycleSettings validated every owner against the signed member roster.
+    const owners =
+      lifecycleRecord(events, 39001, id, relayAuthor)?.tags.flatMap(
+        ([name, pubkey, role]) =>
+          name === "p" && role === "owner" && pubkey ? [pubkey] : [],
+      ) ?? [];
+    if (!owners.length) return settings;
+    // Bound the whole optional lookup, not each batch: it must not consume the
+    // lifecycle deadline and erase independently established Archive/Leave.
+    const profileSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+    try {
+      for (let start = 0; start < owners.length; start += 4) {
+        const batch = owners.slice(start, start + 4);
+        const profiles = await reader.read(
+          batch.map((pubkey) => ({ kinds: [0], authors: [pubkey], limit: 1 })),
+          { signal: profileSignal, fresh: true, priority: "foreground" },
+        );
+        profileSignal.throwIfAborted();
+        assertAccess(id);
+        if (
+          profiles.some(
+            (event) => event.kind !== 0 || !batch.includes(event.pubkey),
+          )
+        )
+          throw new Error("Unexpected channel owner profile response");
+        for (const pubkey of batch) {
+          const profile = profiles
+            .filter((event) => event.pubkey === pubkey)
+            .reduce<RelayEvent | undefined>(newer, undefined);
+          // This verifies profile provenance, NOT the relay's persisted ownership
+          // mapping. The viewer signs; the relay still authorizes every Delete.
+          const owner = profile && (await attestedOwner(profile));
+          profileSignal.throwIfAborted();
+          assertAccess(id);
+          if (owner === viewer)
+            return Object.freeze({ ...settings, canDelete: true });
+        }
+      }
+      return settings;
+    } catch {
+      // Optional read failures affect only Delete. Cancellation/access loss still
+      // invalidate the whole result, including late replies from an old session.
+      signal.throwIfAborted();
+      assertAccess(id);
+      return Object.freeze({ ...settings, deleteUnavailable: true });
+    }
   }
-  async function readVisibility(signal: AbortSignal) {
-    const events = await read([DM_VISIBILITY_KIND], viewer, signal, true);
+  async function readVisibility(signal: AbortSignal, strong = false) {
+    const events = await read(
+      [DM_VISIBILITY_KIND],
+      viewer,
+      signal,
+      true,
+      strong,
+    );
     const record = lifecycleRecord(
       events,
       DM_VISIBILITY_KIND,
@@ -193,7 +258,7 @@ export function createChannelLifecycle({
       return owned((signal) => load(lifecycleChannelId(value), signal), signal);
     },
     async run(
-      action: ChannelLifecycleAction,
+      action: ChannelLifecycleCommand,
       value: string,
       caller?: AbortSignal,
     ) {
@@ -205,10 +270,38 @@ export function createChannelLifecycle({
       let publicationStarted = false;
       try {
         await owned(async (signal) => {
+          // Joining starts from a nonmember preview, so membership-based
+          // settings cannot authorize it. Fresh signed metadata must still
+          // say public; a current roster entry means there is nothing to send.
+          const joined = async () => {
+            const [metadata, roster] = await Promise.all([
+              read([39000], id, signal),
+              read([39002], id, signal, true),
+            ]);
+            const channel = lifecycleRecord(metadata, 39000, id, relayAuthor);
+            const membership = lifecycleRecord(roster, 39002, id, relayAuthor);
+            if (membership && hasTag(membership, "p", viewer)) {
+              acceptDiscovery(channel ? [channel, membership] : [membership]);
+              return true;
+            }
+            if (
+              !channel ||
+              !openMetadata(channel) ||
+              exactLifecycleTag(channel, "archived") === "true"
+            )
+              throw new Error("Only active public channels can be joined.");
+            return false;
+          };
           const authorize = async () => {
-            const settings = await load(id, signal);
+            if (action === "join") return joined();
+            const settings = await load(id, signal, action === "delete");
+            if (action === "delete" && settings.deleteUnavailable)
+              throw new Error(
+                "Delete check unavailable. Retry channel permissions.",
+              );
             const permitted = {
               archive: settings.canArchive,
+              unarchive: settings.canUnarchive,
               delete: settings.canDelete,
               leave: settings.canLeave,
               hide: settings.canHide,
@@ -220,7 +313,7 @@ export function createChannelLifecycle({
                   : "This action is no longer permitted. Refresh channel permissions.",
               );
           };
-          await authorize();
+          if (await authorize()) return;
           const template = lifecycleTemplate(action, id);
           const signed = await writer.sign(structuredClone(template), signal);
           signal.throwIfAborted();
@@ -233,7 +326,7 @@ export function createChannelLifecycle({
             getEventHash(signed) !== signed.id
           )
             throw new Error("Signer changed the channel lifecycle command");
-          await authorize();
+          if (await authorize()) return;
           signal.throwIfAborted();
           publicationStarted = true;
           await writer.publish(signed, signal);
@@ -254,15 +347,34 @@ export function createChannelLifecycle({
                 signal.addEventListener("abort", abort, { once: true });
               });
             if (action === "hide") {
-              if ((await readVisibility(signal)).includes(id)) return;
+              if ((await readVisibility(signal, true)).includes(id)) return;
+            } else if (action === "join") {
+              const events = await read([39002], id, signal, true, true);
+              const roster = lifecycleRecord(events, 39002, id, relayAuthor);
+              if (roster && hasTag(roster, "p", viewer)) {
+                acceptDiscovery([roster]);
+                return;
+              }
             } else {
               const kind = action === "leave" ? 39002 : 39000;
-              const events = await read([kind], id, signal, action === "leave");
+              const events = await read(
+                [kind],
+                id,
+                signal,
+                action === "leave",
+                true,
+              );
               const record = lifecycleRecord(events, kind, id, relayAuthor);
-              if (action === "archive") {
+              if (action === "archive" || action === "unarchive") {
+                const archived =
+                  record && exactLifecycleTag(record, "archived");
+                // The relay omits the archived tag on active channels. Absence
+                // of the whole record is never evidence of restoration.
                 if (
                   record &&
-                  exactLifecycleTag(record, "archived") === "true"
+                  (action === "archive"
+                    ? archived === "true"
+                    : archived === undefined || archived === "false")
                 ) {
                   acceptDiscovery([record]);
                   return;

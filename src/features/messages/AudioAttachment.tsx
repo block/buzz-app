@@ -1,4 +1,11 @@
-import { useCallback, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -30,7 +37,11 @@ export function AudioAttachment({
   attachment: Attachment;
   source: string;
 }) {
+  const active = useConversationPresentation();
   const audio = useRef<HTMLAudioElement>(null);
+  useLayoutEffect(() => {
+    if (!active) audio.current?.pause();
+  }, [active]);
   const endedDuration = useRef<number | undefined>(undefined);
   const previousSource = useRef(source);
   const [currentTime, setCurrentTime] = useState(0);
@@ -151,7 +162,7 @@ export function AudioAttachment({
         onClick={() => {
           const element = audio.current;
           if (!element) return;
-          if (element.paused) void element.play();
+          if (element.paused) void element.play().catch(() => {});
           else element.pause();
         }}
         icon={isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}

@@ -59,11 +59,15 @@ it.each([true, false])(
       wrapper: ToastProvider,
     });
     const toggle = screen.getByRole("switch", { name: "Desktop alerts" });
+    const whileViewing = screen.getByRole("switch", {
+      name: "Notify while viewing",
+    });
     if (paused) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
       await userEvent.setup().click(toggle);
       expect(service.snapshot().preferences.enabled).toBe(true);
       expect(toggle).not.toBeChecked();
+      expect(whileViewing).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("status")).toHaveTextContent(
         "Remove BUZZ_DEV_NOTIFICATIONS=0",
       );
@@ -72,6 +76,16 @@ it.each([true, false])(
       ).not.toBeInTheDocument();
     } else {
       expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+      expect(toggle).toBeChecked();
+      expect(whileViewing).not.toHaveAttribute("aria-disabled", "true");
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
+      expect(toggle).not.toBeChecked();
+      expect(service.snapshot().preferences.enabled).toBe(false);
+      await userEvent
+        .setup()
+        .click(screen.getByText("Desktop alerts", { selector: "label" }));
       expect(toggle).toBeChecked();
       expect(
         screen.getByRole("button", { name: "Allow notifications" }),
@@ -158,6 +172,115 @@ it("keeps both preference recovery paths scoped to the visible section", () => {
   expect(service.snapshot().preferences.enabled).toBe(true);
 });
 
+function previewButton() {
+  const button = screen
+    .getAllByRole("button", { name: "Preview flutter" })
+    .at(0);
+  if (!button) throw new Error("Missing preview control");
+  return button;
+}
+
+it("owns one preview and stops it across replacement, disablement, inactivity, errors, and unmount", async () => {
+  const audios: FakeAudio[] = [];
+  class FakeAudio {
+    currentTime = 0;
+    onended: (() => void) | null = null;
+    onpause: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    pause = vi.fn();
+    play = vi.fn(() => Promise.resolve());
+    constructor(public src: string) {
+      audios.push(this);
+    }
+  }
+  vi.stubGlobal("Audio", FakeAudio);
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "granted",
+      requestPermission: async () => "granted",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  service.selectViewer("a".repeat(64));
+  const view = render(<NotificationSettings notifications={service} />);
+
+  fireEvent.click(previewButton());
+  expect(audios[0]?.src).toBe("/sounds/flutter.mp3");
+  expect(screen.getByRole("button", { name: "Pause flutter" })).toBeEnabled();
+
+  fireEvent.click(previewButton());
+  expect(audios[0]?.pause).toHaveBeenCalledOnce();
+  expect(audios[0]?.onended).toBeNull();
+  expect(audios).toHaveLength(2);
+
+  act(() => service.updatePreferences({ categories: { mention: false } }));
+  expect(audios[1]?.pause).toHaveBeenCalledOnce();
+  act(() => service.updatePreferences({ categories: { mention: true } }));
+  fireEvent.click(previewButton());
+  view.rerender(
+    <NotificationSettings notifications={service} active={false} />,
+  );
+  expect(audios[2]?.pause).toHaveBeenCalledOnce();
+
+  view.rerender(<NotificationSettings notifications={service} />);
+  fireEvent.click(previewButton());
+  act(() => audios[3]?.onerror?.());
+  expect(screen.queryByRole("button", { name: "Pause flutter" })).toBeNull();
+
+  fireEvent.click(previewButton());
+  act(() => service.updatePreferences({ sound: false }));
+  expect(audios[4]?.pause).toHaveBeenCalledOnce();
+  act(() => service.updatePreferences({ sound: true }));
+  fireEvent.click(previewButton());
+  view.unmount();
+  expect(audios[5]?.pause).toHaveBeenCalledOnce();
+  expect(audios[5]?.onerror).toBeNull();
+});
+
+it("resets preview controls when playback rejects", async () => {
+  let reject!: (error: Error) => void;
+  class RejectingAudio {
+    onended: (() => void) | null = null;
+    onpause: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    pause = vi.fn();
+    play = vi.fn(
+      () =>
+        new Promise<void>((_resolve, rejectPromise) => {
+          reject = rejectPromise;
+        }),
+    );
+  }
+  vi.stubGlobal("Audio", RejectingAudio);
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "granted",
+      requestPermission: async () => "granted",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  service.selectViewer("a".repeat(64));
+  render(<NotificationSettings notifications={service} />);
+  fireEvent.click(previewButton());
+  await act(async () => reject(new Error("blocked")));
+  expect(screen.queryByRole("button", { name: "Pause flutter" })).toBeNull();
+});
 it("repeated identical permission failures retain feedback without leaving Settings", async () => {
   const ctx = new Context();
   contexts.push(ctx);
@@ -184,7 +307,9 @@ it("repeated identical permission failures retain feedback without leaving Setti
     wrapper: ToastProvider,
   });
   const notice = () =>
-    screen.getByRole("dialog", { name: "Notification failed" });
+    screen.getByRole("dialog", {
+      name: "Buzz couldn’t send the notification",
+    });
   expect(notice()).toHaveTextContent("Permission unavailable");
   await act(() => vi.advanceTimersByTimeAsync(9000));
   fireEvent.keyDown(notice(), { key: "Escape" });

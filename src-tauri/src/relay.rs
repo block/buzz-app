@@ -1,0 +1,1324 @@
+//! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
+mod agent;
+use crate::identity::{EventTemplate, IdentityHost};
+pub(crate) use agent::{
+    relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
+    relay_agent_resolve,
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
+use tokio::sync::oneshot;
+use url::Url;
+
+mod channel_writes;
+mod kit;
+pub(crate) use channel_writes::{
+    relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
+    relay_kit_prepare,
+};
+pub(crate) use kit::relay_kit_sign;
+mod media_preparation;
+type Result<T> = std::result::Result<T, String>;
+const MAX_BODY: usize = 1024 * 1024;
+const MAX_RESPONSE: usize = 16 * 1024 * 1024;
+
+fn hex_key(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn template(event: &serde_json::Value, error: &str) -> Result<EventTemplate> {
+    serde_json::from_value(serde_json::json!({
+        "kind": event.get("kind"), "created_at": event.get("created_at"),
+        "tags": event.get("tags"), "content": event.get("content"),
+    }))
+    .map_err(|_| error.into())
+}
+
+fn origin(value: &str) -> Result<Url> {
+    let url = Url::parse(value).map_err(|_| "Invalid relay origin")?;
+    if value.len() > 2048
+        || url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Relay access requires an HTTPS origin without credentials or a path".into());
+    }
+    Ok(url)
+}
+
+fn request_url(community: &str, path: &str, method: &str) -> Result<Url> {
+    let allowed = match method {
+        "GET" => matches!(path, "/" | "/api/join-policy"),
+        "POST" => matches!(
+            path,
+            "/query"
+                | "/events"
+                | "/api/invites"
+                | "/api/invites/claim"
+                | "/api/invites/accept-policy"
+                | "/gifs/search"
+        ),
+        _ => false,
+    };
+    if !allowed {
+        return Err("Unsupported relay request".into());
+    }
+    origin(community)?
+        .join(path)
+        .map_err(|_| "Invalid relay path".into())
+}
+
+fn workflow_uuid(value: &str) -> bool {
+    uuid::Uuid::parse_str(value).is_ok()
+        && value.len() == 36
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn valid_workflow_time(value: &str) -> bool {
+    // Timestamp syntax is bounded here; relay owns interpretation of the cursor.
+    value.bytes().all(|byte| {
+        byte.is_ascii_digit() || matches!(byte, b'-' | b'T' | b':' | b'.' | b'Z' | b'+')
+    })
+}
+
+fn workflow_runs_url(community: &str, id: &str, cursor: Option<&WorkflowCursor>) -> Result<Url> {
+    if !workflow_uuid(id)
+        || cursor.is_some_and(|c| {
+            !workflow_uuid(&c.before_id)
+                || c.before.len() > 40
+                || !c.before.as_bytes().get(0..10).is_some_and(|prefix| {
+                    prefix.iter().enumerate().all(|(i, b)| {
+                        if i == 4 || i == 7 {
+                            *b == b'-'
+                        } else {
+                            b.is_ascii_digit()
+                        }
+                    })
+                })
+                || c.before.as_bytes().get(10) != Some(&b'T')
+                || !valid_workflow_time(&c.before)
+        })
+    {
+        return Err("Invalid workflow read".into());
+    }
+    let mut url = origin(community)?
+        .join(&format!("/workflows/{id}/runs"))
+        .map_err(|_| "Invalid workflow read")?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("limit", "20");
+        if let Some(cursor) = cursor {
+            query.append_pair("before", &cursor.before);
+            query.append_pair("before_id", &cursor.before_id);
+        }
+    }
+    Ok(url)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkflowCursor {
+    before: String,
+    before_id: String,
+}
+
+#[tauri::command]
+pub(crate) async fn relay_workflow_runs(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    id: String,
+    cursor: Option<WorkflowCursor>,
+) -> Result<RelayResponse> {
+    let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
+    send(host.inner(), url, "GET", None, true, 1024 * 1024).await
+}
+
+#[tauri::command]
+pub(crate) async fn relay_sign(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    event: EventTemplate,
+) -> Result<serde_json::Value> {
+    validate_event(&community, &event)?;
+    if event.kind == 9007 && !channel_creation_supported(&community).await? {
+        return Err("Channel creation is unavailable".into());
+    }
+    if event.kind == 30078 {
+        return Err("Channel recipe or Canvas rejected".into());
+    }
+    let coordinate_delete = if event.kind == 5 {
+        event
+            .tags
+            .iter()
+            .find(|tag| tag[0] == "a")
+            .map(|tag| tag[1].clone())
+    } else {
+        None
+    };
+    let signed = host.sign(event).await?;
+    if coordinate_delete
+        .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
+    {
+        return Err("Only the author can delete this event".into());
+    }
+    Ok(signed)
+}
+
+fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
+    let mut relay = origin(community)?;
+    if event.kind == 22242 {
+        relay.set_scheme("wss").map_err(|_| "Invalid relay")?;
+        let relay_tags: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|t| t.first().map(String::as_str) == Some("relay"))
+            .collect();
+        let challenges: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|t| t.first().map(String::as_str) == Some("challenge"))
+            .collect();
+        if !event.content.is_empty()
+            || event.tags.len() != 2
+            || relay_tags.len() != 1
+            || relay_tags[0].len() != 2
+            || Url::parse(&relay_tags[0][1]).ok().as_ref() != Some(&relay)
+            || challenges.len() != 1
+            || challenges[0].len() != 2
+            || challenges[0][1].is_empty()
+            || challenges[0][1].len() > 4096
+        {
+            return Err("Relay authentication does not match this community".into());
+        }
+    } else if event.kind == 5 {
+        if !valid_message_deletion(event) && !valid_managed_agent_deletion(event) {
+            validate_workflow_template(event)?;
+        }
+    } else if matches!(event.kind, 30620 | 46020) {
+        validate_workflow_template(event)?;
+    } else if event.kind == 9007 {
+        if !channel_writes::creation(event) {
+            return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+    } else if event.kind == 40100 {
+        if !valid_canvas(event) {
+            return Err("Malformed Canvas save".into());
+        }
+    } else if event.kind == 28936 {
+        // A NIP-43 leave request revokes the signer's own membership: empty
+        // content and exactly the NIP-70 protected tag, nothing else.
+        if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
+            return Err("A leave request carries no content or other tags".into());
+        }
+    } else if !matches!(
+        event.kind,
+        0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
+    ) {
+        return Err("This event is not supported by the packaged relay connection".into());
+    }
+    Ok(())
+}
+
+// Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
+fn valid_canvas(event: &EventTemplate) -> bool {
+    event.content.len() <= 24 * 1024
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("h"))
+            .count()
+            == 1
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("expected-revision"))
+            .count()
+            <= 1
+        && event.tags.iter().all(|tag| {
+            if tag.len() != 2 {
+                return false;
+            }
+            match tag[0].as_str() {
+                "h" => channel_writes::uuid(&tag[1]),
+                "client-id" => tag[1].encode_utf16().count() <= 128,
+                "expected-revision" => {
+                    tag[1] == "none"
+                        || (tag[1].len() == 64
+                            && tag[1]
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                }
+                _ => false,
+            }
+        })
+}
+
+/** Only the owner's managed-agent coordinate may use this global kind-5 shape. */
+fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
+    if !event.content.is_empty()
+        // Signed events return to JavaScript; timestamps must fit Number.MAX_SAFE_INTEGER.
+        || event.created_at > 9_007_199_254_740_991
+        || event.tags.iter().any(|tag| {
+            tag.len() != 2
+                || tag[1].len() > 256
+                || !matches!(tag[0].as_str(), "a" | "k" | "client-id")
+        })
+        || event
+            .tags
+            .iter()
+            .enumerate()
+            .any(|(i, tag)| event.tags[..i].iter().any(|prior| prior[0] == tag[0]))
+        || event
+            .tags
+            .iter()
+            .any(|tag| tag[0] == "k" && tag[1] != "30177")
+    {
+        return false;
+    }
+    let Some(coordinate) = event.tags.iter().find(|tag| tag[0] == "a") else {
+        return false;
+    };
+    let mut parts = coordinate[1].split(':');
+    parts.next() == Some("30177")
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_some_and(hex_key)
+        && parts.next().is_none()
+}
+
+/** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */
+fn valid_message_deletion(event: &EventTemplate) -> bool {
+    if event.kind != 5
+        || event.created_at > 9_007_199_254_740_991
+        || !event.content.is_empty()
+        || event.tags.len() > 106
+        || event
+            .tags
+            .iter()
+            .any(|tag| tag.len() != 2 || !matches!(tag[0].as_str(), "h" | "e" | "k" | "client-id"))
+    {
+        return false;
+    }
+    let channels: Vec<_> = event.tags.iter().filter(|tag| tag[0] == "h").collect();
+    let targets: Vec<_> = event.tags.iter().filter(|tag| tag[0] == "e").collect();
+    let kinds: Vec<_> = event.tags.iter().filter(|tag| tag[0] == "k").collect();
+    channels.len() == 1
+        && !channels[0][1].is_empty()
+        && channels[0][1].encode_utf16().count() <= 256
+        && (1..=100).contains(&targets.len())
+        && targets.iter().all(|tag| {
+            tag[1].len() == 64
+                && tag[1]
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
+        && targets
+            .iter()
+            .enumerate()
+            .all(|(i, tag)| targets[..i].iter().all(|prior| prior[1] != tag[1]))
+        && (1..=3).contains(&kinds.len())
+        && kinds
+            .iter()
+            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002"))
+}
+
+fn validate_workflow_template(event: &EventTemplate) -> Result<()> {
+    let expected = if event.kind == 5 { "a" } else { "d" };
+    if event.tags.len() > 8
+        || event.content.len() > 24_000
+        || (event.kind != 30620 && !event.content.is_empty())
+        || event.tags.iter().any(|tag| {
+            tag.len() != 2
+                || tag.iter().any(|value| value.len() > 256)
+                || !matches!(
+                    tag[0].as_str(),
+                    "h" | "d" | "a" | "expected-revision" | "client-id"
+                )
+        })
+        || event.tags.iter().filter(|tag| tag[0] == "h").count() != 1
+        || event.tags.iter().filter(|tag| tag[0] == expected).count() != 1
+        || event.tags.iter().any(|tag| {
+            (tag[0] == "d" && expected != "d")
+                || (tag[0] == "a" && expected != "a")
+                || (tag[0] == "expected-revision" && event.kind != 30620)
+        })
+        || event
+            .tags
+            .iter()
+            .enumerate()
+            .any(|(i, tag)| event.tags[..i].iter().any(|prior| prior[0] == tag[0]))
+    {
+        return Err("Malformed workflow command".into());
+    }
+    let coordinate = &event.tags.iter().find(|tag| tag[0] == expected).unwrap()[1];
+    let id = if event.kind == 5 {
+        let Some(("30620", owner, id)) = coordinate
+            .split_once(':')
+            .and_then(|(kind, rest)| rest.split_once(':').map(|(owner, id)| (kind, owner, id)))
+        else {
+            return Err("Malformed workflow command".into());
+        };
+        if owner.len() != 64
+            || !owner
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err("Malformed workflow command".into());
+        }
+        id
+    } else {
+        coordinate.as_str()
+    };
+    if !workflow_uuid(id)
+        || !workflow_uuid(&event.tags.iter().find(|tag| tag[0] == "h").unwrap()[1])
+        || event.tags.iter().any(|tag| {
+            tag[0] == "expected-revision"
+                && (tag[1].len() != 64
+                    || !tag[1]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+        })
+    {
+        return Err("Malformed workflow command".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn relay_decode_sidebar(
+    host: tauri::State<'_, IdentityHost>,
+    events: Vec<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    host.decode_sidebar(events).await
+}
+
+#[tauri::command]
+pub(crate) async fn relay_sign_sidebar(
+    host: tauri::State<'_, IdentityHost>,
+    coordinate: String,
+    payload: serde_json::Value,
+    created_at: u64,
+) -> Result<serde_json::Value> {
+    host.sign_sidebar(coordinate, payload, created_at).await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReadStateIntent {
+    slot: String,
+    created_at: u64,
+    blob: serde_json::Value,
+}
+
+#[tauri::command]
+pub(crate) async fn relay_decode_read_state(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    events: Vec<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    origin(&community)?;
+    host.decode_read_state(events).await
+}
+
+#[tauri::command]
+pub(crate) async fn relay_sign_read_state(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    intent: ReadStateIntent,
+) -> Result<serde_json::Value> {
+    origin(&community)?;
+    host.sign_read_state(intent.slot, intent.created_at, intent.blob)
+        .await
+}
+
+/// Publication cannot be routed through the general event writer: it must verify
+/// the exact own, encrypted read-state coordinate before forwarding signed bytes.
+#[tauri::command]
+pub(crate) async fn relay_publish_read_state(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    event: serde_json::Value,
+) -> Result<RelayResponse> {
+    let url = request_url(&community, "/events", "POST")?;
+    let body = serde_json::to_string(&event).map_err(|_| "Invalid read-state event")?;
+    if body.len() > 64 * 1024 {
+        return Err("Invalid read-state event".into());
+    }
+    host.decode_read_state(vec![event]).await?;
+    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+}
+
+#[derive(Serialize)]
+pub(crate) struct RelayResponse {
+    status: u16,
+    headers: BTreeMap<String, String>,
+    body: String,
+}
+
+async fn verify_owned_event(host: &IdentityHost, event: &serde_json::Value) -> Result<()> {
+    if event.get("pubkey").and_then(serde_json::Value::as_str)
+        != Some(host.viewer().await?.as_str())
+    {
+        return Err("Invalid outgoing signature".into());
+    }
+    verify_signature(event)
+}
+
+async fn admit_app_data(
+    host: &IdentityHost,
+    event: &serde_json::Value,
+    community: &str,
+) -> Result<()> {
+    verify_owned_event(host, event).await?;
+    // Sidebar preferences and channel recipes share kind 30078; the `d` coordinate selects the contract.
+    let sidebar = event["tags"].as_array().is_some_and(|tags| {
+        tags.iter().any(|tag| {
+            tag[0] == "d"
+                && tag[1]
+                    .as_str()
+                    .is_some_and(crate::identity::sidebar_coordinate)
+        })
+    });
+    if sidebar {
+        return host.admit_sidebar(event.clone()).await;
+    }
+    kit::validate_ciphertext(host, event, community).await?;
+    Ok(())
+}
+
+fn verify_signature(event: &serde_json::Value) -> Result<()> {
+    let parsed: nostr::event::Event =
+        serde_json::from_value(event.clone()).map_err(|_| "Invalid outgoing signature")?;
+    parsed
+        .verify()
+        .map_err(|_| "Invalid outgoing signature".into())
+}
+
+async fn channel_creation_supported(community: &str) -> Result<bool> {
+    let url = request_url(community, "/", "GET")?;
+    let mut response = client()?
+        .get(url)
+        .header("Accept", "application/nostr+json")
+        .send()
+        .await
+        .map_err(|_| "Community discovery failed")?;
+    if !response.status().is_success() {
+        return Err("Community discovery failed".into());
+    }
+    let body = read_bounded(
+        &mut response,
+        MAX_BODY,
+        "Community discovery failed",
+        "Invalid community information",
+    )
+    .await?;
+    let info: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| "Invalid community information")?;
+    Ok(info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(hex_key)
+        && info
+            .get("supported_nips")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+}
+
+fn client() -> Result<&'static reqwest::Client> {
+    static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()
+        })
+        .as_ref()
+        .map_err(|_| "Relay network client is unavailable".into())
+}
+
+#[tauri::command]
+pub(crate) async fn relay_http(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    path: String,
+    method: String,
+    body: Option<String>,
+) -> Result<RelayResponse> {
+    let url = request_url(&community, &path, &method)?;
+    if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
+        || (method == "GET" && body.is_some())
+        || (method == "POST" && body.is_none())
+    {
+        return Err("Invalid relay request body".into());
+    }
+    if path == "/events" {
+        let event: serde_json::Value =
+            serde_json::from_str(body.as_deref().ok_or("Invalid relay request body")?)
+                .map_err(|_| "Invalid relay request body")?;
+        let kind = event.get("kind").and_then(serde_json::Value::as_u64);
+        if matches!(kind, Some(41010)) {
+            return Err("Choose between one and eight other people.".into());
+        }
+        if kind == Some(30078) {
+            admit_app_data(host.inner(), &event, &community).await?;
+        }
+        if kind == Some(9007) {
+            verify_owned_event(host.inner(), &event).await?;
+            let template = template(
+                &event,
+                "Agent enrollment or channel operation unavailable or invalid",
+            )?;
+            if !channel_writes::creation(&template) {
+                return Err("Agent enrollment or channel operation unavailable or invalid".into());
+            }
+        }
+        if matches!(kind, Some(9002 | 9008 | 9021 | 9022 | 41012 | 9035 | 9036)) {
+            return Err("Invalid outgoing signature".into());
+        }
+    }
+    send(
+        host.inner(),
+        url,
+        &method,
+        body,
+        method == "POST",
+        MAX_RESPONSE,
+    )
+    .await
+}
+
+async fn send(
+    host: &IdentityHost,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<RelayResponse> {
+    let mut request = client()?.request(
+        reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
+        url.clone(),
+    );
+    if authenticated {
+        let payload = body
+            .as_ref()
+            .map(|body| format!("{:x}", Sha256::digest(body.as_bytes())));
+        let auth = host
+            .sign(EventTemplate {
+                kind: 27235,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is unavailable")?
+                    .as_secs(),
+                content: String::new(),
+                tags: [
+                    vec![
+                        vec!["u".into(), url.to_string()],
+                        vec!["method".into(), method.into()],
+                    ],
+                    payload
+                        .map(|hash| vec![vec!["payload".into(), hash]])
+                        .unwrap_or_default(),
+                    vec![vec!["nonce".into(), uuid::Uuid::new_v4().to_string()]],
+                ]
+                .concat(),
+            })
+            .await?;
+        request = request
+            .header(
+                "Authorization",
+                format!(
+                    "Nostr {}",
+                    STANDARD.encode(
+                        serde_json::to_vec(&auth)
+                            .map_err(|_| "Could not encode relay authentication")?
+                    )
+                ),
+            )
+            .header("Content-Type", "application/json");
+        if let Some(body) = body {
+            request = request.body(body);
+        }
+    } else {
+        request = request.header("Accept", "application/nostr+json");
+    }
+    // Never replay a write after a transport error: it may already have reached the relay.
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "Relay request could not be confirmed")?;
+    read_response(response, response_limit).await
+}
+
+async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {
+    let status = response.status().as_u16();
+    let mut headers = BTreeMap::new();
+    for name in ["content-type", "retry-after", "server-timing"] {
+        if let Some(value) = response.headers().get(name).and_then(|v| v.to_str().ok()) {
+            headers.insert(name.into(), value.into());
+        }
+    }
+
+    let bytes = read_bounded(
+        &mut response,
+        limit,
+        "Relay response was interrupted",
+        "Relay response is too large",
+    )
+    .await?;
+
+    let body = String::from_utf8(bytes).map_err(|_| "Relay response is not UTF-8")?;
+    Ok(RelayResponse {
+        status,
+        headers,
+        body,
+    })
+}
+
+async fn read_bounded(
+    response: &mut reqwest::Response,
+    limit: usize,
+    interrupted: &str,
+    oversized: &str,
+) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(oversized.into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| interrupted)? {
+        if chunk.len() > limit - bytes.len() {
+            return Err(oversized.into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+/// The relay's largest accepted upload (videos).
+const MAX_UPLOAD: usize = 500 * 1024 * 1024;
+
+/// A Blossom `Authorization` value. JS never signs these: `relay_sign` rejects
+/// kind 24242, so a script cannot mint a reusable read or a `delete` proof.
+async fn blossom_auth(
+    host: &IdentityHost,
+    url: &Url,
+    verb: &str,
+    content: &str,
+    mut tags: Vec<Vec<String>>,
+) -> Result<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable")?
+        .as_secs();
+    // `server` matches the dev broker's `URL.host` (host plus any explicit port).
+    let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+    tags.extend([
+        vec!["t".into(), verb.into()],
+        vec!["server".into(), server.into()],
+        // The relay's strict NIP-FI window is 60 seconds.
+        vec!["expiration".into(), (now + 60).to_string()],
+    ]);
+    let event = host
+        .sign(EventTemplate {
+            kind: 24242,
+            created_at: now,
+            content: content.into(),
+            tags,
+        })
+        .await?;
+    Ok(format!(
+        "Nostr {}",
+        STANDARD.encode(
+            serde_json::to_vec(&event).map_err(|_| "Could not encode media authentication")?
+        )
+    ))
+}
+
+/// A cancel may overtake its upload IPC. Pending IDs expire because a cancel
+/// can also arrive after completion or after an upload was rejected before start.
+const PENDING_CANCEL_LIFETIME: Duration = Duration::from_secs(60);
+#[derive(Default)]
+struct UploadState {
+    active: HashMap<String, oneshot::Sender<()>>,
+    pending: HashMap<String, Instant>,
+}
+#[derive(Default)]
+pub(crate) struct Uploads(std::sync::Mutex<UploadState>);
+
+impl Uploads {
+    fn lock(&self) -> std::sync::MutexGuard<'_, UploadState> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Registers `id`, or returns `None` when it was already cancelled.
+    fn start(&self, id: &str) -> Result<Option<oneshot::Receiver<()>>> {
+        let mut uploads = self.lock();
+        if uploads.pending.remove(id).is_some() {
+            return Ok(None);
+        }
+        if uploads.active.contains_key(id) {
+            return Err("Upload is already in progress".into());
+        }
+        if uploads.active.len() >= 64 {
+            return Err("Uploads are busy".into());
+        }
+        let (sender, receiver) = oneshot::channel();
+        uploads.active.insert(id.into(), sender);
+        Ok(Some(receiver))
+    }
+
+    fn cancel(&self, id: &str) {
+        let mut uploads = self.lock();
+        if let Some(sender) = uploads.active.remove(id) {
+            let _ = sender.send(());
+            return;
+        }
+        let now = Instant::now();
+        uploads
+            .pending
+            .retain(|_, inserted| now.duration_since(*inserted) < PENDING_CANCEL_LIFETIME);
+        if uploads.pending.contains_key(id) {
+            uploads.pending.insert(id.into(), now);
+            return;
+        }
+        if uploads.pending.len() >= 64 {
+            // With independent IPC calls we cannot distinguish an old cancel
+            // from one that overtook its upload. Retire an arbitrary old pending
+            // ID so a new cancellation still has a bounded chance to win.
+            if let Some(old) = uploads.pending.keys().next().cloned() {
+                uploads.pending.remove(&old);
+            }
+        }
+        uploads.pending.insert(id.into(), now);
+    }
+
+    fn finish(&self, id: &str) {
+        self.lock().active.remove(id);
+    }
+}
+
+fn upload_id(value: Option<&str>) -> Result<&str> {
+    value
+        .filter(|id| {
+            (1..=64).contains(&id.len())
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .ok_or_else(|| "Invalid upload ID".into())
+}
+
+/// Prepares media when requested, then hashes, signs (`t=upload` + `x`) and
+/// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
+/// descriptor validation, as it does for the dev broker.
+#[tauri::command]
+pub(crate) async fn relay_upload(
+    host: tauri::State<'_, IdentityHost>,
+    uploads: tauri::State<'_, Uploads>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<RelayResponse> {
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
+    let id = upload_id(header("x-buzz-upload-id"))?;
+    let url = origin(header("x-buzz-community").unwrap_or_default())?
+        .join("/upload")
+        .map_err(|_| "Invalid relay path")?;
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("Upload body must be raw bytes".into());
+    };
+    // Tauri sets raw IPC `Content-Type` itself, so the file type travels separately.
+    let kind = header("x-buzz-content-type");
+    let preparation = header("x-buzz-preparation").map(str::to_owned);
+    let Some(mut cancelled) = uploads.start(id)? else {
+        return Err("Upload cancelled".into());
+    };
+    // Dropping the request future closes the connection, so a cancelled upload
+    // stops sending and releases its buffer.
+    let result = if let Err(error) = validate_upload_size(body.len()) {
+        // Preserve preparation's structured size error, but reject before copying
+        // the IPC buffer. Cancellation/admission still takes precedence.
+        if preparation.is_some() {
+            Ok(RelayResponse {
+                status: media_preparation::PreparationError::Size.status(),
+                headers: BTreeMap::new(),
+                body: serde_json::json!({"code": "size"}).to_string(),
+            })
+        } else {
+            Err(error)
+        }
+    } else if let Some(mode) = preparation.as_deref() {
+        upload_prepared(host.inner(), url, body.clone(), mode, &mut cancelled).await
+    } else {
+        tokio::select! {
+            result = upload(host.inner(), url, kind, body.clone()) => result,
+            _ = &mut cancelled => Err("Upload cancelled".into()),
+        }
+    };
+    uploads.finish(id);
+    result
+}
+
+#[tauri::command]
+pub(crate) fn relay_upload_cancel(uploads: tauri::State<'_, Uploads>, id: String) -> Result<()> {
+    uploads.cancel(upload_id(Some(&id))?);
+    Ok(())
+}
+
+async fn upload_prepared(
+    host: &IdentityHost,
+    url: Url,
+    body: Vec<u8>,
+    mode: &str,
+    cancelled: &mut oneshot::Receiver<()>,
+) -> Result<RelayResponse> {
+    let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
+        Ok(value) => value,
+        Err(media_preparation::PreparationError::Cancelled) => {
+            return Err("Upload cancelled".into())
+        }
+        Err(error) => {
+            return Ok(RelayResponse {
+                status: error.status(),
+                headers: BTreeMap::new(),
+                body: serde_json::json!({ "code": error.code() }).to_string(),
+            })
+        }
+    };
+    tokio::select! {
+        result = upload(host, url, Some(kind), body) => result,
+        _ = cancelled => Err("Upload cancelled".into()),
+    }
+}
+
+fn validate_upload_size(size: usize) -> Result<()> {
+    if size == 0 || size > MAX_UPLOAD {
+        return Err("File exceeds the supported upload limit".into());
+    }
+    Ok(())
+}
+
+async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
+    validate_upload_size(body.len())?;
+    // A supported video can be 500 MiB. Hash it off the async executor, moving
+    // the same allocation back to the HTTP body rather than making another copy.
+    tokio::task::spawn_blocking(move || {
+        let hash = format!("{:x}", Sha256::digest(&body));
+        (body, hash)
+    })
+    .await
+    .map_err(|_| "Upload hashing could not complete".into())
+}
+
+async fn upload(
+    host: &IdentityHost,
+    url: Url,
+    kind: Option<&str>,
+    body: Vec<u8>,
+) -> Result<RelayResponse> {
+    let kind = kind
+        .filter(|kind| valid_type(kind))
+        .unwrap_or("application/octet-stream");
+    let (body, hash) = hash_upload(body).await?;
+    let auth = blossom_auth(
+        host,
+        &url,
+        "upload",
+        "Upload attachment",
+        vec![vec!["x".into(), hash.clone()]],
+    )
+    .await?;
+    let response = client()?
+        .put(url)
+        // Matches UPLOAD_TIMEOUT_MS; the shared client's 30 s suits JSON calls only.
+        .timeout(Duration::from_secs(600))
+        .header("Authorization", auth)
+        .header("Content-Type", kind)
+        .header("X-SHA-256", hash)
+        .body(body)
+        .send()
+        .await
+        .map_err(|_| "Upload did not finish")?;
+    // A Blossom descriptor is small; the shared validator rejects anything else.
+    read_response(response, 8192).await
+}
+
+/// Largest whole-file media response: the relay's document limit, which also
+/// covers images. Only video can be larger; `<video>` fetches it by `Range`.
+const MAX_MEDIA: usize = 100 * 1024 * 1024;
+/// Open-ended ranges are shortened so playback starts after one small chunk;
+/// the media element requests the next range itself.
+const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
+/// The relay's own cap on a single 206 response.
+const MAX_MEDIA_RANGE: usize = 16 * 1024 * 1024;
+
+/// `buzz-media://` serves relay `GET /media/*` to `<img>`, `<video>` and
+/// `<audio>`, which cannot send the required Blossom `Authorization` header.
+/// Each request gets a fresh `get` token and forwards only the player's
+/// `Range`, so playback streams and seeks. Which URLs use it is decided in
+/// shared TypeScript (`mediaUrl`); this checks only the relay-blob URL shape,
+/// not saved-community membership (Rust keeps no community list).
+pub(crate) fn media_protocol<R: tauri::Runtime>(
+    ctx: tauri::UriSchemeContext<'_, R>,
+    request: tauri::http::Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
+    use tauri::Manager as _;
+    let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let response = match media_request(&request) {
+            Ok((url, range)) => fetch_media(&host, url, range).await,
+            Err(status) => Err(status),
+        };
+        responder.respond(response.unwrap_or_else(|status| {
+            tauri::http::Response::builder()
+                .status(status)
+                .body(Vec::new())
+                .expect("static response")
+        }));
+    });
+}
+
+/// Decode only the custom scheme URLs emitted by convertFileSrc. The media URL
+/// is independently checked before any authenticated request is made.
+fn download_target(source: &str) -> Option<Url> {
+    let url = Url::parse(source).ok()?;
+    let host_ok = match url.scheme() {
+        "buzz-media" => url.host_str() == Some("localhost"),
+        "http" => url.host_str() == Some("buzz-media.localhost"),
+        _ => false,
+    };
+    if !host_ok
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let target = percent_encoding::percent_decode_str(url.path().strip_prefix('/')?)
+        .decode_utf8()
+        .ok()?;
+    media_url(&target)
+}
+
+/// Never interpret untrusted attachment names as paths. A missing or invalid name
+/// falls back to the validated blob's basename.
+fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
+    let stem = name.split('.').next().unwrap_or("");
+    let reserved = stem.trim_end_matches(' ').to_ascii_uppercase();
+    if !name.is_empty()
+        && name.len() <= 255
+        && name != "."
+        && name != ".."
+        && !name.ends_with(['.', ' '])
+        && !matches!(reserved.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        && !matches!(
+            reserved.as_str(),
+            "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        )
+        && !name.chars().any(|c| {
+            c.is_control()
+                || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+                    | '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}')
+        })
+    {
+        name
+    } else {
+        url.path().rsplit('/').next().unwrap_or("media")
+    }
+}
+
+/// Fail closed if the OS cannot mark the file as untrusted internet content.
+#[cfg(target_os = "macos")]
+fn mark_download(file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_secs();
+    let value = format!("0081;{timestamp:x};Buzz;");
+    let result = unsafe {
+        libc::fsetxattr(
+            file.as_raw_fd(),
+            c"com.apple.quarantine".as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+            0,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn mark_download(_file: &std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
+    // Alternate data streams are attached to the same NTFS file, not a sibling.
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    std::fs::write(stream, b"[ZoneTransfer]\r\nZoneId=3\r\n")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn mark_download(_file: &std::fs::File, _path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn save_download(
+    directory: &std::path::Path,
+    filename: &str,
+    body: &[u8],
+) -> Result<std::path::PathBuf> {
+    use std::io::Write as _;
+    let (stem, ext) = filename
+        .rsplit_once('.')
+        .filter(|(stem, _)| !stem.is_empty())
+        .map_or((filename, ""), |(stem, ext)| (stem, ext));
+    for index in 0..1000 {
+        let candidate = if index == 0 {
+            filename.to_owned()
+        } else if ext.is_empty() {
+            format!("{stem} ({index})")
+        } else {
+            format!("{stem} ({index}).{ext}")
+        };
+        let path = directory.join(candidate);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(error) = mark_download(&file, &path)
+                    .and_then(|_| file.write_all(body))
+                    .and_then(|_| file.sync_all())
+                {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(format!("Could not save media: {error}"));
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Could not save media: {error}")),
+        }
+    }
+    Err("Too many files with this name".into())
+}
+
+/// Persist an authenticated bounded response without replacing an existing file.
+/// The host, not the webview, owns the save path and collision policy.
+#[tauri::command]
+pub(crate) async fn media_download<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+    name: String,
+) -> Result<()> {
+    use tauri::Manager as _;
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let filename = download_name(&name, &url).to_owned();
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|_| "Downloads unavailable")?;
+    let response = fetch_media(host.inner(), url, None)
+        .await
+        .map_err(|_| "Media download failed")?;
+    let body = response.into_body();
+    tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
+        .await
+        .map_err(|_| "Media download interrupted".to_owned())??;
+    Ok(())
+}
+
+/// `buzz-media://localhost/<percent-encoded relay media URL>`, the shape of
+/// `convertFileSrc(url, "buzz-media")` on every desktop platform.
+fn media_request(
+    request: &tauri::http::Request<Vec<u8>>,
+) -> std::result::Result<(Url, Option<String>), u16> {
+    if request.method() != tauri::http::Method::GET {
+        return Err(405);
+    }
+    let encoded = request.uri().path().strip_prefix('/').ok_or(400u16)?;
+    let target = percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .map_err(|_| 400u16)?;
+    let url = media_url(&target).ok_or(403u16)?;
+    let range = match request.headers().get("range") {
+        None => None,
+        Some(value) => Some(media_range(value.to_str().map_err(|_| 416u16)?).ok_or(416u16)?),
+    };
+    Ok((url, range))
+}
+
+/// Only relay-hosted blobs on an HTTPS origin; never an arbitrary URL.
+fn media_url(target: &str) -> Option<Url> {
+    let url = Url::parse(target).ok()?;
+    let name = url.path().strip_prefix("/media/")?;
+    let (hash, extension) = name.split_once('.').unwrap_or((name, ""));
+    let extension_ok = extension.is_empty()
+        || extension == "thumb.jpg"
+        || (extension.len() <= 8
+            && extension
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
+    let mut base = url.clone();
+    base.set_path("/");
+    (origin(base.as_str()).is_ok()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && hash.len() == 64
+        && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && extension_ok)
+        .then_some(url)
+}
+
+/// One `bytes=START-[END]` range, bounded so a response fits one buffer.
+fn media_range(value: &str) -> Option<String> {
+    let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
+    let start: u64 = start.parse().ok()?;
+    let last = start.checked_add(MEDIA_CHUNK - 1)?;
+    let end = if end.is_empty() {
+        last
+    } else {
+        end.parse::<u64>().ok()?.min(last)
+    };
+    (end >= start).then(|| format!("bytes={start}-{end}"))
+}
+
+async fn fetch_media(
+    host: &IdentityHost,
+    url: Url,
+    range: Option<String>,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let auth = blossom_auth(host, &url, "get", "Get buzz-media", Vec::new())
+        .await
+        .map_err(|_| 401u16)?;
+    let mut request = client()
+        .map_err(|_| 502u16)?
+        .get(url)
+        // Match the broker's whole-media deadline; large documents may take minutes.
+        .timeout(Duration::from_secs(600))
+        .header("Authorization", auth);
+    if let Some(range) = &range {
+        request = request.header("Range", range);
+    }
+    let mut upstream = request.send().await.map_err(|_| 502u16)?;
+    let status = upstream.status().as_u16();
+    if !matches!(status, 200 | 206) {
+        return Err(status);
+    }
+    let limit = if status == 206 {
+        MAX_MEDIA_RANGE
+    } else {
+        MAX_MEDIA
+    };
+    if upstream
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(413);
+    }
+    let header = |name: &str| {
+        upstream
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
+    let (kind, disposition) = media_type(header("content-type").as_deref());
+    let mut response = tauri::http::Response::builder()
+        .status(status)
+        .header("Content-Type", kind)
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff");
+    if disposition {
+        response = response.header("Content-Disposition", "attachment");
+    }
+    if let Some(value) = header("content-range") {
+        response = response.header("Content-Range", value);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = upstream.chunk().await.map_err(|_| 502u16)? {
+        if body.len() + chunk.len() > limit {
+            return Err(413);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    response.body(body).map_err(|_| 502)
+}
+
+fn valid_type(kind: &str) -> bool {
+    let token = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&b))
+    };
+    kind.split_once('/')
+        .is_some_and(|(a, b)| token(a) && token(b))
+}
+
+/// Mirrors the dev broker's `/api/relay/media`: render images (never SVG),
+/// video and audio; everything else is a download.
+fn media_type(value: Option<&str>) -> (String, bool) {
+    let kind = value
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let inline = valid_type(&kind)
+        && ((kind.starts_with("image/") && kind != "image/svg+xml")
+            || kind.starts_with("video/")
+            || kind.starts_with("audio/"));
+    if inline {
+        (kind, false)
+    } else {
+        ("application/octet-stream".into(), true)
+    }
+}
+#[cfg(test)]
+mod tests;

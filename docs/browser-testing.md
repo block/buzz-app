@@ -3,8 +3,8 @@
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
-pushes: an isolated serial measurement job runs alongside four functional jobs
-(two file-level shards per engine, two workers per runner). Both engines remain
+pushes: an isolated serial measurement job runs alongside twelve functional jobs
+(six file-level shards per engine, two workers per runner). Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
 Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
@@ -95,6 +95,9 @@ Results go to ignored `test-results/browser/`: each built-app test writes `evide
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
+The one exception is the `chromium-classic-scrollbars` project, whose `evidence.json`,
+failure screenshots and traces land in `test-results/browser-classic-scrollbars/`
+so that its separate invocation cannot clear the measurement evidence.
 A dirty-status listing is not a content hash; tie release claims to a separately
 verified clean commit or source manifest.
 
@@ -106,19 +109,33 @@ instances and every untagged WebKit case remain required. Both engines, serial
 measurement order, zero retries, the documented functional assertions and
 measurement ceilings, and the strict `CI required` aggregate remain in place.
 
-CI shards each functional engine across two runners, without waiting for the
+CI shards each functional engine across six runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
-`--shard=N/2`; measurement success is enforced by `CI required`, not job ordering.
+`--shard=N/6`; measurement success is enforced by `CI required`, not job ordering.
 This preserves measurement isolation while spending more setup/runner minutes,
 including when measurements fail. Local same-runner dependencies remain unchanged.
 Artifacts include engine and shard so parallel jobs never overwrite one another.
 
 The Node integration gate lists tests without launching browsers and checks that
-the workflow's four selections cover every discovered functional test/project
+the workflow's twelve selections cover every discovered functional test/project
 exactly once, with no measurements included. It also exercises the required
 check's shell against failed, skipped, cancelled and missing lane results.
 These safeguards must change with the matrix; do not maintain feature allowlists
 or move existing required cases out of CI to reduce its duration.
+
+Cases tagged `@classic-scrollbars` need a scrollbar that takes space. They run
+only in the `chromium-classic-scrollbars` project, which keeps Chromium's
+platform scrollbars visible, and the engine projects exclude them. CI runs that
+project as a second step of the measurements job, so `CI required` blocks on it;
+the integration gate checks that the step exists and that the tagged cases are
+selected there and nowhere else. Linux always draws classic scrollbars, so the
+cases fail there if the scrollbar takes no space. On macOS Chromium follows the
+system "Show scroll bars" setting, so they skip unless `BUZZ_CLASSIC_SCROLLBARS=1`
+is set on a Mac whose scrollbars take space:
+
+```sh
+BUZZ_CLASSIC_SCROLLBARS=1 bin/pnpm test:browser --project chromium-classic-scrollbars --no-deps
+```
 
 The following **three WebKit cases are local-only**, not passing CI coverage:
 
@@ -279,8 +296,9 @@ GC and instrumentation affect the measurements themselves.
 Collect repeated baselines on a stable, otherwise idle runner with the same OS,
 engine version, viewport and build. Compare distributions before choosing timing
 or heap thresholds; do not use these first samples as a universal 60 FPS promise.
-The existing 2,400-row data-path test still separately guards synchronous send
-under 50ms and deterministic fold/notification counts.
+The existing 2,400-row data-path test enforces deterministic fold/notification
+counts and unaffected identities. It logs synchronous send time for comparison;
+it does not impose a runner-dependent latency threshold or guarantee latency.
 
 ## Reading-position contract
 

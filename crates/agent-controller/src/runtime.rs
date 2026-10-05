@@ -1,8 +1,5 @@
 use crate::bundle::RuntimeBundle;
 use crate::config::Agent;
-#[cfg(not(unix))]
-use crate::process::Process;
-#[cfg(unix)]
 use crate::supervisor::Supervised;
 use crate::{AgentEdit, ControlSnapshot, Credentials, ProcessStatus, Result, Store};
 use serde::Deserialize;
@@ -21,6 +18,15 @@ impl RuntimeBundle {
         key: &crate::Secret,
         defaults: &crate::BuildDefaults,
     ) -> Result<Command> {
+        self.command_checked(agent, key, defaults, None)
+    }
+    fn command_checked(
+        &self,
+        agent: &Agent,
+        key: &crate::Secret,
+        defaults: &crate::BuildDefaults,
+        preflight: Option<&crate::pi::LaunchPreflight>,
+    ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
         if key.pubkey() != agent.pubkey {
@@ -29,7 +35,9 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if harness.command == "buzz-agent" {
+        let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+            self.executable("goose-acp")?
+        } else if harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
         } else {
             let path = PathBuf::from(&harness.command);
@@ -43,15 +51,15 @@ impl RuntimeBundle {
         if record["backend"]["type"]
             .as_str()
             .is_some_and(|s| s != "local")
-            || record["team_id"].as_str().is_some_and(|s| !s.is_empty())
-            || record["persona_team_dir"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty())
             || harness.provider == "relay-mesh"
             || !record["relay_mesh"].is_null()
         {
-            return Err("This imported agent requires a remote/team/mesh integration not supported by the local controller".into());
+            return Err("This imported agent requires a remote/mesh integration not supported by the local controller".into());
         }
+        if agent.needs_team_import() {
+            return Err("Import this agent's team instructions from old Buzz under Agents → Import or repair from old Buzz → Repair team import before starting".into());
+        }
+        let team_instructions = crate::import::team_text(&agent.imported["teamInstructions"])?;
         let respond_to = agent.respond_to(defaults.owner_only)?;
         if agent.auth_tag.is_none() {
             return Err("This identity has no saved owner attestation; native owner binding is required before starting".into());
@@ -69,6 +77,36 @@ impl RuntimeBundle {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // Windows system, profile and tool-discovery locations; none are secrets.
+        #[cfg(windows)]
+        let platform = [
+            "SystemRoot",
+            "windir",
+            "SystemDrive",
+            "ComSpec",
+            "PATHEXT",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "USERNAME",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "CommonProgramFiles",
+            "CommonProgramFiles(x86)",
+            "CommonProgramW6432",
+            "PROCESSOR_ARCHITECTURE",
+            "NUMBER_OF_PROCESSORS",
+            "OS",
+            // Runtime shell overrides; Git Bash is otherwise discovered from PATH.
+            "BUZZ_SHELL",
+            "GIT_BASH",
+        ];
+        #[cfg(not(windows))]
+        let platform: [&str; 0] = [];
         for name in [
             "HOME",
             "TMPDIR",
@@ -78,7 +116,10 @@ impl RuntimeBundle {
             "SSH_AUTH_SOCK",
             "SSL_CERT_FILE",
             "SSL_CERT_DIR",
-        ] {
+        ]
+        .into_iter()
+        .chain(platform)
+        {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
@@ -88,6 +129,7 @@ impl RuntimeBundle {
                 crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
             })
             .transpose()?;
+        let pi = crate::pi::verify_launch(pi, preflight)?;
         let (args, environment, tools_path) = if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
@@ -96,16 +138,16 @@ impl RuntimeBundle {
             )
         } else {
             (
-                agent.harness.args.clone(),
+                goose_args(&harness.command, &agent.harness.args),
                 &agent.environment,
-                "/usr/bin:/bin:/usr/sbin:/sbin".into(),
+                tools_path()?,
             )
         };
         let path = std::env::join_paths(
             std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
         )
         .map_err(|_| "Invalid runtime tools path")?;
-        command.envs(environment).env("PATH", path);
+        command.envs(environment).env("PATH", &path);
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -115,11 +157,16 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
             .env("BUZZ_ACP_AGENT_ARGS", args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
+            .env("BUZZ_ACP_TEAM_INSTRUCTIONS", team_instructions)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
             .env("BUZZ_ACP_SUBSCRIBE", "mentions")
             .env("BUZZ_ACP_RESPOND_TO", respond_to)
+            .env(
+                "BUZZ_ACP_SESSION_POLICY",
+                agent.session_policy.unwrap_or_default().as_str(),
+            )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
@@ -179,8 +226,19 @@ impl RuntimeBundle {
                 command.env(env, n.to_string());
             }
         }
-        if let Some(effort) = record["effort_level"].as_str() {
+        if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
+        }
+        if matches!(
+            crate::agent_defaults::harness_kind(&harness.command),
+            Some("pi" | "goose")
+        ) {
+            // Validated user behavior overrides win over saved/imported fields.
+            // Tool discovery remains host-owned, including Pi's pinned Node.
+            command.envs(environment).env("PATH", path);
+        } else if let Some(workers) = environment.get("BUZZ_ACP_AGENTS") {
+            // The editable worker count wins over imported parallelism for every harness.
+            command.env("BUZZ_ACP_AGENTS", workers);
         }
         Ok(command)
     }
@@ -215,6 +273,10 @@ fn databricks_with_defaults(
     ) {
         return Ok(None);
     }
+    // Before any OAuth-setting check: Windows never asks for a workspace.
+    if cfg!(windows) {
+        return Err(crate::connection::DATABRICKS_WINDOWS.into());
+    }
     if agent.environment.contains_key("DATABRICKS_TOKEN") {
         return Err("Remove DATABRICKS_TOKEN to use this app's persistent OAuth connection".into());
     }
@@ -229,6 +291,45 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
+/// PATH after the runtime bundle for non-Pi harnesses. Windows keeps its native
+/// PATH, where Git Bash and user tools are installed; Unix uses a fixed floor
+/// plus, on Linux, common user-level install locations.
+fn tools_path() -> Result<std::ffi::OsString> {
+    if cfg!(windows) {
+        return Ok(std::env::var_os("PATH").unwrap_or_default());
+    }
+    let mut dirs = Vec::new();
+    if cfg!(target_os = "linux") {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        dirs.extend(
+            home.filter(|h| h.is_absolute())
+                .map(|h| h.join(".local/bin")),
+        );
+        dirs.push(PathBuf::from("/usr/local/bin"));
+    }
+    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
+    std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
+}
+/// App-owned npm shims and the pinned Node binary are separate from user-global tools.
+/// `app_data` is Tauri's resolved app-data directory, never browser input.
+pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
+    let path = match name {
+        "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "node" => app_data.join("runtimes/node/v24.18.0").join(
+            match (std::env::consts::OS, std::env::consts::ARCH) {
+                ("macos", "aarch64") => "darwin-arm64/bin/node",
+                ("macos", "x86_64") => "darwin-x64/bin/node",
+                ("linux", "aarch64") => "linux-arm64/bin/node",
+                ("linux", "x86_64") => "linux-x64/bin/node",
+                _ => return None,
+            },
+        ),
+        _ => return None,
+    };
+    executable(&path).ok()?;
+    Some(path)
+}
+
 pub fn installed(name: &str) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
@@ -271,20 +372,13 @@ pub enum Action {
     Restart,
 }
 struct Running {
-    #[cfg(unix)]
     process: Supervised,
-    #[cfg(not(unix))]
-    process: Process,
     revision: u64,
     /// Native-only: holds environment values and is never serialized.
     spawned: serde_json::Value,
     databricks_host: Option<String>,
     #[cfg(all(test, unix))]
     temporary: Option<PathBuf>,
-    #[cfg(not(unix))]
-    _temporary: Option<tempfile::TempDir>,
-    #[cfg(not(unix))]
-    _ownership: crate::ownership::Ownership,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -297,19 +391,25 @@ pub struct ModelContext {
     pub filter: Option<String>,
     pub model_overridden: bool,
 }
-/// Native-only Goose catalog context; environment values never enter a snapshot.
+/// Native-only Goose model context; environment values never enter a snapshot.
 pub struct GooseModelContext {
     pub command: PathBuf,
+    pub args: Vec<String>,
+    pub workspace: PathBuf,
+    pub provider_id: String,
+    pub model_id: String,
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
 }
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
-    bundle: Result<RuntimeBundle>,
+    pub(crate) bundle: Result<RuntimeBundle>,
     running: BTreeMap<String, Running>,
     errors: BTreeMap<String, String>,
-    ownership_root: PathBuf,
+    pub(crate) ownership_root: PathBuf,
+    pub(crate) protection_paths: Result<Vec<PathBuf>>,
+    pub(crate) security_providers: BTreeMap<String, crate::security::Provider>,
 }
 impl Controller {
     pub fn new(
@@ -325,19 +425,24 @@ impl Controller {
             running: BTreeMap::new(),
             errors: BTreeMap::new(),
             ownership_root,
+            security_providers: BTreeMap::new(),
+            protection_paths: Ok(Vec::new()),
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
-        let saved = self.store.agents()?;
+        let (saved, parked) = self.store.inventory()?;
+        let defaults = self.store.defaults()?;
         let command = |name| {
-            let path = self.bundle.as_ref().ok()?.executable(name).ok()?;
+            let path = self.bundle.as_ref().ok()?.display_path(name)?;
             Some(path.to_string_lossy().into_owned())
         };
         let (acp_command, mcp_command) = (command("buzz-acp"), command("buzz-dev-mcp"));
         let mut snapshot = ControlSnapshot {
-            agents: saved.iter().map(Agent::view).collect(),
+            agents: saved.iter().map(|a| a.view(&defaults)).collect(),
+            parked,
             runtime_available: self.bundle.is_ok(),
             runtime_message: self.bundle.as_ref().err().cloned(),
+            default_settings: defaults.view(),
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
@@ -347,9 +452,12 @@ impl Controller {
                     Ok(true) => {
                         agent.status = ProcessStatus::Running;
                         agent.running_revision = Some(run.revision);
+                        // Effective settings, so inherited default changes count.
                         agent.restart_diff = crate::restart::diff(
                             &run.spawned,
-                            &crate::restart::spawn_config(saved),
+                            &crate::restart::spawn_config(&crate::agent_defaults::effective(
+                                saved, &defaults,
+                            )),
                         );
                     }
                     Ok(false) => {
@@ -360,7 +468,6 @@ impl Controller {
                         );
                     }
                     Err(error) => {
-                        #[cfg(unix)]
                         if run.process.stopped() {
                             self.running.remove(&agent.id);
                         }
@@ -391,7 +498,10 @@ impl Controller {
             );
         }
         agent.apply(edit)?;
-        Ok(agent)
+        Ok(crate::agent_defaults::effective(
+            &agent,
+            &self.store.defaults()?,
+        ))
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
@@ -404,7 +514,7 @@ impl Controller {
         edit: AgentEdit,
     ) -> Result<GooseModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
-        goose_model_context(&agent.harness, &agent.environment)
+        self.resolve_goose_model_context(&agent.harness, &agent.workspace, &agent.environment)
     }
     pub fn pi_model_context(
         &self,
@@ -415,6 +525,44 @@ impl Controller {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
+    pub fn pi_launch_context(
+        &self,
+        id: &str,
+        revision: u64,
+    ) -> Result<Option<crate::pi::PiContext>> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Saved settings changed; retry Start".into());
+        }
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if Path::new(&agent.harness.command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some("buzz-pi-acp")
+        {
+            return Ok(None);
+        }
+        crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment).map(Some)
+    }
+    /// Resolve unsaved Create drafts against the same native defaults as a saved start.
+    pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
+        let mut environment = draft_environment(edit.environment);
+        crate::agent_defaults::effective_settings(
+            &mut edit.harness,
+            &mut environment,
+            &self.store.defaults()?,
+        );
+        edit.environment = environment
+            .into_iter()
+            .map(|(key, value)| (key, Some(value)))
+            .collect();
+        Ok(edit)
+    }
     pub fn draft_pi_model_context(edit: AgentEdit) -> Result<crate::pi::PiContext> {
         crate::pi::PiContext::new(
             &edit.harness,
@@ -422,9 +570,59 @@ impl Controller {
             &draft_environment(edit.environment),
         )
     }
-    pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
+    pub fn draft_goose_model_context(&self, edit: AgentEdit) -> Result<GooseModelContext> {
         let environment = draft_environment(edit.environment);
-        goose_model_context(&edit.harness, &environment)
+        self.resolve_goose_model_context(&edit.harness, &edit.workspace, &environment)
+    }
+    fn resolve_goose_model_context(
+        &self,
+        harness: &crate::HarnessEdit,
+        workspace: &str,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<GooseModelContext> {
+        crate::config::validate_environment(environment, &harness.command)?;
+        let command = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+            self.bundle
+                .as_ref()
+                .map_err(Clone::clone)?
+                .executable("goose-acp")?
+        } else {
+            PathBuf::from(&harness.command)
+        };
+        let name = command
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .trim_end_matches(".exe");
+        if !matches!(name, "goose" | "goose-acp") || !command.is_absolute() {
+            return Err("Model discovery requires an absolute Goose executable path".into());
+        }
+        executable(&command)?;
+        let provider = environment
+            .get("GOOSE_PROVIDER")
+            .unwrap_or(&harness.provider);
+        if provider.trim().is_empty()
+            || provider.len() > 128
+            || provider.chars().any(char::is_control)
+        {
+            return Err("Choose a valid Goose provider before browsing models".into());
+        }
+        Ok(GooseModelContext {
+            args: if name == "goose" {
+                vec!["acp".into()]
+            } else {
+                vec![]
+            },
+            command,
+            workspace: workspace.into(),
+            provider_id: provider.clone(),
+            model_id: environment
+                .get("GOOSE_MODEL")
+                .unwrap_or(&harness.model)
+                .clone(),
+            environment: environment.clone(),
+            model_overridden: environment.contains_key("GOOSE_MODEL"),
+        })
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = draft_environment(edit.environment);
@@ -442,6 +640,17 @@ impl Controller {
                 || !agent.imported.is_null(),
         )
     }
+    pub fn use_here(
+        &mut self,
+        id: &str,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.store.use_here(id, resolution)?;
+        self.snapshot()
+    }
+    pub fn local_clone_settings(&self, id: &str) -> Result<crate::CloneSettings> {
+        self.store.local_clone_settings(id)
+    }
     pub fn prepare_import(
         &self,
         imports: &mut crate::Imports,
@@ -453,8 +662,122 @@ impl Controller {
     pub fn commit_import(&mut self, prepared: crate::CredentialedImport) -> Result<()> {
         prepared.commit(&mut self.store)
     }
+    /// Check an exact saved instance has an unconditional signed owner attestation.
+    /// This is not read authorization; the caller must still prove that owner key.
+    pub fn log_target(&self, id: &str, pubkey: &str, relay_url: &str) -> Result<()> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        crate::secret::validate_attestation(
+            agent
+                .auth_tag
+                .as_deref()
+                .ok_or("Owner authorization is unavailable")?,
+            pubkey,
+        )
+    }
+    /// Read retained output for an exact locally managed identity and community.
+    /// Raw output is never included in a snapshot or published to the relay.
+    pub fn read_log(
+        &self,
+        id: &str,
+        pubkey: &str,
+        relay_url: &str,
+        nonce: &str,
+        signature: &str,
+    ) -> Result<String> {
+        let relay = crate::config::canonical_relay(relay_url)?;
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id && agent.pubkey == pubkey && agent.relay_url == relay)
+            .ok_or("Agent no longer exists")?;
+        let auth = agent
+            .auth_tag
+            .as_deref()
+            .ok_or("Owner authorization is unavailable")?;
+        crate::secret::validate_attestation(auth, pubkey)?;
+        let tag: Vec<String> =
+            serde_json::from_str(auth).map_err(|_| "Owner authorization is unavailable")?;
+        crate::logs::verify_owner_proof(&tag[1], id, pubkey, &relay, nonce, signature)?;
+        let path = crate::logs::path(self.store.root(), id)?;
+        crate::logs::read(&path)
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;
+        self.snapshot()
+    }
+    /// Native-only Agent defaults `DATABRICKS_HOST`, for Disconnect recovery of
+    /// an inherited workspace the renderer never sees. Never serialized.
+    pub fn inherited_workspace(&self) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .defaults()?
+            .environment
+            .get("DATABRICKS_HOST")
+            .cloned())
+    }
+    pub fn save_defaults(&mut self, edit: crate::AgentDefaultsEdit) -> Result<ControlSnapshot> {
+        let mut defaults = self.store.defaults()?;
+        defaults.apply(edit)?;
+        self.store.save_defaults(&defaults)?;
+        self.snapshot()
+    }
+    /// Effective launch settings of each live agent, for restart-on-save. Values
+    /// stay native; callers compare before/after a save.
+    pub fn running_settings(&mut self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let defaults = self.store.defaults()?;
+        let live: Vec<_> = self
+            .snapshot()?
+            .agents
+            .into_iter()
+            .filter(|a| a.enabled && a.status == ProcessStatus::Running)
+            .map(|a| a.id)
+            .collect();
+        Ok(self
+            .store
+            .agents()?
+            .iter()
+            .filter(|a| live.contains(&a.id))
+            .map(|a| {
+                let effective = crate::agent_defaults::effective(a, &defaults);
+                (a.id.clone(), crate::restart::spawn_config(&effective))
+            })
+            .collect())
+    }
+    pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
+        let agents = self.store.agents()?;
+        let agent = agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .cloned()
+            .ok_or("Agent no longer exists")?;
+        // Use here setups of one identity share its key; keep it for the others.
+        let shared = agents.iter().any(|other| {
+            other.id != agent.id
+                && other.credential_id == agent.credential_id
+                && other.pubkey == agent.pubkey
+        });
+        if agent.revision != revision {
+            return Err("Agent settings changed. Reload before deleting".into());
+        }
+        if agent.deployed_remote() {
+            return Err("Deployed remote agents can't be deleted from this app".into());
+        }
+        // Stop must be confirmed before removing custody or durable settings.
+        self.stop(id)?;
+        self.store.enabled(id, false)?;
+        // A failed settings write leaves the card available for an explicit retry.
+        // Credential deletion is idempotent, so that retry can finish cleanup.
+        if !shared {
+            self.credentials
+                .delete(&agent.credential_id, &agent.pubkey)?;
+        }
+        self.store.remove(id, revision)?;
+        self.errors.remove(id);
         self.snapshot()
     }
     pub fn action(&mut self, id: &str, action: Action) -> Result<ControlSnapshot> {
@@ -502,7 +825,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
         {
             // Like the host restore, a launch preference is a Start: it enables.
             if let Err(error) = self
@@ -522,10 +845,15 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if !agent.configured() {
+            return Err("Choose Use here before opening this identity’s credentials".into());
+        }
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
     }
+    /// Record the action outcome; the native host projects one final snapshot.
     pub fn action_with_key(
         &mut self,
         id: &str,
@@ -533,18 +861,43 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-    ) -> Result<ControlSnapshot> {
+    ) -> Result<()> {
+        self.action_checked(id, action, revision, key, replay_floor, None)
+    }
+    pub fn action_with_preflight(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        preflight: &crate::pi::LaunchPreflight,
+    ) -> Result<()> {
+        self.action_checked(id, action, revision, key, replay_floor, Some(preflight))
+    }
+    fn action_checked(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        preflight: Option<&crate::pi::LaunchPreflight>,
+    ) -> Result<()> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
+        }
+        if let Some(preflight) = preflight {
+            preflight.check(&self.pi_launch_context(id, revision)?)?;
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
             if let Err(error) = self.stop(id) {
                 self.errors.insert(id.into(), error);
-                return self.snapshot();
+                return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor) {
+        match self.start_with_key(id, Some(key), replay_floor, preflight) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -552,7 +905,7 @@ impl Controller {
                 self.errors.insert(id.into(), error);
             }
         }
-        self.snapshot()
+        Ok(())
     }
     pub fn record_error(&mut self, id: &str, error: String) {
         self.errors.insert(id.into(), error);
@@ -562,18 +915,19 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(Agent::starts_on_launch)
+            .filter(|a| a.starts_on_launch() && a.configured())
             .map(|a| a.id)
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None)
+        self.start_with_key(id, None, None, None)
     }
     fn start_with_key(
         &mut self,
         id: &str,
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
+        preflight: Option<&crate::pi::LaunchPreflight>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -587,12 +941,15 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }
+        // Blank fields inherit agent defaults at each start; never saved back.
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
-        #[cfg(not(unix))]
-        let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
         let stored;
         let key = match supplied {
             Some(key) => key,
@@ -613,7 +970,13 @@ impl Controller {
             .prefix("agent-")
             .tempdir_in(&runs)
             .map_err(|_| "Could not create private runtime directory")?;
-        let mut command = bundle.command(&agent, key)?;
+        let scratch = temporary.path().join("tmp");
+        crate::connection::private_directory(&scratch)?;
+        let mut command = if let Some(preflight) = preflight {
+            bundle.command_checked(&agent, key, &crate::build_defaults(), Some(preflight))?
+        } else {
+            bundle.command(&agent, key)?
+        };
         // Per-send startup input, never saved configuration or inherited environment.
         if let Some(floor) = replay_floor {
             command.env("BUZZ_ACP_REPLAY_FLOOR", floor.to_string());
@@ -622,23 +985,29 @@ impl Controller {
         // may redirect credentials/temp signing material outside this app profile.
         command
             .env("BUZZ_AGENT_CONFIG_DIR", config)
-            .env("TMPDIR", temporary.path())
-            .env("TMP", temporary.path())
-            .env("TEMP", temporary.path());
+            .env("TMPDIR", &scratch)
+            .env("TMP", &scratch)
+            .env("TEMP", &scratch);
         if let Some(settings) = &settings {
             command
                 .env("DATABRICKS_HOST", &settings.host)
                 .env("DATABRICKS_MODEL_FILTER", &settings.filter)
                 .env_remove("DATABRICKS_TOKEN");
         }
+        let control = self.wrap_protected_worker(&agent, &mut command)?;
         // Disarm app-side deletion before a child can use this directory. The
         // supervisor deletes it only after confirmed whole-session teardown.
-        #[cfg(unix)]
+        let log_path = crate::logs::path(config, &agent.id)?;
         let temporary = temporary.keep();
-        #[cfg(unix)]
-        let process = Supervised::spawn(&command, &self.ownership_root, &agent.id, &temporary)?;
-        #[cfg(not(unix))]
-        let process = Process::spawn(&mut command)?;
+        let control = control.map(tempfile::TempDir::keep);
+        let process = Supervised::spawn(
+            &command,
+            &self.ownership_root,
+            &agent.id,
+            &temporary,
+            control.as_deref(),
+            &log_path,
+        )?;
         self.running.insert(
             id.into(),
             Running {
@@ -648,10 +1017,6 @@ impl Controller {
                 databricks_host: settings.map(|s| s.host),
                 #[cfg(all(test, unix))]
                 temporary: Some(temporary),
-                #[cfg(not(unix))]
-                _temporary: Some(temporary),
-                #[cfg(not(unix))]
-                _ownership: ownership,
             },
         );
         Ok(())
@@ -659,7 +1024,6 @@ impl Controller {
     fn stop(&mut self, id: &str) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             let result = run.process.stop();
-            #[cfg(unix)]
             if run.process.stopped() {
                 // E confirms worker exit even when private-dir removal failed.
                 self.running.remove(id);
@@ -761,28 +1125,24 @@ fn model_context_with_defaults(
     })
 }
 
-fn goose_model_context(
-    harness: &crate::HarnessEdit,
-    environment: &BTreeMap<String, String>,
-) -> Result<GooseModelContext> {
-    crate::config::validate_environment(environment)?;
-    let command = PathBuf::from(&harness.command);
-    if command.file_name().and_then(|s| s.to_str()) != Some("goose") || !command.is_absolute() {
-        return Err("Model discovery requires an absolute Goose executable path".into());
+// Saved legacy Goose selections may still carry the CLI's ACP subcommand.
+// Explicit external paths keep their original arguments.
+fn goose_args(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "goose" | "goose-acp") {
+        return args.to_vec();
     }
-    executable(&command)?;
-    if environment
-        .get("GOOSE_PROVIDER")
-        .unwrap_or(&harness.provider)
-        != "databricks_v2"
+    // Match the pinned ACP runner's trim/filter rule before removing the CLI subcommand.
+    let mut normalized: Vec<_> = args
+        .iter()
+        .map(|arg| arg.trim())
+        .filter(|arg| !arg.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if normalized
+        .first()
+        .is_some_and(|arg| arg.eq_ignore_ascii_case("acp"))
     {
-        return Err(
-            "Effective Goose provider is not Databricks v2; check environment overrides".into(),
-        );
+        normalized.remove(0);
     }
-    Ok(GooseModelContext {
-        command,
-        environment: environment.clone(),
-        model_overridden: environment.contains_key("GOOSE_MODEL"),
-    })
+    normalized
 }

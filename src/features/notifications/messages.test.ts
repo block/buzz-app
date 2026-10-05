@@ -217,6 +217,10 @@ async function setup(
   const stop = bindMessageNotifications(notifications, communities);
   cleanups.push(stop);
   await flush();
+  // Names retain owner inventory independently of notification/roster startup.
+  await vi.waitFor(() =>
+    expect(owner.session.agentLibrary.snapshot().status).toBe("ready"),
+  );
   notifications.updatePreferences({ sound: false });
   const emit = (
     events: ReturnType<typeof message>[],
@@ -530,7 +534,9 @@ it("live message wiring supplies the signed author and body, resolving names at 
     title: "Pinky mentioned you in #Room",
     body: "Hello Wes",
   });
-  expect(h.query).not.toHaveBeenCalled();
+  expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
+    [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
+  ]);
 });
 
 it.each([
@@ -585,6 +591,31 @@ it.each([
     });
   },
 );
+
+it("classifies p-tagged DM messages as direct, not mention", async () => {
+  const h = await setup();
+  h.emit([profile(h.peer, { name: "Pinky" })]);
+  const now = Math.floor(Date.now() / 1000);
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "internal-dm-id", channel_type: "dm" }),
+      tags: [
+        ["d", "room"],
+        ["name", "internal-dm-id"],
+        ["t", "dm"],
+      ],
+      created_at: now,
+    }),
+  ]);
+  // Agent and CLI DM traffic p-tags the recipient; that must not reroute the
+  // message to the mention category (label, sound, and preference toggle).
+  h.emit([h.make("hello")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].title).toBe(
+    "Pinky sent you a direct message",
+  );
+});
 
 function deferred() {
   let release = () => {};
@@ -730,7 +761,9 @@ it("notification startup waits for the roster without consuming the shared evide
     deferRoster: true,
   });
   expect(h.markerQuery).not.toHaveBeenCalled();
-  expect(h.query).not.toHaveBeenCalled();
+  expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
+    [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
+  ]);
   h.discover();
   await h.owner.session.unread.ensure();
   expect(h.markerQuery).toHaveBeenCalledOnce();
@@ -898,5 +931,50 @@ it.each([true, false])(
       expect(h.show.mock.calls[1]?.[0].body).toBe("second mention");
     }
     expect(decode).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each([true, false])(
+  "a live reply whose parent is outside the window waits for its conversation lookup (viewer's parent=%s)",
+  async (own) => {
+    vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+    const h = await setup();
+    const parent = message(
+      own ? h.viewer : h.peer,
+      "room",
+      "old",
+      1_700_000_000,
+    );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const base = h.query.getMockImplementation();
+    h.query.mockImplementation(async (filters, ...rest) => {
+      if (filters[0]?.ids?.includes(parent.id)) {
+        await held;
+        return [parent];
+      }
+      return (await base?.(filters, ...rest)) ?? [];
+    });
+    const reply = message(h.peer, "room", "answer", 1_780_000_000, [
+      ["e", parent.id, "", "reply"],
+    ]);
+    h.emit([reply], "live");
+    await flush();
+    expect(h.owner.session.unread.attention("room", reply.id)).toMatchObject({
+      status: "unknown",
+      pending: true,
+    });
+    expect(h.show).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() =>
+      expect(
+        h.owner.session.unread.attention("room", reply.id).pending,
+      ).toBeUndefined(),
+    );
+    await flush();
+    if (own) await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+    else expect(h.show).not.toHaveBeenCalled();
   },
 );

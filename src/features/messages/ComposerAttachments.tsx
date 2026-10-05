@@ -1,3 +1,4 @@
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useEffect, useRef, useState } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -65,9 +66,13 @@ function AttachmentItem({
   remove(id: string, origin: DOMRect): void;
   retry(id: string): void;
 }) {
+  const active = useConversationPresentation();
+  const presented = useRef(active);
+  presented.current = active;
   const [source, setSource] = useState<string>();
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
+  if (!active && open) setOpen(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const type = item.uploaded?.type || item.file.type || "";
   const uploadedSource = item.uploaded ? media(item.uploaded.url) : undefined;
@@ -214,30 +219,32 @@ function AttachmentItem({
           }
         />
       </div>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={item.file.name}
-        finalFocus={trigger}
-      >
-        {open &&
-          source &&
-          (image ? (
-            <img
-              className={styles.fullPreview}
-              src={source}
-              alt={item.file.name}
-            />
-          ) : (
-            // biome-ignore lint/a11y/useMediaCaption: user-selected video has no caption track.
-            <video
-              className={styles.fullPreview}
-              src={source}
-              controls
-              playsInline
-            />
-          ))}
-      </Dialog>
+      {active && (
+        <Dialog
+          open={open}
+          onOpenChange={setOpen}
+          title={item.file.name}
+          finalFocus={() => (presented.current ? trigger.current : false)}
+        >
+          {open &&
+            source &&
+            (image ? (
+              <img
+                className={styles.fullPreview}
+                src={source}
+                alt={item.file.name}
+              />
+            ) : (
+              // biome-ignore lint/a11y/useMediaCaption: user-selected video has no caption track.
+              <video
+                className={styles.fullPreview}
+                src={source}
+                controls
+                playsInline
+              />
+            ))}
+        </Dialog>
+      )}
     </li>
   );
 }

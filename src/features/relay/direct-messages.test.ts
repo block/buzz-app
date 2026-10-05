@@ -6,7 +6,9 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
 
 const id = "11111111-1111-4111-8111-111111111111";
-function setup(options: { badRoster?: boolean; untrusted?: boolean } = {}) {
+function setup(
+  options: { badRoster?: boolean; untrusted?: boolean; lagging?: boolean } = {},
+) {
   const viewer = keypair(),
     other = keypair(),
     relay = keypair(),
@@ -37,7 +39,10 @@ function setup(options: { badRoster?: boolean; untrusted?: boolean } = {}) {
           about: "Unused biography",
         }),
       ];
-    return discovery;
+    return options.lagging &&
+      !filters.every((filter) => filter.consistency === "strong")
+      ? []
+      : discovery;
   });
   const publish = vi.fn<RelayWriter["publish"]>(async () => {});
   const openDirectMessage = vi.fn(async () => id);
@@ -95,6 +100,22 @@ it("opens using signed exact membership, then confirms the regular outbox messag
     release();
     await done;
     expect(t.dm.delivery(message)).toBe("accepted");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("opens a DM before its signed discovery reaches the replica", async () => {
+  const t = setup({ lagging: true });
+  try {
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).resolves.toBe(id);
+    expect(t.owner.session.channels.get?.(id)?.members).toEqual(
+      [t.viewer.pubkey, t.other.pubkey].sort(),
+    );
+    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+      expect.objectContaining({ consistency: "strong", "#d": [id] }),
+    ]);
   } finally {
     t.owner.dispose();
   }
@@ -179,6 +200,30 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
     await expect(t.dm.people("", 1, controller.signal)).rejects.toMatchObject({
       name: "AbortError",
     });
+  } finally {
+    t.owner.dispose();
+  }
+});
+
+it("reads an exact public-key profile without widening directory search", async () => {
+  const t = setup();
+  try {
+    const result = await t.dm.people(
+      t.other.pubkey,
+      1,
+      new AbortController().signal,
+    );
+    expect(result.people).toEqual([
+      expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
+    ]);
+    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+      {
+        kinds: [0],
+        authors: [t.other.pubkey],
+        limit: 30,
+        page: 1,
+      },
+    ]);
   } finally {
     t.owner.dispose();
   }

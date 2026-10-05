@@ -20,7 +20,7 @@ export const parseColorMode = (value: unknown): ColorMode =>
 export const parseColorModePreference = (
   value: unknown,
 ): ColorModePreference =>
-  value === "system" ? "system" : parseColorMode(value);
+  value === "light" || value === "dark" ? value : "system";
 
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
@@ -41,7 +41,7 @@ export function createAppearance(
         : "light"
       : preference;
   let state: AppearanceSnapshot = {
-    preference: "light",
+    preference: "system",
     mode: "light",
     error: null,
     fontScale: 1,
@@ -104,7 +104,7 @@ export function createAppearance(
       state = {
         ...state,
         fontError:
-          "Text size could not be restored. Choose a size to try saving it again.",
+          "Interface size could not be restored. Choose a size to try saving it again.",
       };
     }
     notify();
@@ -169,7 +169,7 @@ export function createAppearance(
         host.localStorage.setItem(FONT_SCALE_KEY, String(fontScale));
       } catch {
         fontError =
-          "This text size is active, but could not be saved on this device. Try again.";
+          "This interface size is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, fontScale, fontError };
       notify();

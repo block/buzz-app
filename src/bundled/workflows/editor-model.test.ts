@@ -94,3 +94,22 @@ test("invalid timeout values block draft submission", () => {
     ),
   ).toBeNull();
 });
+
+test("webhook URL templates are delegated to relay validation; empty URLs are blocked", () => {
+  const yaml = (url: string) => `name: Template
+enabled: false
+trigger: {on: webhook}
+steps:
+  - id: request
+    action: call_webhook
+    url: ${url}
+`;
+  for (const url of [
+    '"{{trigger_text}}"',
+    '"https://{{host}}/hook"',
+    '"https://example.com/hook"',
+  ])
+    expect(draftError(yaml(url))).toBeNull();
+  for (const url of ['""', '"   "', "null", "1"])
+    expect(draftError(yaml(url))).toMatch(/webhook URL or template/);
+});

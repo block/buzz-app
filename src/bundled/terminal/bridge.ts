@@ -23,7 +23,8 @@ export type TerminalBridge = {
   closeOwner(owner: string): Promise<void>;
 };
 export const nativeBridge: TerminalBridge = {
-  available: isTauri(),
+  // Match the supported desktop PTY platforms; enabled intent is independent.
+  available: isTauri() && /Mac|Linux/i.test(navigator.platform),
   createOwner: () => invoke("terminal_create_owner"),
   spawn: (owner, context, cols, rows) =>
     invoke("terminal_spawn", { owner, context, cols, rows }),

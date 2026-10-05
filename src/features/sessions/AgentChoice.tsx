@@ -1,12 +1,17 @@
 import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { RobotIcon, CaretUpIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowClockwiseIcon,
+  RobotIcon,
+  CaretUpIcon,
+} from "../../shared/design-system/icons/index";
 import { useAgentChoices } from "../agents/use-choices";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
   MenuRadioGroup,
   MenuRadioItem,
   MenuNote,
@@ -15,7 +20,9 @@ import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Avatar as ChoiceAvatar } from "../../shared/design-system/ui/Avatar";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarMedia } from "../../shared/avatar-source";
+import { usePresenceStatus } from "../presence/react";
+import type { PresenceStatus } from "../presence/presence";
 import styles from "./Sessions.module.css";
 
 export function agentAdmission(
@@ -32,6 +39,82 @@ export function agentAdmission(
   return parentMembers !== undefined && !parentMembers.includes(pubkey)
     ? ("session-and-channel" as const)
     : ("session" as const);
+}
+
+function AgentStatusAvatar({
+  name,
+  src,
+  presence,
+}: {
+  name: string;
+  src: string | undefined;
+  presence: PresenceStatus;
+}) {
+  return (
+    <Avatar
+      name={name}
+      src={src}
+      className={styles.agentAvatar ?? ""}
+      shape="squircle"
+      statusBadge={presence === "unknown" ? undefined : presence}
+    />
+  );
+}
+
+function AgentChoiceOption({
+  session,
+  agent,
+  src,
+  admission,
+}: {
+  session: RelaySession;
+  agent: { pubkey: string; name: string };
+  src: string | undefined;
+  admission: ReturnType<typeof agentAdmission>;
+}) {
+  const presence = usePresenceStatus(session.presence, agent.pubkey);
+  const admissionLabel =
+    admission === "channel"
+      ? " — adds to channel"
+      : admission === "session-and-channel"
+        ? " — adds to session and channel"
+        : admission === "session"
+          ? " — adds to session"
+          : "";
+  return (
+    <MenuRadioItem
+      value={agent.pubkey}
+      closeOnClick
+      aria-label={
+        presence === "unknown"
+          ? undefined
+          : `${agent.name}, ${presence}${admissionLabel}`
+      }
+    >
+      <ChoiceRow
+        leading={
+          <ChoiceAvatar
+            alt=""
+            fallback={agent.name}
+            src={src}
+            size="small"
+            shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+        }
+        label={agent.name}
+        description={
+          admission === "channel"
+            ? "Adds to channel"
+            : admission === "session-and-channel"
+              ? "Adds to session and channel"
+              : admission === "session"
+                ? "Adds to session"
+                : undefined
+        }
+      />
+    </MenuRadioItem>
+  );
 }
 
 export function AgentChoice({
@@ -59,26 +142,26 @@ export function AgentChoice({
 }) {
   const resolveName = useIdentityNames(session.names);
   const library = session.agentChoices;
-  const agents = useAgentChoices(session);
-  const candidates = agents.identities.map((agent) => agent.pubkey);
-  const identities = agents.identities.map((agent) => ({
+  // Adding grants access, so known-archived agents are not offered.
+  const agents = useAgentChoices(session, true, true);
+  const candidates = agents.selectable.map((agent) => agent.pubkey);
+  const identities = agents.selectable.map((agent) => ({
     ...agent,
     name: resolveName(agent.pubkey, agent.name, candidates),
   }));
   const selected = identities.find((agent) => agent.pubkey === value);
-  function picture(avatar?: string) {
-    const source = avatarSource(avatar);
-    return source?.startsWith("data:")
-      ? source
-      : source
-        ? session.media(source, "small")
-        : undefined;
-  }
+  const selectedPresence = usePresenceStatus(
+    session.presence,
+    selected?.pubkey,
+  );
+  const picture = (avatar?: string) => avatarMedia(avatar, session.media);
   const label = selected
     ? `Change agent: ${selected.name}`
     : value
       ? "Change selected agent"
       : "Choose an agent";
+  const accessibleLabel =
+    selectedPresence === "unknown" ? label : `${label}, ${selectedPresence}`;
   return (
     <MenuRoot>
       <span className={styles.agentTrigger}>
@@ -86,11 +169,10 @@ export function AgentChoice({
           render={
             <Button variant="outline" size="sm" style={{ maxWidth: "100%" }}>
               {selected ? (
-                <Avatar
+                <AgentStatusAvatar
                   name={selected.name}
                   src={picture(selected.avatar)}
-                  className={styles.agentAvatar ?? ""}
-                  shape="squircle"
+                  presence={selectedPresence}
                 />
               ) : (
                 <RobotIcon size={20} aria-hidden="true" />
@@ -101,7 +183,7 @@ export function AgentChoice({
               <CaretUpIcon size={12} aria-hidden="true" />
             </Button>
           }
-          aria-label={label}
+          aria-label={accessibleLabel}
           title={label}
           disabled={disabled}
         />
@@ -135,39 +217,19 @@ export function AgentChoice({
               parentMembers,
             );
             return (
-              <MenuRadioItem
+              <AgentChoiceOption
                 key={agent.pubkey}
-                value={agent.pubkey}
-                closeOnClick
-              >
-                <ChoiceRow
-                  leading={
-                    <ChoiceAvatar
-                      alt=""
-                      fallback={agent.name}
-                      src={picture(agent.avatar)}
-                      size="small"
-                      shape="squircle"
-                    />
-                  }
-                  label={agent.name}
-                  description={
-                    admission === "channel"
-                      ? "Adds to channel"
-                      : admission === "session-and-channel"
-                        ? "Adds to session and channel"
-                        : admission === "session"
-                          ? "Adds to session"
-                          : undefined
-                  }
-                />
-              </MenuRadioItem>
+                session={session}
+                agent={agent}
+                src={picture(agent.avatar)}
+                admission={admission}
+              />
             );
           })}
         </MenuRadioGroup>
         {allowed !== undefined &&
           sessionMembers === undefined &&
-          agents.identities.some(
+          agents.selectable.some(
             (agent) => !allowed.includes(agent.pubkey),
           ) && (
             <MenuNote>
@@ -176,7 +238,7 @@ export function AgentChoice({
             </MenuNote>
           )}
         {sessionMembers !== undefined &&
-          agents.identities.some(
+          agents.selectable.some(
             (agent) =>
               agentAdmission(
                 agent.pubkey,
@@ -188,7 +250,7 @@ export function AgentChoice({
             <MenuNote>
               Adding an agent gives it access to this session’s history
               {parentMembers !== undefined &&
-              agents.identities.some(
+              agents.selectable.some(
                 (agent) =>
                   agentAdmission(
                     agent.pubkey,
@@ -205,7 +267,7 @@ export function AgentChoice({
         {agents.status === "loading" && (
           <MenuNote role="status">Loading agents…</MenuNote>
         )}
-        {agents.status === "ready" && !agents.identities.length && (
+        {agents.status === "ready" && !agents.selectable.length && (
           <MenuNote role="status">
             No agents available in this community.
           </MenuNote>
@@ -215,8 +277,19 @@ export function AgentChoice({
             Your agent library isn’t available on this connection.
           </MenuNote>
         )}
-        {(agents.status === "error" || !!agents.error) && (
+        {agents.archives.status === "error" && (
+          <MenuNote role="status">
+            Couldn’t check which agents are archived, so archived agents may
+            appear.
+          </MenuNote>
+        )}
+        {(agents.status === "error" ||
+          !!agents.error ||
+          agents.archives.status === "error") && (
           <MenuItem closeOnClick={false} onClick={() => void library.refresh()}>
+            <MenuIcon>
+              <ArrowClockwiseIcon size={14} />
+            </MenuIcon>
             Retry agent list
           </MenuItem>
         )}

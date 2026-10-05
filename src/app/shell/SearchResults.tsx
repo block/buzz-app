@@ -7,6 +7,7 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
+import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 
 function conversationName(
@@ -35,10 +36,16 @@ export function SearchResults({
   onQueryChange,
   input,
   pages,
+  scopedChannelId,
+  currentChannelId,
+  onScopeChange,
   openConversation,
 }: {
   session: RelaySession;
   pages: readonly SearchDestination[];
+  scopedChannelId?: string | undefined;
+  currentChannelId?: string | undefined;
+  onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
@@ -51,12 +58,21 @@ export function SearchResults({
     () =>
       list.channels.filter(
         (channel) =>
-          !channel.archived &&
-          (!channel.hidden || channel.channelType === "dm"),
+          (!channel.archived ||
+            (!channel.readOnly &&
+              (channel.channelType === "stream" ||
+                channel.channelType === "forum"))) &&
+          (!channel.hidden || channel.channelType === "dm") &&
+          (!scopedChannelId || channel.id === scopedChannelId),
       ),
-    [list.channels],
+    [list.channels, scopedChannelId],
   );
-  const search = useSearchMessages(session, query.trim());
+  const search = useSearchMessages(session, query.trim(), scopedChannelId);
+  const publicChannels = usePublicChannelSearch(
+    session,
+    scopedChannelId ? "" : query.trim(),
+    list.status === "ready",
+  );
   const names = new Map(
     channels.map((channel) => [
       channel.id,
@@ -81,21 +97,60 @@ export function SearchResults({
         .catch(() => {});
   }, [session, profileKey]);
   const needle = query.trim().toLowerCase().replace(/^#/, "");
-  const conversations: SearchDestination[] = channels
+  const matchingChannels = channels
     .filter((channel) => names.get(channel.id)?.toLowerCase().includes(needle))
-    .slice(0, 8)
-    .map((channel) => ({
-      key: `channel:${channel.id}`,
-      label: names.get(channel.id) ?? channel.name,
-      detail:
-        channel.channelType === "dm"
+    .slice(0, 8);
+  const joinedChannels = matchingChannels.filter(
+    (channel) => channel.channelType !== "dm",
+  );
+  // Joined matches lead; public channels the viewer has not joined fill the group.
+  const unjoinedChannels = publicChannels.channels
+    .filter((channel) => !joinedChannels.some(({ id }) => id === channel.id))
+    .slice(0, Math.max(0, 8 - joinedChannels.length));
+  const conversationDestination = (
+    channel: ChannelSummary,
+  ): SearchDestination => ({
+    key: `channel:${channel.id}`,
+    label: names.get(channel.id) ?? channel.name,
+    detail: channel.archived
+      ? "Archived channel"
+      : channel.readOnly && !channel.cached
+        ? "Public channel · not joined"
+        : channel.channelType === "dm"
           ? "Direct message"
           : channel.channelType === "session"
             ? "Session"
             : "Conversation",
-      icon: ChatCircleIcon,
-      run: () => openConversation(channel.id),
+    icon: ChatCircleIcon,
+    run: () => openConversation(channel.id),
+  });
+  const recent: SearchDestination[] = channels
+    .filter((channel) => !channel.readOnly && !channel.archived)
+    .sort(
+      (a, b) =>
+        (b.lastActivityAt ?? b.updatedAt ?? 0) -
+        (a.lastActivityAt ?? a.updatedAt ?? 0),
+    )
+    .slice(0, 4)
+    .map((channel) => ({
+      ...conversationDestination(channel),
+      ...(channel.preview ? { detail: channel.preview } : {}),
     }));
+  const currentChannel = currentChannelId
+    ? channels.find((channel) => channel.id === currentChannelId)
+    : undefined;
+  const scopeAction: SearchDestination[] =
+    !scopedChannelId && currentChannel && onScopeChange
+      ? [
+          {
+            key: `scope:${currentChannel.id}`,
+            label: `Search ${currentChannel.channelType === "dm" ? "conversation with" : "in"} ${names.get(currentChannel.id) ?? currentChannel.name}`,
+            detail: "Search messages in this conversation",
+            icon: ChatCircleIcon,
+            run: () => onScopeChange(currentChannel.id),
+          },
+        ]
+      : [];
   const messages: SearchDestination[] = search.messages.map((message) => ({
     key: message.id,
     label: message.preview,
@@ -103,33 +158,115 @@ export function SearchResults({
     icon: ChatCircleIcon,
     run: () => openConversation(message.channelId, message.id),
   }));
+  const messageEmpty = search.loading
+    ? "Searching messages…"
+    : search.error
+      ? "Message search is unavailable."
+      : query.trim()
+        ? "No matching messages in accessible conversations."
+        : scopedChannelId
+          ? "Type to search messages in this conversation."
+          : "Type to search messages in this community.";
+  // A retry removes its own focused button. Return focus to the combobox,
+  // which owns keyboard navigation, before the retry starts.
+  const retryFromInput = (retry: () => unknown) => () => {
+    input.current?.focus();
+    retry();
+  };
   return (
     <SearchChoices
       query={query}
       onQueryChange={onQueryChange}
       input={input}
-      groups={[
-        { label: "Pages", destinations: pages },
-        { label: "Conversations", destinations: conversations },
-        { label: "Messages", destinations: messages },
-      ]}
+      label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+      placeholder={
+        scopedChannelId
+          ? "Search messages…"
+          : "Search pages, conversations and messages…"
+      }
+      scope={
+        scopedChannelId && onScopeChange
+          ? {
+              label:
+                names.get(scopedChannelId) ??
+                session.channels.get?.(scopedChannelId)?.name ??
+                "Conversation",
+              onRemove: () => onScopeChange(),
+            }
+          : undefined
+      }
+      groups={
+        scopedChannelId
+          ? [
+              {
+                label: "Most relevant",
+                destinations: messages,
+                empty: messageEmpty,
+              },
+            ]
+          : !query.trim()
+            ? [
+                ...(scopeAction.length
+                  ? [{ label: "This conversation", destinations: scopeAction }]
+                  : []),
+                {
+                  label: "Recent activity",
+                  destinations: recent,
+                  empty:
+                    list.status === "loading"
+                      ? "Loading recent conversations…"
+                      : "No recent activity yet.",
+                },
+                { label: "Actions", destinations: pages },
+              ]
+            : [
+                ...(scopeAction.length
+                  ? [{ label: "This conversation", destinations: scopeAction }]
+                  : []),
+                {
+                  label: "Channels",
+                  destinations: [...joinedChannels, ...unjoinedChannels].map(
+                    conversationDestination,
+                  ),
+                },
+                {
+                  label: "Direct messages",
+                  destinations: matchingChannels
+                    .filter((channel) => channel.channelType === "dm")
+                    .map(conversationDestination),
+                },
+                { label: "Pages", destinations: pages },
+                {
+                  label: "Most relevant",
+                  destinations: messages,
+                  empty:
+                    matchingChannels.length ||
+                    unjoinedChannels.length ||
+                    pages.length
+                      ? undefined
+                      : messageEmpty,
+                },
+              ]
+      }
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"
         aria-live="polite"
       >
-        {list.status === "loading" && <p>Loading joined conversations…</p>}
+        {list.status === "loading" && query.trim() && !list.channels.length && (
+          <p>Loading joined conversations…</p>
+        )}
         {list.status === "error" && (
           <div>
             <p>Couldn’t load all joined conversations.</p>
             <Button
               size="sm"
               variant="ghost"
-              onClick={() =>
+              onClick={retryFromInput(() =>
                 session.channels.refreshList
                   ? session.channels.refreshList()
-                  : session.channels.ensureList()
-              }
+                  : session.channels.ensureList(),
+              )}
             >
               Retry conversations
             </Button>
@@ -138,23 +275,33 @@ export function SearchResults({
         {list.coverage === "partial" && (
           <p>Conversation names include only loaded joined conversations.</p>
         )}
-        {search.loading && <p>Searching messages…</p>}
+        {query.trim() && !scopedChannelId && publicChannels.partial && (
+          <p>Public channel results include only the first page of channels.</p>
+        )}
+        {!scopedChannelId && publicChannels.error && (
+          <div>
+            <p>{publicChannels.error}</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(publicChannels.retry)}
+            >
+              Retry channels
+            </Button>
+          </div>
+        )}
         {search.error && (
           <div>
             <p>{search.error}</p>
-            <Button size="sm" variant="ghost" onClick={search.retry}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={retryFromInput(search.retry)}
+            >
               Retry messages
             </Button>
           </div>
         )}
-        {query.trim() &&
-          !search.loading &&
-          !search.error &&
-          !messages.length &&
-          list.status === "ready" && (
-            <p>No matching messages in accessible conversations.</p>
-          )}
-        {!query.trim() && <p>Type to search messages in this community.</p>}
       </div>
     </SearchChoices>
   );

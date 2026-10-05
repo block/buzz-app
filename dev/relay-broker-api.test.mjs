@@ -1,8 +1,15 @@
+import { createConsola } from "consola";
+import { Context } from "@deepseek-ai/cordis";
+import { HostService } from "../src/features/host/service.ts";
+import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
+import { logSocketFrame } from "../src/features/developer/traffic.ts";
+import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { createHash, createHmac } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { ReadableStream } from "node:stream/web";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,6 +23,9 @@ import {
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
+import { createRelaySession } from "../src/features/relay/session.ts";
+import { feedbackEvent } from "../src/features/relay/product-feedback.ts";
+import { archiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -26,7 +36,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond, capabilities = {}) {
+async function harness(
+  respond,
+  capabilities = {},
+  relayUrl = fixtureRelayUrl,
+  builderlab = {},
+) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -43,7 +58,8 @@ async function harness(respond, capabilities = {}) {
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
-    relayUrl: fixtureRelayUrl,
+    relayUrl,
+    builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
     socketFactory: socket.factory,
@@ -118,12 +134,239 @@ async function harness(respond, capabilities = {}) {
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
+
+test.each([
+  [202, { status: "aborted" }],
+  [409, { error: { code: "must_archive" } }],
+])(
+  "Builderlab HTTP forwards structured deletion status %s",
+  async (status, result) => {
+    let openLogin;
+    const loginOpened = new Promise((resolve) => {
+      openLogin = resolve;
+    });
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "north.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const upstream = [];
+    const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+      open: async (url) => openLogin(url),
+      fetch: async (url, init) => {
+        const path = new URL(url).pathname;
+        if (path.endsWith("/v1/auth/login/exchange"))
+          return Response.json({
+            session_credential: "fixture-only",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/auth/me"))
+          return Response.json({
+            email: "fixture@example.com",
+            expires_at: "2030",
+          });
+        if (path.endsWith("/v1/buzz/communities/delete")) {
+          upstream.push(JSON.parse(init.body));
+          return Response.json({ ...request, ...result }, { status });
+        }
+        throw new Error(`Unexpected fixture request: ${path}`);
+      },
+    });
+    try {
+      const login = fetch(`${h.base}/api/builderlab/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const opened = new URL(await loginOpened);
+      const callback = opened.searchParams.get("returnTo");
+      expect(callback).toBeTruthy();
+      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect((await login).status).toBe(200);
+      const response = await fetch(`${h.base}/api/builderlab/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ ...request, ...result });
+      expect(upstream).toEqual([request]);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 const success = (call) =>
   Response.json(
     call.url.endsWith("/events")
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("remote agent authorization is owner-bound and works without a community", async () => {
+  // No default community is selected, and any upstream request fails.
+  const h = await harness(
+    () => {
+      throw new Error("Authorization must not contact upstream");
+    },
+    {},
+    "",
+  );
+  try {
+    const owner = (await (await h.get("identity")).json()).viewer;
+    const agentPubkey = getPublicKey(generateSecretKey());
+    const http = globalThis.fetch;
+    vi.stubGlobal("fetch", (url, input) => http(new URL(url, h.base), input));
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
+    const context = new Context();
+    const host = new HostService(context);
+    const tag = await host.prepareRemoteAgentAuthorization(agentPubkey);
+    // The host returns an unconditional proof for the requested agent and owner.
+    expect(await authTagOwner(agentPubkey, tag)).toBe(owner);
+    expect(tag.slice(0, 3)).toEqual(["auth", h.event.pubkey, ""]);
+    // The signature binds the exact agent key to the NIP-OA domain.
+    expect(
+      schnorr.verify(
+        Buffer.from(tag[3], "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agentPubkey}:`)
+          .digest(),
+        Buffer.from(tag[1], "hex"),
+      ),
+    ).toBe(true);
+    const route = "prepare-remote-agent-authorization";
+    for (const rejected of [
+      "invalid", // Malformed key.
+      "A".repeat(64), // Uppercase hex.
+      h.event.pubkey, // Self-attestation.
+      null, // Null agent key.
+      42, // Non-string agent key.
+    ]) {
+      expect(
+        (await h.post(route, { owner: h.event.pubkey, agentPubkey: rejected }))
+          .status,
+      ).toBe(400);
+    }
+    // A different owner cannot use the broker's identity to sign.
+    expect(
+      (await h.post(route, { owner: "f".repeat(64), agentPubkey })).status,
+    ).toBe(403);
+    // The request must explicitly bind the current owner.
+    expect((await h.post(route, { agentPubkey })).status).toBe(403);
+    // A non-object request body is rejected.
+    expect((await h.post(route, null)).status).toBe(400);
+    // Oversized requests are rejected before signing.
+    expect(
+      (await h.post(route, { owner, agentPubkey: "a".repeat(4096) })).status,
+    ).toBe(413);
+    // Successful and rejected authorization requests stay local.
+    expect(h.calls).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await h.close();
+  }
+});
+
+test("production transport obtains scoped broker harness log proofs for aliases and canonical origins", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl };
+  try {
+    for (const community of ["primary", fixtureRelayUrl]) {
+      const transport = await connectBrokerTransport(
+        h.base,
+        undefined,
+        community,
+      );
+      expect(transport.authorizeAgentLog).toBeTypeOf("function");
+      const signature = await transport.authorizeAgentLog(target, nonce);
+      const digest = createHash("sha256")
+        .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+        .digest();
+      expect(
+        schnorr.verify(
+          Buffer.from(signature, "hex"),
+          digest,
+          Buffer.from(viewer, "hex"),
+        ),
+      ).toBe(true);
+      await expect(
+        transport.authorizeAgentLog(
+          { ...target, relayUrl: "wss://secondary.example" },
+          nonce,
+        ),
+      ).rejects.toThrow("Log authorization unavailable");
+    }
+    const other = await connectBrokerTransport(h.base, undefined, "secondary");
+    await expect(other.authorizeAgentLog(target, nonce)).rejects.toThrow(
+      "Log authorization unavailable",
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test("harness log proof signs only exact scoped community and agent inputs", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const relayUrl = "wss://primary.example";
+  const id = `${pubkey}-${createHash("sha256").update(relayUrl).digest("hex")}`;
+  const nonce = "12345678-1234-1234-1234-123456789abc";
+  const target = { id, pubkey, relayUrl, nonce };
+  try {
+    const registered = await h.post("register", { url: fixtureRelayUrl });
+    expect(registered.status).toBe(200);
+    const route = "primary/agent-log-proof";
+    expect((await h.post("agent-log-proof", target)).status).toBe(400);
+    for (const invalid of [
+      { ...target, id: `${"f".repeat(64)}-${id.slice(65)}` },
+      { ...target, pubkey: viewer },
+      { ...target, relayUrl: "wss://secondary.example" },
+      { ...target, relayUrl: "file:///private" },
+      { ...target, nonce: "invalid" },
+      { ...target, extra: true },
+    ])
+      expect((await h.post(route, invalid)).status).toBe(400);
+    const result = await h.post(route, target);
+    expect(result.status).toBe(200);
+    const { signature } = await result.json();
+    const digest = createHash("sha256")
+      .update(`buzz-app:harness-log:v1:${id}:${pubkey}:${relayUrl}:${nonce}`)
+      .digest();
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        digest,
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(true);
+    expect(
+      schnorr.verify(
+        Buffer.from(signature, "hex"),
+        createHash("sha256")
+          .update(
+            `buzz-app:harness-log:v1:${id}:${pubkey}:wss://secondary.example:${nonce}`,
+          )
+          .digest(),
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(false);
+  } finally {
+    await h.close();
+  }
+});
 
 test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
   const icon = "https://images.example/icon@2x.png";
@@ -850,6 +1093,27 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
   }
 }, 10000);
 
+test("strong channel confirmation filters reach the upstream query unchanged", async () => {
+  const h = await harness(() => Response.json([]));
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const filters = [
+      {
+        kinds: [39002],
+        "#d": ["11111111-1111-4111-8111-111111111111"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ];
+    await transport.query(filters);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].url).toBe(`${fixtureRelayUrl}/query`);
+    expect(h.calls[0].body).toEqual(filters);
+  } finally {
+    await h.close();
+  }
+});
+
 // Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {
   let release;
@@ -1286,6 +1550,58 @@ test("member addition works without channel creation, while role elevation remai
   }
 });
 
+test("agent removal publishes only one member's exact 9001 through the outbox", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    expect(transport.writer.kinds).toContain(9001);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const tags = [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["p", "a".repeat(64)],
+    ];
+    const id = owner.outbox.send({ kind: 9001, content: "", tags });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === id)?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications.map((event) => event.kind)).toEqual([9001]);
+    const clientId = ["client-id", "22222222-2222-4222-8222-222222222222"];
+    for (const invalid of [
+      [...tags, clientId, ["reason", "x"]],
+      [tags[0], clientId],
+      [tags[0], ["p", "A".repeat(64)], clientId],
+      [["h", "not-a-channel"], tags[1], clientId],
+    ]) {
+      const denied = await h.post("sign", {
+        kind: 9001,
+        content: "",
+        created_at: 1700000000,
+        tags: invalid,
+      });
+      expect(denied.status).toBe(400);
+    }
+    const content = await h.post("sign", {
+      kind: 9001,
+      content: "reason",
+      created_at: 1700000000,
+      tags: [...tags, clientId],
+    });
+    expect(content.status).toBe(400);
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
 test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
   const h = await harness(success);
   try {
@@ -1312,6 +1628,34 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
     });
     expect((await h.post("publish", event)).status).toBe(200);
     expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    // Preserve older clients' metadata as well as current upload descriptors.
+    for (const imeta of [
+      [
+        "imeta",
+        "url https://example.com/image.png",
+        "m image/png",
+        "dim 320x200",
+      ],
+      [
+        "imeta",
+        `url ${fixtureRelayUrl}/media/${"a".repeat(64)}.pdf`,
+        "m application/pdf",
+        "size 3",
+        `x ${"a".repeat(64)}`,
+        "filename report.pdf",
+      ],
+    ]) {
+      const caption = { ...template, tags: [...template.tags, imeta] };
+      const signed = await h.post("sign", caption);
+      expect(signed.status).toBe(200);
+      const replacement = await signed.json();
+      expect(verifyEvent(replacement)).toBe(true);
+      expect(replacement.tags).toEqual(caption.tags);
+      expect((await h.post("publish", replacement)).status).toBe(200);
+      expect(h.publications.at(-1)).toEqual(
+        JSON.parse(JSON.stringify(replacement)),
+      );
+    }
     for (const route of ["sign", "publish"]) {
       for (const tags of [
         [["h", "c"]],
@@ -1324,11 +1668,61 @@ test("edit capability signs and publishes canonical replacements, rejecting malf
           ["e", h.event.id, "", "reply"],
         ],
         [...event.tags, ["e", "a".repeat(64)]],
+        [...event.tags, ["p", "a".repeat(64)]],
+        [...event.tags, ["imeta", 42]],
       ])
         expect((await h.post(route, { ...event, tags })).status).toBe(400);
       expect((await h.post(route, { ...event, content: " " })).status).toBe(
         400,
       );
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(3);
+  } finally {
+    await h.close();
+  }
+});
+
+test("report capability signs and publishes NIP-56 message reports, rejecting other shapes locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(1984);
+    const template = {
+      kind: 1984,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["p", h.event.pubkey],
+        ["e", h.event.id, "spam"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({ kind: 1984, tags: template.tags });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["e", h.event.id, "spam"]],
+        [
+          ["p", h.event.pubkey],
+          ["e", h.event.id, "rude"],
+        ],
+        [
+          ["p", h.event.pubkey],
+          ["e", "bad", "spam"],
+        ],
+        [...template.tags, ["h", "c"]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect(
+        (await h.post(route, { ...event, content: " padded " })).status,
+      ).toBe(400);
       expect(
         (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
       ).toBe(400);
@@ -1382,6 +1776,41 @@ test("message/reaction deletions pass real signing and publication without admit
       ])
         expect((await h.post(route, { ...event, tags })).status).toBe(400);
     }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("agent record deletions sign and publish only the viewer's own kind 30177 coordinate", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const agent = "b".repeat(64);
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["a", `30177:${h.event.pubkey}:${agent}`],
+        ["client-id", "11111111-1111-4111-8111-111111111111"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const tags of [
+      [["a", `30177:${"c".repeat(64)}:${agent}`]],
+      [["a", `30178:${h.event.pubkey}:${agent}`]],
+      [["a", `30177:${h.event.pubkey}:${agent}:extra`]],
+      [["a", `30177:${h.event.pubkey}:invalid`]],
+      [...template.tags, ["e", "a".repeat(64)]],
+    ])
+      expect((await h.post("sign", { ...template, tags })).status).toBe(400);
     expect(h.publications).toHaveLength(1);
   } finally {
     await h.close();
@@ -1523,6 +1952,52 @@ test("status signing and publication preserve scoped replacements and explicit c
   }
 });
 
+test("custom emoji sets sign and publish only as one canonical own coordinate", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(30030);
+    const template = {
+      kind: 30030,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "party", "https://relay.test/media/party.png"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject(template);
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
+    for (const tags of [
+      [["d", "other"]],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "Party", "https://relay.test/p.png"],
+      ],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "party", "https://relay.test/a.png"],
+        ["emoji", "party", "https://relay.test/b.png"],
+      ],
+      [
+        ["d", "buzz:custom-emoji"],
+        ["h", "channel"],
+      ],
+    ])
+      expect((await h.post("sign", { ...template, tags })).status).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
   const owner = new Uint8Array(32);
   owner[31] = 7;
@@ -1595,6 +2070,42 @@ test("memory reads use captured relay and owner, not submitted identity/filter a
       transport.readAgentMemories(author, new AbortController().signal),
     ).rejects.toMatchObject({ name: "MemoryDenied" });
     expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("broker advertises, signs and publishes bounded edits through the real HTTP contract", async () => {
+  const h = await harness(() => new Response("[]"));
+  try {
+    await h.start();
+    const session = await (await h.get("session")).json();
+    expect(session.writeKinds).toContain(40003);
+    const template = {
+      kind: 40003,
+      content: "corrected text",
+      created_at: 1700000000,
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+        ["client-id", "edit-test"],
+      ],
+    };
+    const signed = await h.post("sign", template);
+    expect(signed.status).toBe(200);
+    const event = await signed.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    const published = await h.post("publish", event);
+    expect(published.status).toBe(200);
+    expect(h.publications.some((item) => item.id === event.id)).toBe(true);
+    for (const route of ["sign", "publish"]) {
+      const rejected = await h.post(route, {
+        ...event,
+        tags: [...event.tags, ["p", "b".repeat(64)]],
+      });
+      expect(rejected.status).toBe(400);
+    }
   } finally {
     await h.close();
   }
@@ -1797,6 +2308,112 @@ test("member change receipts must match the signed command", async () => {
   }
 });
 
+test("leave requests sign the exact NIP-43 shape for the selected community only", async () => {
+  const { h, post } = await communityAdmin((call) =>
+    Response.json({ accepted: true, event_id: call.body.id, message: "" }),
+  );
+  try {
+    const response = await post("leave", {});
+    expect(response.status).toBe(200);
+    const sent = h.calls.at(-1);
+    expect(sent.url).toBe(`${fixtureRelayUrl}/events`);
+    expect(verifyEvent(sent.body)).toBe(true);
+    expect(sent.body).toMatchObject({
+      kind: 28936,
+      tags: [["-"]],
+      content: "",
+      pubkey: h.event.pubkey,
+      created_at: Math.floor(Date.now() / 1000),
+    });
+    expect(await response.json()).toMatchObject({
+      accepted: true,
+      event_id: sent.body.id,
+    });
+    // The request body carries nothing: a client cannot smuggle another kind
+    // or extra tags into the signed event.
+    const shaped = await post("leave", {
+      kind: 9031,
+      tags: [["p", "a".repeat(64)]],
+      content: "bye",
+    });
+    expect(shaped.status).toBe(200);
+    expect(h.calls.at(-1).body).toMatchObject({
+      kind: 28936,
+      tags: [["-"]],
+      content: "",
+    });
+    // Unscoped requests name no community to leave.
+    expect((await h.post("leave", {})).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("leave receipts must match the signed request", async () => {
+  const { h, post } = await communityAdmin(() =>
+    Response.json({ accepted: true, event_id: "wrong" }),
+  );
+  try {
+    const response = await post("leave", {});
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Leave request could not be confirmed",
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  [
+    400,
+    "invalid: you are not a relay member",
+    "invalid: you are not a relay member",
+  ],
+  [
+    400,
+    "invalid: relay membership is not enabled",
+    "invalid: relay membership is not enabled",
+  ],
+  [
+    400,
+    "invalid: relay owner cannot leave",
+    "invalid: relay owner cannot leave",
+  ],
+  [
+    403,
+    "blocked: you are banned from this community",
+    "blocked: you are banned from this community",
+  ],
+  [
+    503,
+    "community writes are temporarily unavailable",
+    "community writes are temporarily unavailable",
+  ],
+  // Admin refusals are not leave refusals.
+  [400, "invalid: cannot remove yourself", "Relay request failed (400)"],
+  [
+    400,
+    "invalid: database error: connection reset <script>",
+    "Relay request failed (400)",
+  ],
+])(
+  "leave refusal %i %j is surfaced only when whitelisted",
+  async (status, error, shown) => {
+    const { h, post } = await communityAdmin(() =>
+      Response.json({ error }, { status }),
+    );
+    try {
+      const response = await post("leave", {});
+      expect(response.status).toBe(status);
+      expect((await response.json()).error).toBe(shown);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 test.each([
   [400, "invalid: cannot remove yourself", "invalid: cannot remove yourself"],
   [
@@ -1923,6 +2540,77 @@ test("relay quota on admin routes stays a quota failure, not a refusal", async (
   }
 });
 
+test("identity archive requests use dedicated exact-shape routes behind archive authority", async () => {
+  const respond = (call) =>
+    Response.json(
+      call.url.endsWith("/events")
+        ? { accepted: true, event_id: call.body.id }
+        : [],
+    );
+  const target = "b".repeat(64);
+  const auth = ["auth", "c".repeat(64), "", "d".repeat(128)];
+  const template = archiveRequestTemplate("archive", target, auth);
+  const unavailable = await harness(respond);
+  try {
+    expect(
+      (await unavailable.post("identity-archive-sign", template)).status,
+    ).toBe(400);
+  } finally {
+    await unavailable.close();
+  }
+  const h = await harness(respond, {
+    // The harness relay author is its viewer key; NIP-11 self must match it.
+    archiveAuthority: getPublicKey(
+      Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 7 : 0)),
+    ),
+  });
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.writer.kinds).not.toContain(9035);
+    expect(transport.writer.kinds).not.toContain(9036);
+    const invalid = [
+      { ...template, kind: 9037 },
+      { ...template, content: "reason" },
+      { ...template, tags: [["p", target]] },
+      { ...template, tags: [...template.tags, ["reason", "spam"]] },
+      { ...template, tags: [["-"], ["p", target], ["p", target]] },
+      { ...template, tags: [["-"], ["p", "B".repeat(64)]] },
+      {
+        ...template,
+        tags: [["-"], ["p", target], ["auth", target, "", "d".repeat(128)]],
+      },
+      { ...template, tags: [["-"], ["p", target], auth.slice(0, 3)] },
+    ];
+    for (const event of invalid) {
+      expect((await h.post("identity-archive-sign", event)).status).toBe(400);
+      expect((await h.post("identity-archive-publish", event)).status).toBe(
+        400,
+      );
+    }
+    const signal = new AbortController().signal;
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.identityArchive.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    live = await openBrokerSocket(transport);
+    await transport.identityArchive.publish(signed, signal);
+    expect(h.publications).toHaveLength(1);
+    const foreign = finalizeEvent(
+      { ...template, tags: template.tags.map((tag) => [...tag]) },
+      new Uint8Array(32).fill(5),
+    );
+    expect((await h.post("identity-archive-publish", foreign)).status).toBe(
+      400,
+    );
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
 test("lifecycle uses dedicated shape-limited host routes, never the message writer", async () => {
   const h = await harness((call) =>
     Response.json(
@@ -1996,8 +2684,655 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       400,
     );
     expect(h.publications).toHaveLength(1);
+    const unarchive = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["archived", "false"],
+      ],
+    };
+    expect((await h.post("sign", unarchive)).status).toBe(400);
+    const restore = await transport.channelLifecycle.sign(unarchive, signal);
+    expect(verifyEvent(restore)).toBe(true);
+    expect(restore).toMatchObject(unarchive);
+    expect((await h.post("publish", restore)).status).toBe(400);
+    await transport.channelLifecycle.publish(restore, signal);
+    expect(h.publications).toHaveLength(2);
   } finally {
     live?.dispose();
+    await h.close();
+  }
+});
+
+test("product feedback signs and publishes only private bounded text/category", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(42000);
+    const template = {
+      ...h.event,
+      kind: 42000,
+      content: "This broke",
+      tags: [
+        ["category", "bug"],
+        ["client-id", "fixture"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 42000,
+      content: template.content,
+      tags: template.tags,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const invalid of [
+        { tags: [["h", "c"]] },
+        {
+          tags: [
+            ["category", "bug"],
+            ["category", "praise"],
+          ],
+        },
+        { tags: [["category", "idea"]] },
+        { tags: [null] },
+        { content: " \n " },
+        { content: "é".repeat(16_385) },
+      ])
+        expect((await h.post(route, { ...event, ...invalid })).status).toBe(
+          400,
+        );
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("feedback media tags pass broker signing only for tenant-local bounded descriptors", async () => {
+  const h = await harness(success);
+  const hash = "a".repeat(64);
+  const valid = [
+    "imeta",
+    `url ${fixtureRelayUrl}/media/${hash}.png`,
+    "m image/png",
+    "size 64",
+    `x ${hash}`,
+    "filename capture.png",
+  ];
+  try {
+    await h.start();
+    const template = {
+      ...h.event,
+      kind: 42000,
+      content: `Broken\n\n![capture](<${fixtureRelayUrl}/media/${hash}.png>)`,
+      tags: [valid],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const signed = await response.json();
+    expect((await h.post("publish", signed)).status).toBe(200);
+    for (const tag of [
+      valid.map((part) =>
+        part.startsWith("url ")
+          ? `url https://other.test/media/${hash}.png`
+          : part,
+      ),
+      valid.map((part) => (part.startsWith("size ") ? "size NaN" : part)),
+      valid.map((part) =>
+        part.startsWith("filename ") ? "filename ../capture.png" : part,
+      ),
+      [...valid, "x duplicated"],
+      valid.slice(0, -1),
+    ]) {
+      expect((await h.post("sign", { ...template, tags: [tag] })).status).toBe(
+        400,
+      );
+      expect((await h.post("publish", { ...signed, tags: [tag] })).status).toBe(
+        400,
+      );
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("private feedback crosses the real broker and session without a readback or shared view", async () => {
+  const h = await harness(success);
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    owner = createRelaySession(transport, {
+      outboxStorage: { load: () => [], save() {} },
+    });
+    // The session owns its own stream; waiting on a separate subscription does
+    // not establish that the publication owner's live ID has been admitted.
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().status).toBe("connected"),
+    );
+    const outbox = owner.session.outbox;
+    expect(outbox).toBeDefined();
+    await outbox.ready();
+    const id = outbox.send(feedbackEvent("Controlled private text", "bug"));
+    await vi.waitFor(() => {
+      const result = outbox.snapshot()[0];
+      if (result?.delivery === "failed")
+        throw new Error(result.error ?? "failed");
+      expect(result?.delivery).toBe("accepted");
+    });
+    expect(h.publications).toHaveLength(1);
+    expect(h.publications[0]).toMatchObject({
+      id,
+      kind: 42000,
+      content: "Controlled private text",
+    });
+    expect(verifyEvent(h.publications[0])).toBe(true);
+    expect(h.publications[0].tags.some(([name]) => name === "h")).toBe(false);
+    const feedbackReads = h.calls.filter(
+      ({ body }) =>
+        Array.isArray(body) && body.some(({ ids }) => ids?.includes(id)),
+    );
+    expect(feedbackReads).toEqual([]);
+    expect(
+      owner.session.observe([{ kinds: [42000], limit: 20 }]).snapshot().events,
+    ).toEqual([]);
+  } finally {
+    owner?.dispose();
+    await h.close();
+  }
+});
+
+test("broker HTTP summaries respect live levels and trace excludes private filters", async () => {
+  const logger = getLogger("relay-broker");
+  const reporters = [...logger.options.reporters];
+  const lines = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const h = await harness(success);
+  try {
+    setLogLevel("trace");
+    expect(
+      (
+        await h.post("query", [
+          {
+            kinds: [0],
+            limit: 1,
+            authors: ["a".repeat(64)],
+            search: "private search",
+          },
+        ])
+      ).status,
+    ).toBe(200);
+    expect(lines.some((line) => line.includes("POST /relay/query → 200"))).toBe(
+      true,
+    );
+    expect(lines.some((line) => line.includes('"authors":1'))).toBe(true);
+    expect(lines.join(" ")).not.toContain("private search");
+    expect(lines.join(" ")).not.toContain("a".repeat(64));
+    lines.length = 0;
+    setLogLevel("info");
+    expect((await h.post("query", filters)).status).toBe(200);
+    expect(lines).toHaveLength(0);
+  } finally {
+    await h.close();
+    logger.setReporters(reporters);
+    setLogLevel("info");
+  }
+});
+
+test.each([
+  [
+    new DOMException("private timeout detail", "TimeoutError"),
+    "TimeoutError",
+    500,
+  ],
+  [new SyntaxError("private response body"), "SyntaxError", 500],
+  [
+    new TypeError("private URL", { cause: { code: "ECONNREFUSED" } }),
+    "TypeError (ECONNREFUSED)",
+    502,
+  ],
+  [
+    Object.assign(new Error("private message"), {
+      name: "private name",
+      code: "private code",
+    }),
+    "Error",
+    500,
+  ],
+])(
+  "broker failure logs preserve safe categories/codes, not private exception text (%#)",
+  async (error, summary, status) => {
+    const logger = getLogger("relay-broker");
+    const reporters = [...logger.options.reporters];
+    const lines = [];
+    logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+    setLogLevel("info");
+    const h = await harness(() => {
+      throw error;
+    });
+    try {
+      expect((await h.post("query", filters)).status).toBe(status);
+      expect(lines).toContain(`Request failed: POST /relay/query: ${summary}`);
+      expect(lines.join(" ")).not.toContain("private");
+    } finally {
+      await h.close();
+      logger.setReporters(reporters);
+      setLogLevel("info");
+    }
+  },
+);
+
+test("Trace metadata uses the real Node reporter without fabricated stacks", async () => {
+  const logger = getLogger("relay-broker");
+  const socket = getLogger("relay-ws");
+  const originals = [logger, socket].map((log) => ({
+    log,
+    reporters: [...log.options.reporters],
+    stdout: log.options.stdout,
+    stderr: log.options.stderr,
+  }));
+  const lines = [];
+  const output = {
+    write: (line) => {
+      lines.push(String(line));
+      return true;
+    },
+  };
+  const fancy = createConsola({ fancy: true, stdout: output, stderr: output });
+  for (const { log } of originals) {
+    log.setReporters(fancy.options.reporters);
+    log.options.stdout = output;
+    log.options.stderr = output;
+  }
+  const h = await harness(success);
+  try {
+    lines.length = 0; // Exclude the harness startup lifecycle message.
+    setLogLevel("trace");
+    expect((await h.post("query", filters)).status).toBe(200);
+    logSocketFrame("relay.test", "→", "[]", ["REQ", "live-1", { kinds: [9] }]);
+    expect(lines.join("")).toContain("filters");
+    expect(lines.join("")).toContain("query");
+    expect(lines.join("")).not.toMatch(/\n\s+at |FancyReporter|formatLogObj/);
+    expect(lines).toHaveLength(4); // HTTP summary + metadata, frame summary + metadata.
+    expect(lines.every((line) => line.trim().split("\n").length === 1)).toBe(
+      true,
+    );
+  } finally {
+    await h.close();
+    for (const { log, reporters, stdout, stderr } of originals) {
+      log.setReporters(reporters);
+      log.options.stdout = stdout;
+      log.options.stderr = stderr;
+    }
+    setLogLevel("info");
+  }
+});
+
+test("server-wide stats work without a default community and do not start upstream I/O", async () => {
+  const h = await harness(success, {}, "");
+  try {
+    // Use node:http: Undici diagnostics also count the test client's own socket.
+    const result = await new Promise((resolve, reject) => {
+      get(`${h.base}/api/relay/stats`, (response) => {
+        let raw = "";
+        response.on("data", (chunk) => {
+          raw += chunk;
+        });
+        response.on("end", () => resolve({ status: response.statusCode, raw }));
+      }).on("error", reject);
+    });
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.raw)).toEqual({
+      queries: 0,
+      errors: 0,
+      media: 0,
+      connects: 0,
+    });
+    expect(h.calls).toEqual([]);
+  } finally {
+    await h.close();
+  }
+});
+
+test("community setup signs explicit owner intent without inventory or enrollment", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const pubkey = "ab".repeat(32);
+  const h = await harness(() => {
+    throw new Error("No relay read permitted");
+  });
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/resolve-agent-community`;
+  const input = { pubkey, owner: viewer, confirmed: true };
+  try {
+    for (const invalid of [
+      { ...input, confirmed: false },
+      { ...input, owner: pubkey },
+      { ...input, pubkey: viewer },
+      { ...input, pubkey: "invalid" },
+      { ...input, extra: true },
+    ])
+      expect((await h.post(route, invalid)).status).toBe(400);
+    const response = await h.post(route, input);
+    expect(response.status).toBe(200);
+    const resolution = await response.json();
+    expect(resolution).toMatchObject({
+      pubkey,
+      owner: viewer,
+      relayUrl: fixtureRelayUrl.replace(/^https:/, "wss:"),
+    });
+    const { schnorr } = await import("@noble/curves/secp256k1.js");
+    expect(
+      schnorr.verify(
+        Buffer.from(resolution.signature, "hex"),
+        createHash("sha256")
+          .update(`nostr:agent-community:${pubkey}:${resolution.relayUrl}`)
+          .digest(),
+        Buffer.from(viewer, "hex"),
+      ),
+    ).toBe(true);
+    expect(h.calls).toHaveLength(0);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("details routes are narrow, require the live owner, and do not widen lifecycle/outbox", async () => {
+  const h = await harness(success);
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const template = {
+      kind: 9002,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "renamed"],
+        ["about", ""],
+        ["visibility", "private"],
+      ],
+    };
+    expect(transport.writer.kinds).not.toContain(9002);
+    expect((await h.post("sign", template)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", template)).status).toBe(400);
+    for (const invalid of [
+      { ...template, kind: 9001 },
+      { ...template, content: "extra" },
+      { ...template, tags: [...template.tags, ["archived", "true"]] },
+      ...["0", "-1", "1.5", "2147483648"].map((ttl) => ({
+        ...template,
+        tags: [...template.tags, ["ttl", ttl]],
+      })),
+      { ...template, tags: [...template.tags, ["ttl", "60"], ["ttl", "60"]] },
+      {
+        ...template,
+        tags: [...template.tags.slice(0, 3), ["visibility", "public"]],
+      },
+      { ...template, tags: [template.tags[0], ["topic", "x"]] },
+      {
+        ...template,
+        tags: [template.tags[0], ["name", "n"], ["about", "x".repeat(1001)]],
+      },
+    ]) {
+      for (const route of ["channel-details-sign", "channel-details-publish"])
+        expect((await h.post(route, invalid)).status).toBe(400);
+    }
+    const signal = new AbortController().signal;
+    const event = await transport.channelDetails.sign(template, signal);
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject(template);
+    expect((await h.post("publish", event)).status).toBe(400);
+    await expect(
+      transport.channelDetails.publish(event, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.channelDetails.publish(event, signal);
+    expect(h.publications).toHaveLength(1);
+    for (const ttl of ["604800", ""]) {
+      const change = { ...template, tags: [...template.tags, ["ttl", ttl]] };
+      expect((await h.post("sign", change)).status).toBe(400);
+      expect((await h.post("channel-lifecycle-sign", change)).status).toBe(400);
+      const signed = await transport.channelDetails.sign(change, signal);
+      expect(signed).toMatchObject(change);
+      await transport.channelDetails.publish(signed, signal);
+    }
+    const reopening = {
+      ...template,
+      tags: [...template.tags.slice(0, 3), ["visibility", "open"]],
+    };
+    expect((await h.post("sign", reopening)).status).toBe(400);
+    expect((await h.post("channel-lifecycle-sign", reopening)).status).toBe(
+      400,
+    );
+    const reopened = await transport.channelDetails.sign(reopening, signal);
+    expect(reopened).toMatchObject(reopening);
+    expect((await h.post("publish", reopened)).status).toBe(400);
+    await transport.channelDetails.publish(reopened, signal);
+    expect(h.publications).toHaveLength(4);
+    const foreign = finalizeEvent(
+      structuredClone(template),
+      new Uint8Array(32).fill(5),
+    );
+    expect((await h.post("channel-details-publish", foreign)).status).toBe(400);
+    expect(h.publications).toHaveLength(4);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
+test("member administration uses isolated shape-limited routes and the current community socket", async () => {
+  const h = await harness(success);
+  let live;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const target = getPublicKey(new Uint8Array(32).fill(5));
+    const signal = new AbortController().signal;
+    const template = {
+      kind: 9000,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", id],
+        ["p", target],
+        ["role", "admin"],
+      ],
+    };
+    const invalid = [
+      { ...template, kind: 9002 },
+      { ...template, content: "metadata" },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "owner"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", target],
+          ["role", "bot"],
+        ],
+      },
+      {
+        ...template,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+          ["role", "member"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9001,
+        tags: [
+          ["h", id],
+          ["p", transport.viewer],
+        ],
+      },
+      { ...template, tags: [...template.tags, ["h", id]] },
+      { ...template, tags: null },
+      { ...template, tags: [null] },
+    ];
+    for (const event of invalid)
+      for (const route of [
+        "member-administration-sign",
+        "member-administration-publish",
+      ])
+        expect((await h.post(route, event)).status).toBe(400);
+    expect((await h.post("sign", template)).status).toBe(400);
+    const signed = await transport.memberAdministration.sign(template, signal);
+    expect(verifyEvent(signed)).toBe(true);
+    expect(signed).toMatchObject(template);
+    expect((await h.post("publish", signed)).status).toBe(400);
+    await expect(
+      transport.memberAdministration.publish(signed, signal),
+    ).rejects.toBeInstanceOf(PublishRejected);
+    expect(h.publications).toHaveLength(0);
+    live = await openBrokerSocket(transport);
+    await transport.memberAdministration.publish(signed, signal);
+    const removal = await transport.memberAdministration.sign(
+      { ...template, kind: 9001, tags: template.tags.slice(0, 2) },
+      signal,
+    );
+    expect(
+      (
+        await h.post("sign", {
+          ...template,
+          kind: 9001,
+          tags: template.tags.slice(0, 2),
+        })
+      ).status,
+    ).toBe(400);
+    await transport.memberAdministration.publish(removal, signal);
+    const foreign = finalizeEvent(
+      structuredClone(template),
+      new Uint8Array(32).fill(5),
+    );
+    expect(
+      (await h.post("member-administration-publish", foreign)).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    live?.dispose();
+    await h.close();
+  }
+});
+
+test("inventory inspection returns saved identities without owner resolution or publication", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const pubkey = "ab".repeat(32);
+  let forged = false;
+  let member = true;
+  const h = await harness(
+    () => {
+      const event = finalizeEvent(
+        {
+          kind: 30177,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Saved agent" }),
+          tags: [["d", member ? pubkey : "cd".repeat(32)]],
+        },
+        key,
+      );
+      if (forged) event.sig = "00".repeat(64);
+      return Response.json([event]);
+    },
+    { archiveAuthority: getPublicKey(key) },
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  try {
+    expect((await h.post("agent-inventory", {})).status).toBe(400);
+    expect((await h.post(route, { confirmed: true })).status).toBe(400);
+    expect(h.calls).toHaveLength(0);
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: [pubkey],
+    });
+    member = false;
+    expect(await (await h.post(route, {})).json()).toEqual({
+      identities: ["cd".repeat(32)],
+    });
+    forged = true;
+    expect((await h.post(route, {})).status).toBe(409);
+    expect(h.publications).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+  const unavailable = await harness(() => Response.json([]));
+  try {
+    expect(await (await unavailable.post(route, {})).json()).toEqual({
+      identities: [],
+    });
+    expect(unavailable.calls).toHaveLength(1);
+  } finally {
+    await unavailable.close();
+  }
+});
+
+test("inventory rejects foreign pages, ignores invalid heads and follows exact-key pages", async () => {
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const foreign = new Uint8Array(32);
+  foreign[31] = 8;
+  const pubkey = "ab".repeat(32);
+  const record = (
+    d,
+    content = '{"name":"Same name"}',
+    time = 1,
+    author = key,
+    kind = 30177,
+  ) =>
+    finalizeEvent(
+      { kind, created_at: time, content, tags: [["d", d]] },
+      author,
+    );
+  let rows = [];
+  const h = await harness(({ body }) =>
+    Response.json(body[0].before_id ? [record(pubkey)] : rows),
+  );
+  const route = `${encodeURIComponent(fixtureRelayUrl)}/agent-inventory`;
+  const input = {};
+  try {
+    rows = [record(pubkey, undefined, 1, foreign)];
+    expect((await h.post(route, input)).status).toBe(409);
+    for (const invalid of [
+      [record(pubkey, "not JSON")],
+      [record(pubkey), record(pubkey, "null", 2)],
+
+      [record(pubkey, '{"display_name":"Template"}', 1, key, 30175)],
+    ]) {
+      rows = invalid;
+      expect(await (await h.post(route, input)).json()).toEqual({
+        identities: [],
+      });
+    }
+    rows = Array.from({ length: 200 }, (_, i) =>
+      record(i.toString(16).padStart(64, "0")),
+    );
+    expect((await h.post(route, input)).status).toBe(200);
+    expect(h.calls.at(-1).body[0]).toMatchObject({
+      until: 1,
+      before_id: [...rows]
+        .map((e) => e.id)
+        .sort()
+        .at(-1),
+    });
+    expect(h.publications).toHaveLength(0);
+  } finally {
     await h.close();
   }
 });

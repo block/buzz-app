@@ -3,8 +3,36 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
 
-test("actual composer selects namesakes by exact key, publishes channel/reply tags, and blocks removed members", async ({
+test("settings-enabled mentions fixture renders the composer and preference", async ({
+  page,
+}) => {
+  // This optional fixture mode mounts the real Vite entry point, not an exported component.
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?settings`,
+    );
+    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByText("Remember mentioned agents")).toBeVisible();
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("actual composer selects namesakes by exact key, publishes channel/reply tags, and asks before mentioning removed members", async ({
   page,
 }) => {
   // This journey exercises one-message recipients; prefill-on has separate coverage.
@@ -18,10 +46,14 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     await page.goto(
@@ -39,7 +71,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       expect(
         await popup.evaluate((element) => element.closest("form") === null),
       ).toBe(true);
-      await expect(popup).toHaveCSS("border-radius", "24px");
+      await expect(popup).toHaveCSS("border-radius", "16px");
       await expect
         .poll(() =>
           popup.evaluate((element) => {
@@ -60,7 +92,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       const search = picker.getByRole("searchbox");
-      await search.fill(key);
+      // Both fixture keys are Honey namesakes; public keys are not search terms.
+      await search.fill("Honey");
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
@@ -150,7 +183,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await row.hover();
       await expect(row).toHaveCSS(
         "background-color",
-        mode === "light" ? "rgb(232, 232, 232)" : "rgb(89, 89, 89)",
+        mode === "light" ? "rgb(245, 245, 246)" : "rgb(51, 51, 51)",
       );
       await mention.getByRole("searchbox").fill("");
       const empty = await searchAppearance(mention.locator(".search-field"));
@@ -395,9 +428,14 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
-    await expect(page.getByRole("alert")).toContainText(
-      "no longer a channel member",
-    );
+    // An untyped channel is an ordinary channel: the removed member is now
+    // outside it, so the sender chooses. Closing keeps the draft unsent.
+    const outside = page.getByRole("dialog", {
+      name: "Mention people outside this channel?",
+    });
+    await expect(outside).toContainText("Honey is not in this channel.");
+    await outside.getByRole("button", { name: "Close" }).click();
+    await expect(outside).toHaveCount(0);
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
@@ -406,6 +444,10 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     ).toBe(2);
     // A child layout effect sees disabled DOM before parent command props refresh.
     // Both commands must fail, even with the previous render's enabled closures.
+    // The outside-person prompt above also disabled the composer once.
+    const before = await page.evaluate(
+      () => window.mentionFixture.disabledCalls.length,
+    );
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -415,7 +457,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(recipients.getByRole("button")).toBeDisabled();
     expect(
       await page.evaluate(() => window.mentionFixture.disabledCalls),
-    ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
+    ).toEqual(
+      Array(before + 1).fill({
+        inputDisabled: true,
+        text: false,
+        mention: false,
+      }),
+    );
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
@@ -456,7 +504,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     expect(afterRemoval.tags.filter(([tag]) => tag === "p")).toEqual([
       ["p", keys.second],
     ]);
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }
@@ -476,7 +524,12 @@ test("selected mentions inside code remain visible through draft restore and cha
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();
@@ -567,7 +620,12 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     envFile: false,
     plugins: [react()],
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      // Match the app server: native builds must not reload an editing fixture.
+      watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
+    },
   });
   try {
     await server.listen();
@@ -598,15 +656,34 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     const labels = keys.map((key) => `@Honey · ${npubEncode(key).slice(-4)}`);
     await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    // Hold each reveal when its qualifier renders, before any frame. WebKit can
+    // dispatch animationstart after the 220ms reveal has already finished.
     await page.evaluate(() => {
       window.qualifierReveals = [];
-      document.addEventListener("animationstart", (event) => {
-        if (event.animationName !== "inline-chip-qualifier-reveal") return;
-        window.qualifierReveals.push(event.target);
-        for (const animation of event.target.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
+      new MutationObserver(() => {
+        for (const element of document.querySelectorAll(
+          ".inline-chip-qualifier[data-reveal]",
+        )) {
+          if (window.qualifierReveals.includes(element)) continue;
+          // getAnimations() flushes style, so the reveal animation exists.
+          const reveals = element
+            .getAnimations()
+            .filter(
+              (animation) =>
+                animation.animationName === "inline-chip-qualifier-reveal",
+            );
+          if (!reveals.length) continue;
+          window.qualifierReveals.push(element);
+          for (const animation of reveals) {
+            animation.pause();
+            animation.currentTime = 0;
+          }
         }
+      }).observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-reveal"],
+        childList: true,
+        subtree: true,
       });
     });
     await page.evaluate(() => window.mentionFixture.collide(true));

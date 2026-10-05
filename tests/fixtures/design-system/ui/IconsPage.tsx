@@ -1,6 +1,6 @@
 import {
   CUSTOM_ICONS,
-  PHOSPHOR_ICONS,
+  TABLER_ICONS,
 } from "../../../../src/shared/design-system/icons/inventory";
 import { PageHeader, Section } from "./primitives";
 
@@ -13,18 +13,15 @@ export function IconsPage() {
     <>
       <PageHeader
         title="Icons"
-        intro="Phosphor is Buzz’s sole general-purpose icon family. Products request the icons they need through the shared design-system gateway; they do not import the upstream catalog directly."
+        intro="Use Tabler icons through the shared design-system gateway. Add individual exports there as needed; icon and stroke choices belong to the designer."
       />
 
       <Section
-        title="Available Phosphor icons"
-        description="This inventory is generated from the gateway’s real exports. Adding an approved export updates this page without a second list or bundling the full Phosphor catalog."
+        title="Available Tabler icons"
+        description="This inventory follows the gateway’s exports. Adding an icon there updates this page without loading the full Tabler catalog."
       >
-        <ul
-          className="icon-inventory-grid"
-          aria-label="Available Phosphor icons"
-        >
-          {PHOSPHOR_ICONS.map(({ name, component: Icon }) => (
+        <ul className="icon-inventory-grid" aria-label="Available Tabler icons">
+          {TABLER_ICONS.map(({ name, component: Icon }) => (
             <li className="icon-inventory-item" key={name}>
               <Icon size={24} />
               <span className="text-body-sm text-secondary">
@@ -37,7 +34,7 @@ export function IconsPage() {
 
       <Section
         title="Custom and approved icons"
-        description="Use these only for the specific meaning shown. Their provenance and intended product size remain visible with the artwork."
+        description="Use each custom icon only for its documented meaning. Review its source and intended sizes alongside the artwork."
       >
         <div className="custom-icon-inventory">
           {CUSTOM_ICONS.map(
@@ -64,7 +61,7 @@ export function IconsPage() {
                   ))}
                 </div>
                 <div className="custom-icon-copy">
-                  <h3 className="text-heading text-primary">{meaning}</h3>
+                  <h3 className="text-label text-primary">{meaning}</h3>
                   <p className="text-body-sm text-secondary">{category}</p>
                   <p className="text-body-sm text-tertiary">{provenance}</p>
                 </div>

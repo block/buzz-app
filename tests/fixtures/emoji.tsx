@@ -1,3 +1,4 @@
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -38,15 +39,24 @@ window.addEventListener("pagehide", () => {
 const viewer = keypair(),
   relay = keypair(),
   member = keypair();
+const wrap = new URLSearchParams(location.search).has("wrap");
+const long = new URLSearchParams(location.search).has("long");
+const participantProfiles = new Map([
+  [viewer.pubkey, { name: "Fixture Reader" }],
+  [member.pubkey, { name: "Fixture Member" }],
+]);
 const report = {
   publications: [] as { community: string; event: RelayEvent }[],
   reads: [] as string[],
+  reactionStarted: false,
 };
 const sessions = ["a", "b"].map((community) => {
   const origin = `https://${community}.test`;
   let time = 1,
     fail = false,
-    rejectReaction = false;
+    rejectReaction = false,
+    holdNextReaction: string | null = null;
+  let releaseReaction: (() => void) | undefined;
   let live!: LiveCallbacks;
   let catalogRead: Promise<void> | undefined;
   let releaseCatalogRead: (() => void) | undefined;
@@ -72,6 +82,7 @@ const sessions = ["a", "b"].map((community) => {
                     ["emoji", "nosource", `${origin}/media/no-source.png`],
                     ["emoji", "broken", `${origin}/media/broken.png`],
                     ["emoji", "grinning", `${origin}/media/grinning.png`],
+                    ["emoji", "enjoy", `${origin}/media/enjoy.png`],
                     ["emoji", "party-parrot", `${origin}/media/parrot.png`],
                     ["emoji", "party-parrot-wave", `${origin}/media/wave.png`],
                     [
@@ -123,6 +134,14 @@ const sessions = ["a", "b"].map((community) => {
           return signed(viewer, template);
         },
         async publish(event) {
+          if (holdNextReaction === event.content) {
+            holdNextReaction = null;
+            report.reactionStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseReaction = resolve;
+            });
+            releaseReaction = undefined;
+          }
           if ([5, 7].includes(event.kind) && rejectReaction) {
             rejectReaction = false;
             throw new PublishRejected("Fixture reaction rejected");
@@ -145,11 +164,56 @@ const sessions = ["a", "b"].map((community) => {
   const reaction = signed(member, {
     kind: 7,
     content: ":party:",
+    created_at: 2,
     tags: [
       ["e", root.id],
       ["emoji", "party", `${origin}/media/reaction.png`],
     ],
   });
+  const wrapReactions = [
+    "👍",
+    "❤️",
+    "😂",
+    "🎉",
+    "👀",
+    "🔥",
+    "🙌",
+    "😮",
+    "🤔",
+    "👏",
+  ].map((content, index) =>
+    signed(member, {
+      kind: 7,
+      content,
+      created_at: 5 + index,
+      tags: [["e", root.id]],
+    }),
+  );
+  const ownReaction = signed(viewer, {
+    kind: 7,
+    content: "✅",
+    created_at: 15,
+    tags: [["e", root.id]],
+  });
+  const longReactions = long
+    ? [
+        signed(member, {
+          kind: 7,
+          content: "f".repeat(64),
+          created_at: 16,
+          tags: [["e", root.id]],
+        }),
+        signed(member, {
+          kind: 7,
+          content: `:${"a".repeat(64)}:`,
+          created_at: 17,
+          tags: [
+            ["e", root.id],
+            ["emoji", "a".repeat(64), `${origin}/media/no-source.png`],
+          ],
+        }),
+      ]
+    : [];
   const broken = message(viewer, "c", "Broken :missing:", 2, [
     ["emoji", "missing", "javascript:bad"],
   ]);
@@ -175,7 +239,11 @@ const sessions = ["a", "b"].map((community) => {
   );
   owner.session.channels.ensure("c");
   live.receive([root, broken, unloaded, single, table, blocks]);
-  live.receive([reaction]);
+  live.receive([
+    reaction,
+    ...(wrap ? [...wrapReactions, ownReaction] : []),
+    ...longReactions,
+  ]);
   return {
     ...owner,
     community,
@@ -183,6 +251,8 @@ const sessions = ["a", "b"].map((community) => {
     rows: foldMessages("c", relay.pubkey, [
       root,
       reaction,
+      ...(wrap ? [...wrapReactions, ownReaction] : []),
+      ...longReactions,
       broken,
       unloaded,
       single,
@@ -210,6 +280,16 @@ const sessions = ["a", "b"].map((community) => {
     },
     rejectReaction() {
       rejectReaction = true;
+    },
+    holdNextReaction(content: string) {
+      report.reactionStarted = false;
+      holdNextReaction = content;
+    },
+    releaseReaction() {
+      releaseReaction?.();
+    },
+    operations() {
+      return owner.session.outbox?.snapshot().length ?? 0;
     },
     archive(value: boolean) {
       live.receive([
@@ -239,6 +319,10 @@ Object.assign(window, {
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
     rejectReaction: () => sessions[0]?.rejectReaction(),
+    holdNextReaction: (content: string) =>
+      sessions[0]?.holdNextReaction(content),
+    releaseReaction: () => sessions[0]?.releaseReaction(),
+    operations: () => sessions[0]?.operations(),
     refresh: () => sessions[0]?.session.emoji.refresh(),
     holdCatalog: () => sessions[0]?.holdCatalog(),
     releaseCatalog: () => sessions[0]?.releaseCatalog(),
@@ -295,6 +379,7 @@ function Fixture() {
             session={item.session}
             scope={item.community}
             profile={{ name: "Fixture Reader" }}
+            participantProfiles={participantProfiles}
             media={item.session.media}
             onOpenLink={() => false}
             day={false}
@@ -315,4 +400,8 @@ function Fixture() {
 }
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing fixture root");
-createRoot(container).render(<Fixture />);
+createRoot(container).render(
+  <ToastProvider>
+    <Fixture />
+  </ToastProvider>,
+);

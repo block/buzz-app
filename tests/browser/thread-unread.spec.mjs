@@ -1,10 +1,15 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, virtuaIdle } from "./timeline.mjs";
+import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  // The viewer joined the peer's thread outside the loaded window, so its
+  // replies count only after the membership lookup.
+  threadUnreadJoined: true,
   historyCounts: { alpha: 20, beta: 1 },
   largeSidebar: true,
   pluginFixtures: true, // Observe the real navigation completion, not reply mount timing.
@@ -16,6 +21,7 @@ test.describe("mentioned reply priority", () => {
     page,
     app,
   }) => {
+    await holdReadingFocus(page);
     await open(page, app);
     const alpha = page.locator('button[data-channel-id="alpha"]');
     await expect(
@@ -35,8 +41,10 @@ test.describe("mentioned reply priority", () => {
     expect(
       names.every((name) => name?.startsWith("Open unread thread from ")),
     ).toBe(true);
+    // Each thread previews its latest relevant reply: the nested mention in
+    // the broadcast thread, and the direct mention in the other.
     expect(new Set(names.map((name) => name?.split(": ").at(-1)))).toEqual(
-      new Set(["Broadcast reply", "Unread reply 1"]),
+      new Set(["Broadcast descendant", "Unread reply 1"]),
     );
   });
 });
@@ -45,6 +53,11 @@ test("thread buttons show observed unread independently, clear only after readin
   page,
   app,
 }, testInfo) => {
+  // Reading needs a 300ms dwell (use-reading.ts). An installed clock still
+  // flows, so pause it wherever an open surface must not earn that dwell, and
+  // run the deadline exactly where the test proves reading.
+  await page.clock.install();
+  await holdReadingFocus(page);
   await open(page, app);
   const roots = app.histories
     .get("primary/alpha")
@@ -76,17 +89,15 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(activity).toBeVisible();
   await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
-    "500",
+    "600",
   );
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),
@@ -104,9 +115,19 @@ test("thread buttons show observed unread independently, clear only after readin
   await popover.screenshot({
     path: testInfo.outputPath("activity-popover.png"),
   });
+  // The viewer's own thread and the peer thread the viewer joined. Channel
+  // evidence never returns the viewer's displaced reply, so only the
+  // conversation lookup can make the second thread count.
   await expect(
     popover.getByRole("button", { name: /Open unread thread from/ }),
-  ).toHaveCount(1);
+  ).toHaveCount(2);
+  expect(
+    app.report.queries.some(
+      ({ filter }) =>
+        filter.authors?.[0] === app.viewer &&
+        filter["#e"]?.includes(roots[1].id),
+    ),
+  ).toBe(true);
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.
@@ -141,12 +162,20 @@ test("thread buttons show observed unread independently, clear only after readin
     .first();
   await item.focus();
   await expect(item).toBeFocused();
+  // This open only proves the handoff. Its thread must stay unread, so a slow
+  // close must not let the open panel earn reading dwell. Pause just ahead of
+  // the page clock, which keeps flowing during the round trip.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+  await releaseReadingFocus(page);
   await item.press("Enter");
   await expect(
     page.getByRole("complementary", { name: "Thread", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .click();
   await expect(alpha).toBeFocused();
+  await page.clock.resume();
   const beforeRect = await first.boundingBox();
   await first.hover();
   const afterRect = await first.boundingBox();
@@ -208,17 +237,15 @@ test("thread buttons show observed unread independently, clear only after readin
     name: "Reply to thread",
     exact: true,
   });
-  await replyComposer.focus();
-  await page.waitForTimeout(1000);
-  await expect(replyComposer).toBeFocused();
-  await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
-  await history.focus();
-  // Finish a real read of a visible sibling before checking the hidden child.
-  // Loaded history is not read evidence: collapsed descendants stay unread.
+  // Own-composer dwell acknowledges the visible reply without list focus;
+  // the collapsed descendant and sibling thread remain independent.
   const directId = await panel
     .locator("[data-message-id]")
     .filter({ hasText: "Unread reply 0" })
     .getAttribute("data-message-id");
+  await replyComposer.focus();
+  await page.clock.runFor(300);
+  await expect(replyComposer).toBeFocused();
   await expect
     .poll(
       () =>
@@ -228,6 +255,8 @@ test("thread buttons show observed unread independently, clear only after readin
       { timeout: 12000 },
     )
     .toBe(true);
+  await expect(replyComposer).toBeFocused();
+  await expect(other).toHaveAccessibleName(/Observed unread replies/);
   await expect(
     panel.getByText("Broadcast descendant", { exact: true }),
   ).toHaveCount(0);
@@ -242,27 +271,71 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toHaveCount(0);
   await expect(dot(other)).toBeVisible();
   await expect(other).toHaveAccessibleName(/Observed unread replies/); // No channel-wide shortcut.
-  await panel
-    .getByRole("button", { name: "Close thread", exact: true })
+  // The close transition owns channel width; unread receipt does not mean its
+  // resulting Virtua remeasurement and native scrolling have finished.
+  await page
+    .getByRole("button", { name: "Close Thread tab", exact: true })
     .click();
-  app.reply(roots[0].id, true);
-  await page.waitForTimeout(1000);
+  await expect(
+    page.locator('[data-panel-dock][data-closing="true"]'),
+  ).toHaveCount(0);
+  const own = app.reply(roots[0].id, true);
+  // Barrier: the session has indexed the reply, so its unread effect is final.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("alpha", id),
+        own.id,
+      ),
+    )
+    .toMatchObject({ status: "ineligible", unread: false });
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   app.reply(roots[0].id);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await virtuaIdle(page);
+  // Remeasurement while geometry settles may start another native scroll.
+  await expect(page.locator("[data-channel-timeline] ol")).toHaveCSS(
+    "pointer-events",
+    "auto",
+  );
+  const reopenAttempt = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().attempt.id,
+  );
   await first.click();
+  await expect
+    .poll(() =>
+      page.evaluate((before) => {
+        const { status, entry, attempt } = window.fixtureNavigation.snapshot();
+        return {
+          status,
+          freshAttempt: attempt.id !== before,
+          messageId: entry.target.messageId,
+        };
+      }, reopenAttempt),
+    )
+    .toEqual({ status: "opened", freshAttempt: true, messageId: roots[0].id });
   await expect(
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();
   await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
+  const savedEntry = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry,
+  );
   const beforeReload = app.report.queries.length;
   await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  // Reload restores this visit itself. Reopening Messages through Search races
+  // startup results and could hide a broken restoration by starting a new visit.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const snapshot = window.fixtureNavigation?.snapshot();
+        return snapshot && { status: snapshot.status, entry: snapshot.entry };
+      }),
+    )
+    .toEqual({ status: "opened", entry: savedEntry });
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   // Restoring a joined conversation waits for initial membership discovery;
@@ -283,6 +356,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   page,
   app,
 }) => {
+  await holdReadingFocus(page);
   await open(page, app);
   const root = app.histories
     .get("primary/alpha")
@@ -312,7 +386,8 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
     const trigger = page
       .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ });
-    await expect(trigger).toHaveCSS("pointer-events", "auto");
+    await virtuaIdle(page);
+    await releaseReadingFocus(page);
     await trigger.click();
     await expect.poll(() => requested).toBe(true);
     const before = await page.evaluate(() => {
@@ -322,7 +397,9 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
     await alpha.hover();
     const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
     await activity
-      .getByRole("button", { name: /Open unread thread from.*Broadcast reply/ })
+      .getByRole("button", {
+        name: /Open unread thread from.*Broadcast descendant/,
+      })
       .click();
     await expect
       .poll(() =>
@@ -342,10 +419,125 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
       )
       .toBe("opened");
     await page
-      .getByRole("button", { name: "Close thread", exact: true })
+      .getByRole("button", {
+        name: /^Close (?:thread|Thread tab)$/,
+        exact: true,
+      })
       .click();
     await expect(alpha).toBeFocused();
   } finally {
     release();
   }
+});
+
+// Browser-only contract: fitting rows generate no scroll/resize when an empty
+// legacy continuation finishes. Opening alone must still earn reading dwell.
+test("opening a fitting thread reads after unchanged-row continuation without another gesture", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 1");
+  const button = page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await expect(button).toHaveAccessibleName(/Observed unread replies/);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let continuation = false;
+  await page.route("**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.some(
+        (filter) =>
+          filter.depth_limit &&
+          filter["#e"]?.[0] === root.id &&
+          filter.thread_cursor !== undefined,
+      )
+    ) {
+      continuation = true;
+      await gate;
+    }
+    await route.continue();
+  });
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const history = panel.getByRole("region", { name: "Thread messages" });
+  try {
+    await button.click();
+    await expect.poll(() => continuation).toBe(true);
+    await expect(
+      panel.getByText("Unread reply 1", { exact: true }),
+    ).toBeInViewport();
+    await expect(
+      page.getByRole("tab", { name: "Thread", exact: true }),
+    ).toBeFocused();
+    expect(
+      await history.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight,
+      ),
+    ).toBe(true);
+    await page.clock.runFor(300);
+    await expect(button).toHaveAccessibleName(/Observed unread replies/);
+  } finally {
+    release();
+  }
+  await expect(button).not.toHaveAccessibleName(/Observed unread replies/);
+  // An explicit retarget of the still-open panel also transfers reading focus.
+  const otherRoot = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const other = page
+    .locator(`[data-channel-timeline] [data-message-id="${otherRoot.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await other.click();
+  await expect(panel).toHaveCount(1);
+  await expect(
+    page.getByRole("tab", { name: "Thread", exact: true }),
+  ).toBeFocused();
+  const reply = panel
+    .locator("[data-message-id]")
+    .filter({ hasText: "Unread reply 0" });
+  await expect(reply).toBeInViewport();
+  const id = await reply.getAttribute("data-message-id");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("alpha", id)
+            .unread,
+        id,
+      ),
+    )
+    .toBe(false);
+});
+
+test("channel bottom quiets ordinary replies newer than the latest top-level message without reading their threads", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 1");
+  const button = page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  await expect(button).toHaveAccessibleName(/Observed unread replies/);
+  await page
+    .getByRole("textbox", { name: "Message #Alpha", exact: true })
+    .focus();
+  await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
+    "font-weight",
+    "400",
+  );
+  await expect(button).toHaveAccessibleName(/Observed unread replies/);
 });

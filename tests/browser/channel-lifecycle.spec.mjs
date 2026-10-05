@@ -1,10 +1,9 @@
+import { openChannelDetails } from "./channel-details.mjs";
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
@@ -20,9 +19,9 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-// Native modal focus/escape and real menu -> modal handoff require a browser.
+// Shared modal focus/escape and real menu -> modal handoff require a browser.
 // Role/type/signing/cancellation matrices remain in domain and mounted tests.
-test("archive confirmation returns focus on cancel and navigates after confirmed removal", async ({
+test("archive confirmation returns focus on cancel and retains the conversation on completion", async ({
   page,
   app,
 }, testInfo) => {
@@ -76,10 +75,11 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     await seen;
     await expect(menu).toBeVisible();
     // Attention actions remain usable while lifecycle permissions are held;
-    // the only separator belongs to that existing group, not pending lifecycle.
-    await expect(menu.getByRole("separator")).toHaveCount(1);
+    // existing separators belong to Move and attention, not pending lifecycle.
+    await expect(menu.getByRole("separator")).toHaveCount(2);
     await expect(menu.getByRole("menuitem")).toHaveText([
       "New session",
+      "Move channel",
       "Mute",
       "Mark as Unread",
     ]);
@@ -90,9 +90,10 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(2);
+  await expect(menu.getByRole("separator")).toHaveCount(3);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Move channel",
     "Mute",
     "Mark as Unread",
     "Archive channel",
@@ -127,14 +128,13 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await dialog.screenshot({
     path: testInfo.outputPath("lifecycle-confirmation.png"),
   });
-  await page.keyboard.press("Escape");
+  await dialog.getByRole("heading").click();
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(8, 8);
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await page
-    .getByRole("button", { name: "Projects", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Projects");
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -151,14 +151,23 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
     .click();
+  const conversationUrl = page.url();
   await dialog
     .getByRole("button", { name: "Archive channel", exact: true })
     .click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
+  await expect(page).toHaveURL(conversationUrl);
+  await openChannelDetails(page);
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("button", { name: "Unarchive channel", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Message #Lifecycle channel",
+      exact: true,
+    }),
+  ).toBeDisabled();
   expect(app.report.lifecyclePublications).toHaveLength(1);
   expect(app.report.lifecyclePublications[0].kind).toBe(9002);
   expect(app.report.unexpected).toEqual([]);
@@ -229,7 +238,7 @@ test("DM hide is per-viewer visibility, survives reload and never sends Leave or
 
 // Delete takes the access-purge route (archive does not), across the real broker,
 // session, native dialog and navigation. Role permutations remain below the browser.
-test("typed delete confirmation purges the selected channel and survives reload", async ({
+test("delete confirmation without typing purges the selected channel and survives reload", async ({
   page,
   app,
 }) => {
@@ -257,14 +266,13 @@ test("typed delete confirmation purges the selected channel and survives reload"
     name: "Delete channel",
     exact: true,
   });
-  await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("wrong name");
-  await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("textbox", { name: "Channel name confirmation" })
-    .fill("Lifecycle channel");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("textbox")).toHaveCount(0);
+  await expect(confirm).toBeEnabled();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
@@ -300,15 +308,12 @@ for (const action of ["archive", "hide"]) {
         hidden: action === "archive" ? [dm] : [],
       },
     });
-    test("completion stays neutral with archived and hidden membership, including reload", async ({
+    test("completion preserves the appropriate destination with no visible rows, including reload", async ({
       page,
       app,
     }) => {
       await page.goto(app.origin);
-      await page
-        .getByRole("button", { name: "Messages", exact: true })
-        .first()
-        .click();
+      await openPage(page, "Messages");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });
@@ -327,17 +332,27 @@ for (const action of ["archive", "hide"]) {
         .getByRole("button", { name: label, exact: true })
         .click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      await expect(
-        page.getByText("Select a channel to read it.", { exact: true }),
-      ).toBeVisible();
+      const destination =
+        action === "archive"
+          ? page.getByRole("button", { name: "Channel actions", exact: true })
+          : page.getByText("Select a channel to read it.", { exact: true });
+      await expect(destination).toBeVisible();
+      if (action === "archive") await expect(page).toHaveURL(exactUrl);
       await expect(rows).toHaveCount(0);
-      await expect(composer).toHaveCount(0);
+      if (action === "archive") await expect(composer).toBeDisabled();
+      else await expect(composer).toHaveCount(0);
       await page.reload();
-      await expect(
-        page.getByText("Select a channel to read it.", { exact: true }),
-      ).toBeVisible();
+      await expect(destination).toBeVisible();
+      if (action === "archive") {
+        await expect(page).toHaveURL(exactUrl);
+        await openChannelDetails(page);
+        await expect(
+          page.getByRole("button", { name: "Unarchive channel", exact: true }),
+        ).toBeVisible();
+      }
       await expect(rows).toHaveCount(0);
-      await expect(composer).toHaveCount(0);
+      if (action === "archive") await expect(composer).toBeDisabled();
+      else await expect(composer).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
       ).toEqual([action === "archive" ? 9002 : 41012]);
@@ -354,19 +369,14 @@ for (const action of ["archive", "hide"]) {
   });
 }
 
-// Native Escape dispatch precedes cancel and bubbles through the navigation
+// Escape must not bubble through the navigation
 // disclosure. A DOM emulator cannot prove visibility or modal inertness here.
-test("pending modal Escape on narrow Settings preserves visible recovery after uncertainty", async ({
+test("pending modal Escape in narrow navigation preserves visible recovery after uncertainty", async ({
   page,
   app,
 }) => {
-  await page.setViewportSize({ width: 600, height: 800 });
   await openLifecycle(page, app);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Settings", exact: true }),
-  ).toBeVisible();
+  await page.setViewportSize({ width: 600, height: 800 });
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
     .click();
@@ -417,9 +427,13 @@ test("pending modal Escape on narrow Settings preserves visible recovery after u
       "data-expanded",
       "true",
     );
-    expect(await dialog.evaluate((element) => element.matches(":modal"))).toBe(
-      true,
-    );
+    await expect(dialog).toHaveAttribute("aria-modal", "true");
+    await page.keyboard.press("Tab");
+    expect(
+      await dialog.evaluate((element) =>
+        element.contains(document.activeElement),
+      ),
+    ).toBe(true);
   } finally {
     release();
   }
@@ -443,7 +457,7 @@ test("pending modal Escape on narrow Settings preserves visible recovery after u
     page.getByRole("button", { name: "Show navigation", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Settings", exact: true }),
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   expect(app.report.unexpected).toEqual([]);

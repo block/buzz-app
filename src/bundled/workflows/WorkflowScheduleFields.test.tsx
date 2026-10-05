@@ -39,9 +39,11 @@ const day = (name: string) => screen.getByRole("checkbox", { name });
 const trigger = () =>
   JSON.parse(screen.getByTestId("trigger").textContent ?? "{}");
 
-it("offers every preset behind a native radio and reads a daily cron back", () => {
+it("offers every preset through the shared radio group and reads a daily cron back", () => {
   render(<Harness initial={{ on: "schedule", cron: "0 9 * * *" }} />);
-  expect(screen.getByRole("group", { name: "Repeats" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("radiogroup", { name: "Repeats" }),
+  ).toBeInTheDocument();
   for (const name of [
     "Every 15 minutes",
     "Every 30 minutes",
@@ -172,7 +174,7 @@ it("disables every control", () => {
     <Harness initial={{ on: "schedule", cron: "0 9 * * 1-5" }} disabled />,
   );
   for (const name of ["Daily", "Weekly", "Custom cron"]) {
-    expect(preset(name)).toBeDisabled();
+    expect(preset(name)).toHaveAttribute("aria-disabled", "true");
   }
   expect(day("Monday")).toBeDisabled();
   expect(screen.getByLabelText("Run time (UTC)")).toBeDisabled();

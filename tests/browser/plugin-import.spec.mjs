@@ -1,3 +1,5 @@
+import { selectSettingsSection } from "./navigation.mjs";
+import { openPage, pageChoices } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
@@ -7,7 +9,7 @@ async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(page, samples = []) {
@@ -151,7 +153,7 @@ test("browser truthfully offers desktop-only loading", async ({
 });
 
 // Real font metrics, text wrapping and icon geometry are not observable in jsdom.
-test("Settings text buttons contain enlarged labels without resizing icon buttons", async ({
+test("Settings controls scale together and keep enlarged labels reachable", async ({
   page,
   app,
 }, info) => {
@@ -165,8 +167,10 @@ test("Settings text buttons contain enlarged labels without resizing icon button
           const bounds = root.getBoundingClientRect();
           for (const button of root.querySelectorAll("button.buzz-button")) {
             const box = button.getBoundingClientRect();
-            // Shared md controls are 40px at 100%; enlarged labels may grow.
-            if (scale === 100 && box.height !== 40)
+            // Shared controls retain their authored 32px small or 40px default
+            // minimum at 100%; enlarged labels may grow.
+            const minimum = button.dataset.size === "sm" ? 32 : 40;
+            if (scale === 100 && box.height !== minimum)
               failures.push(`${button.textContent}: default height changed`);
             const text = document.createRange();
             text.selectNodeContents(button);
@@ -181,7 +185,18 @@ test("Settings text buttons contain enlarged labels without resizing icon button
                   `${button.textContent}: content overflows button`,
                 );
             }
-            if (box.left < bounds.left || box.right > bounds.right)
+            const actions = button.closest('[aria-label="Load plugins"]');
+            if (actions) {
+              const viewport = actions.getBoundingClientRect();
+              if (
+                getComputedStyle(actions).overflowX !== "auto" ||
+                viewport.left < bounds.left ||
+                viewport.right > bounds.right
+              )
+                failures.push(
+                  "Plugin actions lack contained horizontal scrolling",
+                );
+            } else if (box.left < bounds.left || box.right > bounds.right)
               failures.push(`${button.textContent}: button overflows section`);
           }
           return failures;
@@ -190,58 +205,72 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       .toEqual([]);
   };
   for (const scale of [100, 200]) {
-    await button(page, "Appearance").click();
+    await selectSettingsSection(page, "Appearance");
     if (scale === 200) {
       for (let i = 0; i < 10; i++)
-        await button(page, "Increase text size").click();
+        await button(page, "Increase interface size").click();
     }
-    await expect(page.getByRole("status", { name: "Text size" })).toHaveText(
-      `${scale}%`,
-    );
+    await expect(
+      page.getByRole("status", { name: "Interface size" }),
+    ).toHaveText(`${scale}%`);
     for (const [width, mode] of [
       [320, "Light"],
       [800, "Dark"],
       [1280, "Light"],
     ]) {
       await page.setViewportSize({ width, height: 900 });
-      await button(page, "Appearance").click();
+      await selectSettingsSection(page, "Appearance");
       const appearance = page.getByRole("region", {
         name: "Appearance",
         exact: true,
       });
       await appearance.getByRole("radio", { name: mode, exact: true }).check();
-      await expect(appearance.getByRole("button")).toHaveCount(3);
+      await expect(appearance.getByRole("button")).toHaveCount(
+        scale === 100 ? 2 : 3,
+      );
+      await expect(
+        appearance.getByRole("button", {
+          name: "Reset interface size",
+          exact: true,
+        }),
+      ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
-      // Shared IconButton must not inherit the enlarged text button's minimum.
+      // Icon buttons grow with the interface while keeping their square shape.
       await expect(
         page.getByRole("button", { name: "Search Buzz", exact: true }),
       ).toHaveAttribute("data-icon-size", "md");
       await expect
         .poll(() =>
-          page.locator("button[data-icon-size]").evaluateAll((buttons) =>
-            buttons
-              .filter((button) => button.getClientRects().length)
-              .map((button) => {
-                const box = button.getBoundingClientRect();
-                const sizes = {
-                  sm: 32,
-                  md: 40,
-                  lg: 52,
-                  compact: 32,
-                  toolbar: 32,
-                  default: 40,
-                  large: 52,
-                };
-                return (
-                  box.width === sizes[button.dataset.iconSize] &&
-                  box.height === box.width
-                );
-              }),
-          ),
+          page
+            .getByRole("region", { name: "Settings", exact: true })
+            .locator("button[data-icon-size]")
+            .evaluateAll(
+              (buttons, scale) =>
+                buttons
+                  .filter((button) => button.getClientRects().length)
+                  .map((button) => {
+                    const box = button.getBoundingClientRect();
+                    const sizes = {
+                      sm: 32,
+                      md: 40,
+                      lg: 52,
+                      compact: 32,
+                      toolbar: 32,
+                      default: 40,
+                      large: 52,
+                    };
+                    return (
+                      box.width ===
+                        sizes[button.dataset.iconSize] * (scale / 100) &&
+                      box.height === box.width
+                    );
+                  }),
+              scale,
+            ),
         )
         .not.toContain(false);
-      await button(page, "Plugins").click();
+      await selectSettingsSection(page, "Plugins");
       const plugins = page.getByRole("region", {
         name: "Plugins",
         exact: true,
@@ -250,7 +279,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       await expect(button(page, "Load from Git")).toBeVisible();
       await checkButtons(plugins, scale);
       if (scale === 200 && width === 320) {
-        // Prove this exercises wrapped text, not just a one-line button.
+        // Labels stay single-line; the parent makes oversized actions reachable.
         const lines = await button(page, "Load from folder").evaluate(
           (button) => {
             const walker = document.createTreeWalker(
@@ -266,7 +295,40 @@ test("Settings text buttons contain enlarged labels without resizing icon button
             return tops.size;
           },
         );
-        expect(lines).toBeGreaterThan(1);
+        expect(lines).toBe(1);
+        const actions = plugins.getByRole("group", { name: "Load plugins" });
+        await expect
+          .poll(() =>
+            actions.evaluate((node) => node.scrollWidth > node.clientWidth),
+          )
+          .toBe(true);
+        for (const edge of ["start", "end"]) {
+          const issues = await actions.evaluate((node, edge) => {
+            node.scrollLeft = edge === "start" ? 0 : node.scrollWidth;
+            const bounds = node.getBoundingClientRect();
+            return [...node.querySelectorAll("button")].flatMap((button) => {
+              const box = button.getBoundingClientRect();
+              const reachable =
+                edge === "start"
+                  ? box.left >= bounds.left - 1
+                  : box.right <= bounds.right + 1;
+              return reachable ? [] : [button.textContent];
+            });
+          }, edge);
+          expect(issues).toEqual([]);
+        }
+        // Keyboard focus must also reach the later action inside the scroller.
+        await button(page, "Load from folder").focus();
+        await page.keyboard.press("Tab");
+        await expect(button(page, "Load from Git")).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(
+          page.getByRole("textbox", { name: "Git or GitHub repository" }),
+        ).toBeVisible();
+        await button(page, "Load from Git").click();
+        await actions.evaluate((node) => {
+          node.scrollLeft = 0;
+        });
       }
       await page.screenshot({
         path: info.outputPath(`settings-buttons-${scale}-${width}.png`),
@@ -285,12 +347,12 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(page.getByRole("radio")).toHaveCount(2);
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
-  await button(page, "Profile").click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Profile");
+  await selectSettingsSection(page, "Plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
-      "This plugin will be installed disabled. Enable it in the list when you’re ready.",
+      "This plugin starts off. Turn it on in the list when you’re ready.",
     ),
   ).toBeVisible();
   await button(page, "Install plugin").click();
@@ -313,7 +375,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await enabled.click();
   await expect(button(page, "Reload")).toHaveCount(0);
   await expect(
-    page.getByText(/It stays enabled and may run immediately/),
+    page.getByText(/It stays on and may run immediately/),
   ).toBeVisible();
   await expect(button(page, "Update plugin")).toBeVisible();
   await button(page, "Close preview").click();
@@ -348,10 +410,7 @@ test("leaving Settings discards a late preview without installing", async ({
   });
   await button(page, "Load from folder").click();
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
+  await openPage(page, "Projects");
   await page.evaluate(() => window.resolveImport());
   await expect
     .poll(() =>
@@ -404,30 +463,23 @@ test("checked-in local examples activate and work independently", async ({
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await toggle.click();
   }
-  const navigation = page.getByRole("navigation", {
-    name: "Pages",
-    exact: true,
-  });
-  await navigation
-    .getByRole("button", { name: "Counter playground", exact: true })
-    .click();
+  await openPage(page, "Counter playground");
   await button(page, "Clicked 0 times").click();
   await expect(button(page, "Clicked 1 times")).toBeVisible();
-  await navigation
-    .getByRole("button", { name: "Notes playground", exact: true })
-    .click();
+  await openPage(page, "Notes playground");
   await page.getByLabel("Scratch note").fill("Hello plugin");
   await expect(page.getByRole("main").getByRole("status")).toHaveText(
     "12 characters",
   );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
+  const navigation = await pageChoices(page);
   await expect(
-    navigation.getByRole("button", { name: "Counter playground", exact: true }),
+    navigation.getByRole("option", { name: "Counter playground", exact: true }),
   ).toHaveCount(0);
   await expect(
-    navigation.getByRole("button", { name: "Notes playground", exact: true }),
+    navigation.getByRole("option", { name: "Notes playground", exact: true }),
   ).toBeVisible();
 });

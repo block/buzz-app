@@ -15,8 +15,12 @@ return <Feature key={`${connection.scope}:${connection.generation}`} session={co
 ```
 
 Scope includes community and viewer; generation distinguishes replacement sessions
-within that scope. Both belong in the remount key. Persist drafts/navigation under
-scope alone so reconnecting does not lose local intent.
+within that scope. Both belong in the remount key. A local-first cached session
+and its live successor intentionally share that generation: this is one startup,
+not a reconnect reset. The channel timeline retains its parent-bound presentation
+lifetime while rebinding readers; other session-owned controls still reset. Persist
+drafts/navigation under scope alone so reconnecting does not lose local intent.
+See [local-first launch](channels.md#local-first-launch) for cache authority rules.
 
 Inside a feature bound to the current session:
 
@@ -62,6 +66,41 @@ locally authored event is **not proof of relay acceptance**. Signature-verified
 membership, bounds and persistence. Domain folds can consume local payloads, but
 must not let them manufacture relay-authored authority.
 
+## Read-your-writes consistency
+
+`fresh: true` prevents sharing an older in-flight request; it does not select
+the writer. Channel creation/admission and recovery, DM opening, channel edits,
+member administration, lifecycle confirmations, and mention preflights request
+`consistency: "strong"` on their authoritative filters. Signed evidence remains
+required; an accepted command is not membership, and writer routing does not
+wait for asynchronous relay side effects. Existing cancellation and bounded
+confirmation retries are unchanged.
+
+Channel discovery accepts an explicit consistency option for post-write exact
+reads and the full-roster fallback. A queued writer-backed refresh survives an
+older in-flight pass or quota pause. If the writer-backed pass itself fails or
+is interrupted, including its metadata phase, its next pass retains writer routing and the
+existing cooldown; a successful pass returns later refreshes to ordinary routing.
+Signed membership hints use writer-backed exact reads or the existing full-roster
+fallback, including metadata. A replica pass superseding pending exact hint
+confirmations queues a writer-backed pass to settle those grants. If list failure,
+disconnect or cache clear retires queued or in-flight hint confirmations, the store
+retains their writer requirement for the next deliberate refresh, Retry or
+establishment, without starting an automatic recovery pass or bypassing cooldown.
+Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
+eligible. The details editor and member-administration capability use writer-backed
+state for their shared load/preflight/confirmation reads; the member dialog's
+separate display-roster load remains replica-eligible. Work-session membership
+preflights (including session sends and canvas saves) also use the writer, so a
+just-added member does not fail the next operation.
+Template setup also confirms exact Canvas/member events and selected Canvas heads
+against the writer without replaying accepted commands. Agent deletion discovers
+member channels and confirms each removal with writer-backed rosters; unreadable
+rosters still fail closed. Standalone recipe saves use writer-backed exact-ID
+confirmation; recipe head and catalog reads remain replica-eligible. For
+writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
+the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
@@ -72,6 +111,18 @@ one (including empty removal sets); the union picks newer sets, then smaller URL
 for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB;
 read caps and overflow expose errors rather than silently evicting replacements.
 An explicit retry after overflow starts a fresh bounded catalog read.
+
+`snapshot().mine` lists the viewer's own set. When the session has an attachment
+uploader and its writer admits kind 30030, the directory also exposes `upload()`
+(the session uploader, fenced by session lifetime) and `add(name, url)`. `add`
+normalizes the shortcode, freshly reads the viewer's own set, replaces that
+shortcode, and republishes the whole set with a strictly newer `created_at`.
+Adds within a session run one at a time, so a stale read cannot drop an earlier
+add. The signed echo must match the template before publishing, the accepted set
+joins the palette immediately, and failures surface as the reference
+`Failed to add emoji.` / `Timed out while adding emoji.` copy. The development
+broker admits kind 30030 only for the canonical own-set template
+(`validEmojiSetTemplate`).
 
 Live kind-30030 updates share the existing profile route, not another socket or
 subscription slot. Global establishment repairs an already requested catalog;
@@ -114,14 +165,38 @@ belong to the session.
 
 The owner resolves marked NIP-10 ancestry to the actual root, fetches that root by
 ID, and traverses with explicit content kinds, `#h`, one root `#e`, depth 100 and
-`include_aux`. Pages advance with both `thread_cursor` and `thread_cursor_id` in
-ascending time/ID order. The cursor comes only from exact verified finite traversal
-rows, excluding appended auxiliary events—not the public read's live/local union.
-There is no fabricated thread `39006` or authoritative exhaustion claim.
+`include_aux`. Canonical UUID channels probe `thread_window: true` separately from
+the root lookup. Strict windows request kinds 9 and 40002 only: the relay's
+window row allowlist rejects legacy diff kind 40008, so strict threads omit diff
+replies until the relay accepts that kind; legacy traversal still includes it. The existing verified reader validates exactly one kind-39007
+bounds event, relay signer, exact tags, version/direction and full host/viewer/request
+binding before any page enters session reconciliation. The destination's authority,
+not the local broker host, supplies the binding. Both shipped transports provide
+this authority through `ReadTransport.scope`; its absence is a configuration error,
+not evidence of an old relay, and does not permit legacy fallback. Strict
+continuation echoes signed `until`/`before_id`; only bounds establish exhaustion,
+including empty pages whose raw scan cursor does not occur among delivered events.
 
-Each page requests 50 traversal rows, with at most ten pages per repair/load range.
-The shared panel automatically loads this range with no explicit pagination button.
-It remains oldest-first: a capped thread cannot promise its newest tail.
+Strict root admission/validation runs once before each load or refresh traversal,
+not between the pages of a retained-range repair: repairing N pages uses one root
+read plus N independently verified window reads. Each separate scrollback load
+still reads the root. Root deletion observed live and access revocation retain their
+existing session paths; a later refresh/load revalidates the root. Neither the root
+lookup nor the page sequence provides an atomic snapshot.
+
+A first probe returning verified replies but no bounds is discarded and restarted
+with clean legacy `thread_cursor`/`thread_cursor_id` state. Empty unsigned responses
+cannot distinguish old empty history from denied access, so remain unavailable.
+Other failures, invalid bounds and missing bounds after a strict page never trigger
+fallback. Non-UUID channels retain the legacy path. No capability cache persists
+across owners or connections.
+
+Each strict thread starts with 10 traversal rows plus their auxiliary events; later pages
+request 50 traversal rows, with at most ten pages per repair/load range. Legacy
+mode still requests 50 rows per page. The shared panel positions after the first
+strict page and demand-loads older pages on scrollback. Legacy mode still
+automatically walks its bounded oldest-first range and cannot promise the newest
+tail. Media review retains eager bounded traversal.
 Refresh re-reads the retained page range from the beginning while preserving known
 rows/edits/deletes: omitted events are not retractions. Live channel traffic feeds
 this same view without another subscription. Channel establishment triggers repair
@@ -203,6 +278,26 @@ not authority evidence. Every later search/open revalidates nonmember metadata.
 An older metadata replay cannot undo a newer private event or an explicit denial.
 A newer signed public event can regrant a never-joined preview; membership loss
 still requires fresh signed membership, not metadata, to reverse it.
+
+### Public channel name search and Join
+
+The relay has no text search for channel metadata. For a typed, unscoped palette
+query, `channels.searchPublic(query)` reads one page (500) of relay-authored
+`39000` metadata without applying it, matches names locally and keeps only
+explicit active public channels the viewer has not joined. It then resolves at
+most eight matches through the same exact `resolve` path as message hits, so
+`channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
+joined-only. A full page reports partial coverage; read failures show a retry.
+The search waits for a ready channel list.
+
+A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
+through the purpose-bound channel-lifecycle sign/publish route; generic signing
+rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
+the viewer roster: a current roster entry needs no request, and only active public
+metadata may be joined. Success is the viewer in a fresh relay-signed `39002`
+roster, applied through shared discovery. That makes the channel a sidebar
+member and enables the composer, which then receives focus. An accepted but
+unconfirmed join reports that it may have taken effect and stays retryable.
 
 ## Ownership and reconciliation
 
@@ -291,7 +386,12 @@ metadata completion cannot replay the older membership snapshot.
 
 The session cancels all pending reads on revocation, because broad/ID/reference
 filters cannot establish event ownership before results arrive. Completion epochs
-also fence already-resolved requests. The session defers subscription callbacks
+also fence already-resolved requests. Directory browsing/searching retries one
+access-epoch invalidation through the same verified scheduler, without admitting
+its results into shared conversation profiles. Caller cancellation, cache clear,
+disconnect and disposal stop that recovery; a second invalidation surfaces an error
+for explicit Retry, rather than starting a UI retry timer. Channel-content reads do
+not inherit this directory-specific retry. The session defers subscription callbacks
 until every owned projection and the final channel list have been purged; a callback
 reading another view cannot observe its pre-revocation snapshot. Unrelated retained
 channel content survives, but in-flight reads may need refresh. A newer signed roster can regrant access;
@@ -377,6 +477,13 @@ owned by the viewer and a transport that supports kind 40003. The dev broker
 advertises edits and validates one canonical target reference before signing or
 publishing. Generic plugins can use `outbox.send` directly.
 
+`session.messages.report(messageId, type, note?)` is the one exception: the relay
+queues NIP-56 reports (kind 1984) for moderators and never stores or echoes them,
+so the session signs and publishes directly and resolves on the relay's accepted
+receipt, as Buzz desktop does. Nothing is persisted or restored; a rejection or
+10-second timeout rejects the call and the dialog keeps its input for retry. The
+method is undefined unless the writer supports kind 1984.
+
 In an empty composer, unmodified Up arrow opens the latest eligible own message
 from that channel or thread in the same editor. Enter/the send arrow saves;
 Escape or × cancels. Edits retain raw attachment Markdown and leave original
@@ -430,8 +537,9 @@ spans show elapsed time. **Export timings** downloads JSON for comparison.
 `pnpm exec vitest run src/features/relay/traffic.integration.test.ts --silent=false`
 exercises first-versus-subsequent send latency, 2,400 retained rows, echo-before-ACK,
 stale-read races, edit rejection, automatic retirement, restart, and asynchronous
-storage disposal. It asserts exact fold work and unaffected identities, plus a
-50 ms synchronous-send regression guard; elapsed measurements are machine dependent.
+storage disposal. It asserts exact fold work, subscriber counts and unaffected
+identities. Synchronous-send time is diagnostic, not an enforced latency guarantee;
+elapsed measurements are machine dependent.
 `live.test.ts` exercises authenticated subscriptions, signature rejection, reconnect
 and disposal. These tests use ephemeral keys and local transports; no live messages
 are posted by validation.
@@ -511,6 +619,11 @@ text to 16 KiB. Its ten-second deadline includes queued/authentication time.
 Disconnect, cancellation or timeout after dispatch, throwing sends, malformed
 receipts and internal/unknown negative receipts remain uncertain. Only a proven
 unsent operation or documented validation/admission rejection proves non-delivery.
+A compare-and-set refusal is proven too: `conflict:` for workflow and NIP-AR
+artifact (45010) events, which the dev broker answers as 409 like the relay's
+`/events`. Either reaches the outbox as `failed`; an artifact write carries a fixed
+`conflict:` error, so its writer reloads and reconciles instead of retrying a
+stale revision.
 NIP-01 rejection does not guarantee rollback of Buzz command side effects. Accepted
 command receipt text stays ephemeral; it is never journaled or replaced by an echo.
 
@@ -571,10 +684,21 @@ for outstanding work. These manual fixtures are not part of `pnpm test`; see
 
 The session's `live` capability exposes connection/route state independently from
 finite-read readiness. A connected socket is not proof that every route is live.
-Global profile and self-scoped membership-hint routes are separate from explicit
-channel subscriptions. One socket supports at most 1,022 channels plus those two
-globals; omitted routes and partial roster coverage remain visible.
+Global profile and self-scoped membership-hint routes are separate from channel
+traffic. The logical interest capacity remains 1,022 channels plus those two globals
+(one fewer channel while agent observation is enabled); omitted routes and partial
+roster coverage remain visible. Joined background channels share stable wires of
+at most 10 channels. Initial replay uses singleton channel filters, matching the
+relay's per-REQ filter cap; live-only replacements use one equivalent filter.
+Public previews and foreground interests admitted as singletons remain separate;
+navigation prioritizes pending work without rebuilding healthy wires. Joined
+versus preview classification travels atomically with interests.
 
+Initial replay is opportunistic and capped at 500 events **per channel filter**,
+preserving the previous singleton replay allowance. A busy channel cannot consume
+another channel's sample. This reduces REQ frames and route-state publications,
+not historical database queries. Aggregate replay status stays conservative:
+500 received events can mark a batch limited but never prove any channel complete.
 EOSE establishes streaming, **not complete historical replay**. Retained channel
 windows get finite, signed-bounds head catch-up after establishment/reconnect;
 unopened channels defer it until demand. `live.snapshot().heads` distinguishes
@@ -582,12 +706,49 @@ pending, verified, deferred and failed obligations. Verification covers the
 bounded current head, not all history or every event missed while disconnected.
 Catch-up merges into paged readers without resetting older pages or their cursor.
 
+Removing a batch member rebuilds only that batch's survivor scope. One established
+source overlaps its zero-replay replacement until EOSE; another removal supersedes
+the pending replacement, not that established source. Removed IDs are fenced
+immediately, including after re-addition. Original source scopes stay immutable;
+ambiguous auxiliary events never gain invented alert attribution. Replacements
+use fresh wire IDs, preserve `since`, and request `limit: 0`, so their events are
+live even before EOSE. Pending setup alone does not prove continuity. Narrowed-scope
+failure, denial, invalid traffic and disposal release both sources. For an
+unchanged scope, a renewal timeout or transient relay error retires only the
+replacement and retains the established source, with the error visible until
+fresh EOSE. The existing minute timer retries that renewal; quota failures retain
+the same source but obey the existing cooldown and three-retry limit. Exhausted
+or unsupported quota retries require manual Retry, not a reset each minute.
+
+One 60-second recovery timer renews established joined batches and hints the
+existing roster and unread owners to repair finite evidence. It does not renew
+singleton previews, add per-channel background history reads or reset the socket.
+This repairs silent pruning and missed hints; 60 seconds is an interval, not a
+convergence deadline under throttling, suspension or failure. Each live-only
+replacement consolidates its unchanged kinds, `since` and channel scope into one
+`limit: 0` filter: no historical sample is shared, and live matching is equivalent.
+The relay still executes one historical query per renewed wire; this reduces
+filter-query invocations, not REQs, HTTP repair or local SSE state publications.
+Finite repairs stay quiet and do not generate retrospective incoming alerts.
+
 `live.snapshot().roster` reports the finite channel-list refresh obligation,
 including failures when no channel is selected. The store owns that obligation,
 the optional metadata read, and its learned retry time; live Retry and diagnostic
 Refresh channels share the same cooldown. Metadata failure never revokes successful
 membership authority. Hints during an active read coalesce into one follow-up;
-a refused read retains the obligation without draining queued work. Live Retry
+a member-added hint naming a channel the viewer does not yet hold confirms only
+that channel when the list is already ready, while removals, unnamed hints, held
+channels and CLOSED still schedule the full refresh. Named hints arriving
+together share one exact read, a channel already being confirmed is not read
+again, and a full refresh that starts afterwards retires pending confirmations
+in favour of its own result. A full refresh that fails while a confirmation is
+pending keeps its error for Retry rather than triggering another refresh, but a
+superseding refresh that a concurrent revocation interrupts before it settles
+reruns, because the grants it inherited still need a complete roster. A cache
+clear or disconnect drops queued and pending confirmations outright, before a
+queued hint can read into the new session state; the next establishment's
+refresh or Retry owns recovery there.
+A refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
 A new channel-route failure with Buzz's `restricted: channel access revoked`
 reason schedules this same coalesced refresh. CLOSED is a hint, not archive or
@@ -604,7 +765,7 @@ its slot). The broker's existing six-request guard additionally covers response
 bodies. Available slots start immediately; completion frees capacity without a timer. These concurrency bounds do not
 reserve relay quota: large startup bursts can still receive quota refusals.
 Explicit server cooldowns, reconnect backoff and operation deadlines remain;
-there is no proactive rate timer or token bucket. Browser POST replacement does
+there is no proactive admission pacing or token bucket. Browser POST replacement does
 not reset learned pauses; signed
 requests enter HTTP admission after asynchronous authentication, at actual fetch
 dispatch. Read/write priority and cancellation cross the reader/transport boundary.
@@ -617,10 +778,10 @@ The browser broker streams SSE over POST with bounded interests and owner-scoped
 retry/priority/interest controls. Retry and interest changes preserve the upstream
 socket and healthy unchanged routes, so they do not interrupt pending publications.
 Interest updates coalesce through `/stream-interests`; origin, community, owner and
-body limits apply (1,024 IDs each for final interests and pending removals, 300 KB
-combined control body). Pending removals preserve retirement of old wires even
-when coalescing hides an intermediate empty interest set. Local interest revisions
-fence delayed channel events, denials
+body limits apply (1,024 IDs each for final interests, joined scope and pending
+removals, 450 KB combined control body). Pending removals preserve retirement of
+old wires even when coalescing hides an intermediate empty interest set. Local
+interest revisions fence delayed channel events, denials
 and establishment across remove/re-add, including changes during stream startup.
 This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
 uses bounded reconnect with current interests; publications are not replayed.

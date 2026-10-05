@@ -1,0 +1,460 @@
+@reference "../../shared/styles/globals.css";
+
+.player {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-media-canvas);
+  color: var(--text-standard);
+  container: video-player / inline-size;
+}
+.player > video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  min-height: 0;
+}
+.reviewControls {
+  position: absolute;
+  z-index: 3;
+  inset: auto var(--space-4) var(--space-3);
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--size-control-sm);
+}
+.reviewControls::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  @apply media-glass;
+}
+.reviewControls::before,
+.reviewControls > * {
+  opacity: var(--review-control-opacity, 1);
+  transition: opacity var(--duration-state) var(--easing-enter);
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-standard);
+  transition: opacity 160ms ease-out;
+}
+.reviewControls > .controls {
+  flex: 1 1 22rem;
+}
+.play {
+  display: flex;
+  flex-shrink: 0;
+}
+.time {
+  flex-shrink: 0;
+  font-size: var(--text-caption);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.duration {
+  color: var(--text-subtle);
+}
+.timeline {
+  position: relative;
+  flex: 1;
+  min-width: 1.25rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+}
+.timeline > input {
+  width: 100%;
+}
+.controls input[type="range"],
+.volumeSlider input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  margin: 0;
+  height: 1.5rem;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: var(
+    --media-range-background,
+    linear-gradient(
+      to right,
+      var(--text-standard) 0 var(--progress),
+      var(--bg-media-track) var(--progress) 100%
+    )
+  );
+  background-size: 100% 2px;
+  background-position: center;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+.controls input::-webkit-slider-thumb,
+.volumeSlider input::-webkit-slider-thumb {
+  appearance: none;
+  width: 2px;
+  height: var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--text-standard);
+}
+.controls input::-moz-range-thumb,
+.volumeSlider input::-moz-range-thumb {
+  width: 2px;
+  height: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--text-standard);
+}
+.marker {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  translate: -50% -50%;
+  display: flex;
+}
+.seekPreview {
+  position: absolute;
+  top: 50%;
+  translate: -50% -50%;
+  width: 2px;
+  height: var(--space-4);
+  pointer-events: none;
+}
+.seekPreview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-pill);
+  background: var(--text-standard);
+  opacity: 0.5;
+}
+.hoverTime {
+  position: absolute;
+  bottom: calc(100% + var(--space-3));
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  padding: var(--space-1) var(--space-1h);
+  border-radius: var(--radius-row);
+  background: var(--surface-popover);
+  pointer-events: none;
+}
+.speedPopup {
+  --size-row: calc(var(--space-6) + var(--space-1));
+  min-width: 0;
+  width: max-content;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+}
+.volumePopup {
+  width: max-content;
+  border-radius: var(--radius-pill);
+}
+.speed {
+  position: relative;
+  flex-shrink: 0;
+}
+.volumeSlider {
+  /* The animated track below paints this native range's value. */
+  --media-range-background: transparent;
+  position: relative;
+  width: var(--size-control-sm);
+  height: min(
+    calc(var(--space-8) * 3),
+    calc(
+      var(--available-height) -
+      var(--size-control-sm) -
+      var(--space-4) -
+      2px
+    )
+  );
+  margin: var(--space-1) 0;
+}
+.volumeSlider input[type="range"] {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+.volumeSlider input::-webkit-slider-thumb {
+  width: var(--space-2);
+  height: var(--space-2);
+  opacity: 0;
+}
+.volumeSlider input::-moz-range-thumb {
+  width: var(--space-2);
+  height: var(--space-2);
+  opacity: 0;
+}
+.volumeTrack {
+  position: absolute;
+  inset: var(--space-1) 0;
+  pointer-events: none;
+}
+.volumeTrack::before,
+.volumeFill {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--bg-media-track);
+}
+.volumeFill {
+  background: var(--text-standard);
+  transform-origin: bottom;
+}
+.volumeKnob {
+  position: absolute;
+  inset: 0;
+}
+.volumeKnob::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-2);
+  height: var(--space-2);
+  transform: translate(-50%, 50%);
+  border-radius: var(--radius-pill);
+  background: var(--text-standard);
+}
+.volumeSlider[data-volume-motion] :is(.volumeKnob, .volumeFill) {
+  transition: transform var(--duration-fast) var(--easing-settle);
+}
+.center {
+  position: absolute;
+  isolation: isolate;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  width: var(--size-control);
+  height: var(--size-control);
+  border-radius: var(--radius-pill);
+}
+.controls[data-inline] {
+  position: absolute;
+  z-index: 3;
+  inset: auto var(--media-controls-inset) var(--media-controls-inset);
+  isolation: isolate;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-1h);
+  border: 0;
+  border-radius: max(
+    0px,
+    calc(var(--media-preview-radius) - var(--media-controls-inset))
+  );
+  background: transparent;
+}
+.gestureFeedback::before,
+.controls[data-inline]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  @apply media-glass;
+}
+.controls[data-inline]::before {
+  clip-path: var(--media-corner-clip, none);
+}
+/* Fade the filter itself, never an ancestor: an opacity ancestor becomes a
+   backdrop root and prevents WebKit from sampling the video during the fade. */
+.center::before,
+.center > *,
+.controls[data-inline]::before,
+.controls[data-inline] > * {
+  opacity: var(--preview-control-opacity, 1);
+  transition: opacity 160ms ease-out;
+}
+
+.controls[data-inline] .time {
+  font-size: var(--text-caption);
+}
+.notice {
+  position: absolute;
+  z-index: 4;
+  top: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  padding: var(--space-2);
+  border-radius: var(--radius-row);
+  background: var(--surface-inset);
+  font-size: var(--text-caption);
+}
+@media (hover: hover) and (pointer: fine) {
+  .player:where(:has(.controls[data-playing])):is(
+      :not(:hover),
+      [data-controls-idle]
+    ):not(:has(:focus-visible)):not(:has([aria-expanded="true"]))
+    .reviewControls {
+    --review-control-opacity: 0;
+    pointer-events: none;
+  }
+  [data-video-preview][data-playing]:not(:hover):not(:has(:focus-visible)):not(
+      :has([aria-expanded="true"])
+    )
+    .center
+    > button,
+  [data-video-preview]:not([data-started]):not(:hover):not(
+      :has(:focus-visible)
+    ):not(:has([aria-expanded="true"]))
+    .controls,
+  [data-video-preview][data-playing]:not(:hover):not(:has(:focus-visible)):not(
+      :has([aria-expanded="true"])
+    )
+    .controls {
+    --preview-control-opacity: 0;
+    pointer-events: none;
+  }
+}
+@container video-player (max-width: 25rem) {
+  .controls:not([data-inline]) {
+    flex-wrap: wrap;
+  }
+  .controls:not([data-inline]) .timeline {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reviewControls::before,
+  .reviewControls > *,
+  .volumeSlider[data-volume-motion] :is(.volumeKnob, .volumeFill),
+  .controls,
+  .center {
+    transition: none;
+  }
+}
+.reactions {
+  display: grid;
+  justify-items: center;
+  flex: 0 1 auto;
+  margin-inline: auto;
+}
+.reactions > fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: 0;
+}
+.reactions > span {
+  display: block;
+  color: var(--text-standard);
+  background: var(--affordance-navigation-quiet);
+  padding: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.reactionEmoji {
+  display: block;
+  font-size: var(--size-emoji-inline);
+  font-family: var(--font-emoji);
+  line-height: 1;
+  scale: 0.85;
+}
+
+.raisedHandsEmoji {
+  /* The celebration rays leave the visible hands below the glyph's center. */
+  translate: 0 calc(-1 * var(--space-half));
+}
+
+.reactions > fieldset {
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.gestureFeedback {
+  pointer-events: none;
+  animation: video-feedback-scale 650ms ease-out both;
+}
+.gestureFeedback::before,
+.center.gestureFeedback > * {
+  animation: video-feedback-fade 650ms ease-out both;
+}
+.gestureFeedback[data-video-feedback="forward"] {
+  left: 75%;
+}
+.gestureFeedback[data-video-feedback="backward"] {
+  left: 25%;
+}
+.gestureFeedback[data-video-feedback="speed"] {
+  top: var(--space-4);
+  translate: -50% 0;
+  font-size: var(--text-label);
+  animation: none;
+}
+.gestureFeedback[data-video-feedback="speed"]::before,
+.gestureFeedback[data-video-feedback="speed"] > * {
+  animation: none;
+}
+.seekAmount {
+  position: absolute;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  scale: 0.8;
+}
+@keyframes video-feedback-scale {
+  from {
+    scale: 0.88;
+  }
+  to {
+    scale: 1.08;
+  }
+}
+@keyframes video-feedback-fade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .center::before,
+  .center > *,
+  .controls[data-inline]::before,
+  .controls[data-inline] > * {
+    transition: none;
+  }
+  .gestureFeedback,
+  .gestureFeedback::before,
+  .center.gestureFeedback > * {
+    animation: none;
+  }
+}
+
+@container media-preview (max-width: 22rem) {
+  .controls[data-inline] {
+    padding-block: 0;
+  }
+  .controls[data-inline] .duration {
+    display: none;
+  }
+}

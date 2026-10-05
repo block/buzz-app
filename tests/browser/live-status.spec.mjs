@@ -1,3 +1,5 @@
+import { openChannelDetails } from "./channel-details.mjs";
+import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
@@ -28,10 +30,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     });
   });
 
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Messages");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -48,15 +47,13 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(warning).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  await page.getByText("Diagnostics", { exact: true }).click();
+  await openChannelDetails(page);
+  await openDiagnostics(page);
   await expect(
     page.getByText("Live updates: connecting", { exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   expect(app.relay.rejected).toHaveLength(0);
   expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
@@ -95,10 +92,7 @@ for (const target of ["alpha", "profiles"]) {
         localStorage.setItem("buzz-appearance.v1", "dark"),
       );
     await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Messages", exact: true })
-      .first()
-      .click();
+    await openPage(page, "Messages");
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
@@ -109,10 +103,8 @@ for (const target of ["alpha", "profiles"]) {
         hasText: "Only currently accessible messages remain readable.",
       });
     await expect(warning).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
-    await page.getByText("Diagnostics", { exact: true }).click();
+    await openChannelDetails(page);
+    await openDiagnostics(page);
     const recovery = page.getByText(
       "Live updates: recovering automatically after rate limiting; awaiting confirmation",
       { exact: true },
@@ -121,7 +113,7 @@ for (const target of ["alpha", "profiles"]) {
     app.relay.holdEose(target);
     const requests = () =>
       app.relay.requests.filter(
-        (r) => r.community === "primary" && r.route === target,
+        (r) => r.community === "primary" && r.routes.includes(target),
       );
     const streams = () =>
       app.report.brokerRequests.filter((r) => r.url.endsWith("/stream")).length;
@@ -147,7 +139,10 @@ for (const target of ["alpha", "profiles"]) {
     for (const width of [390, 800, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       await page
-        .getByRole("button", { name: "Close channel settings", exact: true })
+        .getByRole("button", {
+          name: "Close Channel settings tab",
+          exact: true,
+        })
         .click();
       await page
         .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -157,23 +152,19 @@ for (const target of ["alpha", "profiles"]) {
       await page.screenshot({
         path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
       });
-      await page
-        .getByRole("button", { name: "Channel settings", exact: true })
-        .click();
-      await page.getByText("Diagnostics", { exact: true }).click();
+      await openChannelDetails(page);
+      await openDiagnostics(page);
       await expect(warning).toHaveCount(1);
     }
     const beforeManual = requests().length;
     await page
-      .getByRole("button", { name: "Close channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await page
       .getByRole("button", { name: "Retry live updates", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
-    await page.getByText("Diagnostics", { exact: true }).click();
+    await openChannelDetails(page);
+    await openDiagnostics(page);
     await expect(recovery).toBeVisible();
     await expect(warning).toHaveCount(0);
     await expect.poll(() => requests().length).toBeGreaterThan(beforeManual);
@@ -187,4 +178,12 @@ for (const target of ["alpha", "profiles"]) {
     expect(streams()).toBe(streamCount);
     expect(app.relay.sockets).toHaveLength(sockets);
   });
+}
+
+async function openDiagnostics(page) {
+  // A quick reopen can retain the outgoing settings DOM during its exit.
+  const summary = page.getByText("Diagnostics", { exact: true });
+  if ((await summary.locator("..").getAttribute("open")) === null)
+    await summary.click();
+  await expect(summary.locator("..")).toHaveAttribute("open", "");
 }

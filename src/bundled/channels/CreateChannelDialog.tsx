@@ -2,6 +2,7 @@ import {
   emptyLineup,
   parseLineup,
   type Groups,
+  type Group,
 } from "../../features/channel-templates/model";
 import type {
   TemplateDraft,
@@ -10,10 +11,10 @@ import type {
 import type { ChannelCreationInput } from "../../features/channel-templates/setup";
 import type { RelaySession } from "../../features/relay/session";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
-import { Select } from "../../shared/design-system/ui/Select";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -21,11 +22,19 @@ import {
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import {
+  ChannelPrivacyConfirmation,
+  skipPrivacyConfirmation,
+  rememberPrivacyConfirmation,
+} from "./ChannelPrivacyConfirmation";
+import { ChannelDurationField } from "./ChannelDurationField";
+import { ChannelTextField } from "./ChannelTextField";
+import { SidebarGroupIcon } from "./SidebarGroupIcon";
+import {
+  canonicalDetailsName,
+  detailsDraftErrors,
+} from "../../features/relay/channel-details-protocol";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/work-sessions";
 import styles from "./CreateChannelDialog.module.css";
 
@@ -40,9 +49,22 @@ type Props = {
   session: RelaySession;
   providers: TemplateProviders;
   groups: Groups | undefined;
+  destinations?: readonly (Pick<Group, "id" | "name"> & { icon?: string })[];
+  groupSource?: "legacy";
   initialGroup: string;
   groupsReady: boolean;
 };
+// Error/loading messages are not user edits; only accepted setup belongs to the draft.
+function setupKey(draft: TemplateDraft | undefined) {
+  return JSON.stringify([
+    draft?.templateId ?? "",
+    draft?.lineup.teamIds ?? [],
+    draft?.lineup.agents ?? [],
+    draft?.lineup.canvas ?? "",
+    draft?.agents ?? [],
+  ]);
+}
+
 export function CreateChannelDialog(props: Props) {
   // Each opening owns its callbacks. Closing/reopening cannot revive an old editor.
   return props.open ? <OpenCreateChannelDialog {...props} /> : null;
@@ -56,6 +78,8 @@ function OpenCreateChannelDialog({
   session,
   providers,
   groups,
+  destinations = groups?.groups ?? [],
+  groupSource,
   initialGroup,
   groupsReady,
 }: Props) {
@@ -66,7 +90,7 @@ function OpenCreateChannelDialog({
   const provider = available.length === 1 ? available[0] : undefined;
   const [initialProvider] = useState(provider);
   const [initialDefault] = useState(() =>
-    !pending && provider
+    !pending && provider && !groupSource
       ? (groups?.groups.find((g) => g.id === initialGroup)?.defaultTemplateId ??
         "")
       : "",
@@ -82,33 +106,48 @@ function OpenCreateChannelDialog({
         }
       : undefined,
   );
+  const initialSetup = useRef(setupKey(draft));
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const keepEditing = useRef<HTMLButtonElement>(null);
+  const previousDiscard = useRef(confirmDiscard);
   const input = useRef<HTMLInputElement>(null);
-  const descriptionInput = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (confirmDiscard !== previousDiscard.current)
+      (confirmDiscard ? keepEditing.current : input.current)?.focus();
+    previousDiscard.current = confirmDiscard;
+  }, [confirmDiscard]);
   const privateControlId = useId();
+  const privateSwitch = useRef<HTMLSpanElement>(null);
+  const privacyCancel = useRef<HTMLButtonElement>(null);
+  const [privacyChoice, setPrivacyChoice] = useState<"private" | "public">();
+  const [skipWarning, setSkipWarning] = useState(false);
+  const previousPrivacyChoice = useRef(privacyChoice);
+  useLayoutEffect(() => {
+    if (privacyChoice !== previousPrivacyChoice.current)
+      (privacyChoice ? privacyCancel.current : privateSwitch.current)?.focus();
+    previousPrivacyChoice.current = privacyChoice;
+  }, [privacyChoice]);
   const mounted = useRef(true);
   const previousOpen = useRef(false);
   const previousPending = useRef(pending);
   const [name, setName] = useState("");
-  const [descriptionVisible, setDescriptionVisible] = useState(false);
   const [description, setDescription] = useState("");
   const [lifetime, setLifetime] = useState<"ongoing" | "temporary">("ongoing");
+  const [temporaryTtl, setTemporaryTtl] = useState(
+    DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
+  );
   const [privateChannel, setPrivateChannel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
-  const summary = pending
-    ? pending.setup
-    : draft
-      ? {
-          agents: draft.agents,
-          canvas: draft.lineup.canvas,
-          templateId: draft.templateId,
-          groupId,
-        }
-      : undefined;
-  const group = groups?.groups.find((g) => g.id === groupId);
+  const destination = destinations.find((g) => g.id === groupId);
+  const summary =
+    pending?.setup ?? (draft ? { agents: draft.agents, groupId } : undefined);
+  const group = groupSource
+    ? undefined
+    : groups?.groups.find((g) => g.id === groupId);
   const editing = useRef(false);
-  editing.current = !pending && !busy;
+  editing.current = !pending && !busy && !privacyChoice && !confirmDiscard;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -123,20 +162,44 @@ function OpenCreateChannelDialog({
     previousPending.current = pending;
     if (!opening && !restoring) return;
     setName(pending?.name ?? "");
-    setDescriptionVisible(!!pending?.description);
     setDescription(pending?.description ?? "");
     setLifetime(pending?.ttlSeconds === undefined ? "ongoing" : "temporary");
+    setTemporaryTtl(
+      pending?.ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
+    );
     setPrivateChannel(pending?.visibility === "private");
+    setPrivacyChoice(undefined);
+    setConfirmDiscard(false);
     setError("");
-    setGroupId(pending?.setup?.groupId ?? initialGroup);
+    setGroupId(pending ? (pending.setup?.groupId ?? "") : initialGroup);
   }, [open, pending, initialGroup]);
-  useEffect(() => {
-    if (open && descriptionVisible) descriptionInput.current?.focus();
-  }, [descriptionVisible, open]);
+
+  const normalizedName = canonicalDetailsName(name);
+  const errors = detailsDraftErrors({
+    name: normalizedName,
+    description,
+    visibility: privateChannel ? "private" : "public",
+  });
+  // Recovery must retain the original frozen request, not reinterpret its fields.
+  const invalid = !pending && Object.values(errors).some(Boolean);
+
+  const dirty =
+    !pending &&
+    (name !== "" ||
+      description !== "" ||
+      privateChannel ||
+      lifetime !== "ongoing" ||
+      setupKey(draft) !== initialSetup.current);
+  const requestClose = () => {
+    if (busy) return;
+    if (privacyChoice) setPrivacyChoice(undefined);
+    else if (confirmDiscard) setConfirmDiscard(false);
+    else if (dirty) setConfirmDiscard(true);
+    else onOpenChange(false);
+  };
 
   const submit = async () => {
-    const trimmedName = name.trim();
-    if (!trimmedName || busy) return;
+    if (invalid || busy || privacyChoice || confirmDiscard) return;
     editing.current = false;
     setBusy(true);
     setError("");
@@ -144,10 +207,12 @@ function OpenCreateChannelDialog({
       if (
         !pending &&
         groupId &&
-        (!groupsReady || !groups?.groups.some((g) => g.id === groupId))
+        (!groupsReady || !destinations.some((g) => g.id === groupId))
       )
         throw new Error(
-          "Load the destination group or choose No group before creating.",
+          groupsReady
+            ? "This group is no longer available. Close this dialog and create from another sidebar group or Channels."
+            : "Wait for saved sidebar groups to load, then try again.",
         );
       if (!pending && draft?.problem) throw new Error(draft.problem);
       const agents = draft?.agents ?? [];
@@ -155,14 +220,20 @@ function OpenCreateChannelDialog({
       const templateId = draft?.templateId ?? "";
       await onCreate(
         pending ?? {
-          name: trimmedName,
+          name: normalizedName,
           visibility: privateChannel ? "private" : "open",
-          ...(lifetime === "temporary"
-            ? { ttlSeconds: DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS }
-            : {}),
+          ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
           ...(templateId || groupId || agents.length || canvas
-            ? { setup: { agents, canvas, groupId, templateId } }
+            ? {
+                setup: {
+                  agents,
+                  canvas,
+                  groupId,
+                  templateId,
+                  ...(groupId && groupSource ? { groupSource } : {}),
+                },
+              }
             : {}),
         },
       );
@@ -179,284 +250,324 @@ function OpenCreateChannelDialog({
     }
   };
 
+  const recoverySummary = summary && (
+    <section aria-label="Channel setup summary">
+      <p>
+        {summary.agents.length
+          ? `${summary.agents.length} selected agent${summary.agents.length === 1 ? "" : "s"}.`
+          : "Only you."}
+        {summary.groupId &&
+          ` Destination: ${destinations.find((g) => g.id === summary.groupId)?.name ?? "saved group"}.`}
+      </p>
+      {!pending && (
+        <>
+          <p>
+            Your selected setup is retained. Restore Templates &amp; teams to
+            edit it, or clear it below.
+          </p>
+          <Button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setEditorGeneration((generation) => generation + 1);
+              setDraft({ templateId: "", lineup: emptyLineup(), agents: [] });
+              setError("");
+            }}
+          >
+            Clear template setup (keep group)
+          </Button>
+        </>
+      )}
+    </section>
+  );
+
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        if (!next) requestClose();
+      }}
+      dismissOnOutsideClick
+      step={
+        confirmDiscard
+          ? { key: "discard", scale: 0.95 }
+          : privacyChoice
+            ? { key: "privacy", scale: 0.95 }
+            : { key: "details", scale: 1.05 }
+      }
+      headerGap="compact"
+      footerGap={privacyChoice ? "compact" : "default"}
       preventClose={busy}
-      title="Create a channel"
-      closeLabel="Close channel creation"
+      title={
+        confirmDiscard ? (
+          "Discard changes?"
+        ) : privacyChoice ? (
+          privacyChoice === "private" ? (
+            "Make channel private?"
+          ) : (
+            "Make channel public?"
+          )
+        ) : (
+          <span className={styles.title}>
+            Create a channel
+            {groupId && (
+              <>
+                {" in "}
+                {destination?.icon && (
+                  <>
+                    <SidebarGroupIcon
+                      icon={destination.icon}
+                      session={session}
+                    />{" "}
+                  </>
+                )}
+                {destination?.name ?? "saved group"}
+              </>
+            )}
+          </span>
+        )
+      }
+      description={
+        confirmDiscard ? "Your channel draft has unsaved changes." : undefined
+      }
+      closeLabel={
+        confirmDiscard || privacyChoice
+          ? "Back to channel creation"
+          : "Close channel creation"
+      }
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
-        <>
-          <span className={styles.privateAction}>
-            <Switch
-              id={privateControlId}
-              aria-label="Private"
-              checked={privateChannel}
-              readOnly={busy || !!pending}
-              aria-disabled={busy || undefined}
-              onCheckedChange={(checked) => {
-                if (pending) return;
-                setPrivateChannel(checked);
+        confirmDiscard ? (
+          <>
+            <Button ref={keepEditing} onClick={() => setConfirmDiscard(false)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!busy && !pending) onOpenChange(false);
+              }}
+            >
+              Discard changes
+            </Button>
+          </>
+        ) : privacyChoice ? (
+          <>
+            <Button
+              ref={privacyCancel}
+              onClick={() => setPrivacyChoice(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="prominent"
+              disabled={busy || !!pending}
+              onClick={() => {
+                if (busy || pending) return;
+                if (skipWarning) rememberPrivacyConfirmation(session.scope);
+                setPrivateChannel(privacyChoice === "private");
+                setPrivacyChoice(undefined);
                 setError("");
               }}
-            />
-            <label className="text-label-sm" htmlFor={privateControlId}>
-              Private
-            </label>
-          </span>
-          <Button
-            variant="prominent"
-            type="submit"
-            form="create-channel-form"
-            loading={busy}
-            disabled={!name.trim()}
-          >
-            {pending ? "Resume channel setup" : "Create channel"}
-          </Button>
-        </>
+            >
+              Continue
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className={styles.privateAction}>
+              <Switch
+                id={privateControlId}
+                ref={privateSwitch}
+                aria-label="Private"
+                checked={privateChannel}
+                disabled={!!pending}
+                readOnly={busy}
+                aria-disabled={busy || !!pending || undefined}
+                onCheckedChange={(checked) => {
+                  if (!editing.current) return;
+                  const choice = checked ? "private" : "public";
+                  if (skipPrivacyConfirmation(session.scope)) {
+                    setPrivateChannel(checked);
+                    setError("");
+                  } else {
+                    setSkipWarning(false);
+                    setPrivacyChoice(choice);
+                  }
+                }}
+              />
+              <label className="text-label-sm" htmlFor={privateControlId}>
+                Private
+              </label>
+            </span>
+            <Button
+              variant="prominent"
+              type="submit"
+              form="create-channel-form"
+              loading={busy}
+              disabled={invalid}
+            >
+              {pending ? "Retry channel" : "Create channel"}
+            </Button>
+          </>
+        )
       }
     >
-      <form
-        id="create-channel-form"
-        className={styles.form}
-        inert={busy}
-        aria-busy={busy || undefined}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        {pending && (
-          <p role="status">
-            This attempt keeps its original name, destination and setup. Resume
-            checks the same channel; it will not create another.
-          </p>
-        )}
-        <fieldset
-          disabled={!!pending}
-          inert={!!pending}
-          style={{ display: "contents", border: 0, padding: 0 }}
+      {confirmDiscard ? null : privacyChoice ? (
+        <ChannelPrivacyConfirmation
+          visibility={privacyChoice}
+          checked={skipWarning}
+          onCheckedChange={setSkipWarning}
+        />
+      ) : (
+        <form
+          id="create-channel-form"
+          className={styles.form}
+          inert={busy}
+          aria-busy={busy || undefined}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
         >
-          <Field label="Name">
-            <Input
-              ref={input}
-              data-create-channel-name=""
-              required
-              maxLength={120}
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              placeholder="release-notes"
+          {pending && (
+            <p role="status">
+              This attempt may already have created a channel. Retry checks it
+              first and, if unconfirmed, resends only the same creation request.
+              It will not create another channel or continue template setup.
+            </p>
+          )}
+          <fieldset
+            disabled={!!pending}
+            inert={!!pending}
+            style={{ display: "contents", border: 0, padding: 0 }}
+          >
+            <ChannelTextField
+              field="name"
+              creation
+              inputRef={input}
               value={name}
-              onChange={(event) => {
-                setName(event.target.value);
+              error={name ? errors.name : undefined}
+              onChange={(value) => {
+                setName(value);
                 setError("");
               }}
             />
-          </Field>
-          {descriptionVisible ? (
-            <Field label="Description">
-              <Textarea
-                ref={descriptionInput}
-                maxLength={1000}
-                rows={3}
-                placeholder="What this channel is for"
-                value={description}
-                onChange={(event) => {
-                  setDescription(event.target.value);
-                  setError("");
-                }}
-              />
-            </Field>
-          ) : (
-            <span className={styles.descriptionAction}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setDescriptionVisible(true)}
-              >
-                Add a description
-              </Button>
-            </span>
-          )}
-          {!pending && session.channelKit.available && (
-            <Select
-              variant="field"
-              label="Destination group"
-              value={groupId}
-              groups={[
-                {
-                  label: "",
-                  options: [
-                    { value: "", label: "No group" },
-                    ...(groups?.groups.map((g) => ({
-                      value: g.id,
-                      label: g.name,
-                    })) ?? []),
-                  ],
-                },
-              ]}
-              onValueChange={(id) => {
-                setGroupId(id);
-                if (draft?.problem === "Group default is awaiting selection.") {
-                  setDraft(undefined);
-                  setEditorGeneration((generation) => generation + 1);
+            <ChannelTextField
+              field="description"
+              value={description}
+              error={errors.description}
+              onChange={(value) => {
+                setDescription(value);
+                setError("");
+              }}
+            />
+            {!pending && provider && (
+              <OwnedContribution
+                key={editorGeneration}
+                entry={provider}
+                registry={providers}
+                fallback={
+                  <>
+                    <p role="alert">Template controls could not open.</p>
+                    {recoverySummary}
+                  </>
                 }
-              }}
-            />
-          )}
-          {!pending && provider && (
-            <OwnedContribution
-              key={editorGeneration}
-              entry={provider}
-              registry={providers}
-            >
-              {(entry, active) => {
-                const Editor = entry.editor;
-                return (
-                  <Editor
-                    session={session}
-                    value={draft}
-                    initialDefault={
-                      editorGeneration === 0 && provider === initialProvider
-                        ? initialDefault
-                        : ""
-                    }
-                    group={group}
-                    active={() =>
-                      active() &&
-                      mounted.current &&
-                      editing.current &&
-                      !session.channelCreation.snapshot()
-                    }
-                    onChange={(value) => {
-                      if (
-                        !active() ||
-                        !mounted.current ||
-                        !editing.current ||
-                        session.channelCreation.snapshot()
-                      )
-                        return;
-                      try {
-                        const lineup = parseLineup(value.lineup);
-                        const resolved = parseLineup({
-                          teamIds: [],
-                          agents: value.agents,
-                          canvas: lineup.canvas,
-                        });
-                        if (
-                          typeof value.templateId !== "string" ||
-                          (value.templateId &&
-                            !/^[a-zA-Z0-9_-]{1,128}$/.test(value.templateId))
-                        )
-                          throw new Error("Invalid template selection");
-                        setDraft({
-                          templateId: value.templateId,
-                          lineup,
-                          agents: resolved.agents,
-                          problem: value.problem
-                            ? String(value.problem)
-                            : undefined,
-                        });
-                      } catch (reason) {
-                        setError(String(reason));
+              >
+                {(entry, active) => {
+                  const Editor = entry.editor;
+                  return (
+                    <Editor
+                      session={session}
+                      value={draft}
+                      initialDefault={
+                        editorGeneration === 0 && provider === initialProvider
+                          ? initialDefault
+                          : ""
                       }
-                    }}
-                  />
-                );
-              }}
-            </OwnedContribution>
-          )}
-          {!pending && !provider && group?.defaultTemplateId && !draft && (
-            <p className="text-secondary">
-              Templates &amp; teams is off. This channel will not use the
-              group’s saved template default.
-            </p>
-          )}
-          <Field label={<span className="sr-only">Duration</span>}>
-            <RadioGroup
-              value={lifetime}
-              onValueChange={(value) => {
-                setLifetime(value);
-                setError("");
-              }}
-            >
-              <Radio
-                value="ongoing"
-                variant="card"
-                label="Ongoing"
-                description="Keeps its history until you archive it."
-              />
-              <Radio
-                value="temporary"
-                variant="card"
-                label="Temporary"
-                description="Cleans up after 7 days without activity."
-              />
-            </RadioGroup>
-          </Field>
-        </fieldset>
-        {summary && (
-          <section aria-label="Channel setup summary">
-            <h3 className="text-label">
-              {pending ? "Saved setup to resume" : "Selected starting setup"}
-            </h3>
-            <p>
-              Group: {summary.groupId || "None"}. Template:{" "}
-              {summary.templateId || "None"}.
-            </p>
-            <p>
-              Agents:{" "}
-              {summary.agents.length ? summary.agents.join(", ") : "Only you"}.
-              Existing identities; no agent startup.
-            </p>
-            {summary.canvas ? (
-              <details>
-                <summary>Starting Canvas</summary>
-                <pre className="whitespace-pre-wrap">{summary.canvas}</pre>
-              </details>
-            ) : (
-              <p>Empty starting Canvas.</p>
+                      group={group}
+                      active={() =>
+                        active() &&
+                        mounted.current &&
+                        editing.current &&
+                        !session.channelCreation.snapshot()
+                      }
+                      onChange={(value) => {
+                        if (
+                          !active() ||
+                          !mounted.current ||
+                          !editing.current ||
+                          session.channelCreation.snapshot()
+                        )
+                          return;
+                        try {
+                          const lineup = parseLineup(value.lineup);
+                          const resolved = parseLineup({
+                            teamIds: [],
+                            agents: value.agents,
+                            canvas: lineup.canvas,
+                          });
+                          if (
+                            typeof value.templateId !== "string" ||
+                            (value.templateId &&
+                              !/^[a-zA-Z0-9_-]{1,128}$/.test(value.templateId))
+                          )
+                            throw new Error("Invalid template selection");
+                          const next = {
+                            templateId: value.templateId,
+                            lineup,
+                            agents: resolved.agents,
+                            problem: value.problem
+                              ? String(value.problem)
+                              : undefined,
+                          };
+                          // Loading the opening group's default is initialization,
+                          // not a user edit. Later selections compare with it.
+                          if (
+                            draft?.problem ===
+                              "Group default is awaiting selection." &&
+                            value.templateId === initialDefault &&
+                            editorGeneration === 0
+                          )
+                            initialSetup.current = setupKey(next);
+                          setDraft(next);
+                        } catch (reason) {
+                          setError(String(reason));
+                        }
+                      }}
+                    />
+                  );
+                }}
+              </OwnedContribution>
             )}
-            {!pending && draft?.lineup.teamIds.length ? (
-              <p>Selected teams: {draft.lineup.teamIds.join(", ")}</p>
-            ) : null}
-            {!pending && draft?.problem && <p role="alert">{draft.problem}</p>}
-            {!pending && !provider && (
-              <p>
-                Templates is unavailable. Your accepted setup is retained above;
-                enable it to edit, or explicitly clear it.
+            {!pending && !provider && group?.defaultTemplateId && !draft && (
+              <p className="text-secondary">
+                Templates &amp; teams is off. This channel will not use the
+                group’s saved template default.
               </p>
             )}
-            {!pending && (
-              <Button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setEditorGeneration((generation) => generation + 1);
-                  setDraft({
-                    templateId: "",
-                    lineup: emptyLineup(),
-                    agents: [],
-                  });
-                  setError("");
-                }}
-              >
-                Clear template setup (keep group)
-              </Button>
-            )}
-          </section>
-        )}
-        {error && (
-          <p role="alert" className={styles.error}>
-            {error}
-          </p>
-        )}
-      </form>
+            <ChannelDurationField
+              temporary={lifetime === "temporary"}
+              ttlSeconds={temporaryTtl}
+              disabled={!!pending}
+              onChange={(ttlSeconds) => {
+                if (!editing.current) return;
+                setLifetime(ttlSeconds === undefined ? "ongoing" : "temporary");
+                if (ttlSeconds !== undefined) setTemporaryTtl(ttlSeconds);
+                setError("");
+              }}
+            />
+          </fieldset>
+          {!pending && draft?.problem && <p role="alert">{draft.problem}</p>}
+          {(pending || !provider) && recoverySummary}
+          {error && (
+            <p role="alert" className={styles.error}>
+              {error}
+            </p>
+          )}
+        </form>
+      )}
     </Dialog>
   );
 }

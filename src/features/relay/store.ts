@@ -5,21 +5,26 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { ReadError, readErrorKind } from "./errors";
 import type {
   ChannelList,
+  ChannelReadOptions,
   ChannelMessage,
   ChannelQueries,
+  PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
-import { DiscoveryState } from "./discovery";
+import { DiscoveryState, metadataName, openMetadata } from "./discovery";
 import { foldMessages } from "./fold";
-import { eventDto, hasTag, tag, type RelayEvent } from "./events";
+import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { readSessionWindow } from "./session-window";
-import { ByteLru, byteSize } from "./budget";
+import { ByteLru, byteSize, listByteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
+import { clientMetrics } from "../developer/client-metrics";
+import { MessageClock } from "./message-order";
+import { yieldToHost } from "./yield";
 
 type Listener = () => void;
 type WindowState = {
@@ -32,6 +37,9 @@ type WindowState = {
   atHead: boolean;
   generation: number;
   controller?: AbortController | undefined;
+  /** Rows came from IndexedDB and no relay read has replaced them. Freshness
+   * cannot say this: a dropped socket also marks relay rows `cached`. */
+  restored?: boolean;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -40,12 +48,17 @@ type Head = {
   events: readonly RelayEvent[];
   savedAt: number;
   cached: boolean;
+  restored?: true;
 };
 export type ChannelStoreOptions = {
   profiling?: RelayProfiler;
   maxWindows?: number;
   unavailableReason?: string;
   prepared?: boolean;
+  /** Local resume session has no network authority or writer. */
+  cachedOnly?: boolean;
+  /** Prioritize the previous conversation; other saved heads restore in background. */
+  initialChannelId?: string | undefined;
   /** Warm every roster channel's head in the background before it is opened. */
   warm?: boolean;
   persistence?: HeadPersistence;
@@ -55,11 +68,17 @@ export type ChannelStoreOptions = {
   maxHistoryBytes?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
+  /** The session's send clock; rendered windows raise its channel watermarks. */
+  clock?: MessageClock;
   notifyListener?: (listener: () => void) => void;
 };
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
-/** Relay read cap. A roster read returning fewer than this is complete evidence of the viewer's membership. */
+/** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+// One page of public channel metadata for name search; matches resolve exactly.
+const PUBLIC_CHANNEL_PAGE = 500;
+/** Exact omission confirmations use the relay's explicit channel-ID cap. */
+const DISCOVERY_CONFIRM_LIMIT = 128;
 const UNAVAILABLE: ChannelList = Object.freeze({
   status: "unavailable",
   channels: Object.freeze([]),
@@ -83,7 +102,7 @@ export function createChannelStore(
         restored?(events: readonly RelayEvent[]): void;
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
-        rosterChanged?(): void;
+        rosterChanged?(strong?: boolean): void;
       })
     | null,
   directory: ProfileDirectory,
@@ -93,10 +112,14 @@ export function createChannelStore(
     channelId: string,
     author: string,
     events: readonly import("./events").EventData[],
-  ) =>
-    foldMessages(channelId, author, events, {
+  ) => {
+    const started = performance.now();
+    const rows = foldMessages(channelId, author, events, {
       includeReplies: discovery?.isSession(channelId) ?? false,
     });
+    clientMetrics.cpu("fold", performance.now() - started, events.length);
+    return rows;
+  };
   const {
     maxWindows = 3,
     unavailableReason,
@@ -108,6 +131,7 @@ export function createChannelStore(
     maxHistoryBytes = 8 * 1024 * 1024,
     now = Date.now,
     local,
+    clock = new MessageClock(),
     notifyListener = (listener: () => void) => listener(),
     profiling = createRelayProfiler(),
   } = options;
@@ -117,6 +141,7 @@ export function createChannelStore(
     epoch = 0,
     listBusy = false;
   let listAgain = false;
+  let strongListAgain = false;
   let listRetryAt = 0;
   type RosterRefresh = Readonly<{
     state: "idle" | "pending" | "verified" | "deferred" | "error";
@@ -133,21 +158,32 @@ export function createChannelStore(
   const discovery = transport
     ? new DiscoveryState(transport.viewer, transport.relayAuthor)
     : null;
+  // Restored metadata needs confirmation independently of roster progress/retries.
+  const pendingMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
   const tails = new ByteLru<{
     events: readonly RelayEvent[];
     preview?: string | undefined;
   }>(64, 4 * 1024 * 1024);
+  /** `byteSize` of a tail, without serializing its retained events again. */
+  const tailBytes = (tail: NonNullable<ReturnType<typeof tails.peek>>) =>
+    byteSize({ ...tail, events: [] }) - 2 + listByteSize(tail.events);
   let media = createMediaPreparation();
   const controllers = new Set<AbortController>();
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
-  let intent: string | undefined;
+  let intent: string | undefined = options.initialChannelId;
   let current: string | undefined;
   const mediaIntents: string[] = [];
   let hydration: Promise<void> | undefined;
+  let revealHydration: (() => void) | undefined;
+  let initialHydration = new Promise<void>((resolve) => {
+    revealHydration = resolve;
+  });
+  let startup: Promise<void> | undefined;
+  let discoveryObserved = false;
   let preparing = false;
   let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
@@ -172,6 +208,8 @@ export function createChannelStore(
       const old = previous.get(channel.id);
       return old &&
         old.name === channel.name &&
+        old.description === channel.description &&
+        old.visibility === channel.visibility &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
@@ -179,6 +217,8 @@ export function createChannelStore(
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
+        old.readOnly === channel.readOnly &&
+        old.cached === channel.cached &&
         old.members?.length === channel.members?.length &&
         (old.members ?? []).every(
           (id, index) => id === channel.members?.[index],
@@ -197,6 +237,7 @@ export function createChannelStore(
       !discoveryChanged &&
       sameChannels &&
       next.status === list.status &&
+      next.coverage === list.coverage &&
       next.error === list.error &&
       next.asOf === list.asOf
     )
@@ -252,6 +293,11 @@ export function createChannelStore(
     )
       return;
     const previousPreview = messagePreview(state.snapshot.rows);
+    if (rows.length && !state.snapshot.rows.length)
+      clientMetrics.channelData(
+        state.channelId,
+        state.restored ? "disk" : "network",
+      );
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
     if (previousPreview !== messagePreview(rows)) setList(list);
@@ -316,6 +362,7 @@ export function createChannelStore(
         transport?.relayAuthor ?? "",
         profiling,
         () => discovery?.isSession(channelId) ?? false,
+        clock,
       ),
       channelId,
       snapshot: idleWindow(channelId),
@@ -329,6 +376,8 @@ export function createChannelStore(
     return state;
   }
   const authorized = (id: string) => discovery?.canAccess(id) ?? false;
+  const canReadRemote = (id: string) =>
+    !options.cachedOnly && authorized(id) && !discovery?.get(id)?.cached;
   const live = (state: WindowState, generation: number) =>
     !disposed &&
     authorized(state.channelId) &&
@@ -440,6 +489,7 @@ export function createChannelStore(
         true,
       );
       void persistence?.remove(channelId).catch(() => {});
+      saveDiscovery();
     });
   }
   const isSession = (channelId: string) => !!discovery?.isSession(channelId);
@@ -478,7 +528,7 @@ export function createChannelStore(
     controllers.add(controller);
     let head: Head;
     try {
-      if (disposed || !transport || !authorized(channelId))
+      if (disposed || !transport || !canReadRemote(channelId))
         throw new DOMException("Stale request", "AbortError");
       const { events, page } = await readPage(channelId, null, {
         signal: controller.signal,
@@ -509,7 +559,7 @@ export function createChannelStore(
       )
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
-      relayDebug("head failed", channelId.slice(0, 8), describe(error));
+      relayDebug("head failed", channelId.slice(0, 8), readErrorKind(error));
       if (
         !disposed &&
         generation === epoch &&
@@ -541,7 +591,7 @@ export function createChannelStore(
     return head;
   }
   async function loadPage(state: WindowState, cursor: WindowCursor | null) {
-    if (!transport) return;
+    if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
     const controller = new AbortController();
     state.controller = controller;
@@ -552,6 +602,7 @@ export function createChannelStore(
         state.cursor = head.cursor;
         state.events = head.events;
         state.atHead = true;
+        state.restored = head.restored === true;
         setWindow(state, patchFromHead(head));
         return;
       }
@@ -581,6 +632,7 @@ export function createChannelStore(
       state.events = retained;
       state.atHead = !cursor;
       state.cursor = page.cursor;
+      state.restored = false;
       setWindow(state, {
         status: "ready",
         rows,
@@ -614,6 +666,7 @@ export function createChannelStore(
     }
   }
   async function hydrate() {
+    const reveal = revealHydration;
     if (!persistence || !transport) return;
     const generation = epoch;
     let records: SavedHead[];
@@ -622,6 +675,10 @@ export function createChannelStore(
     } catch {
       return;
     }
+    if (
+      !records.some((record) => record.channelId === options.initialChannelId)
+    )
+      reveal?.();
     while (records.length) {
       const priorityIndex = records.findIndex(
         (record) => record.channelId === intent,
@@ -631,6 +688,7 @@ export function createChannelStore(
         1,
       );
       if (!record) break;
+      const initial = record.channelId === options.initialChannelId;
       const accessVersion = accessVersions.get(record.channelId) ?? 0;
       if (disposed || generation !== epoch) return;
       if (
@@ -640,8 +698,10 @@ export function createChannelStore(
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||
         now() - record.savedAt > 86_400_000
-      )
+      ) {
+        if (initial) reveal?.();
         continue;
+      }
       try {
         // Verify in channel-sized batches and yield between them; cache parsing never monopolizes startup.
         // Persisted input is untrusted even if an in-memory test object carries nostr-tools'
@@ -650,10 +710,15 @@ export function createChannelStore(
           eventDto(JSON.parse(JSON.stringify(value)));
         const events: RelayEvent[] = [];
         for (let index = 0; index < record.events.length; index += 8) {
-          events.push(
-            ...record.events.slice(index, index + 8).map(verifySaved),
+          const started = performance.now();
+          const batch = record.events.slice(index, index + 8).map(verifySaved);
+          clientMetrics.cpu(
+            "verify.restore",
+            performance.now() - started,
+            batch.length,
           );
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          events.push(...batch);
+          await yieldToHost();
           if (
             disposed ||
             generation !== epoch ||
@@ -684,6 +749,7 @@ export function createChannelStore(
           hasMore: page.hasMore,
           savedAt: record.savedAt,
           cached: true,
+          restored: true,
         };
         const verifiedProfiles: RelayEvent[] = [];
         for (let index = 0; index < record.profiles.length; index += 8) {
@@ -698,7 +764,7 @@ export function createChannelStore(
                 : verifySaved(value),
             );
           }
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          await yieldToHost();
           if (
             disposed ||
             generation !== epoch ||
@@ -726,30 +792,136 @@ export function createChannelStore(
           state.cursor = head.cursor;
           state.events = head.events;
           state.atHead = true;
+          state.restored = head.restored === true;
           setWindow(state, patchFromHead(head));
         }
       } catch {
         /* Corrupt or unsigned cache records cannot reach the read model. */
+      } finally {
+        if (initial) reveal?.();
       }
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await yieldToHost();
+    }
+  }
+  function saveDiscovery() {
+    if (!persistence?.writeStartup || !discovery || !transport || disposed)
+      return;
+    void persistence
+      .writeStartup({
+        discovery: {
+          savedAt: now(),
+          relayAuthor: transport.relayAuthor,
+          events: discovery.savedEvents(),
+          profiles: [
+            ...new Set(
+              discovery
+                .channels()
+                .filter((channel) => !channel.cached)
+                .flatMap((channel) => channel.participants ?? []),
+            ),
+          ]
+            .slice(0, 1024)
+            .flatMap((id) => {
+              const event = directory.event(id);
+              return event ? [event] : [];
+            }),
+        },
+      })
+      .catch(() => {});
+  }
+  async function restoreStartup() {
+    if (!persistence?.readStartup || !transport || !discovery) return;
+    const generation = epoch;
+    try {
+      const saved = (await persistence.readStartup())?.discovery;
+      if (
+        !saved ||
+        saved.relayAuthor !== transport.relayAuthor ||
+        !Number.isFinite(saved.savedAt) ||
+        saved.savedAt > now() ||
+        now() - saved.savedAt > 86_400_000 ||
+        !Array.isArray(saved.events) ||
+        saved.events.length > 2048 ||
+        byteSize(saved) > 8 * 1024 * 1024
+      )
+        return;
+      const events: RelayEvent[] = [];
+      for (let index = 0; index < saved.events.length; index += 12) {
+        events.push(
+          ...saved.events
+            .slice(index, index + 12)
+            .map((value) => eventDto(JSON.parse(JSON.stringify(value)))),
+        );
+        await yieldToHost();
+        if (disposed || generation !== epoch || discoveryObserved) return;
+      }
+      const profiles: RelayEvent[] = [];
+      if (Array.isArray(saved.profiles) && saved.profiles.length <= 1024) {
+        for (let index = 0; index < saved.profiles.length; index += 12) {
+          for (const value of saved.profiles.slice(index, index + 12)) {
+            try {
+              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
+            } catch {
+              /* A bad optional label cannot discard valid conversation history. */
+            }
+          }
+          await yieldToHost();
+          if (disposed || generation !== epoch || discoveryObserved) return;
+        }
+      }
+      if (disposed || generation !== epoch || discoveryObserved) return;
+      applyDiscovery(events, undefined, undefined, true);
+      const participants = new Set(
+        discovery.channels().flatMap((channel) => channel.participants ?? []),
+      );
+      directory.accept(
+        profiles.filter(
+          (event) => event.kind === 0 && participants.has(event.pubkey),
+        ),
+      );
+      await (options.initialChannelId ? initialHydration : hydration);
+    } catch {
+      // Missing, corrupt or unavailable device storage never blocks fresh reads.
     }
   }
   function applyDiscovery(
     events: readonly RelayEvent[],
     complete?: ReadonlySet<string>,
     started?: ReadonlyMap<string, RelayEvent>,
+    cached = false,
   ) {
     if (disposed || !transport || !discovery) return;
+    if (!cached) discoveryObserved = true;
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
+    const overflowRevision = discovery.overflowRevision;
+    if (cached) discovery.restrictToKnown();
     let discoveryChanged = false;
-    for (const event of events)
-      discoveryChanged = discovery.accept(event) || discoveryChanged;
+    for (const event of events) {
+      discoveryChanged = discovery.accept(event, cached) || discoveryChanged;
+      if (event.kind === 39000) {
+        const id = tag(event, "d");
+        if (id && discovery.metadataVersion(id)?.id === event.id) {
+          if (cached) pendingMetadata.add(id);
+          else pendingMetadata.delete(id);
+        }
+      }
+    }
+    if (discovery.overflowRevision !== overflowRevision) {
+      coverage = "partial";
+      complete = undefined;
+    }
     // Only a complete viewer-scoped roster read proves absence; capped reads and live traffic never revoke by omission.
     if (complete) {
       discovery.retain(complete, started);
       coverage = undefined;
     }
+    const confirmed = list.channels.filter(
+      (channel) =>
+        channel.cached &&
+        !discovery.get(channel.id)?.cached &&
+        discovery.canAccess(channel.id),
+    );
     const channels = Object.freeze(discovery.channels());
     const nextAllowed = new Set(channels.map((channel) => channel.id));
     const known = new Set([
@@ -764,12 +936,14 @@ export function createChannelStore(
         void persistence?.remove(id).catch(() => {});
       }
     allowed = nextAllowed;
+    let appliedEpoch = epoch;
     const commit = () => {
       for (const state of [...windows.values()])
         if (!authorized(state.channelId)) evict(state);
       for (const id of heads.keys()) if (!authorized(id)) heads.delete(id);
       for (const id of tails.keys()) if (!authorized(id)) tails.delete(id);
       if (complete) void persistence?.retain([...nextAllowed]).catch(() => {});
+      appliedEpoch = epoch;
       setList(
         {
           status: "ready",
@@ -787,15 +961,30 @@ export function createChannelStore(
     else commit();
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
-    if (prepared) hydration ??= hydrate();
+    if (prepared && !hydration) {
+      const reveal = revealHydration;
+      hydration = hydrate().finally(() => reveal?.());
+    }
+    if (!cached) {
+      saveDiscovery();
+      for (const channel of confirmed) {
+        // Disk rows were display-only during hydration. Fresh membership now
+        // makes that verified evidence usable for explicit read intent too.
+        const saved = heads.peek(channel.id);
+        if (saved) transport.restored?.(saved.events);
+        if (windows.has(channel.id)) queries.ensure(channel.id);
+      }
+    }
+    return !disposed && appliedEpoch === epoch;
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
    * optional read and cannot delay revocation or overwrite newer live grants. */
-  async function discover(force = false) {
-    if (disposed || !transport || !discovery) return;
+  async function discover(force = false, strong = false) {
+    if (disposed || !transport || !discovery || options.cachedOnly) return;
     // Hints/establishment during a read require a later read. During a quota
     // pause they retain an obligation, not another request with a deadline.
     if (force) listAgain = true;
+    if (strong) strongListAgain = true;
     if (
       listBusy ||
       performance.now() < listRetryAt ||
@@ -805,16 +994,22 @@ export function createChannelStore(
     )
       return;
     listAgain = false;
+    // A post-write request queued behind an older pass must keep writer routing.
+    const consistency = strongListAgain
+      ? { consistency: "strong" as const }
+      : {};
+    strongListAgain = false;
     listRetryAt = 0;
     listBusy = true;
     rosterRefresh = Object.freeze({ state: "pending" });
-    transport.rosterChanged?.();
+    transport.rosterChanged?.(consistency.consistency === "strong");
     if (disposed) {
       listBusy = false;
       return;
     }
+    coverage = "partial";
     if (list.status !== "ready")
-      setList({ status: "loading", channels: list.channels });
+      setList({ status: "loading", channels: list.channels, coverage });
     if (disposed) {
       listBusy = false;
       return;
@@ -823,55 +1018,177 @@ export function createChannelStore(
     let controller = new AbortController();
     controllers.add(controller);
     const started = discovery.rosterVersions();
+    const overflowRevision = discovery.overflowRevision;
     let readingRoster = true;
+    let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
     try {
-      const rosters = await transport.read(
-        [{ kinds: [39002], "#p": [transport.viewer], limit: DISCOVERY_LIMIT }],
-        { signal: controller.signal },
-      );
-      if (disposed || generation !== epoch) return;
-      const ids = [
-        ...new Set(
-          rosters
-            .filter(
-              (event) =>
-                event.kind === 39002 &&
-                event.pubkey === transport.relayAuthor &&
-                hasTag(event, "p", transport.viewer),
+      const ids = new Set<string>();
+      const named = new Set<string | undefined>();
+      let cursor: RelayEvent | undefined;
+      let complete: Set<string> | undefined;
+      let retainedComplete = false;
+      let paged = false;
+      // At most the retained roster budget plus its final exhaustion read.
+      // This also bounds a relay returning repeated coordinates with new versions.
+      for (let page = 0; page <= discovery.capacity / DISCOVERY_LIMIT; page++) {
+        const rosters = await transport.read(
+          [
+            {
+              kinds: [39002],
+              ...consistency,
+              "#p": [transport.viewer],
+              limit: DISCOVERY_LIMIT,
+              ...(cursor
+                ? { until: cursor.created_at, before_id: cursor.id }
+                : {}),
+            },
+          ],
+          { signal: controller.signal },
+        );
+        if (disposed || generation !== epoch) return;
+        const members = rosters
+          .filter(
+            (event) =>
+              event.kind === 39002 &&
+              event.pubkey === transport.relayAuthor &&
+              hasTag(event, "p", transport.viewer) &&
+              tag(event, "d"),
+          )
+          .sort(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          );
+        for (const event of members) {
+          const id = tag(event, "d");
+          if (id) ids.add(id);
+        }
+        for (const event of rosters)
+          if (event.kind === 39000 && event.pubkey === transport.relayAuthor)
+            named.add(tag(event, "d"));
+        const last = members.at(-1);
+        const advances =
+          members.every(
+            (event) =>
+              !cursor ||
+              event.created_at < cursor.created_at ||
+              (event.created_at === cursor.created_at && event.id > cursor.id),
+          ) &&
+          (rosters.length < DISCOVERY_LIMIT || !!last);
+        const shortPage = advances && rosters.length < DISCOVERY_LIMIT;
+        const pageComplete = shortPage ? ids : undefined;
+        if (
+          !applyDiscovery(
+            rosters,
+            pageComplete && !paged ? pageComplete : undefined,
+            started,
+          )
+        )
+          return;
+        const overflowed = discovery.overflowRevision !== overflowRevision;
+        if (overflowed) complete = undefined;
+        if (disposed || (!shortPage && generation !== epoch)) return;
+        if (!advances)
+          throw new ReadError(
+            "invalid-response",
+            "Channel discovery cursor did not advance",
+          );
+        if (shortPage && !overflowed) {
+          complete = ids;
+          retainedComplete = !paged;
+          break;
+        }
+        if (overflowed) break;
+        cursor = last;
+        paged = true;
+      }
+      if (complete && !retainedComplete) {
+        denyAllOnFailure = false;
+        const current = discovery.rosterVersions();
+        const omitted = paged
+          ? [...started].flatMap(([id, roster]) =>
+              !complete?.has(id) &&
+              current.get(id) === roster &&
+              hasTag(roster, "p", transport.viewer) &&
+              discovery.authorized(id)
+                ? [id]
+                : [],
             )
-            .map((event) => tag(event, "d"))
-            .filter((id): id is string => !!id),
-        ),
-      ];
-      const named = new Set(
-        rosters
-          .filter((event) => event.kind === 39000)
-          .map((event) => tag(event, "d")),
+          : [];
+        for (
+          let offset = 0;
+          offset < omitted.length;
+          offset += DISCOVERY_CONFIRM_LIMIT
+        ) {
+          const batch = omitted.slice(offset, offset + DISCOVERY_CONFIRM_LIMIT);
+          const confirmations = await transport.read(
+            [
+              {
+                kinds: [39002],
+                ...consistency,
+                authors: [transport.relayAuthor],
+                "#d": batch,
+                "#p": [transport.viewer],
+                limit: batch.length + 1,
+              },
+            ],
+            { signal: controller.signal, fresh: true },
+          );
+          if (disposed || generation !== epoch) return;
+          if (
+            confirmations.length > batch.length ||
+            confirmations.some(
+              (event) =>
+                event.kind !== 39002 ||
+                event.pubkey !== transport.relayAuthor ||
+                !hasTag(event, "p", transport.viewer) ||
+                !batch.includes(tag(event, "d") ?? ""),
+            )
+          )
+            throw new ReadError(
+              "invalid-response",
+              "Channel discovery confirmation exceeded its read budget",
+            );
+          for (const event of confirmations) {
+            const id = tag(event, "d");
+            if (id) complete.add(id);
+          }
+          applyDiscovery(confirmations);
+          if (disposed || generation !== epoch) return;
+        }
+        if (discovery.overflowRevision !== overflowRevision)
+          complete = undefined;
+        if (complete && !applyDiscovery([], complete, started)) return;
+      }
+      const wanted = [...ids].filter(
+        (id) =>
+          discovery.authorized(id) &&
+          !named.has(id) &&
+          (force || pendingMetadata.has(id) || !discovery.named(id)),
       );
-      const wanted = ids.filter(
-        (id) => !named.has(id) && (force || !discovery.named(id)),
-      );
-      const complete =
-        rosters.length < DISCOVERY_LIMIT ? new Set(ids) : undefined;
-      if (!complete) coverage = "partial";
-      applyDiscovery(rosters, complete, started);
-      if (disposed) return;
       generation = epoch;
       readingRoster = false;
+      denyAllOnFailure = false;
       // Applying our own complete roster can invalidate the original request.
       // Metadata gets a fresh cancellation owner, never another completeness set.
       controllers.delete(controller);
       controller = new AbortController();
       controllers.add(controller);
-      const metadata = wanted.length
-        ? await transport.read(
-            [{ kinds: [39000], "#d": wanted, limit: DISCOVERY_LIMIT }],
-            { signal: controller.signal },
-          )
-        : [];
-      if (disposed || generation !== epoch) return;
-      applyDiscovery(metadata);
+      for (let offset = 0; offset < wanted.length; offset += DISCOVERY_LIMIT) {
+        const metadata = await transport.read(
+          [
+            {
+              kinds: [39000],
+              ...consistency,
+              "#d": wanted.slice(offset, offset + DISCOVERY_LIMIT),
+              limit: DISCOVERY_LIMIT,
+            },
+          ],
+          { signal: controller.signal },
+        );
+        if (disposed || generation !== epoch) return;
+        applyDiscovery(metadata);
+        if (disposed || generation !== epoch) return;
+      }
       if (!disposed && generation === epoch) outcome = { state: "verified" };
     } catch (error) {
       if (disposed || generation !== epoch) return;
@@ -880,7 +1197,7 @@ export function createChannelStore(
         : { state: "error", error: describe(error) };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;
-      if (readingRoster && readErrorKind(error) === "denied") {
+      if (denyAllOnFailure && readErrorKind(error) === "denied") {
         discovery.denyAll();
         transport.revokeAccess(() => {
           for (const id of allowed ?? [])
@@ -904,7 +1221,19 @@ export function createChannelStore(
         setList({ ...list, status: "error", error: describe(error) });
       }
     } finally {
+      // Failure or interruption has not fulfilled the writer requirement, even
+      // after roster authority landed. Restore it before a queued pass starts.
+      if (
+        !disposed &&
+        consistency.consistency === "strong" &&
+        outcome.state !== "verified"
+      )
+        strongListAgain = true;
       controllers.delete(controller);
+      if (!disposed && readingRoster) {
+        coverage = "partial";
+        setList({ ...list, coverage });
+      }
       listBusy = false;
       if (!disposed) {
         rosterRefresh = Object.freeze(outcome);
@@ -912,18 +1241,43 @@ export function createChannelStore(
         // read waits for deliberate retry/a later hint instead of draining work.
         if (listAgain && outcome.state !== "error") void discover(true);
         else transport.rosterChanged?.();
+        if (outcome.state === "verified")
+          for (const id of windows.keys()) revalidateCached(id);
       }
     }
   }
-  /** Resolve only returned/demanded nonmember channels, through the verified reader. */
+  /** Resolve only returned/demanded nonmember channels, through the verified reader.
+   *
+   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
+   * these properties. The create-channel path guards them with real-store tests
+   * in work-sessions.test.ts rather than through this store's own suite:
+   * - The id filter keeps every channel the store does not yet authorize, so a
+   *   just-created channel is confirmed by one exact `#d` read instead of the
+   *   full viewer-roster rediscovery. Skipping such ids would send every create
+   *   back through the full pass. Session hints route held channels to the full
+   *   pass because this filter skips them (including unarchive triggers). See
+   *   "admits a created ... channel through the store's exact read without
+   *   rediscovering the roster". A member addition to a joined channel is
+   *   confirmed by `refreshRoster` below, not by widening this filter.
+   * - Events apply through `applyDiscovery`, which always commits the list as
+   *   `ready`. Only resolve into a list discovery has already made ready; on an
+   *   idle, loading or error list this would publish a ready list holding just
+   *   these channels and hide a failed initial discovery. See "creates a channel
+   *   during initial discovery without committing a list of only that channel";
+   *   its check that every ready snapshot carries the first page's channel is
+   *   the canonical regression test.
+   * - Every call is a fresh read that the reader never merges with an identical
+   *   read in flight. The session coalesces hints across deliveries and skips
+   *   ids it is already confirming; a full pass that starts later retires
+   *   those confirmations, so a delayed grant cannot outlive the complete roster. */
   async function resolve(
     channelIds: readonly string[],
-    settings?: ReadOptions,
+    settings?: ChannelReadOptions,
   ) {
-    if (disposed || !transport || !discovery)
+    if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
     const ids = [...new Set(channelIds)].filter(
-      (id) => !discovery.authorized(id),
+      (id) => !discovery.authorized(id) || discovery.get(id)?.cached,
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");
@@ -931,24 +1285,47 @@ export function createChannelStore(
     const started = new Map(
       ids.map((id) => [id, discovery.metadataVersion(id)]),
     );
-    const events = await transport.read(
-      [
-        {
-          kinds: [39000],
-          authors: [transport.relayAuthor],
-          "#d": ids,
-          limit: ids.length + 1,
-        },
-        {
-          kinds: [39002],
-          authors: [transport.relayAuthor],
-          "#d": ids,
-          "#p": [transport.viewer],
-          limit: ids.length + 1,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
+    const cachedRosters = discovery.rosterVersions();
+    let events: readonly RelayEvent[];
+    try {
+      events = await transport.read(
+        [
+          {
+            kinds: [39000],
+            ...(settings?.consistency
+              ? { consistency: settings.consistency }
+              : {}),
+            authors: [transport.relayAuthor],
+            "#d": ids,
+            limit: ids.length + 1,
+          },
+          {
+            kinds: [39002],
+            ...(settings?.consistency
+              ? { consistency: settings.consistency }
+              : {}),
+            authors: [transport.relayAuthor],
+            "#d": ids,
+            "#p": [transport.viewer],
+            limit: ids.length + 1,
+          },
+        ],
+        { ...settings, fresh: true },
+      );
+    } catch (error) {
+      const [id] = ids;
+      if (
+        !disposed &&
+        generation === epoch &&
+        !settings?.signal?.aborted &&
+        ids.length === 1 &&
+        id &&
+        discovery.get(id)?.cached &&
+        readErrorKind(error) === "denied"
+      )
+        denyChannel(id, error);
+      throw error;
+    }
     settings?.signal?.throwIfAborted();
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel resolution", "AbortError");
@@ -981,8 +1358,22 @@ export function createChannelStore(
       ...events.filter((event) => event.kind !== 39002),
     ]);
     if (resumed) setList(list, true);
-    // Missing evidence cannot keep an earlier public preview readable.
+    // Exact viewer-scoped omission is complete for this ID, unlike a capped
+    // global roster. Cached membership cannot fall back to public metadata.
     for (const id of ids) {
+      if (
+        discovery.get(id)?.cached &&
+        discovery.rosterVersions().get(id) === cachedRosters.get(id) &&
+        !events.some(
+          (event) =>
+            event.kind === 39002 &&
+            event.pubkey === transport.relayAuthor &&
+            tag(event, "d") === id &&
+            hasTag(event, "p", transport.viewer),
+        )
+      )
+        denyChannel(id, new Error("Conversation is unavailable"));
+      // Missing evidence cannot keep an earlier public preview readable.
       if (
         !events.some(
           (event) =>
@@ -1001,9 +1392,185 @@ export function createChannelStore(
         throw new Error("Channel metadata capacity unavailable");
     }
   }
+  /** Find active public channels the viewer has not joined, by name.
+   * The relay has no metadata text search, so this reads one bounded page of
+   * relay-signed 39000 metadata without applying it, matches names locally,
+   * and admits only the matches through `resolve`. Matches become readable
+   * previews through `get`; they never enter `list()`. */
+  async function searchPublic(
+    query: string,
+    settings?: ReadOptions & { limit?: number },
+  ): Promise<PublicChannelSearch> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle) return { channels: [], partial: false };
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel search");
+    const generation = epoch;
+    const events = await transport.read(
+      [
+        {
+          kinds: [39000],
+          authors: [transport.relayAuthor],
+          limit: PUBLIC_CHANNEL_PAGE,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel search", "AbortError");
+    const metadata = events.filter(
+      (event) => event.kind === 39000 && event.pubkey === transport.relayAuthor,
+    );
+    const latest = new Map<string, RelayEvent>();
+    for (const event of metadata) {
+      const id = tag(event, "d");
+      if (id) latest.set(id, newer(latest.get(id), event));
+    }
+    const candidates = [...latest.entries()]
+      .flatMap(([id, event]) => {
+        const name = metadataName(event);
+        return openMetadata(event) &&
+          !event.tags.some(
+            ([key, value]) => key === "archived" && value === "true",
+          ) &&
+          !discovery.authorized(id) &&
+          name?.toLowerCase().includes(needle)
+          ? [{ id, name }]
+          : [];
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .slice(0, settings?.limit ?? 8);
+    // Exact resolution, not this page, owns access: it re-reads the signed
+    // metadata and the viewer roster for each match before granting a preview.
+    if (candidates.length)
+      await resolve(
+        candidates.map(({ id }) => id),
+        settings,
+      );
+    return {
+      channels: candidates.flatMap(({ id }) => {
+        const channel = discovery.get(id);
+        return channel?.readOnly && !channel.archived && !channel.cached
+          ? [channel]
+          : [];
+      }),
+      partial: metadata.length >= PUBLIC_CHANNEL_PAGE,
+    };
+  }
+  /** Re-read one authorized channel's relay-signed roster and merge it into the
+   * ready list: one exact `#d` read of a single 39002, instead of the full
+   * viewer-roster rediscovery, when an agent is added to a joined channel.
+   *
+   * This is a separate entry point because `resolve` deliberately skips ids the
+   * store already authorizes: its exact read carries cached-denial semantics for
+   * restored channels, which a member addition must not inherit. The agent-add
+   * path in work-sessions.ts `refresh` guards this method with real-store tests
+   * in work-sessions.test.ts; the merge itself is covered in store.test.ts.
+   * - Only an id the store authorizes is read. Admitting a channel the list lacks
+   *   is `resolve`'s job, and a denied id never regains access here: the method
+   *   returns without a read, so cached denials stay as they were.
+   * - The roster applies through `applyDiscovery`, which always commits the list
+   *   as `ready`, so this rejects unless discovery has already made the list
+   *   ready (the same guard `resolve` relies on; see its docstring).
+   * - The read is viewer-scoped (`#p`), so the relay never answers with a roster
+   *   this viewer is absent from. An omitted roster changes nothing: revocation
+   *   by omission stays with the complete viewer-roster pass and live traffic. */
+  async function refreshRoster(
+    channelId: string,
+    settings?: ChannelReadOptions,
+  ) {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for a roster refresh");
+    if (!discovery.authorized(channelId)) return false;
+    const generation = epoch;
+    const events = await transport.read(
+      [
+        {
+          kinds: [39002],
+          ...(settings?.consistency
+            ? { consistency: settings.consistency }
+            : {}),
+          authors: [transport.relayAuthor],
+          "#d": [channelId],
+          "#p": [transport.viewer],
+          limit: 2,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    // A list that stopped being ready in flight needs the full pass to become
+    // ready again; committing this roster now would hide that from the user.
+    if (disposed || generation !== epoch || list.status !== "ready")
+      throw new DOMException("Stale roster refresh", "AbortError");
+    if (
+      events.length > 1 ||
+      events.some(
+        (event) =>
+          event.kind !== 39002 ||
+          event.pubkey !== transport.relayAuthor ||
+          tag(event, "d") !== channelId ||
+          !hasTag(event, "p", transport.viewer),
+      )
+    )
+      throw new ReadError(
+        "invalid-response",
+        "Channel roster refresh exceeded its read budget",
+      );
+    if (events.length) applyDiscovery(events);
+    const roster = events[0];
+    return (
+      !!roster &&
+      discovery.rosterVersions().get(channelId)?.id === roster.id &&
+      discovery.authorized(channelId) &&
+      !discovery.get(channelId)?.cached
+    );
+  }
+  const cachedResolutions = new Set<string>();
+  function revalidateCached(channelId: string) {
+    if (
+      disposed ||
+      options.cachedOnly ||
+      !discovery?.get(channelId)?.cached ||
+      listBusy ||
+      rosterRefresh.state === "idle" ||
+      cachedResolutions.has(channelId)
+    )
+      return;
+    const controller = new AbortController();
+    controllers.add(controller);
+    cachedResolutions.add(channelId);
+    void resolve([channelId], { signal: controller.signal })
+      .catch((error) => {
+        const state = windows.get(channelId);
+        if (
+          !disposed &&
+          !controller.signal.aborted &&
+          state &&
+          authorized(channelId)
+        )
+          setWindow(state, { error: describe(error) });
+      })
+      .finally(() => {
+        controllers.delete(controller);
+        cachedResolutions.delete(channelId);
+      });
+  }
   async function clearCache() {
     epoch++;
     hydration = undefined;
+    revealHydration?.();
+    initialHydration = new Promise<void>((resolve) => {
+      revealHydration = resolve;
+    });
+    startup = Promise.resolve();
+    discoveryObserved = true;
+    discovery?.clearCached();
     warmCandidates.clear();
     warmEligible.clear();
     warmPreferred = [];
@@ -1013,6 +1580,7 @@ export function createChannelStore(
     for (const state of [...windows.values()]) evict(state);
     heads.clear();
     tails.clear();
+    if (discovery) setList({ ...list, channels: discovery.channels() });
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -1060,10 +1628,17 @@ export function createChannelStore(
       warming = false;
     }
   }
+  function restore() {
+    if (!prepared || !persistence?.readStartup) return Promise.resolve();
+    startup ??= restoreStartup();
+    return startup;
+  }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
     get: (id: string) => discovery?.get(id),
     resolve,
+    searchPublic,
+    refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
       windows.get(channelId)?.snapshot ?? idleWindow(channelId),
@@ -1078,10 +1653,13 @@ export function createChannelStore(
       };
     },
     ensureList() {
-      void discover();
+      if (!persistence?.readStartup) void discover();
+      else void restore().then(() => discover());
     },
-    refreshList() {
-      void discover(true);
+    refreshList(settings?: Pick<ChannelReadOptions, "consistency">) {
+      const strong = settings?.consistency === "strong";
+      if (!persistence?.readStartup) void discover(true, strong);
+      else void restore().then(() => discover(true, strong));
     },
     /** Background roster warm. The caller supplies preferred ids (e.g. starred);
      * the rest follow by recency of their retained head, never-fetched last. */
@@ -1111,7 +1689,20 @@ export function createChannelStore(
         state.cursor = retained.cursor;
         state.events = retained.events;
         state.atHead = true;
+        state.restored = retained.restored === true;
         setWindow(state, patchFromHead(retained));
+      }
+      clientMetrics.channelEnsured(
+        channelId,
+        !state.snapshot.rows.length
+          ? "network"
+          : state.restored
+            ? "disk"
+            : "memory",
+      );
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
       }
       if (transport.demand?.(channelId)) return;
       if (
@@ -1138,6 +1729,7 @@ export function createChannelStore(
         state.cursor = head.cursor;
         state.events = head.events;
         state.atHead = true;
+        state.restored = head.restored === true;
         setWindow(state, patchFromHead(head));
         prepareMedia(channelId);
       }
@@ -1146,7 +1738,13 @@ export function createChannelStore(
       void loadPage(state, null);
     },
     prepare(channelId: string) {
-      if (!prepared || disposed || !transport || !allowed?.has(channelId))
+      if (
+        !prepared ||
+        disposed ||
+        !transport ||
+        !allowed?.has(channelId) ||
+        !canReadRemote(channelId)
+      )
         return;
       intent = channelId;
       const head = heads.get(channelId);
@@ -1189,6 +1787,10 @@ export function createChannelStore(
     refresh(channelId: string) {
       if (disposed || !transport || !authorized(channelId)) return;
       const state = touch(channelId);
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
+      }
       if (transport.demand?.(channelId)) return;
       if (state.controller) return;
       if (!state.snapshot.rows.length)
@@ -1197,6 +1799,10 @@ export function createChannelStore(
     },
     loadOlder(channelId: string) {
       if (disposed || !transport) return;
+      if (!canReadRemote(channelId)) {
+        revalidateCached(channelId);
+        return;
+      }
       const state = windows.get(channelId);
       if (
         state?.snapshot.status !== "ready" ||
@@ -1214,6 +1820,9 @@ export function createChannelStore(
   let previousLocal = new Map(
     (local?.snapshot() ?? []).map((item) => [item.event.id, item]),
   );
+  const unsubscribeProfiles = directory.queries.subscribe(() => {
+    if (discoveryObserved) saveDiscovery();
+  });
   const unsubscribeLocal = local?.subscribe(() => {
     if (disposed) return;
     const next = new Map(
@@ -1301,7 +1910,8 @@ export function createChannelStore(
               ).values(),
             ]),
           );
-      tails.set(channelId, { events: retained, preview });
+      const tail = { events: retained, preview };
+      tails.set(channelId, tail, tailBytes(tail));
     }
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
@@ -1340,7 +1950,7 @@ export function createChannelStore(
       let retained = [...state.events, ...incoming];
       let limited = false;
       if (
-        byteSize(retained) > maxHistoryBytes ||
+        listByteSize(retained) > maxHistoryBytes ||
         retained.filter(
           (event) => channelRowKind(event.kind) && !localIds.has(event.id),
         ).length > maxHistoryRows
@@ -1363,7 +1973,7 @@ export function createChannelStore(
                 (tag) => tag[0] === "e" && keep.has(tag[1] ?? ""),
               )),
         );
-        while (retained.length && byteSize(retained) > maxHistoryBytes)
+        while (retained.length && listByteSize(retained) > maxHistoryBytes)
           retained.splice(0, Math.max(1, Math.ceil(retained.length / 4)));
         const retainedIds = new Set(retained.map((event) => event.id));
         for (const id of state.traffic.keys())
@@ -1380,11 +1990,10 @@ export function createChannelStore(
     for (const channelId of changedChannels) {
       const tail = tails.peek(channelId);
       const state = windows.get(channelId);
-      if (tail && state)
-        tails.set(channelId, {
-          ...tail,
-          preview: messagePreview(state.snapshot.rows),
-        });
+      if (tail && state) {
+        const next = { ...tail, preview: messagePreview(state.snapshot.rows) };
+        tails.set(channelId, next, tailBytes(next));
+      }
     }
     setList(list);
   }
@@ -1396,6 +2005,10 @@ export function createChannelStore(
     const hadHydration = hydration !== undefined;
     epoch++;
     hydration = undefined;
+    revealHydration?.();
+    initialHydration = new Promise<void>((resolve) => {
+      revealHydration = resolve;
+    });
     for (const id of warmEligible)
       if (!authorized(id)) {
         warmEligible.delete(id);
@@ -1461,12 +2074,13 @@ export function createChannelStore(
     }
     // Disk heads also carry profile and cross-channel auxiliary evidence. Drop
     // this disposable cache conservatively; pending writes use separate storage.
-    if (hadHydration) void persistence?.clear().catch(() => {});
+    if (hadHydration) void persistence?.retain([]).catch(() => {});
     setList(list);
   }
   function dispose() {
     disposed = true;
     unsubscribeLocal?.();
+    unsubscribeProfiles();
     epoch++;
     media.dispose();
     for (const controller of controllers) controller.abort();
@@ -1482,10 +2096,16 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
+    /** Preserve a retired exact confirmation's routing without scheduling work.
+     * The next refresh/Retry owns dispatch and the existing cooldown. */
+    requireStrongListRead() {
+      if (!disposed) strongListAgain = true;
+    },
     retryList() {
       if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
         void discover(true);
     },
+    restore,
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
     purgeAccess,
@@ -1528,6 +2148,7 @@ export function createChannelStore(
         );
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        retained.restored = false;
         accept(head.events);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");

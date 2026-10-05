@@ -1,3 +1,4 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
@@ -7,7 +8,6 @@ test.use({
   // Navigation can publish read positions through the real broker.
   readState: true,
   developmentReact: true,
-  historyCounts: { alpha: 1, beta: 1 },
 });
 
 const channelActivity = (page) =>
@@ -17,7 +17,9 @@ const channelActivity = (page) =>
   });
 const agentEntry = (page, agent) =>
   channelActivity(page).getByRole("button", {
-    name: new RegExp(`^View activity for .+ ${agent.slice(0, 12)}$`),
+    name: new RegExp(
+      `^View activity for .+ ${agent.slice(0, 12)}(?:, Presence: (?:online|away|offline))?$`,
+    ),
   });
 const activityPanel = (page) =>
   page.getByRole("region", { name: "Agent activity", exact: true });
@@ -31,48 +33,148 @@ const activity = (kind, channelId, turnId, payload) => ({
   ...(payload === undefined ? {} : { payload }),
 });
 
+test("sidebar activity opens the working agent panel", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const key = generateSecretKey();
+  const agent = getPublicKey(key);
+  app.observer(activity("turn_liveness", "alpha", "sidebar"), key);
+  const row = page.locator('[data-channel-id="alpha"]');
+  await expect(
+    row.getByRole("img", { name: /working in Alpha$/ }),
+  ).toBeVisible();
+  await row.hover();
+  const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
+  await expect(popup).toBeVisible();
+  await popup.getByRole("button", { name: /Open conversation for/ }).hover();
+  const action = popup.getByRole("button", { name: /View .+ activity/ });
+  await expect(action).toBeVisible();
+  await action.click();
+  await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
+});
+
+test("mention picker demands the relay's protected archive snapshot", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Mention a member or agent" }),
+  ).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        app.report.queries.filter(({ filter }) => filter.kinds?.includes(13535))
+          .length,
+    )
+    .toBeGreaterThan(0);
+  expect(
+    app.report.queries
+      .filter(({ filter }) => filter.kinds?.includes(13535))
+      .every(
+        ({ filter }) =>
+          filter.authors?.length === 1 &&
+          filter.limit === 1 &&
+          Object.keys(filter).length === 3,
+      ),
+  ).toBe(true);
+});
+
 // The composer entry is the only channel launcher. Profile activity remains the
 // durable fallback after fresh working evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and resets on disable", async ({
   page,
   app,
 }) => {
-  await open(page, app);
-  await expect(
-    page.getByRole("button", { name: "Agent Activity", exact: true }),
-  ).toHaveCount(0);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  // Hold the first explicit profile read before broker admission so telemetry
+  // demand cannot coalesce into it; hold all upstream presence responses too,
+  // including a replacement if that first request is cancelled.
+  app.relay.holdPresence();
+  const firstSnapshot = Promise.withResolvers();
+  let firstAuthors;
+  await page.route("**/presence-snapshot", async (route) => {
+    if (!firstAuthors) {
+      firstAuthors = route.request().postDataJSON()[0].authors;
+      await firstSnapshot.promise;
+    }
+    await route.fallback();
+  });
   const firstKey = generateSecretKey();
   const secondKey = generateSecretKey();
   const first = getPublicKey(firstKey);
   const second = getPublicKey(secondKey);
-  const unsafe = app.observer(
-    activity("turn_liveness", "alpha", "one", {
-      text: '<img src=x onerror="window.telemetryExecuted=true">',
-    }),
-    firstKey,
-  );
-  app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
-  app.observer(
-    {
-      kind: "batch",
-      timestamp: new Date().toISOString(),
-      channelId: "alpha",
-      payload: {
-        events: [
-          activity("acp_read", "alpha", "one", "wanted child"),
-          activity("acp_write", "beta", "other-channel", "other channel"),
-        ],
-      },
-    },
-    firstKey,
-  );
-
   const region = channelActivity(page);
-  await expect(region).toBeVisible();
   const firstEntry = agentEntry(page, first);
   const secondEntry = agentEntry(page, second);
-  await expect(firstEntry).toBeVisible();
+  let unsafe;
+  try {
+    await open(page, app);
+    await page
+      .getByRole("button", { name: "View Alice Fixture profile", exact: true })
+      .first()
+      .click();
+    await expect.poll(() => firstAuthors).toBeDefined();
+    await expect(
+      page.getByRole("button", { name: "Agent Activity", exact: true }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    unsafe = app.observer(
+      activity("turn_liveness", "alpha", "one", {
+        text: '<img src=x onerror="window.telemetryExecuted=true">',
+      }),
+      firstKey,
+    );
+    app.observer(activity("turn_liveness", "alpha", "two"), secondKey);
+    app.observer(
+      {
+        kind: "batch",
+        timestamp: new Date().toISOString(),
+        channelId: "alpha",
+        payload: {
+          events: [
+            activity("acp_read", "alpha", "one", "wanted child"),
+            activity("acp_write", "beta", "other-channel", "other channel"),
+          ],
+        },
+      },
+      firstKey,
+    );
+
+    await expect(region).toBeVisible();
+    await expect(firstEntry).toBeVisible();
+    expect(firstAuthors).not.toContain(first);
+    expect(firstAuthors).not.toContain(second);
+    // Neither agent publishes live presence in this fixture. Even if demand
+    // cancels and retries the held snapshot, neither response can label it yet.
+    await expect(firstEntry).not.toHaveAccessibleName(/, Presence:/);
+  } finally {
+    firstSnapshot.resolve();
+    app.relay.releasePresence();
+  }
+  await expect
+    .poll(() =>
+      app.report.presenceSnapshots.some(
+        ({ filter, pending, aborted }) =>
+          filter.authors.includes(first) && !pending && !aborted,
+      ),
+    )
+    .toBe(true);
+  await expect(firstEntry).toHaveAccessibleName(/, Presence: online$/);
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  // A busy skip followed by a successful retry must not masquerade as recovery.
+  expect(
+    app.report.brokerRequests.filter(({ url }) =>
+      url.endsWith("/presence-snapshot"),
+    ),
+  ).toHaveLength(app.report.presenceSnapshots.length);
   await expect(firstEntry).toContainText("working");
   await expect(secondEntry).toBeVisible();
   await expect(region).toHaveCSS("border-top-width", "0px");
@@ -153,7 +255,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect(panel.locator("pre code")).toContainText('"channelId": "alpha"');
   await expect(panel.locator("pre code")).not.toContainText("other channel");
 
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(firstEntry).toBeFocused();
   await secondEntry.click();
   await expect(panel.locator("code").first()).toHaveText(second);
@@ -161,7 +263,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     panel.getByRole("button", { name: /turn_liveness/ }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   await expect(secondEntry).toBeFocused();
   await secondEntry.click();
   await expect(panel.locator("code").first()).toHaveText(second);
@@ -175,13 +277,14 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     exact: true,
   });
   await toggle.click();
-  await expect
-    .poll(() => app.relay.hasRoute("primary", "observer"))
-    .toBe(false);
+  // Owner-review requests share the observer transport but own independent
+  // demand. Disabling the optional activity UI clears its evidence without
+  // tearing down the app-level agent-update listener.
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   expect(app.relay.sockets).toHaveLength(sockets);
   await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(region).toHaveCount(0);
@@ -193,8 +296,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
   await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(agentEntry(page, first)).toBeVisible();
@@ -207,7 +310,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
 
   // Stale evidence is unknown, not completed; one terminal turn must not hide
   // another active turn for the same agent. Capture survives closing the panel.
-  await page.getByRole("button", { name: "Close channel panel" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
   app.observer(activity("turn_completed", "alpha", "after-reset"), firstKey);
   await expect(agentEntry(page, first)).toHaveCount(0);
   app.observer(
@@ -218,10 +321,9 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     firstKey,
   );
   await expect(agentEntry(page, first)).toContainText("status unknown");
-  await expect(agentEntry(page, first).locator("svg")).toHaveCSS(
-    "animation-name",
-    "none",
-  );
+  await expect(
+    agentEntry(page, first).locator(".navigation-item-trailing svg"),
+  ).toHaveCSS("animation-name", "none");
   app.observer(activity("turn_liveness", "alpha", "fresh"), firstKey);
   await expect(agentEntry(page, first)).toContainText("working");
   app.observer(activity("turn_completed", "alpha", "fresh"), firstKey);
@@ -258,6 +360,12 @@ for (const mode of ["light", "dark"]) {
     const entry = agentEntry(page, agent);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // The shell applies its media-query change in React. Wait for that commit
+      // before measuring; otherwise these reads can straddle sidebar collapse.
+      await expect(page.locator("[data-shell-sidebar-toggle]")).toHaveAttribute(
+        "aria-label",
+        width <= 650 ? "Show navigation" : "Hide Channel sidebar",
+      );
       await expect(entry).toBeVisible();
       const entryBox = await entry.boundingBox();
       const formBox = await page
@@ -335,7 +443,13 @@ for (const mode of ["light", "dark"]) {
   });
 }
 
-const it = test.extend({ readState: true });
+const profileChannelId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const it = test.extend({
+  readState: true,
+  channelIds: [profileChannelId, "beta"],
+  channelNames: { [profileChannelId]: "Alpha" },
+  historyCounts: { [profileChannelId]: 1, beta: 1 },
+});
 it("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
@@ -343,9 +457,17 @@ it("profile activity opens the exact agent and originating channel before its fi
   await open(page, app);
   // The production broker advertises read-state writes even without the
   // readState fixture option. Exercise that publication before profile activity.
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
+  await expect(
+    page.getByRole("complementary", {
+      name: "Channel settings",
+      exact: true,
+      includeHidden: true,
+    }),
+  ).toHaveAttribute("aria-busy", "false");
+  await expect(
+    page.getByRole("button", { name: "Leave channel", exact: true }),
+  ).toBeVisible();
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {
@@ -356,15 +478,46 @@ it("profile activity opens the exact agent and originating channel before its fi
   await expect.poll(() => app.report.readPublications.length).toBe(1);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Channel settings", exact: true })
+    .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const profile = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  // A person's profile carries no activity card: neither preview nor launcher.
+  const personKey = generateSecretKey();
+  const personMessage = finalizeEvent(
+    {
+      kind: 9,
+      tags: [["h", profileChannelId]],
+      content: "Contextual person entry",
+      created_at: Math.floor(Date.now() / 1000),
+    },
+    personKey,
+  );
+  app.relay.publish("primary", personMessage);
+  await page
+    .locator(`[data-message-id="${personMessage.id}"]`)
+    .getByRole("button", { name: /profile/ })
+    .click();
+  // The settled metadata read is the barrier: no agent evidence can follow it.
+  await expect(
+    profile.getByText("No profile metadata is available in this community."),
+  ).toBeVisible();
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toHaveCount(0);
+  await expect(
+    profile.getByRole("button", { name: "View activity", exact: true }),
+  ).toHaveCount(0);
   const agentKey = generateSecretKey();
   const agent = getPublicKey(agentKey);
+  app.serveProfile(agentKey, { name: "Fixture agent", is_agent: true });
   const message = finalizeEvent(
     {
       kind: 9,
-      tags: [["h", "alpha"]],
+      tags: [["h", profileChannelId]],
       content: "Contextual agent entry",
       created_at: Math.floor(Date.now() / 1000),
     },
@@ -390,10 +543,6 @@ it("profile activity opens the exact agent and originating channel before its fi
     )
     .toBe(true);
   await avatar.click();
-  const profile = page.getByRole("complementary", {
-    name: "Profile",
-    exact: true,
-  });
   await expect(
     profile.getByRole("region", { name: "Activity preview" }),
   ).toContainText("No activity yet");
@@ -408,7 +557,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   await expect(panel.locator("code").first()).toHaveText(agent);
   await expect(
     panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+  ).toHaveText(`Alpha · ${profileChannelId}`);
   await expect(
     panel.getByText(
       /Waiting for live records for this identity in this channel/,
@@ -421,11 +570,14 @@ it("profile activity opens the exact agent and originating channel before its fi
     sessionId: null,
     timestamp: new Date().toISOString(),
   });
-  app.observer(item("acp_read", "alpha", "other-agent"), generateSecretKey());
+  app.observer(
+    item("acp_read", profileChannelId, "other-agent"),
+    generateSecretKey(),
+  );
   app.observer(item("acp_write", "beta", "other-channel"), agentKey);
   app.observer(item("session_resolved", null, "unscoped"), agentKey);
   const expected = app.observer(
-    item("turn_liveness", "alpha", "wanted"),
+    item("turn_liveness", profileChannelId, "wanted"),
     agentKey,
   );
   const row = panel.getByRole("button", { name: /turn_liveness/ });
@@ -451,6 +603,13 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
   await panel.press("Escape");
+  await expect(profile).toBeVisible();
+  const profileTab = page
+    .getByRole("tablist", { name: "Panel tabs" })
+    .getByRole("tab", { selected: true });
+  await expect(profileTab).toBeFocused();
+  await profileTab.press("Escape");
+  await expect(profile).toBeHidden();
   await expect(avatar).toBeFocused();
   await avatar.click();
   await expect(
@@ -465,7 +624,7 @@ it("profile activity opens the exact agent and originating channel before its fi
     JSON.parse(expected.plaintext).timestamp,
   );
   const update = (value) => ({
-    ...item("acp_read", "alpha", "wanted"),
+    ...item("acp_read", profileChannelId, "wanted"),
     payload: { method: "session/update", params: { update: value } },
   });
   app.observer(
@@ -561,10 +720,16 @@ it("profile activity opens the exact agent and originating channel before its fi
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();
   await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Back", exact: true })
     .click();
-  await page.locator('[data-channel-id="alpha"]').click();
+  await page.locator(`[data-channel-id="${profileChannelId}"]`).click();
+  // Channel navigation restores the existing profile tab. Close it explicitly
+  // so this exercises a fresh opening and its focus handoff after disable.
+  await page
+    .getByRole("button", { name: "Close Fixture agent tab", exact: true })
+    .click();
+  await expect(profile).toBeHidden();
   await avatar.click();
   await expect(profile).toBeVisible();
   await expect(
@@ -572,9 +737,7 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toHaveCount(0);
   // Finish the reopened profile's focus handoff and timeline layout before
   // starting read dwell; visible profile content alone proves neither.
-  await expect(
-    profile.getByRole("region", { name: "Profile details" }),
-  ).toBeFocused();
+  await expect(profileTab).toBeFocused();
   await settle(page);
   const history = page.getByRole("region", {
     name: "Channel message history",
@@ -625,7 +788,7 @@ test.describe("thread activity", () => {
     });
     const marker = page
       .locator('[data-channel-id="alpha"]')
-      .getByRole("img", { name: "Agent working", exact: true });
+      .getByRole("img", { name: /working in Alpha$/ });
     const sendTyping = (threadId, signingKey = key, secondsAgo = 0) => {
       const event = finalizeEvent(
         {
@@ -669,8 +832,21 @@ test.describe("thread activity", () => {
       name: "Reply to thread",
       exact: true,
     });
+    // Visible content can precede the dock's entrance finishing. Measure all
+    // alignment against the settled panel, not different animation frames.
+    await page.locator("[data-panel-dock]").evaluate(async (element) => {
+      await Promise.all(
+        element.getAnimations().map((animation) => animation.finished),
+      );
+    });
+    const typingIndicator = thread.getByRole("status", {
+      name: "Typing activity",
+    });
+    await expect(typingIndicator).toBeVisible();
     const entryBox = await entry.boundingBox(),
-      formBox = await form.boundingBox();
+      formBox = await form.boundingBox(),
+      typingBox = await typingIndicator.boundingBox();
+    expect(typingBox.y + typingBox.height).toBeLessThan(entryBox.y);
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
     expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
     const inset = await entry.evaluate((element) =>
@@ -696,11 +872,18 @@ test.describe("thread activity", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
     await expect(entry).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(390);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(390);
+    await expect(typingIndicator).toBeVisible();
     const narrowEntry = await entry.boundingBox(),
-      narrowForm = await form.boundingBox();
+      narrowForm = await form.boundingBox(),
+      narrowTyping = await typingIndicator.boundingBox();
+    expect(narrowTyping.y + narrowTyping.height).toBeLessThan(narrowEntry.y);
+    expect(narrowTyping.x).toBeGreaterThanOrEqual(narrowForm.x);
+    expect(narrowTyping.x + narrowTyping.width).toBeLessThanOrEqual(
+      narrowForm.x + narrowForm.width,
+    );
     expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(
       narrowForm.y,
     );
@@ -725,10 +908,14 @@ test.describe("thread activity", () => {
       }),
     ).toHaveText(/Alpha.*alpha/);
     await page
-      .getByRole("button", { name: "Close channel panel", exact: true })
+      .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
       .click();
     sendTyping();
     await expect(marker).toBeVisible();
+    const workingBox = await marker.boundingBox();
+    expect(workingBox).toEqual(
+      expect.objectContaining({ width: 26, height: 15 }),
+    );
     await expect(channelActivity(page)).toBeVisible();
     const channelBox = await channelActivity(page)
       .getByRole("button")
@@ -737,6 +924,15 @@ test.describe("thread activity", () => {
     const channelForm = await page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .boundingBox();
+    const channelTyping = page
+      .getByRole("form", { name: "Send a message to Alpha", exact: true })
+      .locator("..")
+      .getByRole("status", { name: "Typing activity" });
+    await expect(channelTyping).toBeVisible();
+    const channelTypingBox = await channelTyping.boundingBox();
+    expect(channelTypingBox.y + channelTypingBox.height).toBeLessThan(
+      channelBox.y,
+    );
     expect(channelBox.y + channelBox.height).toBeLessThanOrEqual(channelForm.y);
     await expect(marker).toHaveCount(0, { timeout: 10_000 });
     await expect(channelActivity(page)).toHaveCount(0);

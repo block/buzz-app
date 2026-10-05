@@ -27,7 +27,11 @@ export interface AgentView {
   pubkey: string;
   relayUrl: string;
   name: string;
+  /** Missing preserves existing artwork; empty removes it. */
+  picture?: string | null;
   systemPrompt: string;
+  /** Null inherits Agent defaults; imported agents can carry their own choice. */
+  sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: {
     command: string;
@@ -40,7 +44,13 @@ export interface AgentView {
   revision: number;
   runningRevision: number | null;
   enabled: boolean;
-  status: "stopped" | "starting" | "running" | "stopping" | "failed";
+  status:
+    | "stopped"
+    | "waiting"
+    | "starting"
+    | "running"
+    | "stopping"
+    | "failed";
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
@@ -61,30 +71,83 @@ export interface AgentView {
   launchProviderEnv: string | null;
   /** Empty unless a running process was started with different saved settings. */
   restartDiff: RestartDiffEntry[];
+  /** Native refuses to delete a deployed remote record. */
+  deployedRemote?: boolean;
+  /** Older imports need an explicit snapshot of their legacy team instructions. */
+  needsTeamImport?: boolean;
+  /** Absent on older hosts means an existing configured setup. */
+  configured?: boolean;
+}
+export interface ParkedIdentity {
+  pubkey: string;
+  name: string;
+  /** Historical metadata sources, not a credential availability assertion. */
+  sources: ImportSource[];
 }
 export interface ControlSnapshot {
+  localInventoryActions?: boolean;
+  parked?: ParkedIdentity[];
+  inventoryWarnings?: string[];
   agents: AgentView[];
   runtimeAvailable: boolean;
-  /** Native-owned editing suggestions, not installation or execution evidence.
+  /** Native executable presence and editing suggestions, not sign-in or execution evidence.
    * Optional so an older running native host retains editable custom values. */
   harnessOptions?: {
     command: string;
     label: string;
     available?: boolean;
+    /** Executable presence only; Pi also needs Node.js for its adapter. */
+    status?: "ready" | "cli-needed" | "adapter-needed";
+    /** The native installer is available on macOS/Linux, not Windows. */
+    installSupported?: boolean;
+    /** The selected Pi install is app-owned and older than the pinned adapter. */
+    updateSupported?: boolean;
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
+  avatarEditingAvailable?: boolean;
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
   agentDefaults?: { provider: string; model: string; ownerOnly: boolean };
+  /** Device-wide Agent defaults from Settings; environment keys only. */
+  defaultSettings?: AgentDefaultSettings;
+  /** Running agents restarted by the save that produced this snapshot. */
+  restarted?: number;
+  /** Agents whose automatic restart after that save failed. */
+  restartFailures?: number;
+}
+export interface AgentDefaultSettings {
+  harness: "buzz-agent" | "goose" | "pi";
+  provider: string;
+  model: string;
+  effort: string;
+  sessionPolicy: "channel" | "thread";
+  environmentKeys: string[];
+}
+export interface AgentDefaultsEdit
+  extends Omit<AgentDefaultSettings, "environmentKeys"> {
+  /** Missing preserves the native value; null removes it; string replaces it. */
+  environment: Record<string, string | null>;
+}
+/** Save feedback once native restarted the affected running agents. */
+export function savedMessage(restarted = 0, failures = 0) {
+  const agents = (n: number) => `${n} agent${n === 1 ? "" : "s"}`;
+  const saved =
+    restarted === 0 ? "Saved." : `Saved. Restarted ${agents(restarted)}.`;
+  return failures === 0
+    ? saved
+    : `${saved} ${agents(failures)} couldn’t restart with the new settings; check Agents.`;
 }
 export interface AgentEdit {
   name: string;
+  /** Omitted preserves artwork; empty removes it. */
+  picture?: string;
   systemPrompt: string;
+  sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: Omit<AgentView["harness"], "environmentKeys">;
   /** Missing preserves the native value; null removes it; string replaces it. */
@@ -96,8 +159,39 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type AgentLogTarget = Pick<AgentView, "id" | "pubkey" | "relayUrl"> & {
+  /** Scoped signer; never a caller-supplied identity or public key. */
+  authorize(
+    target: Pick<AgentView, "id" | "pubkey" | "relayUrl">,
+    nonce: string,
+  ): Promise<string>;
+};
+export interface HarnessInstallReport {
+  ready: boolean;
+  restarted: number;
+  restartFailures: number;
+  logPath: string;
+  output: string;
+  error: string | null;
+}
+
+export type CommunityResolution = {
+  pubkey: string;
+  relayUrl: string;
+  owner: string;
+  signature: string;
+};
+export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
+  readLog?(target: AgentLogTarget): Promise<string>;
+  configureHere?(
+    id: string,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
+  localCloneSettings?(id: string): Promise<CloneSettings>;
+  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
+  installPi?(): Promise<HarnessInstallReport>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -116,6 +210,14 @@ export interface AgentControlHost {
     expectedRevision: number,
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
+  saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
+  /** Attach replay input only; never starts or restarts a process. */
+  attachMention?(
+    id: string,
+    expectedRevision: number,
+    replayFloor: number,
+  ): Promise<void>;
   action(
     id: string,
     action: AgentAction,
@@ -131,6 +233,12 @@ export interface AgentControlState {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   data: ControlSnapshot | null;
   busy: boolean;
+  /** App-lifetime install progress and last result, independent of agent writes. */
+  piInstall?: {
+    installing: boolean;
+    report: HarnessInstallReport | null;
+    error: string | null;
+  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingCredentialWrite?: boolean;
@@ -139,7 +247,13 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  /** Sensitive local output. Native custody and exact community are rechecked per read. */
+  readLog?(target: AgentLogTarget): Promise<string>;
+  configureHere?: AgentControlHost["configureHere"];
+  localCloneSettings?: AgentControlHost["localCloneSettings"];
+  cloneSettings?: AgentControlHost["cloneSettings"];
   models?: AgentModels;
+  installPi?(): Promise<HarnessInstallReport>;
   create?(
     requestId: string,
     destination: string,
@@ -152,6 +266,8 @@ export interface AgentControl {
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   save: AgentControlHost["save"];
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
+  saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
@@ -169,15 +285,26 @@ export function agentLaunchBlock(
   state: AgentControlState,
   agent: AgentView,
 ): string | null {
+  if (agent.configured === false)
+    return "Choose Use here before starting this imported identity.";
   if (state.status !== "ready") return "Refresh status before starting.";
   if (state.busy) return "Waiting for the current operation.";
   if (!state.data?.runtimeAvailable)
     return (
       state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
     );
+  if (agent.status === "waiting")
+    return "Waiting to start; unlock Keychain if prompted.";
   if (agent.status === "starting" || agent.status === "stopping")
     return "Waiting for the process transition.";
   return null;
+}
+
+/** The host's sanitized rejection reason, if a control command carried one. */
+export function agentFailureReason(problem: unknown): string {
+  return problem instanceof Error && typeof problem.cause === "string"
+    ? problem.cause
+    : "";
 }
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
@@ -210,6 +337,7 @@ export function createAgentControl(
     status: host ? "idle" : "unavailable",
     data: null,
     busy: false,
+    piInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -217,6 +345,7 @@ export function createAgentControl(
   let generation = 0;
   let stopped = 0;
   let read: Promise<void> | null = null;
+  let installNeedsRefresh = false;
   const update = (patch: Partial<AgentControlState>) => {
     if (disposed) return;
     state = { ...state, ...patch };
@@ -229,11 +358,12 @@ export function createAgentControl(
     if (!host || disposed || state.busy) return Promise.resolve();
     if (read) return read;
     const current = generation;
-    if (!state.data) update({ status: "loading", error: null });
+    if (!state.data && state.status === "idle")
+      update({ status: "loading", error: null });
     const pending = Promise.resolve()
       .then(async () => {
-        // Only read-only native startup/contention failures are transient. Keep
-        // the coalesced read loading for up to twenty 250ms waits, not a UI error.
+        // Only read-only native startup is transient. Keep the coalesced read
+        // loading for up to twenty 250ms waits, not a UI error.
         for (let attempt = 0; !disposed && current === generation; attempt++) {
           try {
             return await host.snapshot();
@@ -241,8 +371,7 @@ export function createAgentControl(
             if (disposed || current !== generation) return;
             if (
               attempt === 20 ||
-              (error !== "Agent runtime is initializing; retry shortly" &&
-                error !== "Another native agent operation is in progress")
+              error !== "Agent runtime is initializing; retry shortly"
             )
               throw error;
             await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -258,7 +387,7 @@ export function createAgentControl(
             update({
               status: "error",
               error:
-                "Could not refresh local agents. Retry to get current host status.",
+                "Could not refresh local agents. Current host status is unconfirmed.",
             });
         },
       )
@@ -267,6 +396,18 @@ export function createAgentControl(
       });
     read = pending;
     return pending;
+  }
+
+  async function refreshAfterInstall(): Promise<void> {
+    if (!installNeedsRefresh || disposed || state.busy) return;
+    installNeedsRefresh = false;
+    // An earlier snapshot may have started before the installer completed.
+    if (read) await read;
+    if (state.busy) {
+      installNeedsRefresh = true;
+      return;
+    }
+    await refresh();
   }
 
   async function run<T>(
@@ -299,13 +440,15 @@ export function createAgentControl(
       return result;
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
-      const detail = typeof error === "string" ? `${error} ` : "";
-      if (current === generation)
-        update({
-          status: "error",
-          error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
-        });
-      throw new Error("Could not confirm the agent operation.");
+      const detail =
+        typeof error === "string"
+          ? `${error}${/[.!?]$/.test(error) ? "" : "."}`
+          : "";
+      const message = `${detail ? `${detail} ` : ""}Could not confirm the operation. Check current status and saved settings before retrying; the operation will not be repeated automatically. Your edits are retained.`;
+      if (current === generation) update({ status: "error", error: message });
+      // Dialogs own failed-write details after a successful status read; the
+      // cause carries the host reason without its unconfirmed-status guidance.
+      throw new Error(message, detail ? { cause: detail } : undefined);
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
       // newer Stop's result/error. Credential writes may commit; refresh recovers them.
@@ -322,6 +465,7 @@ export function createAgentControl(
           busy: !!(state.pendingLaunch || state.pendingCredentialWrite),
         });
       }
+      void refreshAfterInstall();
     }
   }
 
@@ -339,8 +483,53 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  const installPi = host?.installPi;
   return {
     models,
+    ...(host?.readLog
+      ? {
+          readLog: async (target: AgentLogTarget) => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const readLog = host.readLog;
+            if (!readLog) throw new Error(agentControlUnavailable);
+            const content = await readLog(target);
+            if (disposed) throw new Error(agentControlUnavailable);
+            return content;
+          },
+        }
+      : {}),
+    ...(installPi
+      ? {
+          installPi: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            if (state.piInstall?.installing)
+              throw new Error("A Harness installation is already in progress.");
+            if (state.status !== "ready" || state.busy)
+              throw new Error("Refresh local agents before installing Pi.");
+            update({
+              piInstall: { installing: true, report: null, error: null },
+            });
+            try {
+              const report = await installPi();
+              update({ piInstall: { installing: false, report, error: null } });
+              return report;
+            } catch {
+              update({
+                piInstall: {
+                  installing: false,
+                  report: null,
+                  error:
+                    "Couldn’t install Pi. Try again or check the desktop app.",
+                },
+              });
+              throw new Error("Could not install Pi.");
+            } finally {
+              installNeedsRefresh = true;
+              await refreshAfterInstall();
+            }
+          },
+        }
+      : {}),
     ...(host?.prepareCreate && host.commitCreate
       ? {
           create: async (
@@ -420,7 +609,43 @@ export function createAgentControl(
     },
     refresh,
     save: (id, revision, edit) =>
-      run((native) => native.save(id, revision, edit), ready),
+      // Save may restart running agents and wait on their OS credential
+      // prompts; like other credential waits, recovery Stop stays available
+      // and a superseded result never replaces the newer Stop's evidence.
+      run(
+        (native) => native.save(id, revision, edit),
+        ready,
+        false,
+        undefined,
+        true,
+      ),
+    ...(host?.saveDefaults
+      ? {
+          saveDefaults: (edit: AgentDefaultsEdit) =>
+            run(
+              (native) => {
+                if (!native.saveDefaults)
+                  throw new Error("Agent defaults are unavailable.");
+                return native.saveDefaults(edit);
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(host?.delete
+      ? {
+          // Resolve the host method per call, like every other command.
+          delete: (id: string, revision: number) =>
+            run((native) => {
+              if (!native.delete)
+                throw new Error("Agent deletion is unavailable.");
+              return native.delete(id, revision);
+            }, ready),
+        }
+      : {}),
     action,
     dismissMentionError: () => update({ mentionError: null }),
     prepareMention(pubkeys, relayUrl, replayFloor, signal) {
@@ -441,14 +666,38 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              agent.configured !== false &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];
         const failures: string[] = [];
         for (const agent of agents) {
           if (!valid()) return;
-          if (agent.status === "running" || state.pendingLaunch === agent.id)
+          if (agent.status === "running" && state.pendingLaunch !== agent.id)
             continue;
+          if (
+            agent.status === "waiting" ||
+            agent.status === "starting" ||
+            state.pendingLaunch === agent.id
+          ) {
+            try {
+              if (!host.attachMention)
+                throw new Error("Replay attachment unavailable");
+              // Replay metadata has its own native admission. It never mutates the
+              // projection or supersedes the in-flight Start/Stop write lane.
+              await host.attachMention(
+                agent.id,
+                agent.revision,
+                Math.min(replayFloor, earliestPending),
+              );
+            } catch {
+              if (!valid()) return;
+              failures.push(
+                `${agent.name}'s pending launch could not confirm replay of this mention. Open Agents to check its status.`,
+              );
+            }
+            continue;
+          }
           try {
             const result = await action(
               agent.id,
@@ -474,6 +723,51 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.configureHere
+      ? {
+          configureHere: (id: string, resolution: CommunityResolution) =>
+            run(
+              (native) => {
+                if (!native.configureHere)
+                  throw new Error("Use here is unavailable.");
+                return native.configureHere(id, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(host?.localCloneSettings
+      ? {
+          localCloneSettings: (id: string) =>
+            run(
+              (native) => {
+                if (!native.localCloneSettings)
+                  throw new Error("Local clone is unavailable.");
+                return native.localCloneSettings(id);
+              },
+              () => {},
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(host?.cloneSettings
+      ? {
+          cloneSettings: (source: ImportSource, pubkey: string) =>
+            run(
+              (native) => {
+                if (!native.cloneSettings)
+                  throw new Error("Clone settings are unavailable.");
+                return native.cloneSettings(source, pubkey);
+              },
+              () => {},
+            ),
+        }
+      : {}),
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

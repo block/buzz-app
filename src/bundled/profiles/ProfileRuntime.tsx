@@ -1,16 +1,26 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   AgentControl,
   AgentView,
+  AgentLogTarget,
   RestartChange,
   RestartDiffEntry,
 } from "../../features/agents/control";
 import { useAgentControl } from "../../features/agents/control-react";
+import type { OpenResult } from "../../features/navigation/controller";
+import { exactProfileAgent } from "../../features/profiles/instance-target";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
+import { FileTextIcon, CaretRightIcon } from "../../shared/design-system/icons";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { AgentEditor } from "../agents/AgentEditor";
@@ -20,22 +30,28 @@ import styles from "./Profiles.module.css";
 const AUTO_RESTART_OFF_BLURB =
   "Configuration changed since this agent started. Automatic restart is off for this agent — stop and respawn it to apply the changes.";
 
-/** The exact native record for this key in the active community, if unambiguous. */
-export function useRuntimeAgent(
+/** Matching native inventory and unambiguous configuration record in this community. */
+export function useRuntimeAgents(
   control: AgentControl | undefined,
   scope: string | undefined,
   pubkey: string,
-): AgentView | undefined {
+  instanceId?: string,
+): { count: number; agent: AgentView | undefined; pending: boolean } {
   const state = useSyncExternalStore(
     control?.subscribe ?? noSubscribe,
     control?.snapshot ?? noState,
     control?.snapshot ?? noState,
   );
-  if (!scope || !state?.data) return undefined;
+  const pending = state?.status === "idle" || state?.status === "loading";
+  if (!scope || !state?.data) return { count: 0, agent: undefined, pending };
   const matches = sameCommunityAgents(state.data.agents, scope).filter(
     (agent) => agent.pubkey === pubkey,
   );
-  return matches.length === 1 ? matches[0] : undefined;
+  return {
+    count: matches.length,
+    pending,
+    agent: exactProfileAgent(state.data.agents, scope, pubkey, instanceId),
+  };
 }
 const noSubscribe = () => () => {};
 const noState = () => null;
@@ -43,14 +59,22 @@ const noState = () => null;
 /** Owner-only saved and running configuration. The caller verifies ownership. */
 export function ProfileRuntime({
   control,
+  onOpenHarnesses,
   agent,
   session,
   owner,
+  instances,
+  authorizeLog,
+  onOpenLog,
 }: {
   control: AgentControl;
+  onOpenHarnesses?: (() => Promise<OpenResult>) | undefined;
   agent: AgentView;
   session: RelaySession;
   owner: string;
+  instances: ReactNode;
+  authorizeLog?: AgentLogTarget["authorize"] | undefined;
+  onOpenLog?(target: AgentLogTarget): void;
 }) {
   const state = useAgentControl(control);
   const [editing, setEditing] = useState(false);
@@ -108,13 +132,43 @@ export function ProfileRuntime({
       )}
       <section aria-label="Activity" className={styles.runtime}>
         <h3 className="text-body">Activity</h3>
-        <Rows rows={[["Status", statusLabel(agent.status)]]} />
-        <Switch
-          label="Start on launch"
-          checked={agent.startOnAppLaunch}
-          disabled={blocked}
-          onCheckedChange={toggle}
-        />
+        <div className={styles.activityRows}>
+          <div className={styles.activityRow}>
+            <span>Status</span>
+            <span className={styles.activityStatus} data-status={agent.status}>
+              {statusLabel(agent.status)}
+            </span>
+          </div>
+          <div className={styles.activityRow}>
+            <Switch
+              label="Start on launch"
+              checked={agent.startOnAppLaunch}
+              disabled={blocked}
+              onCheckedChange={toggle}
+            />
+          </div>
+          {control.readLog && authorizeLog && onOpenLog && (
+            <div className={styles.logEntry}>
+              <Button
+                size="compact"
+                variant="ghost"
+                disabled={state.status !== "ready"}
+                onClick={() =>
+                  onOpenLog({
+                    id: agent.id,
+                    pubkey: agent.pubkey,
+                    relayUrl: agent.relayUrl,
+                    authorize: authorizeLog,
+                  })
+                }
+              >
+                <FileTextIcon size={18} aria-hidden="true" />
+                Harness log
+                <CaretRightIcon size={18} aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+        </div>
       </section>
       {state.status === "error" && (
         <div className="flex flex-col items-start gap-2">
@@ -167,6 +221,7 @@ export function ProfileRuntime({
           ))}
         </dl>
       </section>
+      {instances}
       {!!advanced.length && (
         <section aria-label="Advanced" className={styles.runtime}>
           <h3 className="text-body">Advanced</h3>
@@ -179,6 +234,15 @@ export function ProfileRuntime({
           control={control}
           state={state}
           onClose={() => setEditing(false)}
+          onOpenHarnesses={
+            onOpenHarnesses
+              ? () => {
+                  void onOpenHarnesses().then((result) => {
+                    if (result.status === "opened") setEditing(false);
+                  });
+                }
+              : undefined
+          }
         />
       )}
       {notice && (
@@ -235,6 +299,8 @@ function respondToLabel(
 }
 
 function statusLabel(status: AgentView["status"]) {
+  if (status === "waiting")
+    return "Waiting to start · unlock Keychain if prompted";
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 

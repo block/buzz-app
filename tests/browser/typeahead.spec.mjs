@@ -1,8 +1,19 @@
 import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
+};
+// Wait until the directory page for this query has settled, so a late page
+// cannot race the step under test.
+const settled = async (page, query) => {
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.searches()))
+    .toContain(query);
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
+    .toBe(0);
 };
 const expectAvatarShape = async (target, shape) => {
   await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
@@ -63,6 +74,7 @@ test("open completion republishes library-only display hints without changing th
     .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
     .toBe(1);
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: new RegExp(keys.first),
   });
@@ -107,6 +119,7 @@ for (const mode of ["light", "dark"]) {
       // Keep pointer hover from supplying a second highlight during keyboard use.
       await page.mouse.move(0, 0);
       await input.fill(kind === "mention" ? "@Ho" : ":smile");
+      if (kind === "mention") await settled(page, "Ho");
       const popup = page.getByRole("region", {
         name: kind === "mention" ? "Mention suggestions" : "Emoji suggestions",
         exact: true,
@@ -114,7 +127,7 @@ for (const mode of ["light", "dark"]) {
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
       if (kind === "mention") {
-        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("border-radius", "16px");
         await expect(popup).toHaveCSS("padding", "12px");
         await expect(popup).toHaveCSS("width", "380px");
         await expect(options.first()).toHaveCSS("padding", "8px");
@@ -138,7 +151,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(245, 245, 246)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
@@ -180,8 +193,7 @@ for (const mode of ["light", "dark"]) {
 test("typeahead replaces only the query and publishes selected namesake identity, including replies", async ({
   page,
 }) => {
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  const errors = watchPageErrors(page);
   const input = await open(page);
   const keys = await page.evaluate(() => ({
     first: window.mentionFixture.first,
@@ -229,7 +241,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
   const sent = await page.evaluate(() => window.mentionFixture.publications[1]);
   expect(sent.tags).toContainEqual(["e", "a".repeat(64), "", "reply"]);
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", keys.first]]);
-  expect(errors).toEqual([]);
+  expect(errors.unexplained()).toEqual([]);
 });
 test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preserve ordinary editing", async ({
   page,
@@ -453,7 +465,16 @@ test("selection follows IDs through reordering and rejected replacement never fa
     );
   const a = { id: "a", label: "Alpha", edit: { text: "A" } },
     b = { id: "b", label: "Beta", edit: { text: "B" } };
+  expect(await publish([b])).toBe(true);
+  await expect(page.getByRole("option", { name: "Beta" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   expect(await publish([a, b])).toBe(true);
+  await expect(page.getByRole("option", { name: "Alpha" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await input.press("ArrowDown");
   await expect(page.getByRole("option", { name: "Beta" })).toHaveAttribute(
     "aria-selected",
@@ -500,6 +521,44 @@ test("selection follows IDs through reordering and rejected replacement never fa
     await page.evaluate(() => window.completionFixture.publications.length),
   ).toBe(0);
 });
+test("emoji completion starts at the first ranked result when Unicode joins community matches", async ({
+  page,
+}, testInfo) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42"><circle cx="21" cy="21" r="20" fill="purple"/></svg>',
+    }),
+  );
+  await page.goto("/tests/fixtures/emoji.html");
+  await page.mouse.move(0, 0);
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  // Load the community catalog before starting a new query, as in a live composer.
+  await input.fill(":enjoy");
+  await expect(
+    page.getByRole("option", { name: ":enjoy:", exact: true }),
+  ).toBeVisible();
+  for (const query of ["joy", "grin"]) {
+    await input.fill(`:${query}`);
+    const list = page.getByRole("listbox", { name: "Emoji suggestions" });
+    const first = list.getByRole("option").first();
+    await expect(first).toHaveAccessibleName(`:${query}:`);
+    await expect(first).toHaveAttribute("aria-selected", "true");
+    await expect(list).toHaveJSProperty("scrollTop", 0);
+    if (query === "joy")
+      await page
+        .getByRole("region", { name: "Emoji suggestions", exact: true })
+        .screenshot({
+          path: testInfo.outputPath("emoji-first-result.png"),
+        });
+    await input.press("Enter");
+    await expect(input).toHaveJSProperty(
+      "value",
+      query === "joy" ? "😂" : "😁",
+    );
+  }
+});
+
 test("current custom catalog drives typeahead and signed tags across community replacement", async ({
   page,
 }, testInfo) => {
@@ -548,8 +607,8 @@ test("current custom catalog drives typeahead and signed tags across community r
   const selectedParty = partyOptions.first();
   const hoveredParty = partyOptions.nth(1);
   await expect(selectedParty).toHaveAttribute("aria-selected", "true");
-  await expect(suggestions).toHaveCSS("border-radius", "24px");
-  await expect(selectedParty).toHaveCSS("border-radius", "18px");
+  await expect(suggestions).toHaveCSS("border-radius", "16px");
+  await expect(selectedParty).toHaveCSS("border-radius", "9px");
   const nativeEmoji = partyOptions.locator("[data-native-emoji]").first();
   await expect(nativeEmoji).toBeVisible();
   expect(
@@ -588,7 +647,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
   await expect(hoveredParty).toHaveCSS(
     "background-color",
-    "rgb(232, 232, 232)",
+    "rgb(245, 245, 246)",
   );
   const partyList = page.getByRole("listbox", {
     name: "Emoji suggestions",
@@ -796,14 +855,13 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     second: window.mentionFixture.second,
   }));
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: `Honey ${keys.first}`,
     exact: true,
   });
-  const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
-  });
+  // The directory labels the second Honey as an agent, so match its key.
+  const second = page.getByRole("option", { name: new RegExp(keys.second) });
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.refresh());
   await expect(first).toBeVisible();
@@ -819,7 +877,12 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     .toBe("Unrelated preview");
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.removeFirst());
+  // The removed member is now outside the channel. Its row stays but is
+  // disabled: adding them needs a fresh review.
   await expect(first).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: /Channel membership changed/ }),
+  ).toHaveAttribute("aria-disabled", "true");
   await expect(second).toBeVisible();
   await second.click();
   await expect(input).toHaveJSProperty("value", "@Honey ");

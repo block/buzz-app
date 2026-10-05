@@ -1,5 +1,5 @@
 use crate::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -7,14 +7,42 @@ use std::path::Path;
 pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_AGENTS: usize = 2000;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionPolicy {
+    #[default]
+    Channel,
+    Thread,
+}
+
+impl SessionPolicy {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Channel => "channel",
+            Self::Thread => "thread",
+        }
+    }
+}
+fn is_false(value: &bool) -> bool {
+    !value
+}
+fn policy_edit<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<SessionPolicy>>, D::Error> {
+    Option::<SessionPolicy>::deserialize(deserializer).map(Some)
+}
+
 // Only these explicit projections may cross IPC. Environment values and unknown
 // legacy fields remain native-only even when they do not look like credentials.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlSnapshot {
     pub agents: Vec<AgentView>,
+    pub parked: Vec<crate::store::ParkedIdentity>,
     pub runtime_available: bool,
     pub runtime_message: Option<String>,
+    /// Device-wide defaults; environment keys only.
+    pub default_settings: crate::agent_defaults::AgentDefaultsView,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,7 +51,11 @@ pub struct AgentView {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
+    /// Saved choice; null uses Agent defaults unless an imported policy exists.
+    pub session_policy: Option<SessionPolicy>,
     pub workspace: String,
     pub harness: HarnessView,
     pub revision: u64,
@@ -41,8 +73,8 @@ pub struct AgentView {
     pub backend: Option<String>,
     pub acp_command: Option<String>,
     pub mcp_command: Option<String>,
-    /// Model/provider the next start passes to the worker from saved selectors
-    /// or build defaults; `None` when an environment override decides it.
+    /// Model/provider the next start passes to the worker from saved selectors,
+    /// agent defaults or build defaults; `None` when an environment override decides it.
     pub launch_model: Option<String>,
     pub launch_provider: Option<String>,
     /// Environment key deciding that selector. Its value never leaves native.
@@ -50,6 +82,9 @@ pub struct AgentView {
     pub launch_provider_env: Option<&'static str>,
     /// Redacted saved-versus-running differences while the process is alive.
     pub restart_diff: Vec<crate::restart::RestartDiffEntry>,
+    pub deployed_remote: bool,
+    pub needs_team_import: bool,
+    pub configured: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +100,7 @@ pub struct HarnessView {
 #[serde(rename_all = "lowercase")]
 pub enum ProcessStatus {
     Stopped,
+    Waiting,
     Starting,
     Running,
     Stopping,
@@ -74,7 +110,12 @@ pub enum ProcessStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
+    /// Missing preserves the current choice; null explicitly inherits defaults.
+    #[serde(default, deserialize_with = "policy_edit")]
+    pub session_policy: Option<Option<SessionPolicy>>,
     pub workspace: String,
     pub harness: HarnessEdit,
     /// Absence preserves; null deletes; a value replaces. Never a read API.
@@ -97,7 +138,14 @@ pub(crate) struct Agent {
     pub pubkey: String,
     pub relay_url: String,
     pub name: String,
+    #[serde(default)]
+    pub picture: Option<String>,
     pub system_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_policy: Option<SessionPolicy>,
+    /// Distinguish an explicit default choice from a legacy imported policy.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub session_policy_inherit: bool,
     pub workspace: String,
     pub harness: HarnessEdit,
     pub environment: BTreeMap<String, String>,
@@ -115,15 +163,22 @@ pub(crate) struct Agent {
     pub extra: BTreeMap<String, Value>,
 }
 impl Agent {
-    pub fn view(&self) -> AgentView {
+    pub(crate) fn configured(&self) -> bool {
+        self.extra.get("configured") != Some(&Value::Bool(false))
+    }
+    /// `inherited` supplies launch selectors; the saved harness is shown as saved.
+    pub(crate) fn view(&self, inherited: &crate::agent_defaults::AgentDefaults) -> AgentView {
         let defaults = crate::build_defaults();
-        let launch = defaults.launch_view(&self.harness, &self.environment);
+        let effective = crate::agent_defaults::effective(self, inherited);
+        let launch = defaults.launch_view(&effective.harness, &effective.environment);
         AgentView {
             id: self.id.clone(),
             pubkey: self.pubkey.clone(),
             relay_url: self.relay_url.clone(),
             name: self.name.clone(),
+            picture: self.picture.clone(),
             system_prompt: self.system_prompt.clone(),
+            session_policy: self.selected_session_policy(),
             workspace: self.workspace.clone(),
             harness: HarnessView {
                 command: self.harness.command.clone(),
@@ -139,6 +194,7 @@ impl Agent {
             status: ProcessStatus::Stopped,
             error: None,
             diagnostics: Vec::new(),
+            configured: self.configured(),
             profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
@@ -153,10 +209,42 @@ impl Agent {
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),
+            deployed_remote: self.deployed_remote(),
+            needs_team_import: self.needs_team_import(),
         }
+    }
+    pub fn needs_team_import(&self) -> bool {
+        let record = &self.imported["record"];
+        ["team_id", "persona_team_dir"].iter().any(|field| {
+            record[field]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        }) && self.imported.get("teamInstructions").is_none()
     }
     pub fn starts_on_launch(&self) -> bool {
         self.start_on_app_launch.unwrap_or(self.enabled)
+    }
+    pub(crate) fn selected_session_policy(&self) -> Option<SessionPolicy> {
+        if self.session_policy_inherit {
+            return None;
+        }
+        self.session_policy.or_else(|| {
+            // Old Buzz omitted Channel on serialization; a linked definition
+            // still wins over the record when its field is absent.
+            let imported = self
+                .imported
+                .get("definition")
+                .filter(|value| value.is_object())
+                .or_else(|| {
+                    self.imported
+                        .get("record")
+                        .filter(|value| value.is_object())
+                })?;
+            Some(match imported["session_policy"].as_str() {
+                Some("thread") => SessionPolicy::Thread,
+                _ => SessionPolicy::Channel,
+            })
+        })
     }
     pub fn respond_to(&self, owner_only: bool) -> Result<&str> {
         let respond_to = if owner_only {
@@ -172,14 +260,34 @@ impl Agent {
             Err("Invalid imported response policy".into())
         }
     }
+    /// An imported record for an agent hosted by a remote backend.
+    pub fn deployed_remote(&self) -> bool {
+        let record = &self.imported["record"];
+        record["backend"]["type"]
+            .as_str()
+            .is_some_and(|s| s != "local")
+            && !record["backend_agent_id"].is_null()
+    }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
+        if let Some(picture) = edit.picture {
+            validate_picture(&picture)?;
+            if self.picture.as_ref() != Some(&picture) {
+                self.picture = Some(picture);
+                self.extra
+                    .insert("profilePending".into(), Value::Bool(true));
+            }
+        }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;
+        if let Some(policy) = edit.session_policy {
+            self.session_policy = policy;
+            self.session_policy_inherit = policy.is_none();
+        }
         self.workspace = edit.workspace;
         self.harness = edit.harness;
         for (key, value) in edit.environment {
-            validate_env_key(&key)?;
             if let Some(value) = value {
+                validate_env_key(&key, &self.harness.command)?;
                 text(&value, 32 * 1024, "Environment value")?;
                 self.environment.insert(key, value);
             } else {
@@ -207,6 +315,9 @@ impl Agent {
             return Err("Agent name is required".into());
         }
         text(&self.name, 256, "Agent name")?;
+        if let Some(picture) = &self.picture {
+            validate_picture(picture)?;
+        }
         text(&self.system_prompt, 128 * 1024, "System prompt")?;
         text(&self.workspace, 4096, "Workspace")?;
         if !Path::new(&self.workspace).is_absolute() {
@@ -231,7 +342,7 @@ impl Agent {
         if let Some(settings) = &self.harness.databricks {
             settings.validate()?;
         }
-        validate_environment(&self.environment)
+        validate_environment(&self.environment, &self.harness.command)
     }
 }
 pub(crate) fn canonical_key(key: &str) -> bool {
@@ -274,26 +385,44 @@ fn text(value: &str, limit: usize, label: &str) -> Result<()> {
         Ok(())
     }
 }
-pub(crate) fn validate_environment(environment: &BTreeMap<String, String>) -> Result<()> {
+pub(crate) fn validate_environment(
+    environment: &BTreeMap<String, String>,
+    command: &str,
+) -> Result<()> {
     if environment.len() > 128 {
         return Err("Too many environment entries".into());
     }
     for (key, value) in environment {
-        validate_env_key(key)?;
+        validate_env_key(key, command)?;
         text(value, 32 * 1024, "Environment value")?;
+        if key == "BUZZ_ACP_AGENTS"
+            && !value
+                .parse::<u32>()
+                .is_ok_and(|count| (1..=32).contains(&count))
+        {
+            return Err("Agent worker count must be an integer from 1 to 32".into());
+        }
     }
     Ok(())
 }
-fn validate_env_key(key: &str) -> Result<()> {
+pub(crate) fn validate_env_key(key: &str, command: &str) -> Result<()> {
     let upper = key.to_ascii_uppercase();
+    let behavior_overrides = matches!(
+        crate::agent_defaults::harness_kind(command),
+        Some("pi" | "goose")
+    );
     if key.is_empty()
         || key.len() > 128
         || !key
             .bytes()
             .enumerate()
             .all(|(i, c)| c == b'_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
-        || upper.starts_with("BUZZ_ACP_")
-        || upper.starts_with("BUZZ_MANAGED_")
+        // Pi/Goose retain old Buzz's behavior overrides. Other harnesses keep
+        // their namespace restrictions; Create's worker count is editable.
+        || (!behavior_overrides
+            && ((upper.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
+                || upper.starts_with("BUZZ_MANAGED_")))
+        || (upper == "BUZZ_ACP_AGENTS" && key != "BUZZ_ACP_AGENTS")
         || upper.starts_with("BUZZ_APP_")
         || upper.starts_with("GIT_CONFIG_")
         || matches!(
@@ -305,6 +434,28 @@ fn validate_env_key(key: &str) -> Result<()> {
                 | "BUZZ_API_TOKEN"
                 | "BUZZ_AGENT_CONFIG_DIR"
                 | "PI_ACP_PI_COMMAND"
+                // Identity, routing, execution and saved response policy.
+                | "BUZZ_ACP_PRIVATE_KEY"
+                | "BUZZ_ACP_API_TOKEN"
+                | "BUZZ_ACP_AGENT_COMMAND"
+                | "BUZZ_ACP_AGENT_ARGS"
+                | "BUZZ_ACP_MCP_COMMAND"
+                | "BUZZ_ACP_LAUNCH_PREFIX"
+                | "BUZZ_ACP_RESPOND_TO"
+                | "BUZZ_ACP_RESPOND_TO_ALLOWLIST"
+                | "BUZZ_ACP_ALLOWED_RESPOND_TO"
+                | "BUZZ_ACP_AGENT_OWNER"
+                | "BUZZ_ACP_DISPLAY_NAME"
+                | "BUZZ_ACP_TEAM_INSTRUCTIONS"
+                // Host-owned lifetime, readiness and per-send replay policy.
+                | "BUZZ_ACP_EXIT_AFTER_INACTIVITY"
+                | "BUZZ_ACP_IDLE_POOL_SLEEP"
+                | "BUZZ_ACP_SESSION_POLICY"
+                | "BUZZ_ACP_NO_PRESENCE"
+                | "BUZZ_ACP_SETUP_PAYLOAD"
+                | "BUZZ_ACP_REPLAY_FLOOR"
+                | "BUZZ_MANAGED_AGENT"
+                | "BUZZ_MANAGED_AGENT_START_NONCE"
         )
     {
         // Do not interpolate arbitrary user text into diagnostics.
@@ -312,4 +463,22 @@ fn validate_env_key(key: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn validate_picture(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.len() <= 2048 {
+        if let Ok(url) = url::Url::parse(value) {
+            if url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err("Avatar must be an HTTPS image URL without credentials".into())
 }

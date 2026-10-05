@@ -1,24 +1,19 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
-import { Switch } from "../shared/design-system/ui/Switch";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
-import {
-  SquaresFourIcon,
-  UserIcon,
-  PaletteIcon,
-  BellIcon,
-  ChatCircleIcon,
-  KeyboardIcon,
-  WrenchIcon,
-} from "../shared/design-system/icons/index";
+import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 
 import type { Appearance } from "../shared/theme/service";
@@ -29,85 +24,74 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
-import { MessageSettings } from "./MessageSettings";
+import { AgentSettings } from "./AgentSettings";
+import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
-
-type Section = { id: string; label: string; icon: typeof UserIcon };
-
-const baseSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "messages", label: "Messages", icon: ChatCircleIcon },
-  { id: "notifications", label: "Notifications", icon: BellIcon },
-];
-
-// DEV alone is not enough: packaged desktop builds load a production bundle
-// from tauri://localhost, so the hostname check excludes them too.
-export const developerMode =
-  import.meta.env.DEV &&
-  /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
-
-const sections: Section[] = developerMode
-  ? [...baseSections, { id: "developer", label: "Developer", icon: WrenchIcon }]
-  : baseSections;
+import type { Updates } from "../features/updates/updates";
+import { UpdateSettings } from "../features/updates/UpdateSettings";
+import { developerMode, settingsSections } from "./settings-sections";
 
 export function Settings({
   cards,
   plugins,
   communities,
+  identity,
   appearance,
   shortcuts,
   shortcutBindings,
   notifications,
+  agentControl,
+  updates,
   navigation,
   onSection,
+  navigationPane = false,
 }: {
   cards: SettingsCards;
+  agentControl: AgentControl;
   plugins: PluginManager;
   communities: Communities;
+  identity?: Identity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
   notifications: NotificationsService;
+  updates: Updates;
   navigation?:
     | import("../features/navigation/service").PageNavigation
     | undefined;
   onSection?: (section: string) => void;
+  navigationPane?: boolean;
 }) {
+  useEffect(() => cards.retainVisibility(), [cards]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const messageCards = contributed.filter((card) => !card.group);
-  const groups = [
-    ...new Set(contributed.flatMap((card) => card.group ?? [])),
-  ].map((label) => ({
-    label,
-    cards: contributed.filter((card) => card.group === label),
-  }));
-  const [chosen, setSelected] = useState("profile");
-  // A grouped card's section is its contribution key; it closes with its plugin.
-  const selected =
-    sections.some((section) => section.id === chosen) ||
-    contributed.some((card) => card.group && card.key === chosen)
-      ? chosen
-      : "profile";
+  const client = useSyncExternalStore(
+    communities.subscribe,
+    communities.snapshot,
+  );
+  const selectedCommunity = client.memberships.find(
+    (membership) => membership.id === client.selected,
+  );
+  const { groups, sections, defaultSection } = useMemo(
+    () => settingsSections(contributed, selectedCommunity),
+    [contributed, selectedCommunity],
+  );
+  const [selected, setSelected] = useState(defaultSection);
   const requestedSection =
     navigation?.target.kind === "settings"
-      ? (navigation.target.section ?? "profile")
+      ? (navigation.target.section ?? defaultSection)
       : undefined;
   useEffect(() => {
     if (
       requestedSection &&
-      (sections.some((section) => section.id === requestedSection) ||
-        contributed.some((card) => card.group && card.key === requestedSection))
+      sections.some((section) => section.id === requestedSection)
     )
       setSelected(requestedSection);
-  }, [requestedSection, contributed]);
-  const choose = (id: string) => {
-    if (onSection) onSection(id);
-    else setSelected(id);
-  };
+    else if (!sections.some((section) => section.id === selected)) {
+      setSelected(defaultSection);
+      if (requestedSection === selected) onSection?.(defaultSection);
+    }
+  }, [defaultSection, onSection, requestedSection, selected, sections]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -118,40 +102,35 @@ export function Settings({
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
   return (
-    <div className={styles.root}>
-      <Panel aria-labelledby="settings-title">
+    <div
+      className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
+    >
+      <Panel
+        aria-label={navigationPane ? "Settings" : undefined}
+        aria-labelledby={navigationPane ? undefined : "settings-title"}
+      >
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
-            <h1 id="settings-title" className="m-0 px-3 py-4 text-label">
-              Settings
-            </h1>
+            <div className={styles.sidebarHeader}>
+              <h1 id="settings-title" className="m-0 text-label">
+                Settings
+              </h1>
+            </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              {sections.map(({ id, label, icon: Icon }) => (
-                <NavigationItem
-                  label={label}
-                  icon={<Icon aria-hidden="true" size={18} />}
-                  selected={selected === id}
-                  type="button"
-                  key={id}
-                  aria-current={selected === id ? "page" : undefined}
-                  onClick={(event) => {
-                    event.currentTarget.focus();
-                    choose(id);
-                  }}
-                />
-              ))}
               {groups.map((group) => (
-                <NavigationSection key={group.label} label={group.label}>
-                  {group.cards.map((card) => (
+                <NavigationSection key={group.id} label={group.label}>
+                  {group.sections.map(({ id, label, icon: Icon }) => (
                     <NavigationItem
-                      label={card.title}
-                      selected={selected === card.key}
+                      label={label}
+                      icon={Icon && <Icon aria-hidden="true" size={18} />}
+                      selected={selected === id}
                       type="button"
-                      key={card.key}
-                      aria-current={selected === card.key ? "page" : undefined}
+                      key={id}
+                      aria-current={selected === id ? "page" : undefined}
                       onClick={(event) => {
                         event.currentTarget.focus();
-                        choose(card.key);
+                        if (onSection) onSection(id);
+                        else setSelected(id);
                       }}
                     />
                   ))}
@@ -160,6 +139,7 @@ export function Settings({
             </nav>
           </aside>
           <div className={styles.detail}>
+            {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
                 notifications={notifications}
@@ -179,25 +159,20 @@ export function Settings({
                 plugins={plugins}
               />
             </div>
-            <div hidden={selected !== "messages"}>
-              <MessageSettings active={selected === "messages"} />
-              {selected === "messages" &&
-                messageCards.map((card) => (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
-                    {(entry, active) => {
-                      const Card = entry.component;
-                      return <Card active={active} />;
-                    }}
-                  </OwnedContribution>
-                ))}
+            <div hidden={selected !== "agents"}>
+              <AgentSettings
+                control={agentControl}
+                active={selected === "agents"}
+              />
+            </div>
+            <div hidden={selected !== "updates"}>
+              <UpdateSettings
+                updates={updates}
+                active={selected === "updates"}
+              />
             </div>
             {contributed.map(
               (card) =>
-                card.group &&
                 selected === card.key && (
                   <OwnedContribution
                     key={card.key}
@@ -206,13 +181,26 @@ export function Settings({
                   >
                     {(entry, active) => {
                       const Card = entry.component;
-                      return <Card active={active} />;
+                      return (
+                        <Card
+                          active={active}
+                          {...(!card.group && selectedCommunity
+                            ? { community: selectedCommunity }
+                            : {})}
+                        />
+                      );
                     }}
                   </OwnedContribution>
                 ),
             )}
             <div hidden={selected !== "profile"}>
-              <ProfileSettings communities={communities} />
+              <ProfileSettings
+                key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
+                communities={communities}
+                community={selectedCommunity}
+                identity={identity}
+                active={selected === "profile"}
+              />
             </div>
             {developerMode && (
               <div hidden={selected !== "developer"}>
@@ -221,9 +209,15 @@ export function Settings({
             )}
             <div hidden={selected !== "plugins"}>
               <section aria-labelledby="plugin-settings-title">
-                <h2 id="plugin-settings-title" className="mt-0 mb-6 text-label">
-                  Plugins
-                </h2>
+                <Header
+                  id="plugin-settings-title"
+                  title="Plugins"
+                  subtitle={
+                    !plugins.imports
+                      ? "Open the desktop app to load plugins from a folder or Git repository."
+                      : undefined
+                  }
+                />
                 {catalog ? (
                   <PluginImport
                     plugins={plugins}
@@ -272,43 +266,42 @@ export function Settings({
                           ? running.error
                           : null);
                       return (
-                        <article
-                          className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
-                          key={id}
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-soft text-muted">
-                              <SquaresFourIcon aria-hidden="true" size={17} />
-                            </span>
-                            <div className="min-w-0">
-                              <h3 className="m-0 text-label font-medium">
-                                {plugin.manifest.name}
-                              </h3>
-                              {failure && (
-                                <p role="alert" className="error">
-                                  {failure}
-                                </p>
-                              )}
-                            </div>
-                          </div>
+                        <article className="py-1" key={id}>
+                          {/* Channels is required and has no enable/disable control. */}
+                          {id === "buzz.channels" ? (
+                            <PreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              title={plugin.manifest.name}
+                              trailing={
+                                <span className="text-body-sm text-subtle">
+                                  Required
+                                </span>
+                              }
+                            />
+                          ) : (
+                            <SwitchPreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              label={plugin.manifest.name}
+                              aria-label={`Enable ${plugin.manifest.name}`}
+                              checked={plugin.enabled}
+                              readOnly={busy}
+                              aria-disabled={busy}
+                              onClick={(event) => event.currentTarget.focus()}
+                              onCheckedChange={() => {
+                                if (busy) return;
+                                void plugins.change(
+                                  plugin.enabled ? "disable" : "enable",
+                                  id,
+                                );
+                              }}
+                            />
+                          )}
+                          {failure && (
+                            <p role="alert" className="error text-body-sm">
+                              {failure}
+                            </p>
+                          )}
                           <div className="actions items-center">
-                            {/* Channels is required and has no enable/disable control. */}
-                            {id !== "buzz.channels" && (
-                              <Switch
-                                aria-label={`Enable ${plugin.manifest.name}`}
-                                checked={plugin.enabled}
-                                readOnly={busy}
-                                aria-disabled={busy}
-                                onClick={(event) => event.currentTarget.focus()}
-                                onCheckedChange={() => {
-                                  if (busy) return;
-                                  void plugins.change(
-                                    plugin.enabled ? "disable" : "enable",
-                                    id,
-                                  );
-                                }}
-                              />
-                            )}
                             {plugin.previous && (
                               <Button
                                 type="button"

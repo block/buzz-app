@@ -1,0 +1,319 @@
+use super::*;
+#[derive(Default)]
+struct Memory {
+    saved: Mutex<Option<Vec<u8>>>,
+    denied: Mutex<bool>,
+    write_denied: Mutex<bool>,
+    reads: Mutex<usize>,
+}
+impl Store for Arc<Memory> {
+    fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        *self.reads.lock().unwrap() += 1;
+        if *self.denied.lock().unwrap() {
+            return Err("denied".into());
+        }
+        Ok(self.saved.lock().unwrap().clone().map(Zeroizing::new))
+    }
+    fn add(&self, value: &[u8]) -> Result<()> {
+        if *self.write_denied.lock().unwrap() {
+            return Err("write denied".into());
+        }
+        let mut saved = self.saved.lock().unwrap();
+        if saved.is_some() {
+            return Err("occupied".into());
+        }
+        *saved = Some(value.to_vec());
+        Ok(())
+    }
+}
+fn identity(store: &Arc<Memory>) -> Identity {
+    Identity {
+        state: State::Unread,
+        store: Box::new(store.clone()),
+    }
+}
+fn fixture() -> Key {
+    Key(Zeroizing::new([1; 32]))
+}
+
+#[test]
+fn imports_exact_key_then_restores_and_exports_without_repeated_reads() {
+    let store = Arc::new(Memory::default());
+    let mut owner = identity(&store);
+    let nsec = fixture().nsec().unwrap();
+    let public = fixture().viewer().unwrap();
+    assert_eq!(owner.save(Some(&nsec)).unwrap(), public);
+    assert_eq!(owner.export().unwrap(), nsec);
+    assert_eq!(owner.restore().unwrap(), Some(public.clone()));
+    assert_eq!(*store.reads.lock().unwrap(), 1);
+    let mut restarted = identity(&store);
+    assert_eq!(restarted.restore().unwrap(), Some(public));
+    assert_eq!(restarted.export().unwrap(), nsec);
+    assert_eq!(*store.reads.lock().unwrap(), 2);
+}
+#[test]
+fn denied_and_corrupt_reads_cannot_create_or_overwrite() {
+    for corrupt in [false, true] {
+        let store = Arc::new(Memory::default());
+        *store.denied.lock().unwrap() = !corrupt;
+        if corrupt {
+            *store.saved.lock().unwrap() = Some(b"corrupt".to_vec());
+        }
+        let before = store.saved.lock().unwrap().clone();
+        let mut owner = identity(&store);
+        assert!(owner.restore().is_err());
+        assert!(owner.save(None).is_err());
+        assert!(owner.save(Some(&fixture().nsec().unwrap())).is_err());
+        assert_eq!(*store.saved.lock().unwrap(), before);
+        assert!(matches!(owner.state, State::Unread));
+    }
+}
+#[test]
+fn failed_persistence_never_adopts_candidate_and_retry_uses_imported_key() {
+    let store = Arc::new(Memory::default());
+    *store.write_denied.lock().unwrap() = true;
+    let mut owner = identity(&store);
+    let nsec = fixture().nsec().unwrap();
+    assert!(owner.save(Some(&nsec)).is_err());
+    assert!(owner.export().is_err());
+    assert!(store.saved.lock().unwrap().is_none());
+    *store.write_denied.lock().unwrap() = false;
+    assert_eq!(
+        owner.save(Some(&nsec)).unwrap(),
+        fixture().viewer().unwrap()
+    );
+}
+#[test]
+fn cached_absence_cannot_overwrite_an_identity_created_by_another_process() {
+    let store = Arc::new(Memory::default());
+    let mut first = identity(&store);
+    let mut second = identity(&store);
+    assert!(first.restore().unwrap().is_none());
+    let public = second.save(None).unwrap();
+    assert!(first.save(None).is_err());
+    assert_eq!(identity(&store).restore().unwrap(), Some(public));
+}
+#[test]
+fn invalid_imports_do_not_create_keys_and_saved_identity_is_immutable() {
+    let store = Arc::new(Memory::default());
+    let mut owner = identity(&store);
+    for text in [
+        "",
+        "ab",
+        &"ab".repeat(32),
+        &bech32::encode::<Bech32>(Hrp::parse("npub").unwrap(), &[1; 32]).unwrap(),
+        &Key(Zeroizing::new([0; 32])).nsec().unwrap(),
+    ] {
+        assert!(owner.save(Some(text)).is_err());
+        assert!(store.saved.lock().unwrap().is_none());
+    }
+    let public = owner.save(None).unwrap();
+    assert!(owner.save(None).is_err());
+    assert!(owner.save(Some(&fixture().nsec().unwrap())).is_err());
+    assert_eq!(owner.restore().unwrap(), Some(public));
+}
+#[test]
+fn default_test_host_cannot_access_real_credentials() {
+    assert!(IdentityHost::default().0.lock().unwrap().restore().is_err());
+}
+
+#[tokio::test]
+async fn authorize_agent_signs_for_agent_and_rejects_invalid_requests() {
+    use secp256k1::{schnorr::Signature, Secp256k1, XOnlyPublicKey};
+    let host = IdentityHost::fixture();
+    let owner = host.viewer().await.unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let tag = host
+        .authorize_agent(owner.clone(), agent.clone())
+        .await
+        .unwrap();
+    assert_eq!(&tag[..3], &["auth", owner.as_str(), ""]);
+    let signature: Signature = tag[3].parse().unwrap();
+    let pubkey: XOnlyPublicKey = owner.parse().unwrap();
+    let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+    Secp256k1::verification_only()
+        .verify_schnorr(&signature, &digest, &pubkey)
+        .unwrap();
+    assert!(host
+        .authorize_agent(agent.clone(), owner.clone())
+        .await
+        .unwrap_err()
+        .contains("signed-in identity"));
+    for invalid in ["invalid".into(), "A".repeat(64), owner.clone()] {
+        assert!(host.authorize_agent(owner.clone(), invalid).await.is_err());
+    }
+    assert!(IdentityHost::default()
+        .authorize_agent(owner, agent)
+        .await
+        .is_err());
+}
+
+#[test]
+fn remote_agent_authorization_reaches_signer_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let owner = fixture().viewer().unwrap();
+    let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
+    let response = get_ipc_response(
+        &view,
+        tauri::webview::InvokeRequest {
+            cmd: "identity_prepare_remote_agent_authorization".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: view.url().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                "owner": owner, "agentPubkey": agent
+            })),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.into(),
+        },
+    )
+    .unwrap()
+    .deserialize::<Vec<String>>()
+    .unwrap();
+    assert_eq!(&response[..3], &["auth", owner.as_str(), ""]);
+    let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+    secp256k1::Secp256k1::verification_only()
+        .verify_schnorr(
+            &response[3].parse().unwrap(),
+            &digest,
+            &owner.parse().unwrap(),
+        )
+        .unwrap();
+}
+
+#[test]
+fn uppercase_import_keeps_the_exact_key_and_mixed_case_is_rejected() {
+    let store = Arc::new(Memory::default());
+    let mut owner = identity(&store);
+    let nsec = fixture().nsec().unwrap();
+    assert!(owner.save(Some(&nsec.replacen("nsec", "NSEC", 1))).is_err());
+    assert!(store.saved.lock().unwrap().is_none());
+    assert_eq!(
+        owner.save(Some(&nsec.to_uppercase())).unwrap(),
+        fixture().viewer().unwrap()
+    );
+    assert_eq!(identity(&store).export().unwrap(), nsec);
+}
+
+#[test]
+fn development_and_release_items_are_separate() {
+    assert_eq!(
+        SERVICE,
+        if cfg!(debug_assertions) {
+            "dev.local.buzz.foundation.identity.debug"
+        } else {
+            "dev.local.buzz.foundation.identity"
+        }
+    );
+    assert!(!SERVICE.starts_with("buzz-desktop"));
+}
+
+#[test]
+fn sidebar_registers_bind_legacy_projection_and_preserve_tombstones() {
+    use serde_json::json;
+    let reg = |value| json!([100, "1234567890abcdef", value]);
+    let tombstones: serde_json::Map<_, _> = (0..105)
+        .map(|i| (format!("section:{i}"), reg(serde_json::Value::Null)))
+        .collect();
+    let sort = json!({"version": 1, "groups": {}, "meta": {"v": 1, "g": tombstones}});
+    assert!(super::validate_sidebar_payload("channel-sort", &sort).is_ok());
+    let mut mismatch = sort.clone();
+    mismatch["meta"]["g"]["channels"] = reg(json!("recent"));
+    assert!(super::validate_sidebar_payload("channel-sort", &mismatch).is_err());
+    mismatch["groups"]["channels"] = json!("recent");
+    assert!(super::validate_sidebar_payload("channel-sort", &mismatch).is_ok());
+    let mut live = sort;
+    for i in 0..105 {
+        let key = format!("section:{i}");
+        live["meta"]["g"][&key] = reg(json!("recent"));
+        live["groups"][&key] = json!("recent");
+    }
+    assert!(super::validate_sidebar_payload("channel-sort", &live).is_err());
+    let sections = json!({"version":1, "sections":[{"id":"work","name":"Work","order":0}], "assignments":{"c":"work"},
+        "meta":{"v":1,"s":{"work":{"name":reg(json!("Work")),"order":reg(json!(40)),"live":reg(json!(true))},
+            "dead":{"live":reg(json!(false))}},"a":{"c":reg(json!("work")),"old":reg(serde_json::Value::Null)}}});
+    assert!(super::validate_sidebar_payload("channel-sections", &sections).is_ok());
+    let mut mismatch = sections.clone();
+    mismatch["sections"][0]["name"] = json!("Wrong");
+    assert!(super::validate_sidebar_payload("channel-sections", &mismatch).is_err());
+    for invalid in [
+        json!(null),
+        json!({"v":2}),
+        json!({"v":1,"g":null}),
+        json!({"v":1,"g":{"channels":[1,"bad","recent"]}}),
+        json!({"v":1,"g":{"channels":[9007199254740992_u64,"1234567890abcdef","recent"]}}),
+    ] {
+        assert!(super::validate_sidebar_payload(
+            "channel-sort",
+            &json!({"version":1,"groups":{},"meta":invalid})
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn sidebar_section_caps_apply_to_live_projection_not_retained_registers() {
+    use serde_json::{json, Value};
+    let reg = |value| json!([100, "1234567890abcdef", value]);
+    let dead_sections: serde_json::Map<_, _> = (0..101)
+        .map(|i| {
+            (
+                format!("s{i}"),
+                json!({"name": reg(json!("Old")), "live": reg(json!(false))}),
+            )
+        })
+        .collect();
+    let removed_assignments: serde_json::Map<_, _> = (0..1001)
+        .map(|i| (format!("c{i}"), reg(Value::Null)))
+        .collect();
+    let mut record = json!({"version": 1, "sections": [], "assignments": {},
+        "meta": {"v": 1, "s": dead_sections, "a": removed_assignments}});
+    assert!(serde_json::to_vec(&record).unwrap().len() < 128 * 1024);
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_ok());
+    for i in 0..101 {
+        record["meta"]["s"][format!("s{i}")]["live"] = reg(json!(true));
+    }
+    // An under-cap legacy projection must not hide an over-cap live register tree.
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
+    record["sections"] =
+        super::project_sidebar_meta("channel-sections", &record["meta"])["sections"].clone();
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
+    for i in 1..101 {
+        record["meta"]["s"][format!("s{i}")]["live"] = reg(json!(false));
+    }
+    record["sections"] = json!([{"id": "s0", "name": "Old", "order": 0}]);
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_ok());
+    for i in 0..1001 {
+        record["meta"]["a"][format!("c{i}")] = reg(json!("s0"));
+    }
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
+    record["assignments"] =
+        super::project_sidebar_meta("channel-sections", &record["meta"])["assignments"].clone();
+    assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
+}
+
+#[tokio::test]
+async fn sidebar_signer_refuses_inconsistent_metadata() {
+    use serde_json::json;
+    let host = super::IdentityHost::fixture();
+    let mut payload = json!({"version":1, "groups":{},
+        "meta":{"v":1,"g":{"channels":[100,"1234567890abcdef","recent"]}}});
+    assert!(host
+        .sign_sidebar("channel-sort".into(), payload.clone(), 100)
+        .await
+        .is_err());
+    payload["groups"]["channels"] = json!("recent");
+    let event = host
+        .sign_sidebar("channel-sort".into(), payload, 100)
+        .await
+        .unwrap();
+    assert!(host.admit_sidebar(event).await.is_ok());
+}

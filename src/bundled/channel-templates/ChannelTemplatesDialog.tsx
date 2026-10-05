@@ -1,3 +1,4 @@
+import type { RelaySession } from "../../features/relay/session";
 import {
   useEffect,
   useLayoutEffect,
@@ -15,13 +16,14 @@ import {
   type Template,
 } from "../../features/channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AgentSelection, TemplateFields } from "./TemplateFields";
 import styles from "../channels/ChannelTemplates.module.css";
 
 export function ChannelTemplatesDialog({
+  session,
   open,
   onOpenChange,
   kit,
@@ -29,7 +31,10 @@ export function ChannelTemplatesDialog({
   initial,
   notice,
   active,
+  finalFocus,
 }: {
+  session?: RelaySession | undefined;
+  finalFocus?: DialogProps["finalFocus"];
   active(): boolean;
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -50,6 +55,11 @@ export function ChannelTemplatesDialog({
   const [base, setBase] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState<{
+    value: Team | Template;
+    eventId: string;
+  }>();
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (open) {
       kit.ensure();
@@ -85,7 +95,9 @@ export function ChannelTemplatesDialog({
   };
   return (
     <Dialog
+      dismissOnOutsideClick
       open={open}
+      finalFocus={finalFocus}
       onOpenChange={onOpenChange}
       preventClose={busy}
       title={
@@ -150,6 +162,7 @@ export function ChannelTemplatesDialog({
             </Field>
             {draft.type === "team" ? (
               <AgentSelection
+                session={session}
                 agents={agents}
                 selected={draft.agents}
                 onChange={(agents) => setDraft({ ...draft, agents })}
@@ -166,6 +179,7 @@ export function ChannelTemplatesDialog({
                   />
                 </Field>
                 <TemplateFields
+                  session={session}
                   value={draft}
                   onChange={(value) => setDraft({ ...draft, ...value })}
                   entries={state.entries}
@@ -229,14 +243,9 @@ export function ChannelTemplatesDialog({
                         </Button>
                         <Button
                           variant="ghost"
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete “${value.name}”? Existing channels stay unchanged. References in templates and group defaults will need replacement.`,
-                              )
-                            )
-                              void save(value, entry.eventId, true);
-                          }}
+                          onClick={() =>
+                            setDeleting({ value, eventId: entry.eventId })
+                          }
                         >
                           Delete
                         </Button>
@@ -248,6 +257,35 @@ export function ChannelTemplatesDialog({
           </>
         )}
       </div>
+      <Dialog
+        open={open && !!deleting}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(undefined);
+        }}
+        dismissOnOutsideClick
+        initialFocus={cancelDelete}
+        title={`Delete “${deleting?.value.name ?? ""}”?`}
+        actions={
+          <>
+            <Button ref={cancelDelete} onClick={() => setDeleting(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!deleting) return;
+                setDeleting(undefined);
+                void save(deleting.value, deleting.eventId, true);
+              }}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      >
+        Existing channels stay unchanged. References in templates and group
+        defaults will need replacement.
+      </Dialog>
     </Dialog>
   );
 }

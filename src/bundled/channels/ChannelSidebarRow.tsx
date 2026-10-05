@@ -1,3 +1,4 @@
+import { FadingLabel } from "./FadingLabel";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -15,8 +16,10 @@ export function ChannelSidebarRow({
   nameAccessory,
   badge,
   childContent,
+  dmVisualSpacing = false,
   wrapSelect,
   selected,
+  presenceDescription,
   sessions,
   draft,
   draftSelected,
@@ -32,8 +35,10 @@ export function ChannelSidebarRow({
   nameAccessory?: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
+  dmVisualSpacing?: boolean;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
+  presenceDescription?: string | undefined;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -45,6 +50,7 @@ export function ChannelSidebarRow({
   onHideDm?: (id: string) => void;
 }) {
   const childrenId = useId();
+  const presenceId = `${childrenId}-presence`;
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const selectButton = (
@@ -54,13 +60,17 @@ export function ChannelSidebarRow({
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
       }
+      aria-describedby={presenceDescription ? presenceId : undefined}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
       label={
-        <span className={styles.nameContent}>
-          <span className={styles.label}>{channel.name}</span>
+        <span
+          className={styles.nameContent}
+          data-name-accessory={nameAccessory ? "" : undefined}
+        >
+          <FadingLabel className={styles.label}>{channel.name}</FadingLabel>
           {nameAccessory}
         </span>
       }
@@ -68,7 +78,12 @@ export function ChannelSidebarRow({
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />
         ) : (
-          icon
+          <span
+            className={styles.iconSpace}
+            data-dm-visual={dmVisualSpacing || undefined}
+          >
+            {icon}
+          </span>
         )
       }
       trailing={badge && <span className={styles.badges}>{badge}</span>}
@@ -107,16 +122,22 @@ export function ChannelSidebarRow({
         )}
         <div className={styles.select}>
           {wrapSelect ? wrapSelect(selectButton) : selectButton}
+          {presenceDescription && (
+            <span className="sr-only" id={presenceId}>
+              {presenceDescription}
+            </span>
+          )}
         </div>
         {channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>
             <IconButton
               type="button"
               size="compact"
-              shape="round"
               aria-label={`Remove ${channel.name} from DMs`}
               onClick={(event) => {
-                const section = event.currentTarget.closest("details");
+                const section = event.currentTarget.closest(
+                  "[data-sidebar-section]",
+                );
                 const rows = [
                   ...(section?.querySelectorAll<HTMLElement>(
                     "button[data-channel-id]",
@@ -162,9 +183,9 @@ export function ChannelSidebarRow({
             onClick={() => onSelect(child.id)}
             selected={selected === child.id}
             label={
-              <span className={styles.childLabel}>
+              <FadingLabel className={styles.childLabel}>
                 {childContent?.(child) ?? child.name}
-              </span>
+              </FadingLabel>
             }
           />
         ))}

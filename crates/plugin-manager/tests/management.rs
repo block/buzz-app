@@ -257,6 +257,21 @@ fn rollback_swaps_reload_sources_and_same_byte_reload_refreshes_source() {
         .unwrap();
     assert_eq!(plugin.previous.as_deref(), Some(first.as_str()));
     assert!(plugin.reloadable);
+    let changed = "export const thirdReload = true;";
+    fs::write(third_source.join("plugin.js"), changed).unwrap();
+    let catalog = manager.reload("example.page").unwrap();
+    let reloaded = catalog
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_ne!(reloaded.revision, plugin.revision);
+    assert_eq!(reloaded.previous.as_deref(), Some(plugin.revision.as_str()));
+    manager.change("enable", "example.page").unwrap();
+    assert_eq!(
+        manager.module("example.page", &reloaded.revision).unwrap(),
+        changed
+    );
 }
 #[test]
 fn invalid_install_preserves_working_revision() {
@@ -453,7 +468,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         "buzz.identity-naming",
         "buzz.terminal",
         "buzz.sessions",
-        "buzz.bestie",
+        "buzz.inbox",
         "buzz.projects",
         "buzz.agents",
         "buzz.emoji",
@@ -521,6 +536,19 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
 }
 
 #[test]
+fn feedback_is_in_native_catalog() {
+    let (root, manager, _source) = fixture();
+    assert!(bundled_manifests().iter().any(|m| m.id == "buzz.feedback"));
+    assert!(manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .iter()
+        .any(|p| p.manifest.id == "buzz.feedback" && p.enabled));
+    drop(root);
+}
+
+#[test]
 fn channels_is_required_even_with_saved_disabled_settings() {
     let (root, manager, _source) = fixture();
     manager.change("disable", "buzz.github").unwrap();
@@ -563,6 +591,52 @@ fn channels_is_required_even_with_saved_disabled_settings() {
             .plugins
             .iter()
             .find(|p| p.manifest.id == "buzz.channels")
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
+fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
+    let (_root, manager, _source) = fixture();
+    let catalog = manager.catalog().unwrap();
+    assert_eq!(catalog.plugins.len(), 21);
+    for plugin in &catalog.plugins {
+        let id = plugin.manifest.id.as_str();
+        let default = !matches!(id, "buzz.bestie" | "buzz.todos" | "buzz.channel-templates");
+        assert_eq!(plugin.enabled, default, "{id}");
+        if id == "buzz.channels" {
+            assert!(manager.change("disable", id).is_err());
+        } else {
+            for enabled in [true, false] {
+                manager
+                    .change(if enabled { "enable" } else { "disable" }, id)
+                    .unwrap();
+                assert_eq!(
+                    manager
+                        .catalog()
+                        .unwrap()
+                        .plugins
+                        .iter()
+                        .find(|p| p.manifest.id == id)
+                        .unwrap()
+                        .enabled,
+                    enabled,
+                    "{id}"
+                );
+            }
+        }
+    }
+    // Existing native profiles can keep Bestie on across process restarts.
+    manager.change("enable", "buzz.bestie").unwrap();
+    let reopened = Manager::open(Some(_root.path().to_path_buf()), "test", false).unwrap();
+    assert!(
+        reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "buzz.bestie")
             .unwrap()
             .enabled
     );

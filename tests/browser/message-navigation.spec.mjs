@@ -1,5 +1,11 @@
+import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, end, settle } from "./timeline.mjs";
+import { open, end, settle, wheel } from "./timeline.mjs";
+import {
+  holdReadingFocus,
+  releaseReadingFocus,
+  readJournal,
+} from "./reading.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -100,9 +106,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     window.retainedSettingsThread = element;
   });
   const position = await thread(page).evaluate((element) => element.scrollTop);
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(threadElement).toBeHidden();
   await expect(threadElement.locator("..")).toHaveAttribute("inert", "");
   // Hidden retained content cannot be focused even though its layout is kept.
@@ -110,7 +114,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     .locator('[aria-label="Thread messages"]')
     .evaluate((element) => element.focus());
   await expect(
-    page.getByRole("button", { name: "Close channel settings" }),
+    page.getByRole("tab", { name: "Channel settings", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   expect(
@@ -118,7 +122,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
       element.contains(document.activeElement),
     ),
   ).toBe(false);
-  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await page
+    .getByRole("button", { name: "Close Channel settings tab" })
+    .click();
   await expect(threadElement).toBeVisible();
   expect(
     await threadElement.evaluate(
@@ -146,11 +152,15 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await profile.evaluate((element) => {
     window.retainedSettingsProfile = element;
   });
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await expect(profile).toBeHidden();
-  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await page
+    .getByRole("button", { name: "Close Channel settings tab" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Thread", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Alice Fixture", exact: true }).click();
   await expect(profile).toBeVisible();
   expect(
     await profile.evaluate(
@@ -158,13 +168,14 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     ),
   ).toBe(true);
   await page
-    .getByRole("button", { name: "Close channel panel", exact: true })
+    .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
     .click();
-  // Opening a panel retires the navigation-owned thread so the rail continues
-  // to hold one surface. A fresh navigation can open another exact target.
-  await expect(thread(page)).toHaveCount(0);
+  // Closing the profile returns to its retained thread tab.
+  await expect(thread(page)).toBeVisible();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Close (?:thread|Thread tab)$/, exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -211,6 +222,74 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
     0,
   );
   await expect(thread(page)).toHaveCount(0);
+  // Successful exact navigation retains its target ID. Detach after reveal;
+  // live arrivals must count without treating that retained ID as pending.
+  await history.hover();
+  await wheel(page, -500, history);
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeGreaterThan(80);
+  const first = app.append("primary", "alpha", "First detached arrival");
+  const jump = history.locator("button[data-jump-to-latest]");
+  await expect(jump).toHaveAccessibleName("1 new message");
+  await jump.focus();
+  await page.keyboard.press("Space");
+  await expect(history).toBeFocused();
+  await expect(
+    history.locator(`[data-message-id="${first.id}"]`),
+  ).toBeInViewport();
+  await settle(page, history);
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeLessThan(4);
+  await history.hover();
+  await wheel(page, -500, history);
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeGreaterThan(80);
+  const detachedTop = await history.evaluate((element) => element.scrollTop);
+  app.append("primary", "alpha", "Second detached arrival");
+  // A row can remeasure after newer reader input (for example, media loading).
+  // Preserve the detached position through that measurement, not just the count
+  // before Virtua has delivered it. Finish native wheel movement before taking
+  // the exact baseline; the driver regression, not this settled browser check,
+  // controls cancellation inside the retained command's 150ms lifetime.
+  await history
+    .locator("[data-message-id]")
+    .last()
+    .evaluate((row) => {
+      row.style.paddingBottom = "24px";
+    });
+  await settle(page, history);
+  expect(await history.evaluate((element) => element.scrollTop)).toBe(
+    detachedTop,
+  );
+  await expect(jump).toHaveAccessibleName("1 new message");
+  await jump.focus();
+  await page.keyboard.press("Enter");
+  await expect(history).toBeFocused();
+  await expect(jump).toHaveCount(1);
+  await expect(
+    jump.locator("xpath=ancestor::*[@data-visible][1]"),
+  ).toHaveAttribute("inert", "");
+  await expect(
+    jump.locator("xpath=ancestor::*[@data-visible][1]"),
+  ).toHaveAttribute("aria-hidden", "true");
+  await expect(history.getByRole("button").and(jump)).toHaveCount(0);
+  await expect(jump).toBeHidden();
+  await composer.focus();
   app.append("primary", "alpha", "Live after exact timeline reveal");
   await expect(history).toContainText("Live after exact timeline reveal");
   await expect(composer).toBeFocused();
@@ -279,7 +358,7 @@ for (const nested of [false, true])
             `[data-message-id="${app.exact.target.id}"]`,
           );
           const close = page.getByRole("button", {
-            name: "Close thread",
+            name: /^Close (?:thread|Thread tab)$/,
             exact: true,
           });
           let originalRow;
@@ -323,17 +402,17 @@ for (const nested of [false, true])
             ).toBe(!nested);
             await expect(moveFocus ? close : row).toBeFocused();
             if (nested && !moveFocus) {
-              // Programmatic collapse removes a focused target without first moving
-              // focus to a trigger. Reopening later must not revive that old intent.
-              await page
-                .getByRole("button", { name: "Hide replies", exact: true })
-                .evaluate((element) => element.click());
-              await expect(row).toHaveCount(0);
-              await page
-                .getByRole("button", { name: /^View 1 reply/ })
-                .evaluate((element) => element.click());
+              // A later arrival cannot close or refocus an already revealed branch.
+              await close.focus();
+              app.reply(app.exact.root.id);
+              await expect(
+                thread(page).getByText("New peer reply", { exact: true }),
+              ).toBeVisible();
               await expect(row).toBeVisible();
-              await expect(row).not.toBeFocused();
+              await expect(close).toBeFocused();
+              await expect(
+                page.getByRole("button", { name: "Hide replies", exact: true }),
+              ).toHaveCount(0);
             }
           } finally {
             await originalRow?.dispose();
@@ -409,54 +488,102 @@ test("superseding a held exact read cancels it; a late response cannot steal foc
   await expect.poll(() => status(page)).toBe("opened");
 });
 
-test("same-scope replacement withdraws a held old session and reopens the exact row", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  let release;
-  let intercepted;
-  const seen = new Promise((resolve) => {
-    intercepted = resolve;
+for (const selected of ["reply", "root"]) {
+  test(`same-scope replacement waits for fresh membership before reopening the exact ${selected}`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const id = selected === "root" ? app.exact.root.id : app.exact.target.id;
+    const destination = {
+      ...target(app, id),
+      ...(selected === "root" ? { threadRootId: id } : {}),
+    };
+    let release;
+    let intercepted;
+    const seen = new Promise((resolve) => {
+      intercepted = resolve;
+    });
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let releaseRoster;
+    const roster = new Promise((resolve) => {
+      releaseRoster = resolve;
+    });
+    let reconnecting = false;
+    let rosterRequested = false;
+    let exactReads = 0;
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (
+        reconnecting &&
+        filters?.some((filter) => filter.kinds?.includes(39002))
+      ) {
+        rosterRequested = true;
+        await roster;
+        return route.continue();
+      }
+      if (!filters?.some((filter) => filter.ids?.includes(id)))
+        return route.continue();
+      exactReads++;
+      if (exactReads !== 1) return route.continue();
+      intercepted();
+      await held;
+      await route
+        .fulfill({
+          json: [selected === "root" ? app.exact.root : app.exact.target],
+        })
+        .catch(() => {});
+    });
+    try {
+      await page.evaluate((value) => {
+        window.exactResult = window.fixtureNavigation.open(value);
+      }, destination);
+      await seen;
+      const generation = await page.evaluate(() => {
+        const generation = window.fixtureRelay.snapshot().generation;
+        window.fixtureRelay.disconnect();
+        return generation;
+      });
+      await expect(thread(page)).toHaveCount(0);
+      reconnecting = true;
+      await page.evaluate(() => window.fixtureRelay.retry());
+      release();
+      await expect.poll(() => rosterRequested).toBe(true);
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const connection = window.fixtureRelay.snapshot();
+            return (
+              connection.status === "ready" &&
+              connection.session.channels.get("alpha")?.cached === true
+            );
+          }),
+        )
+        .toBe(true);
+      await settle(page);
+      expect(await status(page)).toBe("opening");
+      await expect(thread(page)).toHaveCount(0);
+      expect(exactReads).toBe(1);
+      releaseRoster();
+      const row = thread(page).locator(`[data-message-id="${id}"]`);
+      // Opening a root is ordinary thread navigation (bottom-follow), not an
+      // exact-row reveal. Replies must still receive exact-message focus.
+      if (selected === "root") await expect(row).toBeAttached();
+      else await expect(row).toBeFocused();
+      expect(
+        await page.evaluate(() => window.fixtureRelay.snapshot().generation),
+      ).toBeGreaterThan(generation);
+      expect(await page.evaluate(() => window.exactResult)).toEqual({
+        status: "opened",
+      });
+    } finally {
+      release();
+      releaseRoster();
+    }
   });
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  let first = true;
-  await page.route("**/api/relay/**/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (
-      !first ||
-      !filters?.some((filter) => filter.ids?.includes(app.exact.target.id))
-    )
-      return route.continue();
-    first = false;
-    intercepted();
-    await held;
-    await route.fulfill({ json: [app.exact.target] }).catch(() => {});
-  });
-  await page.evaluate((value) => {
-    window.exactResult = window.fixtureNavigation.open(value);
-  }, target(app));
-  await seen;
-  const generation = await page.evaluate(() => {
-    const generation = window.fixtureRelay.snapshot().generation;
-    window.fixtureRelay.disconnect();
-    return generation;
-  });
-  await expect(thread(page)).toHaveCount(0);
-  await page.evaluate(() => window.fixtureRelay.retry());
-  release();
-  await expect(
-    thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
-  ).toBeFocused();
-  expect(
-    await page.evaluate(() => window.fixtureRelay.snapshot().generation),
-  ).toBeGreaterThan(generation);
-  expect(await page.evaluate(() => window.exactResult)).toEqual({
-    status: "opened",
-  });
-});
+}
 
 test("post-success membership loss removes the thread and live updates do not snap it back to the target", async ({
   page,
@@ -466,7 +593,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const region = thread(page);
   const channelButton = page.getByRole("button", {
-    name: "Close thread",
+    name: /^Close (?:thread|Thread tab)$/,
     exact: true,
   });
   await channelButton.focus();
@@ -481,9 +608,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   await expect(channelButton).toBeFocused();
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
   app.omitChannel("alpha");
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
+  await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh channels", exact: true })
@@ -573,7 +698,10 @@ readingTest(
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page
-        .getByRole("button", { name: "Close thread", exact: true })
+        .getByRole("button", {
+          name: /^Close (?:thread|Thread tab)$/,
+          exact: true,
+        })
         .click();
       await expect(history).toBeVisible();
       await settle(page);
@@ -685,16 +813,30 @@ readTest(
 readTest(
   "settings blocks reading and focus in a retained thread",
   async ({ page, app }) => {
-    await page.clock.install();
+    // Keep reveal frames controlled while startup cannot earn reading dwell.
+    // Pause at a fixed offset, not the page's already-ticking clock.
+    const base = Date.now();
+    await page.clock.install({ time: base });
+    await holdReadingFocus(page);
     await open(page, app);
     await page.evaluate(() =>
       window.fixtureRelay.snapshot().session.unread.ensure(),
     );
-    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .focus();
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+
+    await page.clock.pauseAt(base + 20_000);
+    await releaseReadingFocus(page);
+    const opening = openTarget(page, target(app));
+    // Exact reveal requires real focus for two animation frames. Advance one
+    // frame at a time until its owner completes, without earning reading dwell.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return status(page);
+      })
+      .toBe("opened");
+    expect(await opening).toEqual({ status: "opened" });
+    expect((await readJournal(page)).state.frontiers).toEqual({});
+    expect(app.report.readPublications).toEqual([]);
     const before = app.report.readPublications.length;
     const row = page.locator(
       `[aria-label="Thread messages"] [data-message-id="${app.exact.target.id}"]`,
@@ -702,9 +844,7 @@ readTest(
     await row.focus();
     await expect(row).toBeFocused();
     // Programmatic opening deliberately does not focus the settings trigger first.
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .evaluate((element) => element.click());
+    await openChannelDetails(page, { programmatic: true, clockPaused: true });
     await expect(
       page.getByRole("complementary", {
         name: "Channel settings",
@@ -720,9 +860,10 @@ readTest(
         .evaluate((element) => element.contains(document.activeElement)),
     ).toBe(false);
     await page.clock.runFor(10000);
+    expect((await readJournal(page)).state.frontiers).toEqual({});
     expect(app.report.readPublications.length).toBe(before);
     await page
-      .getByRole("button", { name: "Close channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await row.focus();
     await expect(row).toBeFocused();
@@ -754,9 +895,7 @@ traversalTest(
     );
     await row.getByRole("button", { name: "Reveal spoiler" }).click();
     await expect(row.locator('[data-revealed="true"]')).toHaveCount(1);
-    await page
-      .getByRole("button", { name: "Channel settings", exact: true })
-      .click();
+    await openChannelDetails(page);
     const settings = page.getByRole("complementary", {
       name: "Channel settings",
       exact: true,
@@ -776,7 +915,7 @@ traversalTest(
       "retained thread must not paint over settings",
     ).toBe(true);
     await page
-      .getByRole("button", { name: "Close channel settings", exact: true })
+      .getByRole("button", { name: "Close Channel settings tab", exact: true })
       .click();
     await expect(
       row.getByText("REVEALED SPOILER TEXT", { exact: true }),
@@ -809,7 +948,7 @@ for (const movedFocus of [false, true])
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
       const original = await row.elementHandle();
       const close = page.getByRole("button", {
-        name: "Close thread",
+        name: /^Close (?:thread|Thread tab)$/,
         exact: true,
       });
       const focusTarget = movedFocus ? close : row;
@@ -837,9 +976,9 @@ for (const movedFocus of [false, true])
       ).toBeVisible();
       // Opening moves focus intentionally; establish the owned/moved focus anew.
       await expect(
-        branch.getByRole("button", { name: "Hide replies", exact: true }),
+        region.locator(`[data-message-id="${child.id}"]`),
       ).toBeFocused();
-      await focusTarget.focus();
+      if (movedFocus) await focusTarget.focus();
       app.deleteTarget(child);
       await expect(
         region.getByText("First live child", { exact: true }),
@@ -938,6 +1077,23 @@ liveTest(
       region.locator(`[data-message-id="${app.exact.root.id}"]`),
     ).toBeAttached();
     await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(region).toBeFocused();
+    await expect(region).toHaveAttribute("tabindex", "0");
+    app.append(
+      "primary",
+      "alpha",
+      "Reply after selected deletion",
+      true,
+      true,
+      app.exact.root.id,
+    );
+    await expect(
+      region.getByText("Reply after selected deletion", { exact: true }),
+    ).toBeVisible();
+    await expect(region).toHaveAttribute("tabindex", "0");
+    await page.getByRole("button", { name: "Add tab", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(region).toBeFocused();
     await expect(
       region.getByText("Selected message unavailable."),
     ).toBeVisible();

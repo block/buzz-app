@@ -1,3 +1,4 @@
+import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
@@ -6,8 +7,6 @@ const home = { version: 1, kind: "home" };
 const settings = { version: 1, kind: "settings" };
 const address = (origin, target) =>
   `${origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`;
-const pages = (page) =>
-  page.getByRole("navigation", { name: "Pages", exact: true });
 const messages = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
 
@@ -31,12 +30,30 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   await expect(messages(page)).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 950 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
+      )
+      .toMatchObject({
+        // Local bootstrap now defers mounting ChannelsPage; the old initial
+        // disconnected mount could complete this visit before default resolution.
+        // The existing resolver keeps the conversation in that same visit.
+        kind: "conversation",
+        channelId: "alpha",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      });
+    await expect(messages(page)).toBeVisible();
+    const choices = await pageChoices(page);
     await expect(
-      pages(page).getByRole("button", { name: "Messages", exact: true }),
-    ).toHaveAttribute("aria-current", "page");
+      choices.getByRole("option", { name: "Messages", exact: true }),
+    ).toBeVisible();
     await expect(
-      pages(page).getByRole("button", { name: "Home", exact: true }),
+      choices.getByRole("option", { name: "Home", exact: true }),
     ).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await expect
       .poll(() =>
         page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -53,9 +70,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
     dialog.getByRole("option", { name: "Home", exact: true }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await pages(page)
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
+  await openPage(page, "Projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
@@ -90,7 +105,11 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
   await page.goto(address(app.origin, settings));
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Channels", exact: true }),
+    page
+      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("article")
+      .filter({ has: page.getByText("Channels", { exact: true }) })
+      .getByText("Required", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Enable Channels", exact: true }),
@@ -115,14 +134,16 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
   await page.goto(address(app.origin, settings));
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Channels", exact: true }),
+    page
+      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("article")
+      .filter({ has: page.getByText("Channels", { exact: true }) })
+      .getByText("Required", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Enable Channels", exact: true }),
   ).toHaveCount(0);
-  await pages(page)
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
+  await openPage(page, "Messages");
   await expect(messages(page)).toBeVisible();
 });
 
@@ -137,9 +158,11 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await expect(
     page.getByRole("heading", { name: "Couldn’t open Buzz", exact: true }),
   ).toBeVisible();
+  const recoveryChoices = await pageChoices(page);
   await expect(
-    pages(page).getByRole("button", { name: "Home", exact: true }),
+    recoveryChoices.getByRole("option", { name: "Home", exact: true }),
   ).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
@@ -149,9 +172,11 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await page
     .getByRole("button", { name: "Back up & reset settings", exact: true })
     .click();
+  const recoveredChoices = await pageChoices(page);
   await expect(
-    pages(page).getByRole("button", { name: "Messages", exact: true }),
+    recoveredChoices.getByRole("option", { name: "Messages", exact: true }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page
     .getByRole("button", { name: "Retry navigation", exact: true })
     .click();

@@ -1,0 +1,50 @@
+/* Parser-loaded before the application graph. Palette stays design-system owned. */
+@layer theme, base, components, utilities;
+@import "../shared/design-system/styles/tokens.css";
+@import "../shared/styles/tokens.css";
+
+@layer base {
+  html {
+    background: var(--workspace);
+    color: var(--text);
+  }
+  body {
+    margin: 0;
+  }
+}
+
+.buzz-launch {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: var(--workspace);
+}
+
+#buzz-launch {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  transition: opacity 220ms ease-out;
+}
+
+#buzz-launch.buzz-launch--leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.buzz-launch picture,
+.buzz-launch img {
+  display: block;
+  width: 4.5rem;
+  height: 4.5rem;
+}
+
+:root[data-color-mode="dark"] .buzz-launch img {
+  filter: invert(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #buzz-launch {
+    transition-duration: 120ms;
+  }
+}

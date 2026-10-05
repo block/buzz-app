@@ -18,3 +18,9 @@ export function relayBrokerPlugin(options?: {
     open?: (url: string) => Promise<void>;
   };
 }): Plugin;
+export function validProductFeedback(event: {
+  kind: number;
+  content: string;
+  created_at: number;
+  tags: unknown;
+}): boolean;

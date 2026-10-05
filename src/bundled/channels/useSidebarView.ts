@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
 export const CHANNEL_SIDEBAR_DEFAULT_WIDTH = 260;
-export const CHANNEL_SIDEBAR_MIN_WIDTH = 124;
+export const CHANNEL_SIDEBAR_MIN_WIDTH = 220;
 export const CHANNEL_SIDEBAR_MAX_WIDTH = 520;
 
 export function clampChannelSidebarWidth(width: number) {
@@ -16,7 +16,12 @@ type SidebarView = {
   collapsed: string[];
   scrollTop: number;
   width: number;
+  /** The destination whose sidebar entry the saved position shows. */
+  location?: string | undefined;
 };
+
+// Preserve explicit resize intent across route remounts when storage is unavailable.
+const widths = new Map<string, number>();
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
@@ -33,25 +38,103 @@ function restore(scope: string): SidebarView {
         ? saved.scrollTop
         : 0,
     width:
-      typeof saved.width === "number" && Number.isFinite(saved.width)
+      widths.get(scope) ??
+      (typeof saved.width === "number" && Number.isFinite(saved.width)
         ? clampChannelSidebarWidth(saved.width)
-        : CHANNEL_SIDEBAR_DEFAULT_WIDTH,
+        : CHANNEL_SIDEBAR_DEFAULT_WIDTH),
+    location: typeof saved.location === "string" ? saved.location : undefined,
   };
 }
 
 /** Scoped to the ready community/viewer workspace; no roster or message cache. */
-export function useSidebarView(scope: string, ready: boolean) {
+export function readChannelSidebarWidth(scope: string): number {
+  return restore(scope).width;
+}
+
+/**
+ * Show the current destination (`aria-current="page"`) in the sidebar
+ * viewport. Rows hidden by a collapsed section or session list are shown
+ * through the header or parent row that represents them. Returns false while
+ * no current entry is laid out yet; otherwise returns the offset that shows it.
+ */
+function revealCurrent(viewport: HTMLElement): number | false {
+  const owners = [
+    ...viewport.querySelectorAll<HTMLElement>('[aria-current="page"]'),
+  ].map((entry) => {
+    let owner = entry;
+    for (let node: HTMLElement | null = entry; node && node !== viewport; ) {
+      if (node.hidden && node.previousElementSibling instanceof HTMLElement)
+        owner = node.previousElementSibling;
+      node = node.parentElement;
+    }
+    return owner.getBoundingClientRect();
+  });
+  const rects = owners.filter((rect) => rect.height);
+  const rect = rects[0];
+  if (!rect) return false;
+  const top = viewport.getBoundingClientRect().top;
+  const bottom = top + viewport.clientHeight;
+  // A visible copy (for example, a starred channel) already shows it.
+  if (rects.some((rect) => rect.top >= top && rect.bottom <= bottom))
+    return viewport.scrollTop;
+  // Center an offscreen entry clear of the unread edge cues; nudge a clipped
+  // one only as far as needed so the row under the pointer does not jump.
+  return (
+    viewport.scrollTop +
+    (rect.bottom <= top || rect.top >= bottom
+      ? rect.top - top - (viewport.clientHeight - rect.height) / 2
+      : rect.top < top
+        ? rect.top - top
+        : rect.bottom - bottom)
+  );
+}
+
+/** Scrolls to `top`; returns the new offset if the viewport moved. */
+function scroll(viewport: HTMLElement, top: number) {
+  const before = viewport.scrollTop;
+  viewport.scrollTop = top;
+  return viewport.scrollTop === before ? undefined : viewport.scrollTop;
+}
+
+/**
+ * `location` keys the main pane's destination. A new destination reveals its
+ * sidebar entry once, when that entry first renders, unless the user scrolls
+ * first. Remounting at the saved destination keeps the saved position.
+ */
+export function useSidebarView(
+  scope: string,
+  ready: boolean,
+  location?: string,
+) {
   const [view, setView] = useState(() => restore(scope));
   const intent = useRef(view);
   const list = useRef<HTMLElement>(null);
   const pending = useRef(true);
+  // The destination waiting for its entry to render.
+  const reveal = useRef<string | undefined>(undefined);
+  // Until the first reveal or scroll, the saved destination keeps the
+  // restored position.
+  const restored = useRef(view.location);
 
-  // Once the viewport moves, the user owns it even if they return to the top.
+  // The offset this hook last scrolled to, until its scroll event arrives.
+  const moved = useRef<number | undefined>(undefined);
+
+  // Once the user moves the viewport, they own it even if they return to the
+  // top. A scroll event at the offset this hook set is its own restoration or
+  // reveal; any other offset includes user input.
   useLayoutEffect(() => {
     const viewport = list.current;
     if (!viewport) return;
     const scrolled = () => {
+      const own = moved.current === viewport.scrollTop;
+      moved.current = undefined;
+      if (own) return;
       pending.current = false;
+      // The user's position now belongs to the destination they navigated
+      // to, so returning there keeps it instead of revealing again.
+      if (reveal.current)
+        intent.current = { ...intent.current, location: reveal.current };
+      reveal.current = restored.current = undefined;
     };
     viewport.addEventListener("scroll", scrolled, { passive: true });
     return () => viewport.removeEventListener("scroll", scrolled);
@@ -62,9 +145,39 @@ export function useSidebarView(scope: string, ready: boolean) {
     if (!ready || !pending.current || !list.current) return;
     // Compositor scrolling may update the position before its scroll event.
     if (list.current.scrollTop === 0)
-      list.current.scrollTop = intent.current.scrollTop;
+      moved.current =
+        scroll(list.current, intent.current.scrollTop) ?? moved.current;
     pending.current = false;
   }, [ready]);
+  // A destination without an entry (the Messages landing page before it
+  // resolves to a conversation) stays pending. It owns the saved position
+  // only if the user scrolls there.
+  useLayoutEffect(() => {
+    reveal.current = location === restored.current ? undefined : location;
+  }, [location]);
+  // The entry can render after navigation (roster startup, a new DM), so
+  // retry after each commit until it exists. Runs after the restore above.
+  const attempt = useRef(() => {});
+  useLayoutEffect(() => {
+    attempt.current = () => {
+      if (!ready || !reveal.current || !list.current) return;
+      const top = revealCurrent(list.current);
+      if (top === false) return;
+      moved.current = scroll(list.current, top) ?? moved.current;
+      intent.current = { ...intent.current, location: reveal.current };
+      reveal.current = restored.current = undefined;
+    };
+    attempt.current();
+  });
+  // A hidden sidebar (the closed narrow drawer) has no layout, and showing it
+  // does not rerender this list, so also retry when the viewport gets a size.
+  useLayoutEffect(() => {
+    const viewport = list.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => attempt.current());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     const save = () => {
       if (!pending.current && list.current)
@@ -107,6 +220,7 @@ export function useSidebarView(scope: string, ready: boolean) {
     setWidth: (width: number) => {
       const next = clampChannelSidebarWidth(width);
       if (intent.current.width === next) return;
+      widths.set(scope, next);
       update({ ...intent.current, width: next });
       writeView(scope, "channel-sidebar", { ...intent.current, width: next });
     },

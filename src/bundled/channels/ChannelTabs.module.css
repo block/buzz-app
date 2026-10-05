@@ -1,0 +1,48 @@
+@reference "../../shared/styles/globals.css";
+
+.picker {
+  width: 100%;
+  padding: var(--space-4) var(--space-panel-inset);
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.pickerLayout {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  min-height: 0;
+  overflow: hidden;
+}
+.group {
+  margin-block-start: var(--space-4);
+}
+.choices {
+  min-width: 0;
+  overflow: auto;
+}
+.group > p {
+  padding: var(--space-2);
+}
+.conversation {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+}
+
+.conversation > aside {
+  flex: 1;
+}

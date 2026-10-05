@@ -1,9 +1,10 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
-import { isGoose, type AgentDraft } from "./agent-edit";
+import { harnessKind, PI_API_KEYS, type AgentDraft } from "./agent-edit";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
@@ -12,26 +13,30 @@ export function AgentHarnessEditor({
   defaultProvider,
   piProviders = [],
   onChange,
+  onOpenHarnesses,
+  discardEdits = false,
   disabled = false,
 }: {
   draft: AgentDraft;
-  piProviders?: string[];
+  onOpenHarnesses?: (() => void) | undefined;
+  discardEdits?: boolean;
+  piProviders?: string[] | null;
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   disabled?: boolean;
   defaultProvider?: string | undefined;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const executable = draft.command.replaceAll("\\", "/").split("/").at(-1);
+  const kind = harnessKind(draft.command);
   const harness =
     options.find((option) => option.command === draft.command) ??
-    (executable === "goose" || executable === "buzz-pi-acp"
-      ? options.find(
-          (option) =>
-            option.command.replaceAll("\\", "/").split("/").at(-1) ===
-            executable,
-        )
+    (kind === "goose" || kind === "pi"
+      ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
   const external = harness?.label === "Goose" || harness?.label === "Pi";
+  const piLoading = harness?.label === "Pi" && piProviders === null;
+  const missingPi = options.some(
+    (option) => option.label === "Pi" && option.available === false,
+  );
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -63,23 +68,30 @@ export function AgentHarnessEditor({
           });
         }}
       />
-      {options.some(
-        (option) => isGoose(option.command) && option.available === false,
-      ) && (
+      {missingPi && (
         <p className="text-body-sm text-secondary">
-          Install the Goose CLI to use it as a harness.
+          Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
-      {options.some(
-        (option) => option.label === "Pi" && option.available === false,
-      ) && (
-        <p className="text-body-sm text-secondary">
-          Install Pi, buzz-pi-acp and Node.js, then reopen the desktop app to
-          use Pi.
-        </p>
+      {missingPi && onOpenHarnesses && (
+        <div className="space-y-1">
+          <Button
+            type="button"
+            variant="link"
+            disabled={disabled}
+            onClick={onOpenHarnesses}
+          >
+            Open Harnesses in Settings
+          </Button>
+          {discardEdits && (
+            <p className="m-0 text-body-sm text-secondary">
+              Opening Settings discards unsaved edits.
+            </p>
+          )}
+        </div>
       )}
       <ConfigChoice
-        disabled={disabled}
+        disabled={disabled || piLoading}
         key={harness?.label ?? draft.command}
         label={external ? "LLM Provider" : "Provider"}
         customLabel="Custom provider / current value"
@@ -88,20 +100,13 @@ export function AgentHarnessEditor({
         options={[
           {
             value: "",
-            label:
-              draft.command === "buzz-agent" && defaultProvider
-                ? `Build default (${defaultProvider})`
-                : "Not set",
+            label: defaultProvider
+              ? `Use agent defaults (${defaultProvider})`
+              : "Not set",
           },
-          ...(harness?.providers ?? []),
           ...(harness?.label === "Pi"
-            ? piProviders
-                .filter(
-                  (p) =>
-                    !harness.providers.some((option) => option.value === p),
-                )
-                .map((value) => ({ value, label: value }))
-            : []),
+            ? piOptions(piProviders, draft.provider)
+            : (harness?.providers ?? [])),
         ]}
         onChange={(provider) =>
           onChange({
@@ -110,8 +115,27 @@ export function AgentHarnessEditor({
           })
         }
       />
+      {piLoading && (
+        <p role="status" className="text-body-sm text-secondary">
+          Loading signed-in providers…
+        </p>
+      )}
     </div>
   );
+}
+
+// Pi lists providers its catalog reports as signed in, then the providers
+// someone can sign in to here with an API key. While the catalog loads, keep
+// a current custom choice listed so the selection stays put.
+function piOptions(signedIn: string[] | null, current: string) {
+  const known = signedIn ?? (current && !PI_API_KEYS[current] ? [current] : []);
+  const label = (value: string) => PI_API_KEYS[value]?.label ?? value;
+  return [
+    ...known.map((value) => ({ value, label: label(value) })),
+    ...Object.keys(PI_API_KEYS)
+      .filter((value) => !known.includes(value))
+      .map((value) => ({ value, label: `${label(value)} (API key needed)` })),
+  ];
 }
 
 function ConfigChoice({

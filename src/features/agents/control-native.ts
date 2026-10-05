@@ -17,14 +17,45 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),
+    readLog: async ({ id, pubkey, relayUrl, authorize }) => {
+      const nonce = await invoke<string>("agent_control_log_challenge", {
+        id,
+        pubkey,
+        relayUrl,
+      });
+      const signature = await authorize({ id, pubkey, relayUrl }, nonce);
+      return invoke<string>("agent_control_read_log", {
+        id,
+        pubkey,
+        relayUrl,
+        nonce,
+        signature,
+      });
+    },
+    installPi: () => invoke("pi_install"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
+    saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),
+    delete: (id, expectedRevision) =>
+      invoke("agent_control_delete", { id, expectedRevision }),
+    attachMention: (id, expectedRevision, replayFloor) =>
+      invoke("agent_control_attach_mention", {
+        id,
+        expectedRevision,
+        replayFloor,
+      }),
     action: (id, action, replayFloor) =>
       invoke("agent_control_action", {
         id,
         action,
         ...(replayFloor === undefined ? {} : { replayFloor }),
       }),
+    configureHere: (id, resolution) =>
+      invoke("agent_control_use_here", { id, resolution }),
+    localCloneSettings: (id) =>
+      invoke("agent_control_local_clone_settings", { id }),
+    cloneSettings: (source, pubkey) =>
+      invoke("agent_control_clone_settings", { source, pubkey }),
     previewImport: (source, destination) =>
       invoke("agent_control_import_preview", { source, destination }),
     commitImport: (token, ids) =>

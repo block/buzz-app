@@ -8,9 +8,15 @@ import type {
   ControlSnapshot,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
-import { CircleNotchIcon } from "../../shared/design-system/icons";
+import {
+  CheckCircleIcon,
+  CircleNotchIcon,
+  WarningCircleIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
+
+const VISIBLE_MODEL_LIMIT = 10;
 
 export function AgentModelPicker({
   id,
@@ -19,26 +25,36 @@ export function AgentModelPicker({
   control,
   defaults,
   defaultModel,
+  inheritedWorkspace,
   onPiProviders,
   onChange,
   disabled = false,
 }: {
   disabled?: boolean;
-  onPiProviders?(providers: string[]): void;
+  /** Pi's signed-in providers, or null while its catalog is loading. */
+  onPiProviders?(providers: string[] | null): void;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
   defaultModel?: string | undefined;
+  /** Workspace/filter supplied by write-only Agent defaults; values stay native. */
+  inheritedWorkspace?: { host: boolean; filter: boolean };
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const statusId = useId();
   const goose = isGoose(draft.command);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const external = goose || pi;
-  const host = draft.databricks?.host ?? defaults?.host ?? "";
-  const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
+  // An inherited Agent defaults value wins over the compiled floor at launch;
+  // leave it blank here so native resolves the same hidden value.
+  const host =
+    draft.databricks?.host ??
+    (inheritedWorkspace?.host ? "" : (defaults?.host ?? ""));
+  const filter =
+    draft.databricks?.filter ??
+    (inheritedWorkspace?.filter ? "" : (defaults?.filter ?? ""));
   const [catalog, setCatalog] = useState<{
     key: string;
     data: ModelCatalog;
@@ -77,13 +93,11 @@ export function AgentModelPicker({
     setQuery(null);
     setOpen(false);
     attempted.current = null;
-    onPiProviders?.([]);
     return () => {
       pending.current?.abort();
       pending.current = null;
-      onPiProviders?.([]);
     };
-  }, [key, onPiProviders]);
+  }, [key]);
   // Provider is only a filter for Pi's catalog, but pending search text belongs
   // to the provider the person was editing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: provider changes retire its pending search text without invalidating Pi’s catalog.
@@ -91,9 +105,76 @@ export function AgentModelPicker({
     setQuery(null);
     highlighted.current = null;
   }, [draft.provider]);
+  // A test result belongs to the exact draft it tested.
+  const testKey = JSON.stringify([key, draft.provider, draft.model]);
+  const [test, setTest] = useState<{
+    key: string;
+    run: AbortController;
+    result: string;
+    model?: string | undefined;
+  } | null>(null);
+  const testing = useRef<AbortController | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: editing the tested draft retires its native test.
+  useEffect(
+    () => () => {
+      testing.current?.abort();
+      testing.current = null;
+    },
+    [testKey],
+  );
+  const testResult = test?.key === testKey ? test.result : null;
+  let testMessage = testResult;
+  if (testResult === "ok") {
+    testMessage = test?.model
+      ? `Connected using ${test.model}.`
+      : "Connected. The model replied.";
+  } else if (testResult === "testing") {
+    testMessage = "Sending a short test message…";
+  }
+  const testConnection = async () => {
+    if (!control.models || testing.current) return;
+    pending.current?.abort();
+    pending.current = null;
+    attempted.current = null;
+    setBusy(false);
+    setStatus("");
+    setOpen(false);
+    const run = new AbortController();
+    testing.current = run;
+    // Only this run may settle its own result; a retired run clears it.
+    const settle = (result: string, model?: string) =>
+      setTest((current) => {
+        if (current?.run !== run) return current;
+        if (run.signal.aborted) return null;
+        return { ...current, result, model };
+      });
+    setTest({ key: testKey, run, result: "testing" });
+    try {
+      const result = await control.models.request(
+        {
+          id,
+          expectedRevision: id ? draft.revision : undefined,
+          edit: agentEdit(draft, true),
+          host: "",
+          filter: "",
+          action: "test",
+        },
+        run.signal,
+      );
+      settle("ok", result.testedModel);
+    } catch (error) {
+      settle((error as Error).message);
+    } finally {
+      if (testing.current === run) testing.current = null;
+    }
+  };
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
-    if (!external && !host.trim()) {
+    // Native runs one lookup at a time; model browsing replaces a test.
+    testing.current?.abort();
+    testing.current = null;
+    setTest(null);
+    if (!external && !host.trim() && !inheritedWorkspace?.host) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
@@ -122,23 +203,26 @@ export function AgentModelPicker({
           host: external ? "" : host,
           filter: external ? "" : filter,
           action,
+          ...(!external &&
+          ((inheritedWorkspace?.host && !host) ||
+            (inheritedWorkspace?.filter && !filter))
+            ? { inheritWorkspace: true }
+            : {}),
         },
         abort.signal,
       );
       if (abort.signal.aborted || currentKey.current !== key) return;
       setCatalog({ key, data });
-      if (pi)
-        onPiProviders?.([
-          ...new Set(data.models.map((m) => m.id.split("/")[0] ?? "")),
-        ]);
       setStatus(
         data.disconnected
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : external
-              ? `No ${pi ? "Pi" : "Goose"} models found. Check local configuration or enter a custom ID.`
-              : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : goose
+              ? "No models found for this Goose provider. Check its configuration or enter a custom ID."
+              : pi
+                ? "No signed-in Pi providers found. Buzz doesn’t use API keys exported in your shell profile. Choose a provider under LLM Provider to add its API key, or enter a custom ID."
+                : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key)
@@ -150,10 +234,29 @@ export function AgentModelPicker({
       }
     }
   };
+  // Pi's catalog is headless and supplies the signed-in provider list, so load
+  // it when Pi is selected. Later context edits wait for Browse or Retry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only entering Pi triggers the automatic lookup.
+  useEffect(() => {
+    if (pi) void run("connect");
+  }, [pi, draft.command]);
   const fresh = catalog?.key === key ? catalog.data : null;
+  const reportedProviders = JSON.stringify(
+    !pi
+      ? []
+      : busy
+        ? null
+        : [...new Set(fresh?.models.map((m) => m.id.split("/")[0] ?? ""))],
+  );
+  useEffect(() => {
+    onPiProviders?.(JSON.parse(reportedProviders));
+  }, [reportedProviders, onPiProviders]);
+  useEffect(() => () => onPiProviders?.([]), [onPiProviders]);
   const entries = (fresh?.models ?? []).filter(
     (m) => !pi || !draft.provider || m.id.startsWith(`${draft.provider}/`),
   );
+  const piNoModelsMessage =
+    "No Pi models for this provider. Buzz doesn’t use API keys exported in your shell profile. Add this provider’s API key for this agent, then browse models again.";
   const selectedId =
     pi && draft.provider && draft.model
       ? `${draft.provider}/${draft.model}`
@@ -187,6 +290,12 @@ export function AgentModelPicker({
     !items.some((model) => model.id === custom || model.name === custom)
   )
     items.push({ id: custom, name: custom });
+  const matchingItems =
+    query === null
+      ? items
+      : items.filter((item) =>
+          `${item.name} ${item.id}`.toLowerCase().includes(query.toLowerCase()),
+        );
   const commitQuery = () => {
     if (query === null) return;
     const match = entries.find(
@@ -198,18 +307,40 @@ export function AgentModelPicker({
   return (
     <section data-buzz-ui="" className="text-body" aria-label="Model settings">
       <div className="space-y-3">
+        {supported && external && draft.provider && (
+          <div className="space-y-2">
+            <Button
+              disabled={disabled}
+              loading={testResult === "testing"}
+              onClick={() => void testConnection()}
+            >
+              Test connection
+            </Button>
+            {testResult && (
+              <p
+                role="status"
+                className={`flex items-center gap-2 text-body-sm ${testResult === "ok" ? "text-success" : testResult === "testing" ? "text-secondary" : "text-danger"}`}
+              >
+                {testResult === "ok" ? (
+                  <CheckCircleIcon size={16} aria-hidden="true" />
+                ) : testResult !== "testing" ? (
+                  <WarningCircleIcon size={16} aria-hidden="true" />
+                ) : null}
+                {testMessage}
+              </p>
+            )}
+          </div>
+        )}
         <div>
           <Combobox.Root<ModelCatalog["models"][number]>
             disabled={disabled}
-            items={items}
+            items={goose && busy ? [] : items}
             filteredItems={
-              query === null
-                ? items
-                : items.filter((item) =>
-                    `${item.name} ${item.id}`
-                      .toLowerCase()
-                      .includes(query.toLowerCase()),
-                  )
+              goose && busy
+                ? []
+                : goose
+                  ? matchingItems.slice(0, VISIBLE_MODEL_LIMIT)
+                  : matchingItems
             }
             value={selected}
             inputValue={query ?? selected?.name ?? ""}
@@ -256,8 +387,8 @@ export function AgentModelPicker({
                   void run("connect");
               }}
               placeholder={
-                draft.command === "buzz-agent" && defaultModel
-                  ? `Build default: ${defaultModel}`
+                defaultModel
+                  ? `Use agent defaults (${defaultModel})`
                   : "Choose or enter a model"
               }
               onBlur={commitQuery}
@@ -275,6 +406,7 @@ export function AgentModelPicker({
               }}
             />
             <Combobox.Popup
+              className={goose ? "agent-model-popup" : undefined}
               empty={busy ? null : "Type a model ID to use a custom model."}
             >
               {busy && (
@@ -291,31 +423,65 @@ export function AgentModelPicker({
                   {pi ? "Loading Pi models…" : "Loading models…"}
                 </div>
               )}
+              {pi &&
+                !busy &&
+                (status ||
+                  (fresh && draft.provider && entries.length === 0)) && (
+                  <div className="px-3 py-2 text-body-sm text-secondary">
+                    {fresh && draft.provider && entries.length === 0
+                      ? piNoModelsMessage
+                      : status}
+                  </div>
+                )}
               <Combobox.List
                 style={{
                   maxHeight: "min(20rem, calc(var(--available-height) - 4rem))",
                   overflowY: "auto",
                 }}
               >
-                {(model: ModelCatalog["models"][number]) => (
-                  <Combobox.Item
-                    key={model.id}
-                    value={model}
-                    description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
-                  >
-                    {model.name}
-                  </Combobox.Item>
-                )}
+                {(model: ModelCatalog["models"][number]) => {
+                  const custom = !entries.some(
+                    (entry) => entry.id === model.id,
+                  );
+                  return (
+                    <Combobox.Item
+                      key={model.id}
+                      value={model}
+                      description={
+                        goose && model.name === model.id
+                          ? custom
+                            ? "Custom ID"
+                            : undefined
+                          : `${model.id}${custom ? " · Custom ID" : ""}`
+                      }
+                    >
+                      {model.name}
+                    </Combobox.Item>
+                  );
+                }}
               </Combobox.List>
             </Combobox.Popup>
           </Combobox.Root>
         </div>
+        {goose && fresh && entries.length > VISIBLE_MODEL_LIMIT && (
+          <p className="text-body-sm text-secondary">
+            Showing up to {VISIBLE_MODEL_LIMIT} models. Type to search all{" "}
+            {entries.length}.
+          </p>
+        )}
         {status && (
           <p
             id={statusId}
             role="status"
-            className="text-body-sm text-secondary"
+            className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
           >
+            {busy && goose && (
+              <CircleNotchIcon
+                size={16}
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+            )}
             {status}
           </p>
         )}
@@ -346,10 +512,7 @@ export function AgentModelPicker({
           </p>
         )}
         {pi && fresh && entries.length === 0 && draft.provider && (
-          <p className="text-body-sm text-secondary">
-            No Pi models available for this provider. Check Pi sign-in or
-            extension configuration, or enter a custom ID.
-          </p>
+          <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
         )}
         {pi &&
           fresh &&
@@ -373,14 +536,14 @@ export function AgentModelPicker({
           draft.model &&
           !entries.some((model) => model.id === draft.model) && (
             <p className="text-body-sm text-warning">
-              This model ID is not in Goose’s current Databricks v2 list. Select
-              a listed model or confirm the custom ID before starting.
+              This model ID is not in Goose’s current provider list. Select a
+              listed model or confirm the custom ID before starting.
             </p>
           )}
         {goose && (
           <p className="text-body-sm text-secondary">
-            Models come from your Goose Databricks connection. If sign-in is
-            needed, run goose configure before browsing.
+            Browse to check this Goose provider’s models using the credentials
+            entered above or already configured in Goose.
           </p>
         )}
       </div>
@@ -426,7 +589,11 @@ export function AgentModelPicker({
                         <Input
                           disabled={disabled}
                           value={host}
-                          placeholder="https://workspace.example.com"
+                          placeholder={
+                            inheritedWorkspace?.host
+                              ? "Use agent defaults"
+                              : "https://workspace.example.com"
+                          }
                           spellCheck={false}
                           onChange={(event) =>
                             onChange({
@@ -439,6 +606,11 @@ export function AgentModelPicker({
                         <Input
                           disabled={disabled}
                           value={filter}
+                          placeholder={
+                            inheritedWorkspace?.filter
+                              ? "Use agent defaults"
+                              : undefined
+                          }
                           spellCheck={false}
                           onChange={(event) =>
                             onChange({
@@ -467,8 +639,7 @@ export function AgentModelPicker({
                       <p className="text-body-sm text-secondary">
                         Credentials are shared within Foundation for this
                         workspace, not with old Buzz. Disconnect removes this
-                        app’s cache, not your browser session. Save does not
-                        restart an agent.
+                        app’s cache, not your browser session.
                       </p>
                     </>
                   )}

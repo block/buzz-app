@@ -9,9 +9,16 @@ import type { ThreadSnapshot } from "../relay/threads";
 import type { PageNavigation } from "../navigation/service";
 import { SessionMessageTarget } from "./SessionMessageTarget";
 
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollIntoView",
+);
 beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   // Browser-only APIs are fixture boundaries; actual layout is tested in Playwright.
-  HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -22,8 +29,14 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  if (originalScrollIntoView)
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "scrollIntoView",
+      originalScrollIntoView,
+    );
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   vi.unstubAllGlobals();
-  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 function setup() {
   const views: ReturnType<typeof makeView>[] = [];
@@ -55,7 +68,9 @@ function setup() {
   }
   const profiles = new Map();
   const channels = { status: "ready", channels: [] };
+  const unread = { manual: "none" };
   const session = {
+    unread: { snapshot: () => unread, subscribe: () => () => {} },
     presence: {
       status: () => "unknown",
       limited: () => false,
@@ -75,6 +90,7 @@ function setup() {
       ensure: async () => {},
     },
     channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
     media: () => undefined,
   } as unknown as RelaySession;
   function request(id: string) {
@@ -197,6 +213,10 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
   );
   const selected = screen.getByText("Selected reply");
   expect(selected).toBeVisible();
+  // Floating message actions hide once their anchor leaves this scroll pane.
+  expect(
+    screen.getByRole("region", { name: "Selected session message" }),
+  ).toHaveAttribute("data-message-scroller");
   // Let reveal run before teardown; rendering text alone can outrun its frame.
   await waitFor(() =>
     expect(selected.closest("[data-message-id]")).toHaveFocus(),

@@ -1,3 +1,4 @@
+import { avatarMedia } from "../../shared/avatar-source";
 import { useEffect, useSyncExternalStore } from "react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { templateAgentChoices } from "../../features/agents/choices";
@@ -8,33 +9,29 @@ export function useTemplateCatalog(session: RelaySession) {
     session.channelKit.subscribe,
     session.channelKit.snapshot,
   );
-  const library = useAgentChoices(session);
-  const archives = useSyncExternalStore(
-    session.archives.subscribe,
-    session.archives.snapshot,
-  );
+  // Keep legacy artwork available just as Agents does; its readiness does not
+  // gate native selection or preflight. Archive evidence comes with the choices.
+  const library = useAgentChoices(session, true, true);
+  const { archives } = library;
   const list = useChannelList(session.channels);
   useEffect(() => {
     session.channelKit.ensure();
   }, [session]);
-  useEffect(() => {
-    // Channel discovery/access changes can invalidate a completed archive read.
-    if (archives.status === "idle") void session.archives.ensure();
-  }, [session, archives.status]);
+  const { templates } = library;
   return {
     kit,
-    agentsComplete: library.complete && list.status === "ready",
+    agentsComplete: templates.complete && list.status === "ready",
     agentsPending:
-      library.pending || list.status === "idle" || list.status === "loading",
-    agents: templateAgentChoices(library, list).filter(
-      (a) => !archives.archived.includes(a.pubkey),
-    ),
-    agentsReady: library.status === "ready" && archives.status === "ready",
-    error: library.error ?? archives.error ?? list.error,
+      templates.pending || list.status === "idle" || list.status === "loading",
+    agents: templateAgentChoices(library, list).map((agent) => ({
+      ...agent,
+      avatar: avatarMedia(agent.avatar, session.media),
+    })),
+    agentsReady: templates.status === "ready" && archives.status === "ready",
+    error: templates.error ?? archives.error ?? list.error,
     refresh: () => {
       void session.channelKit.refresh();
-      void session.agentChoices.refresh();
-      void session.archives.refresh();
+      void session.agentChoices.refresh("templates");
       session.channels.refreshList?.();
     },
   };

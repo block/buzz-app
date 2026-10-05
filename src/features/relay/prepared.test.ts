@@ -12,6 +12,7 @@ import {
   signed,
 } from "./testing";
 import type { HeadPersistence, SavedHead } from "./persistence";
+import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import { ByteLru } from "./budget";
 
 const relay = keypair(),
@@ -379,7 +380,7 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   store.dispose();
 });
 
-it("keeps known membership when a capped roster read omits it, and reports partial coverage", async () => {
+it("keeps known membership and cached heads when a later roster page fails", async () => {
   const { queries, store, next } = setup();
   queries.ensureList();
   next().respond(discovery(["a"])); // Metadata answered inline; no second read.
@@ -393,8 +394,10 @@ it("keeps known membership when a capped roster read omits it, and reports parti
   );
   next().respond(capped);
   await flush();
-  next().respond([]);
-  await flush();
+  const continuation = next();
+  expect(continuation.filters[0]?.kinds).toEqual([39002]);
+  continuation.fail(new Error("Later roster page unavailable"));
+  await vi.waitFor(() => expect(queries.list().status).toBe("error"));
   expect(queries.list().channels.map((c) => c.id)).toContain("a");
   expect(queries.list().channels.length).toBe(501);
   expect(queries.list().coverage).toBe("partial");
@@ -423,6 +426,8 @@ it("hides DM channels behind the NIP-29 hidden tag", async () => {
     {
       id: "dm",
       name: "DM",
+      description: "",
+      visibility: undefined,
       hidden: true,
       members: [viewer.pubkey, alice.pubkey].sort(),
       preview: undefined,
@@ -597,5 +602,36 @@ it("selection shares the one speculative read and failure releases preparation c
     expect(next().filters[0]?.["#h"]).toEqual(["b"]);
   } finally {
     store.dispose();
+  }
+});
+
+it("failed prepared head diagnostics omit response text from JSON errors", async () => {
+  const logger = getLogger("relay");
+  const reporters = [...logger.options.reporters];
+  const previous = logLevel();
+  const lines: string[] = [];
+  logger.setReporters([{ log: (entry) => lines.push(entry.args.join(" ")) }]);
+  const { queries, store, next } = setup();
+  try {
+    setLogLevel("debug");
+    queries.ensureList();
+    next().respond(discovery(["a"]));
+    await flush();
+    queries.ensure("a");
+    let failure: unknown;
+    try {
+      await new Response("RESPONSE_SECRET_306").json();
+    } catch (error) {
+      failure = error;
+    }
+    expect(String(failure)).toContain("RESPONSE_SECRET_306");
+    next().fail(failure);
+    await flush();
+    expect(lines.join(" ")).toContain("head failed a unavailable");
+    expect(lines.join(" ")).not.toContain("RESPONSE_SECRET_306");
+  } finally {
+    store.dispose();
+    logger.setReporters(reporters);
+    setLogLevel(previous);
   }
 });

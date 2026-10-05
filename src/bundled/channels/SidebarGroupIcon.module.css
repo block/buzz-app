@@ -1,0 +1,26 @@
+.icon {
+  position: relative;
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  place-items: center;
+  vertical-align: middle;
+  font-size: var(--sidenav-emoji-size);
+  line-height: 1;
+  overflow: visible;
+}
+.placeholder {
+  position: absolute;
+  inset: 0;
+  background: var(--border-standard);
+}
+.image {
+  display: block;
+  width: var(--sidenav-emoji-size);
+  height: var(--sidenav-emoji-size);
+  object-fit: contain;
+}
+.image[data-loading] {
+  visibility: hidden;
+}

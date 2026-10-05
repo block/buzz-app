@@ -1,7 +1,7 @@
 # Contribution workflow
 
 The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
-and Rust 1.97.1
+and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
 are downloaded on first use. Desktop development still requires the
@@ -60,6 +60,26 @@ need their own validation.
   sessions short. Press Ctrl+C to finalize the capture; the command prints the
   `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
   Chromium DevTools (**Performance** > **Load profile**).
+  Use `just web profile --scenario <file>` for an unattended capture. The file
+  is any JavaScript module, inside or outside the repository (a relative path
+  resolves from the repository root), that default-exports
+  `async (page, { signal }) => {}` and drives the Playwright `page`. When it
+  returns, the command saves the app's [client metrics](client-metrics.md)
+  export as `client-metrics.json` and exits without Ctrl+C. A scenario that
+  throws or does not finish within five minutes fails the run: the command
+  prints the scenario's stack and the directory holding the remaining
+  artifacts, saves no client metrics, and exits nonzero. Ctrl+C during a
+  scenario also saves no client metrics but exits zero, like any interrupted
+  capture. `signal` aborts on Ctrl+C, at the timeout, and when the capture ends,
+  so pass it to any wait that would otherwise outlive the run. A scenario
+  outside the repository resolves bare imports from its own location, not from
+  the repository's `node_modules`. A scenario runs as your real account, so
+  keep it read-only. Every capture starts from a fresh browser profile with no
+  community selected unless `BUZZ_DEV_OPEN_RELAY=1` is set. `manifest.json`
+  records the scenario file and `relay`, the `https://` origin of the
+  `BUZZ_RELAY_URL` that Vite resolves from the environment or its `.env` files;
+  a value the dev server would reject is recorded as `null`. To profile in
+  another Vite mode, pass it as `--mode <mode>` so the manifest follows it.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -69,7 +89,9 @@ need their own validation.
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the adapter derives a stable port from the worktree path (the same derivation
   `just web` uses) and prints the chosen URL. Different paths can still collide.
-  All desktop builds use the `buzz` URL scheme. See [OS deep links](deep-links.md).
+  Ordinary desktop development runs do not claim the OS `buzz` URL scheme or the
+  packaged single-instance lock, so multiple worktrees can run at once. Packaged
+  and debug bundles still use `buzz`. See [OS deep links](deep-links.md).
   Desktop requires the exact port to be free; an occupied port fails rather than
   opening another copy's server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
@@ -123,8 +145,12 @@ isolated test buses, never use the desktop session bus or display real banners. 
 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
-into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Parallel worktrees normally need
+into a new worktree. Native dependencies are fetched by Cargo as needed into the
+shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
+user-level `target-dir`, so its app and bundled resources always match its sources;
+remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
+The pinned agent runtime is built once per clone and reused by worktrees with the
+same pin and toolchain. Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
 ports must be integers from 1 to 65535. Browser dev
@@ -274,33 +300,42 @@ relevant integration evidence, not an automatic local full scan.
 
 Pre-push runs the project TypeScript check (`tsc --noEmit`), then Vitest tests
 related to the branch's changed JS/TS inputs, using the locally available merge
-base with `origin/main`. Documentation-only
-and native-only pushes skip this runner. Shared JS configuration/dependency
+base with `origin/main`. Documentation-only, native-only and Rust-only pushes
+skip this runner. Shared JS configuration/dependency
 changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, and the app composition test for source edits that its Vite loader hides
 from the import graph.
 A separate **design-system** job runs `design:typecheck` and `design:check` after
-types/unit tests. The jobs are serialized because pinned Lefthook 2.1.12 shares
+types/unit tests. A separate **rust-clippy** job runs the pinned Clippy over the
+whole Cargo workspace with the same invocation as the `native` CI lane
+(`cargo clippy --workspace --locked --all-targets -- -D warnings`); Rust-only
+changes do not run the JS/test lane, and its first cold build can take minutes.
+The jobs are serialized because pinned Lefthook 2.1.12 shares
 a mutable stdin reader: parallel consumers can lose Git refs and silently skip
 checks. Source CSS/JS/TS, design viewer/guard files, shared
 configuration/dependencies and hook-runner changes select this job; a missing base
 runs it conservatively. Its selection is independent of the unit-test skip, so
-CSS-only and viewer-only errors still block a push. Documentation-only and
-native-only pushes skip both jobs. Both selected jobs must pass.
+CSS-only and viewer-only errors still block a push. The Clippy lane is likewise
+selected independently: Rust source (`crates/`, `src-tauri/`), the workspace
+manifests/lockfile, Clippy or Rust toolchain configuration, and changes under
+`bin/` (the pinned toolchain) select it. Documentation-only pushes skip all
+three jobs. Every selected job must pass.
 On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
 concurrency in the hook. The optional value must be a positive integer; leaving
 it unset preserves Vitest's default. This also applies to direct Vitest runs and
 does not change test selection, timeouts, assertions, or retries.
 
-Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
-The design job disables pnpm dependency auto-repair. Install dependencies when
-switching branches, not during a push.
+Neither the JS nor design job fetches, installs dependencies, formats, or starts
+browsers; the design job disables pnpm dependency auto-repair. The Clippy job
+runs no builds beyond Clippy's own check pipeline, no tests and no browsers;
+its first cold run downloads dependencies and can take minutes. Install
+dependencies when switching branches, not during a push.
 
 This is advisory coverage of the current working tree, not a replacement for CI:
 uncommitted edits can affect results, dynamic dependencies may not be selected,
-and non-HEAD refs are explicitly left to CI. Type errors, design violations and test
-failures block the push. The type checks use `tsconfig.json` and
+and non-HEAD refs are explicitly left to CI. Type errors, design violations, test
+failures and Clippy warnings block the push. The type checks use `tsconfig.json` and
 `tsconfig.design.json`; they do not typecheck plain JavaScript browser tests or
 prove runtime service provisioning.
 Do not edit files concurrently with hooks. First-use Hermit tool downloads can
@@ -314,26 +349,41 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
+- **JavaScript:** two runners, each with Biome, one TypeScript check and a frontend
+  build. Vitest splits all test files across the runners, with two workers each;
+  both shards must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
+- **Browser journeys:** twelve runners (Chromium and WebKit, six file-level shards
   per engine), each with two workers. They start alongside measurements on separate
-  runners; `CI required` still requires both lanes. Each runner builds the native
-  plugin-manager fixture in a separately logged setup step before starting
-  Playwright. Its Rust cache is optional: a cache miss still builds the fixture,
-  outside the browser subprocess timeout. No measurement is repeated on shards,
-  and no retry hides a failure. Functional jobs also run when measurements fail:
-  this spends more runner minutes for faster, independent feedback.
+  runners; `CI required` still requires both lanes. A separate required Ubuntu
+  job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
+  It uploads a tar with executable permission, checkout revision and SHA-256
+  checksum; shards download by exact same-run artifact ID and verify all three
+  before running. A missing artifact fails CI rather than rebuilding. Local
+  non-CI journeys retain the locked Cargo build. Each browser test uses its own
+  mutable fixture home. No measurements are repeated on shards and no retries
+  hide failures.
+- Both browser lanes use the version-matched, digest-pinned
+  [Playwright Docker image](https://playwright.dev/docs/docker), which supplies
+  browsers and Linux libraries without per-job apt provisioning. Follow the
+  [CI container guidance](https://playwright.dev/docs/ci#via-containers).
+  Update both image references and digests when upgrading `@playwright/test`.
+  Setup verifies installed Playwright against image metadata and launches the
+  selected engine (both for measurements) before tests; it never downloads a
+  missing browser. Hermit pins Node/pnpm through explicit `./bin/` entry points
+  and fails closed if the pnpm store path cannot be resolved. Containers use
+  `HOME=/root` and trust only their exact checked-out workspace. Native host
+  jobs keep their normal toolchain and library setup.
 - **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
-Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
+Hermit/pnpm/Cargo caches avoid repeat downloads and cold compilation.
 Superseded PR runs are cancelled. Automatic CI uses disposable Ubuntu runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
@@ -349,7 +399,8 @@ gh workflow run ci.yml --ref <branch>
 ```
 
 A manual dispatch runs only **Windows native validation**: the same pinned Rust,
-Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Clippy and complete Tauri, agent-controller and credential-store package tests,
+without repeating Linux/browser jobs.
 Windows failures do not block the automatic `CI required` check; a Linux pass
 is not Windows validation. The job does not exercise OS banner interaction or
 packaged-app acceptance.

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -7,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { bindNames } from "./service";
 import { createAgentDirectory } from "./testing";
 import type { RelaySession } from "../relay/session";
+import type { PresenceStatus } from "../presence/presence";
 import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
 import { SearchResults } from "../../app/shell/SearchResults";
 import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
@@ -22,6 +25,7 @@ afterEach(() => {
 });
 function fixture() {
   const listeners = new Set<() => void>();
+  let presenceStatus: PresenceStatus = "unknown";
   const profiles = new Map([
     [a, { name: "Larry", isAgent: true as const }],
     [b, { name: "Larry", isAgent: true as const }],
@@ -34,10 +38,13 @@ function fixture() {
     participants: [a],
   };
   let list = { status: "ready" as const, channels: [channel] };
+  const rows = [{ pubkey: a, name: "Larry" }];
   const library = {
     status: "ready",
-    identities: [{ pubkey: a, name: "Larry" }],
+    identities: rows,
+    selectable: rows,
     definitions: [],
+    archives: { status: "unavailable" as const, archived: [] },
   };
   const message = {
     id: "m",
@@ -71,6 +78,11 @@ function fixture() {
     };
   };
   const session = {
+    presence: {
+      status: () => presenceStatus,
+      limited: () => false,
+      subscribe: (_pubkey: string, listener: () => void) => subscribe(listener),
+    },
     profiles: { snapshot: () => profiles, subscribe, ensure: async () => {} },
     channels: {
       list: () => list,
@@ -117,6 +129,10 @@ function fixture() {
   stops.push(() => names.dispose());
   return {
     session: { ...session, names },
+    setPresence(status: PresenceStatus) {
+      presenceStatus = status;
+      for (const listener of listeners) listener();
+    },
     join() {
       channel = { ...channel, members: [a, b], participants: [a, b] };
       list = { ...list, channels: [channel] };
@@ -154,6 +170,12 @@ it("uses channel scope in link previews and activity, and participant scope in s
       name: `View activity for Larry ${a.slice(0, 12)}`,
     }),
   ).toBeVisible();
+  act(() => f.setPresence("away"));
+  expect(
+    screen.getByRole("button", {
+      name: `View activity for Larry ${a.slice(0, 12)}, Presence: away`,
+    }),
+  ).toBeVisible();
   act(() => f.join());
   expect(view.container.querySelector("strong")).toHaveTextContent(
     "Larry · rcaj",
@@ -163,7 +185,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
   );
   expect(
     screen.getByRole("button", {
-      name: `View activity for Larry · rcaj ${a.slice(0, 12)}`,
+      name: `View activity for Larry · rcaj ${a.slice(0, 12)}, Presence: away`,
     }),
   ).toBeVisible();
 });

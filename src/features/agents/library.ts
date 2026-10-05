@@ -1,4 +1,4 @@
-/** A display-only projection of the existing local Buzz library, not proof of
+/** A display-only projection of the local and owner-authored relay inventory, not proof of
  * ownership, membership, custody or running state. No prompts/configuration. */
 export type AgentLibrary = Readonly<{
   definitions: readonly Readonly<{
@@ -20,6 +20,26 @@ export type AgentLibrarySnapshot = AgentLibrary &
     error?: string;
   }>;
 const empty = { definitions: Object.freeze([]), identities: Object.freeze([]) };
+
+/** One artwork rule for every agent surface: an identity without its own art
+ * shows its linked definition's art. Applied once where the snapshot is made. */
+export function inheritDefinitionAvatars<T extends AgentLibrary>(
+  library: T,
+): T {
+  const art = new Map(
+    library.definitions.flatMap((row) =>
+      row.avatar ? [[row.id, row.avatar] as const] : [],
+    ),
+  );
+  // Keep reader extras such as a partial-source error.
+  return {
+    ...library,
+    identities: library.identities.map((row) => {
+      const avatar = row.avatar ?? art.get(row.definitionId ?? "");
+      return avatar && avatar !== row.avatar ? { ...row, avatar } : row;
+    }),
+  };
+}
 export function createAgentLibrary(
   read: AgentLibraryReader | undefined,
   notify = (listener: () => void) => listener(),
@@ -51,7 +71,7 @@ export function createAgentLibrary(
       })
       .then((library) => {
         if (!closed && !owned.signal.aborted)
-          publish({ ...library, status: "ready" });
+          publish({ ...inheritDefinitionAvatars(library), status: "ready" });
       })
       .catch(() => {
         if (!closed && !owned.signal.aborted)
@@ -59,7 +79,7 @@ export function createAgentLibrary(
             ...snapshot,
             status: "error",
             error:
-              "Could not read the current Buzz agent library. Open Buzz and retry; its saved library is left unchanged.",
+              "Could not read agent inventory. Check the community connection and local library, then retry; saved data is unchanged.",
           });
       })
       .finally(() => {
@@ -108,27 +128,5 @@ export function createAgentLibrary(
       clear();
       listeners.clear();
     },
-  };
-}
-/** Match legacy buildUnifiedGroups, but show all linked keys rather than choosing
- * a runtime-dependent representative. Unknown archive evidence does not erase
- * library entries, and this grouping never supplies mention recipients. */
-export function groupAgentLibrary(
-  library: AgentLibrary,
-  archived: (key: string) => boolean,
-) {
-  const selected = new Set(library.definitions.map((row) => row.id));
-  const visible = library.identities.filter((row) => !archived(row.pubkey));
-  return {
-    groups: library.definitions.map((definition) => ({
-      ...definition,
-      identities: visible.filter(
-        (identity) => identity.definitionId === definition.id,
-      ),
-    })),
-    custom: visible.filter((row) => !row.definitionId),
-    unknown: visible.filter(
-      (row) => row.definitionId && !selected.has(row.definitionId),
-    ),
   };
 }

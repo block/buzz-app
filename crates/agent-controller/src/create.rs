@@ -35,11 +35,14 @@ impl NewAgent {
             return Err("Agent authorization belongs to another owner".into());
         }
         let mut agent = Agent {
+            picture: None,
             id: self.id.clone(),
             pubkey: self.key.pubkey().into(),
             relay_url: self.relay.clone(),
             name: String::new(),
             system_prompt: String::new(),
+            session_policy: None,
+            session_policy_inherit: false,
             workspace: String::new(),
             harness: HarnessEdit {
                 command: String::new(),
@@ -94,7 +97,7 @@ impl Controller {
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
         if agent.extra.get("profilePending") != Some(&Value::Bool(true)) {
-            return Err("No pending creation profile".into());
+            return Err("No pending profile update".into());
         }
         let auth = agent.auth_tag.ok_or("Missing owner authorization")?;
         crate::secret::validate_attestation(&auth, &agent.pubkey)?;
@@ -107,6 +110,7 @@ impl Controller {
             ),
             auth,
             name: agent.name,
+            picture: agent.picture,
             revision: agent.revision,
         })
     }
@@ -121,14 +125,31 @@ pub struct CreationProfile {
     pub url: String,
     pub auth: String,
     pub name: String,
+    pub picture: Option<String>,
     pub revision: u64,
 }
 impl CreationProfile {
-    pub fn event(&self, key: &Secret) -> Result<Value> {
+    pub fn event(&self, key: &Secret, existing: &[Value]) -> Result<Value> {
         if key.pubkey() != self.pubkey {
             return Err("Profile identity changed".into());
         }
-        key.profile(&self.name, &self.auth)
+        key.profile(&self.name, self.picture.as_deref(), &self.auth, existing)
+    }
+    pub fn confirm(&self, existing: &[Value], event_id: &str) -> Result<()> {
+        let current = crate::profile::current(existing, &self.pubkey)?;
+        if current.as_ref().map(|profile| profile.id.as_str()) != Some(event_id) {
+            return Err("A different profile is current; saved avatar remains pending. Refresh and retry publication.".into());
+        }
+        Ok(())
+    }
+    pub fn query_url(&self) -> String {
+        self.url.trim_end_matches("/events").to_owned() + "/query"
+    }
+    pub fn authenticate_query(&self, key: &Secret, body: &[u8]) -> Result<Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Profile identity changed".into());
+        }
+        key.profile_auth(&self.query_url(), body)
     }
     pub fn authenticate(&self, key: &Secret, body: &[u8]) -> Result<Value> {
         if key.pubkey() != self.pubkey {

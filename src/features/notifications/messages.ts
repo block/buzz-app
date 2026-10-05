@@ -96,8 +96,15 @@ export function bindMessageNotifications(
           message.channelId,
           message.messageId,
         );
-        const category = attention.category;
-        if (attention.status !== "eligible" || !category) continue;
+        // A reply whose conversation lookup is pending may become thread
+        // attention; admission waits until the lookup decides it.
+        const category =
+          attention.category ?? (attention.pending ? "thread" : undefined);
+        if (
+          !category ||
+          (attention.status !== "eligible" && !attention.pending)
+        )
+          continue;
         void notifications.admit(
           category,
           labels[category],
@@ -121,9 +128,11 @@ export function bindMessageNotifications(
               message.messageId,
             );
             const sync = owned.unread.sync();
-            // Mentions bypass channel mute, as in the legacy policy. Unknown
-            // preferences must not briefly release ordinary alerts at startup.
-            if (attention.category !== "mention") {
+            // Explicit mentions bypass channel mute, as in the legacy policy —
+            // including p-tagged messages in DM channels, whose category is
+            // "direct". Unknown preferences must not briefly release ordinary
+            // alerts at startup.
+            if (!attention.mentioned) {
               const preferences = owned.sidebarPreferences.snapshot();
               if (preferences.data?.muted.includes(message.channelId))
                 return false;
@@ -135,6 +144,7 @@ export function bindMessageNotifications(
             }
             if (
               attention.status === "ineligible" ||
+              (!attention.pending && attention.category !== category) ||
               (!notifications.snapshot().preferences.notifyWhileViewing &&
                 attention.viewing)
             )

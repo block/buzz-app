@@ -1,7 +1,26 @@
 import { test, expect } from "@playwright/test";
+import { npubEncode } from "nostr-tools/nip19";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { watchPageErrors } from "./page-errors.mjs";
+
+// Each identity card keeps its public key in its own popover.
+async function openPublicKeys(page, agents) {
+  const shown = [];
+  for (const button of await agents
+    .getByRole("button", { name: /: public key$/ })
+    .all()) {
+    await button.click();
+    const popup = page.getByRole("dialog", { name: /public key$/ });
+    await expect(popup).toBeVisible();
+    shown.push(...(await popup.locator("li").allInnerTexts()));
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+    await expect(button).toBeFocused();
+  }
+  return shown.map((text) => text.trim());
+}
 
 test("Old Buzz library reads the existing library with exact linked keys and session-safe retries", async ({
   page,
@@ -14,42 +33,43 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  const errors = watchPageErrors(page);
   try {
     await server.listen();
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agents.html`,
     );
     const agents = page.getByRole("region", {
-      name: "Library templates",
+      name: "Library identities",
       exact: true,
     });
     await expect(
       agents.getByRole("heading", { name: "A Brain", exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     const keys = await page.evaluate(() => window.agentFixture.agents);
+    const npubs = keys.map((key) => npubEncode(key));
     await expect
-      .poll(() => agents.locator("img").evaluate((image) => image.naturalWidth))
+      .poll(() =>
+        agents
+          .locator("img")
+          .first()
+          .evaluate((image) => image.naturalWidth),
+      )
       .toBeGreaterThan(0);
-    await expect(agents.locator("img")).toHaveCSS("opacity", "1");
+    await expect(agents.locator("img").first()).toHaveCSS("opacity", "1");
     await expect(agents.locator("[data-avatar-shape]")).toHaveCount(2);
     for (const avatar of await agents.locator("[data-avatar-shape]").all())
       await expect(avatar).toHaveAttribute("data-avatar-shape", "squircle");
     await expect(
-      agents.getByRole("img", { name: "A Brain", exact: true }),
+      agents.getByRole("img", { name: /^A Brain identity/ }),
     ).toHaveCount(2);
 
-    for (const key of keys)
-      await expect(agents.getByText(key, { exact: true })).toBeHidden();
-    await agents
-      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
-      .click();
-    for (const key of keys)
-      await expect(agents.getByText(key, { exact: true })).toBeVisible();
-    await expect(
-      page.getByText(/current Buzz library, read-only/),
-    ).toBeVisible();
+    for (const npub of npubs)
+      await expect(agents.getByText(npub, { exact: true })).toBeHidden();
+    const shown = await openPublicKeys(page, agents);
+    expect([...shown].sort()).toEqual([...npubs].sort());
+    for (const key of keys) expect(shown.join(" ")).not.toContain(key);
+    await expect(page.getByText(/This inventory is read-only/)).toBeVisible();
     const surface = page.getByRole("region", { name: "Agents", exact: true });
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
@@ -82,7 +102,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
             return matches;
           }),
         ).toBe(true);
-        const scroller = surface.locator(":scope > div");
+        const scroller = surface.locator(".overflow-auto");
         const documentTop = await page.evaluate(
           () => document.scrollingElement.scrollTop,
         );
@@ -99,7 +119,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
           0,
         );
         await expect(
-          surface.getByText(/current Buzz library, read-only/),
+          surface.getByText(/This inventory is read-only/),
         ).toBeInViewport();
         expect(await surface.evaluate((el) => el.scrollTop)).toBe(0);
         expect(
@@ -139,7 +159,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(
-      page.getByText("No selected agents in your Buzz library."),
+      page.getByText("No visible identities in your Buzz library."),
     ).toBeVisible();
     await expect(agents.getByRole("article")).toHaveCount(0);
     await page
@@ -165,8 +185,8 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
-    await expect(agents.getByRole("article")).toHaveCount(2);
-    await expect(agents.getByText(keys[0], { exact: true })).toHaveCount(0);
+    await expect(agents.getByRole("article")).toHaveCount(1);
+    await expect(agents.getByText(npubs[0], { exact: true })).toHaveCount(0);
     await page
       .getByRole("button", { name: "Toggle archive", exact: true })
       .click();
@@ -177,11 +197,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
-    await agents
-      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
-      .click();
-    for (const key of keys)
-      await expect(agents.getByText(key, { exact: true })).toBeVisible();
+    expect([...(await openPublicKeys(page, agents))].sort()).toEqual(
+      [...npubs].sort(),
+    );
     await expect(page.getByText(/Archive visibility is unknown/)).toBeVisible();
     await page
       .getByRole("button", { name: "Toggle missing archive", exact: true })
@@ -204,7 +222,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
     expect(await page.evaluate(() => window.agentFixture.reads())).toBe(
-      reads + 2,
+      reads + 3,
     );
     await page
       .getByRole("button", { name: "Toggle hold", exact: true })
@@ -213,7 +231,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(page.getByRole("status")).toHaveText(
-      "Reading your Buzz library…",
+      "Reading agent inventory…",
     );
     await page
       .getByRole("button", { name: "Community B", exact: true })
@@ -223,20 +241,20 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .click();
     await expect(
       agents.getByRole("heading", { name: "B Brain", exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     await expect(page.getByText("A Brain", { exact: true })).toHaveCount(0);
     await page
       .getByRole("button", { name: "Community A", exact: true })
       .click();
     await expect(
-      agents.getByRole("heading", { name: "A Brain", exact: true }),
+      agents.getByRole("heading", { name: /^A Brain identity/ }),
     ).toHaveCount(2);
     await page
       .getByRole("button", { name: "Clear cache", exact: true })
       .click();
     await expect(page.getByRole("status")).toContainText("Library cleared");
     await expect(page.getByRole("article")).toHaveCount(0);
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

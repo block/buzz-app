@@ -1,4 +1,5 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
+import { companionPlugins } from "./companion-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -7,8 +8,46 @@ import type { Navigation } from "../../src/features/navigation/controller";
 import type { PageProps } from "../../src/features/pages/service";
 import type { PageNavigation } from "../../src/features/navigation/service";
 import type { RelayData } from "../../src/features/relay/service";
+import { PanelSubview } from "../../src/features/panels/PanelSubview";
 import type { PanelProps } from "../../src/features/panels/service";
 import type { NotificationInput } from "../../src/features/notifications/service";
+
+function DrillInFixture({ target, context }: PanelProps) {
+  const [log, setLog] = useState(false);
+  return (
+    <>
+      <p>Wrong match</p>
+      <input aria-label="Panel draft" defaultValue="" />
+      <button
+        type="button"
+        onClick={(event) => {
+          event.currentTarget.focus();
+          context?.push?.(`${target}:detail`);
+        }}
+      >
+        Open child detail
+      </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.currentTarget.focus();
+          setLog(true);
+        }}
+      >
+        Open local log
+      </button>
+      {log && (
+        <PanelSubview
+          title="Fixture log"
+          backLabel="Back to detail"
+          onBack={() => setLog(false)}
+        >
+          <p>Log contents</p>
+        </PanelSubview>
+      )}
+    </>
+  );
+}
 
 declare global {
   interface Window {
@@ -130,6 +169,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "pending",
           title: "Pending fixture",
+          primary: true,
           handlesNavigation: true,
           component: PendingDestination,
         });
@@ -161,6 +201,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "session",
           title: "Session fixture",
+          primary: true,
           handlesNavigation: true,
           component: SessionPage,
         });
@@ -181,6 +222,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "slow",
           title: "Delayed fixture",
+          primary: true,
           component: () => <p>Delayed destination presented</p>,
         });
       },
@@ -223,6 +265,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "retry",
           title: "Retry fixture",
+          primary: true,
           component: RetryPage,
         });
       },
@@ -238,7 +281,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           id: "catch-all",
           title: "Wrong panel",
           matches: () => true,
-          component: () => <p>Wrong match</p>,
+          component: DrillInFixture,
         });
         ctx.panels.register({
           id: "notes",
@@ -250,9 +293,11 @@ export const fixturePlugins: readonly BundledPlugin[] = [
         ctx.pages.register({
           id: "legacy",
           title: "Legacy",
+          primary: true,
           component: Legacy,
         });
       },
     },
   },
+  ...companionPlugins,
 ];

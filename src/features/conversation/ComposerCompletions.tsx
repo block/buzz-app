@@ -1,3 +1,9 @@
+import {
+  readComposerSnapshot,
+  composerMarkdownContext,
+} from "../messages/composer-document";
+import type { ComposerSnapshot } from "../messages/mention-draft";
+import { scanMarkdown } from "../relay/message-content";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import { createPortal } from "react-dom";
 import { useCompletionPosition } from "./useCompletionPosition";
@@ -28,20 +34,69 @@ import styles from "./Completions.module.css";
 
 const RETRY = Symbol("retry-completion");
 
+// Channel links belong in prose, not inside existing links or code.
+// Run only after a channel trigger matches; ordinary typing does no extra parsing.
+function channelCompletionInProse(
+  text: string,
+  document: ComposerSnapshot | undefined,
+  query: CompletionQuery,
+) {
+  const doc = readComposerSnapshot(document);
+  const context = doc ? composerMarkdownContext(doc) : { text, protected: [] };
+  const overlaps = (start: number, end: number) =>
+    query.start < end && query.end > start;
+  if (context.protected.some(({ start, end }) => overlaps(start, end)))
+    return false;
+  const { tree, tooDeep } = scanMarkdown(context.text);
+  if (tooDeep) return false;
+  const pending = [tree];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined || !overlaps(start, end))
+      continue;
+    if (
+      [
+        "code",
+        "inlineCode",
+        "link",
+        "linkReference",
+        "image",
+        "imageReference",
+        "definition",
+        "html",
+      ].includes(node.type)
+    )
+      return false;
+    pending.push(...(node.children ?? []));
+  }
+  return true;
+}
+
 export function ComposerCompletions({
   registry,
   editor,
   input,
   replace,
+  resolved,
   ...context
 }: CompletionContext & {
   registry: ContributionReader<ComposerCompletion>;
   editor: CompletionEditor;
   input: RefObject<ComposerInputElement | null>;
+  /** Chip ranges and the draft text they were measured against. */
+  resolved: Readonly<{
+    text: string;
+    document?: ComposerSnapshot;
+    recipients: readonly Readonly<{ start: number; end: number }>[];
+  }>;
   replace(
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ): boolean;
 }) {
   const providers = useSyncExternalStore(
@@ -50,8 +105,17 @@ export function ComposerCompletions({
     registry.snapshot,
   );
   const observation = editor.observation;
-  const match = observation && matchCompletion(providers, observation, context);
+  // Stale chip ranges cannot classify this caret.
+  const match =
+    observation &&
+    resolved.text === observation.text &&
+    matchCompletion(providers, observation, context, resolved.recipients);
   if (!match || !observation) return null;
+  if (
+    match.provider.pluginId === "buzz.channels" &&
+    !channelCompletionInProse(observation.text, resolved.document, match.query)
+  )
+    return null;
   return (
     <ContributionBoundary
       key={JSON.stringify([
@@ -100,19 +164,25 @@ function OwnedCompletion({
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ): boolean;
 }) {
   const id = useId();
   const compact = provider.pluginId === "buzz.emoji";
   const mention = provider.pluginId === "buzz.mentions";
+  const channel = provider.pluginId === "buzz.channels";
+  const named = mention || channel;
   const popup = useCompletionPosition(
     input,
     compact ? 0.375 : 1,
-    mention ? { preferAbove: true, gap: 4, maxWidth: 380 } : undefined,
+    named
+      ? { preferAbove: true, gap: 4, maxWidth: channel ? 480 : 380 }
+      : undefined,
   );
   const list = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
+  // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
   const revealSelection = useRef(false);
   const live = useRef(false);
@@ -142,7 +212,7 @@ function OwnedCompletion({
           ? previous
           : previous === RETRY && next.retry
             ? RETRY
-            : next.items[0]?.id,
+            : undefined,
       );
       return () => {
         if (latest.current !== next) return;
@@ -167,15 +237,20 @@ function OwnedCompletion({
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
-  function accept(index: number) {
+  function accept(index: number, key = "click") {
     if (!active() || latest.current !== result) return false;
     if (index === items.length && result?.retry) {
       result.retry();
       return true;
     }
     const item = items[index];
-    if (!item) return false;
-    const accepted = current.current.replace(item.edit, query, observation);
+    if (!item || item.disabled || item.canSelect?.(key) === false) return false;
+    const accepted = current.current.replace(
+      item.edit,
+      query,
+      observation,
+      key,
+    );
     if (accepted) current.current.editor.invalidate();
     return accepted;
   }
@@ -216,6 +291,15 @@ function OwnedCompletion({
         }
         return false;
       }
+      if (event.key === " " && result?.spaceId) {
+        const exact = items.findIndex((item) => item.id === result.spaceId);
+        if (accept(exact, " ")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+        return false;
+      }
       if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count) {
         event.preventDefault();
         event.stopPropagation();
@@ -228,7 +312,7 @@ function OwnedCompletion({
       if ((event.key === "Enter" || event.key === "Tab") && count) {
         event.preventDefault();
         event.stopPropagation();
-        accept(selectedIndex);
+        accept(selectedIndex, event.key);
         return true;
       }
       return false;
@@ -267,7 +351,8 @@ function OwnedCompletion({
             className={styles.popup}
             aria-label={`${provider.title} suggestions`}
             data-compact={compact || undefined}
-            data-mention={mention || undefined}
+            data-mention={named || undefined}
+            data-channel={channel || undefined}
           >
             <div
               id={id}
@@ -283,6 +368,7 @@ function OwnedCompletion({
                   role="option"
                   tabIndex={-1}
                   aria-selected={i === selectedIndex}
+                  aria-disabled={!!item.disabled}
                   aria-label={
                     compact && item.detail
                       ? `${item.label} ${item.detail}`
@@ -294,7 +380,7 @@ function OwnedCompletion({
                     if (event.button === 0) event.preventDefault();
                   }}
                   onPointerMove={
-                    compact || mention
+                    compact || named
                       ? () => {
                           revealSelection.current = false;
                           setSelected(item.id);
@@ -310,7 +396,7 @@ function OwnedCompletion({
                     </span>
                   )}
                   <span className={styles.label} data-completion-label>
-                    {mention ? (
+                    {named ? (
                       <span className={styles.name}>{item.label}</span>
                     ) : (
                       item.label
@@ -328,6 +414,11 @@ function OwnedCompletion({
                       </small>
                     )}
                   </span>
+                  {channel && i === selectedIndex && (
+                    <span aria-hidden="true" className={styles.acceptKey}>
+                      Enter
+                    </span>
+                  )}
                 </div>
               ))}
               {result?.retry && (
@@ -342,7 +433,7 @@ function OwnedCompletion({
                     if (event.button === 0) event.preventDefault();
                   }}
                   onPointerMove={
-                    compact || mention
+                    compact || named
                       ? () => {
                           revealSelection.current = false;
                           setSelected(RETRY);

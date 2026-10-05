@@ -1,15 +1,44 @@
+import { BestieIcon } from "../../shared/design-system/icons";
 import type { PluginModule } from "../../plugins/api";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
 
-export const inject = ["panels"];
+export const inject = ["pages"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.panels.register({
-    id: "companion",
+  ctx.pages.register({
+    id: "bestie",
     title: "Bestie",
-    matches: () => false,
-    launcher: { icon: "/bestie.png", target: "" },
-    component: Bestie,
+    layout: "workspace",
+    primary: true,
+    component: BestiePage,
   });
 };
+
+// Bestie's home page until agent chat connects.
+function BestiePage() {
+  return (
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Bestie">
+        <div className="flex h-full min-h-0 flex-col">
+          <PanelHeader
+            title={
+              <PanelHeaderLabel
+                title="Bestie"
+                icon={<BestieIcon size="1rem" />}
+              />
+            }
+          />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <Bestie />
+          </div>
+        </div>
+      </FullPageSurface>
+    </div>
+  );
+}
 
 function Bestie() {
   return (

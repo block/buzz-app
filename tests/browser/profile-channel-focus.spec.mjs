@@ -8,7 +8,14 @@ async function expectPaintedRing(page, list, row) {
   expect(
     await row.evaluate((element) => element.matches(":focus-visible")),
   ).toBe(true);
-  const bounds = await list.boundingBox();
+  const listBounds = await list.boundingBox();
+  // Navigation rows paint their focus ring outside the unbordered list.
+  const bounds = {
+    x: listBounds.x - 4,
+    y: listBounds.y - 4,
+    width: listBounds.width + 8,
+    height: listBounds.height + 8,
+  };
   const image = await page.screenshot({
     clip: {
       x: Math.floor(bounds.x),
@@ -81,11 +88,14 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   await page
     .locator("html")
     .evaluate((html) => html.setAttribute("data-keyboard-navigation", ""));
-  await single.getByRole("button", { name: "#One" }).focus();
+  await single.getByRole("button", { name: "One" }).focus();
   await expectPaintedRing(page, single, single.getByRole("button"));
 
-  await panel.getByRole("button", { name: "Close channel panel" }).click();
-  await page.getByRole("button", { name: "View Viewer profile" }).click();
+  await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).click();
+  await page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .getByRole("button", { name: "View Viewer profile" })
+    .click();
   await panel.getByRole("tab", { name: "Channels" }).click();
   const multiple = channels.locator("ul");
   await expect(multiple.locator("li")).toHaveCount(2);

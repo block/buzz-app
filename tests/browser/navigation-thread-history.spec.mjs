@@ -1,5 +1,7 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, virtuaIdle } from "./timeline.mjs";
+
+import { wheel } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -141,7 +143,7 @@ for (const reading of [false, true]) {
         .getByRole("button", { name: /^View thread:/ });
       // Virtua can retain its pointer lock after geometry stops moving. Wait
       // for input readiness before Playwright tries alternate scroll alignments.
-      await expect(trigger).toHaveCSS("pointer-events", "auto");
+      await virtuaIdle(page);
       await trigger.click();
       await expect.poll(() => requested).toBe(true);
       // One of the 50 loaded replies is a collapsed descendant.
@@ -151,21 +153,33 @@ for (const reading of [false, true]) {
       ).toHaveCount(0);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       // The panel is presented even while bounded history is still pending.
       await expect
         .poll(() =>
           page.evaluate(() => window.fixtureNavigation.snapshot().status),
         )
         .toBe("opened");
+      await expect(region).toHaveAttribute("aria-busy", "false");
+      await expect
+        .poll(() =>
+          region.evaluate(
+            (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+          ),
+        )
+        .toBeLessThan(4);
       let position = 0;
       if (reading) {
+        const bottom = await region.evaluate((node) => node.scrollTop);
         await region.hover();
-        await page.mouse.wheel(0, 500);
-        await expect
-          .poll(() => region.evaluate((node) => node.scrollTop))
-          .toBe(500);
+        // A wheel request is not an exact displacement (Linux WebKit can stop
+        // short), so the reading position is wherever the completed gesture
+        // came to rest; the checks below then hold that value exactly.
+        await wheel(page, -500, region);
         position = await region.evaluate((node) => node.scrollTop);
+        expect(position, "reading gesture leaves the bottom").toBeLessThan(
+          bottom,
+        );
       }
       release();
       await expect(region.locator("[data-message-id]")).toHaveCount(123);
@@ -179,6 +193,8 @@ for (const reading of [false, true]) {
         .toBe("opened");
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        const jumpToLatest = region.locator("button[data-jump-to-latest]");
+        await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
       } else {
         await expect
           .poll(() =>
@@ -191,7 +207,7 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
         await expect(
-          page.getByRole("button", { name: "Close thread", exact: true }),
+          page.getByRole("tab", { name: "Thread", exact: true }),
         ).toBeFocused();
       }
       const live = app.reply(root.id);
@@ -200,6 +216,53 @@ for (const reading of [false, true]) {
       ).toBeVisible();
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+        const jumpToLatest = region.locator("button[data-jump-to-latest]");
+        await expect(jumpToLatest).toHaveAccessibleName("1 new message");
+        await jumpToLatest.focus();
+        await page.keyboard.press("Space");
+        await expect(region).toBeFocused();
+        await expect(
+          region.locator(`[data-message-id="${live.id}"]`),
+        ).toBeInViewport();
+        await expect(jumpToLatest).toHaveCount(1);
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("inert", "");
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("aria-hidden", "true");
+        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
+          0,
+        );
+        await expect(jumpToLatest).toBeHidden();
+        await region.hover();
+        await wheel(page, -500, region);
+        await expect
+          .poll(() =>
+            region.evaluate(
+              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+            ),
+          )
+          .toBeGreaterThan(80);
+        const nextLive = app.reply(root.id);
+        await expect(jumpToLatest).toHaveAccessibleName("1 new message");
+        await jumpToLatest.focus();
+        await page.keyboard.press("Enter");
+        await expect(region).toBeFocused();
+        await expect(
+          region.locator(`[data-message-id="${nextLive.id}"]`),
+        ).toBeInViewport();
+        await expect(jumpToLatest).toHaveCount(1);
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("inert", "");
+        await expect(
+          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+        ).toHaveAttribute("aria-hidden", "true");
+        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
+          0,
+        );
+        await expect(jumpToLatest).toBeHidden();
       } else {
         await expect(
           region.locator(`[data-message-id="${live.id}"]`),
@@ -210,7 +273,9 @@ for (const reading of [false, true]) {
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toBeInViewport();
-      await expect(region.locator("[data-message-id]")).toHaveCount(125);
+      await expect(region.locator("[data-message-id]")).toHaveCount(
+        reading ? 126 : 125,
+      );
     } finally {
       release();
       await page.unroute(routePattern);

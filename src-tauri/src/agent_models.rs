@@ -38,6 +38,10 @@ pub(crate) struct Request {
     host: String,
     filter: String,
     action: Operation,
+    /// Blank host/filter are inherited from write-only Agent defaults the UI
+    /// cannot see, so native supplies them instead of treating blank as explicit.
+    #[serde(default)]
+    inherit_workspace: bool,
 }
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -45,6 +49,8 @@ enum Operation {
     Connect,
     Refresh,
     Disconnect,
+    /// One small completion with the draft's provider and model.
+    Test,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +59,8 @@ pub(crate) struct Catalog {
     models: Vec<Model>,
     model_overridden: bool,
     disconnected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tested_model: Option<String>,
 }
 #[derive(Serialize)]
 struct Model {
@@ -210,18 +218,26 @@ fn resolve(
     if request.host.len() > 4096 || request.filter.len() > 4096 {
         return Err("Connection settings are too long".into());
     }
+    // An explicit agent workspace/filter must never be replaced by an inherited
+    // default, even if a caller sends inheritWorkspace with blank request fields.
+    let can_inherit = request.inherit_workspace
+        && request
+            .edit
+            .as_ref()
+            .is_some_and(|edit| edit.harness.databricks.is_none());
+    let defer = |value: &str| can_inherit && value.is_empty();
     let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
-    if context.host.is_some() && origin(&request.host)? != host {
+    if context.host.is_some() && !defer(&request.host) && origin(&request.host)? != host {
         return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
     }
-    if context
-        .filter
-        .as_ref()
-        .is_some_and(|v| v != &request.filter)
-    {
-        return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
-    }
-    let filter = DatabricksModelFilter::parse(Some(&request.filter))
+    let filter = match &context.filter {
+        Some(native) if defer(&request.filter) => native,
+        Some(native) if native != &request.filter => {
+            return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
+        }
+        _ => &request.filter,
+    };
+    let filter = DatabricksModelFilter::parse(Some(filter))
         .map_err(|_| "Invalid model filter".to_owned())?;
     Ok((host, filter))
 }
@@ -252,17 +268,33 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             .and_then(|n| n.to_str())
             == Some("buzz-pi-acp")
     }) {
-        let prepared = controller.pi_model_context(
-            request.id.as_deref(),
-            request.expected_revision,
-            request.edit.clone().unwrap(),
-        );
+        let edit = request.edit.clone().unwrap();
+        let prepared = controller
+            .pi_model_context(
+                request.id.as_deref(),
+                request.expected_revision,
+                edit.clone(),
+            )
+            .await;
         return host
             .run(ticket, async move {
                 if request.action == Operation::Disconnect {
                     return Err("Pi credentials are managed by Pi".into());
                 }
-                let models = crate::pi_models::fetch(prepared?)
+                let context = crate::pi_models::verify(prepared?).await?.into_context();
+                if request.action == Operation::Test {
+                    let harness = &edit.harness;
+                    let tested_model =
+                        crate::pi_models::test(context, &harness.provider, &harness.model).await?;
+                    return Ok(Catalog {
+                        host: String::new(),
+                        models: vec![],
+                        model_overridden: false,
+                        disconnected: false,
+                        tested_model: Some(tested_model),
+                    });
+                }
+                let models = crate::pi_models::fetch(context)
                     .await?
                     .into_iter()
                     .map(|id| Model {
@@ -275,6 +307,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     models,
                     model_overridden: false,
                     disconnected: false,
+                    tested_model: None,
                 })
             })
             .await;
@@ -283,32 +316,43 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         std::path::Path::new(&edit.harness.command)
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("goose")
+            .is_some_and(|name| matches!(name.trim_end_matches(".exe"), "goose" | "goose-acp"))
     });
     if goose {
-        // Goose's catalog handler may start OAuth on a cache miss. Only the
-        // explicit Browse/Retry action may invoke it; Refresh stays headless.
-        if request.action != Operation::Connect {
+        // Goose's catalog handler may start OAuth on a cache miss. Only an
+        // explicit Browse/Retry or Test may invoke Goose; Refresh stays headless.
+        if !matches!(request.action, Operation::Connect | Operation::Test) {
             return host
                 .run(ticket, async {
                     Err("Goose model lookup requires explicit Browse or Retry".into())
                 })
                 .await;
         }
-        let prepared = request
-            .edit
-            .clone()
-            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-            .and_then(|edit| {
-                controller.goose_model_context(
-                    request.id.as_deref(),
-                    request.expected_revision,
-                    edit,
-                )
-            });
+        let prepared = match request.edit.clone() {
+            Some(edit) => {
+                controller
+                    .goose_model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
+            }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        };
         return host
             .run(ticket, async move {
                 let context = prepared?;
+                if request.action == Operation::Test {
+                    // Saved environment overrides are write-only. Testing them
+                    // must not return their hidden provider/model values to IPC.
+                    let selection_overridden = context.model_overridden
+                        || context.environment.contains_key("GOOSE_PROVIDER");
+                    let tested_model = crate::goose_models::test(context).await?;
+                    return Ok(Catalog {
+                        host: String::new(),
+                        models: vec![],
+                        model_overridden: false,
+                        disconnected: false,
+                        tested_model: (!selection_overridden).then_some(tested_model),
+                    });
+                }
                 let model_overridden = context.model_overridden;
                 let models = crate::goose_models::fetch(context)
                     .await?
@@ -323,29 +367,52 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                     models,
                     model_overridden,
                     disconnected: false,
+                    tested_model: None,
                 })
+            })
+            .await;
+    }
+    if request.action == Operation::Test {
+        return host
+            .run(ticket, async {
+                Err("Connection tests are only available for Pi and Goose".into())
             })
             .await;
     }
     // Disconnect is recovery: changing provider or breaking saved settings must
     // not trap credentials. Its explicit host selects ONLY this app's cache.
     let prepared = if request.action == Operation::Disconnect {
-        controller
-            .ensure_open()
-            .and_then(|_| origin(&request.host))
+        // An inherited workspace is sent blank; native resolves it from Agent
+        // defaults without the draft, so recovery survives invalid settings.
+        let named = if request.inherit_workspace && request.host.is_empty() {
+            controller
+                .inherited_workspace()
+                .await
+                .and_then(|workspace| {
+                    workspace.ok_or_else(|| {
+                        "Agent defaults no longer set a Databricks workspace".to_owned()
+                    })
+                })
+        } else {
+            controller.ensure_open().await.map(|_| request.host.clone())
+        };
+        named
+            .and_then(|named| origin(&named))
             .and_then(|workspace| {
                 host.cache(&workspace)
                     .map(|cache| (false, workspace, None, cache))
             })
     } else {
         // Short settings read only; never hold the controller across network waits.
-        request
-            .edit
-            .clone()
-            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-            .and_then(|edit| {
-                controller.model_context(request.id.as_deref(), request.expected_revision, edit)
-            })
+        let context = match request.edit.clone() {
+            Some(edit) => {
+                controller
+                    .model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .await
+            }
+            None => Err("Agent draft is required for model lookup".to_owned()),
+        };
+        context
             .and_then(|context| {
                 resolve(&request, &context)
                     .map(|(workspace, filter)| (context.model_overridden, workspace, filter))
@@ -356,15 +423,21 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             })
     };
     let factory = state.factory.clone();
+    let hide_inherited_host = request.inherit_workspace && request.host.is_empty();
     host.run(ticket, async move {
         let (model_overridden, workspace, filter, cache) = prepared?;
         if request.action == Operation::Disconnect {
-            controller.disconnect(&workspace)?;
+            controller.disconnect(&workspace).await?;
             return Ok(Catalog {
-                host: workspace,
+                host: if hide_inherited_host {
+                    String::new()
+                } else {
+                    workspace
+                },
                 models: vec![],
                 model_overridden,
                 disconnected: true,
+                tested_model: None,
             });
         }
         execute(
@@ -379,6 +452,14 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         .await
     })
     .await
+    .map(|mut catalog| {
+        // The native connection uses the inherited write-only environment;
+        // the catalog projection must not reveal its workspace URL to the UI.
+        if hide_inherited_host {
+            catalog.host.clear();
+        }
+        catalog
+    })
 }
 
 // Production reuses the immutable engine with its existing auth policy. Tests replace only the
@@ -430,6 +511,9 @@ impl RuntimeConnection {
         cache: &std::path::Path,
         opener: Arc<dyn BrowserOpener>,
     ) -> Result<Self, String> {
+        if cfg!(windows) {
+            return Err(buzz_agent_controller::connection::DATABRICKS_WINDOWS.into());
+        }
         // Match the pinned runtime's discovery/client/scopes/namespace exactly.
         // Do not call the convenience wrapper: its default opener logs the URL.
         let auth = PkceOAuthTokenSource::new_with(
@@ -534,11 +618,13 @@ async fn execute(
         models,
         model_overridden,
         disconnected: false,
+        tested_model: None,
     })
 }
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+// Windows refuses this OAuth engine: see databricks_oauth_is_unsupported_on_windows.
+#[cfg(all(test, unix))]
 mod bundled_tests;

@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from "vitest";
 import { parseAttachments } from "./fold";
 import { foldMessages } from "./fold";
+import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import { shareMessageRows } from "./row-identity";
 import { foldProfiles } from "./profiles";
 import { DiscoveryState } from "./discovery";
@@ -83,7 +84,7 @@ describe("message fold", () => {
       rootOnly,
     ]);
     const expectedTen = [b, same]
-      .sort((x, y) => y.id.localeCompare(x.id))
+      .sort((x, y) => x.id.localeCompare(y.id))
       .map((event) => event.id);
     expect(rows.map((row) => row.id)).toEqual([
       ...expectedTen,
@@ -635,6 +636,8 @@ describe("discovery", () => {
       {
         id: "alpha",
         name: "Alpha",
+        description: "",
+        visibility: undefined,
         members: [alice.pubkey, bob.pubkey].sort(),
       },
       { id: "zeta", name: "zeta".slice(0, 8), members: [alice.pubkey] },
@@ -1109,3 +1112,28 @@ it("retains latest raw edit source through attachment projection and row sharing
     ),
   ).toBe(next);
 });
+
+it("keeps signed reference identities separate from addressed recipients", () => {
+  const event = message(alice, channel, "@Bob", 10, [
+    ["mention", bob.pubkey],
+    ["mention", bob.pubkey],
+    ["mention", relay.pubkey, "agent-address"],
+    ["mention", "invalid"],
+  ]);
+  const [row] = foldMessages(channel, relay.pubkey, [event]);
+  expect(row?.mentions).toEqual([]);
+  expect(row?.mentionReferences).toEqual([bob.pubkey]);
+});
+
+it.each(mentionConformance.tags.read)(
+  "conforms to the portable mention tag reading contract: $name",
+  (fixture) => {
+    const [row] = foldMessages(channel, relay.pubkey, [
+      message(alice, channel, "@Someone", 10, fixture.tags),
+    ]);
+    expect({
+      mentions: row?.mentions,
+      references: row?.mentionReferences,
+    }).toEqual(fixture.expected);
+  },
+);

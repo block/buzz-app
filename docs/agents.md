@@ -14,7 +14,7 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 
 ### Implemented compatibility view
 
-- The live development broker (macOS and Linux) reads the installed Buzz library at
+- The live development broker (macOS and Linux) and packaged native host read the installed Buzz library at
   `~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`
   (on Linux, `$XDG_DATA_HOME/xyz.block.buzz.app/agents/managed-agents.json`,
   defaulting to `~/.local/share`).
@@ -23,14 +23,14 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- Selected definitions remain one card each, including definitions without an
-  identity. Exact linked keys remain available in each card’s identity disclosure, including namesakes; unlinked and
-  unmatched identities use Custom agents/Other identities groupings. Unlike old Buzz's
-  runtime-dependent representative selection, this read-only view shows all
-  non-archived linked keys and has no profile/start action or running badge.
-- Confirmed relay archives hide identity rows, not definition cards. Missing
-  archive evidence is labeled; it does not erase the saved library. This is
-  display behavior, never mention permission.
+- The library shows one tile per exact identity, grouped only by explicit profile
+  links. Each tile discloses its full public key. Profiles with no linked identity
+  appear separately; an archived identity does not become an empty profile.
+- Only distinct keys with the same displayed name need a short npub suffix. Names
+  alone never create a profile group. Suffix collisions extend deterministically using
+  the complete inventory, including identities hidden by archive filtering.
+- Missing archive evidence keeps identities visible. Archive filtering affects
+  display only, never mention permission or runtime control.
 - One lazy host read per opening/Refresh; no polling or relay-directory startup
   scan. Concurrent host requests coalesce. Read caps: 8 MiB / 2000 records;
   malformed/missing files fail visibly without echoing their contents. The host
@@ -77,8 +77,12 @@ envelope/fixture validation does not certify the later compatibility adapter.
 
 `session.agentChoices` is the canonical read-only selection projection. Templates,
 mention pickers, the session agent chooser and their admission checks use it—not
-`agentLibrary` directly. It combines ready legacy identities and ready native
-identities in this exact community, deduplicated by public key. Native process
+`agentLibrary` directly. Its general projection combines ready legacy identities and ready native
+identities in this exact community, deduplicated by public key. Templates use its
+separate `templates` projection: native identities when native controls exist,
+including authoritative empty/loading/error states without legacy fallback;
+legacy identities only on hosts without native controls. Template refresh never
+waits for an unused legacy inventory. Native process
 status is not selection eligibility; stopped/native-only agents remain selectable.
 `agentLibrary` remains the old-library compatibility/import source. Agents management
 and the shared display-name resolver keep their own distinct presentation contracts.
@@ -96,12 +100,37 @@ usable, with partial failures surfaced through Retry. `status: ready` means usab
 not complete: automatic-recipient inference must honor `complete`, and automatic
 saved-template resolution must wait for required pending identity/roster evidence.
 
+Archive visibility has one owner. The projection reads `session.archives` and
+exposes `identities` (every known agent, including archived ones, for facts about
+existing content) and `selectable` (known-archived agents removed; unknown state
+fails open; the viewer is never hidden). Every forward-looking agent chooser uses
+`selectable`, including the session agent picker and profile **Add to channel**.
+Session admission in `workSessions.addAgents` rejects every known-archived key,
+including parent-channel members; unknown archive state keeps the library and
+parent-member rules. Selectors demand the lazy archive read through
+`useAgentChoices(session, includeLegacy, true)`, and the session picker shows an
+archive read failure with Retry. The same base rule,
+`archiveHides`, filters mention recipients, channel member invitations and member
+addition, and the Agents page and Agent Library. The Agents page keeps one
+documented exception: an archived identity with local controls stays listed so it
+can still be managed. Do not reimplement the rule per surface.
+
+Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
+an identity without its own avatar shows its linked definition's avatar
+(`inheritDefinitionAvatars`). Surfaces read `identity.avatar` and do not repeat
+the lookup.
+
 Action policy stays explicit: ordinary member mentions use the channel roster and
-never acquire template archive gates. Ordinary nonmember enrollment admits managed
-same-community identities; session invitations also allow existing legacy choices.
-Templates additionally require verified non-archived state, and legacy-only choices
-need visible community membership. Save-as-template discloses an incomplete inferred
-lineup when either inventory or roster evidence is partial; it never claims a full
+hide known-archived identities without requiring verified non-archived evidence.
+Ordinary nonmember mentions also offer people from the selected community directory
+and eligible managed agents. Send asks before adding them; selection grants no
+access. Session invitations retain their existing rules, including legacy choices.
+Templates additionally require verified non-archived state (`templateAgentChoices`
+returns nothing until archive evidence is ready), and legacy-only choices
+need visible community membership. Saved keys are never rebound to a namesake.
+Template pickers and agent identity details display npubs, not raw hex keys.
+Save-as-template discloses an incomplete inferred
+lineup when its required inventory or roster evidence is partial; it never claims a full
 channel-membership copy. Shared choice visibility is not permission to grant access.
 
 Regression sources: `features/agents/choices.test.ts` and
@@ -119,12 +148,75 @@ thread composers through the shared conversation tool contract. The host retains
 recipient intent, inline editing and avatar removal even when the chooser plugin is disabled.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
-Typing a name alone does not notify anyone. Editing a selected span removes its
-notification intent. Native beforeinput ranges preserve untouched spans; missing
+Typing a name alone does not notify anyone. Plain Space after a unique exact name
+selects its recipient; ambiguous names require Tab, Enter or click. Editing a
+selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
 selected together receive visible key qualifiers; editing a selected span removes
 its notification intent. Chips remain available without the Mentions chooser.
+
+### Chooser rules
+
+Both the toolbar picker and inline completion use `mention-candidates.ts` and
+`mention-ranking.ts`. Membership permits notification, not a promise that an agent
+will accept or answer the prompt. DMs, like channels, can name outside people;
+they become references because nobody can be added to a DM. Ordinary
+nonmember consent and session invitation rules remain the access owners;
+selection itself neither grants access nor starts an agent. Invalid recipient
+keys, known-archived identities, and archived/read-only destinations are excluded.
+The viewer is never hidden from themself. Unknown archive state does not block
+selection. Optional archive reads are lazy.
+
+Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
+group, matches against the visible resolved label come first: whole-name exact,
+name prefix, whole-word exact, then word prefix. Base names and known aliases are
+fallback matches in that same order. Only resolved names and real profile/agent
+names are searchable. Public keys (including unnamed identity fallbacks) are not
+completion matches. Arbitrary name substrings do not match. A hidden base-name match never
+promotes a weaker visible-label match. When visible-label match quality ties,
+base-name/alias match quality breaks the tie before recipient preferences.
+Among equal matches, agents with profile-reported ownership by the viewer come
+first, before humans and other agents. Agents that share a base name then form one
+block, placed at the first of their case-insensitive displayed labels (including
+disambiguating suffixes). Inside a block, explicit-choice recency, managed status,
+and already-known online/away status decide the order. Humans never join a block
+and sort first on an equal label. Remaining ties use the displayed label, then the
+full key. Each rule is a per-choice sort key, so the order is the same for any
+input order. Ownership comes
+from profile owner metadata, not a name or presence in the saved library.
+Recency stays in memory per session/destination and is bounded to 100 destinations
+and 100 recipients each. Neither ownership nor recency overrides membership or
+match quality.
+
+An open query installs at most 50 keys. Their order and membership stay fixed until
+the query changes or the chooser reopens. Labels, insertion names and availability
+remain live. A removed/archived row stays disabled in place; Enter/Tab cannot fall
+through to sending. A member who becomes an outside invitation choice also stays
+disabled until reopening. Retry refreshes evidence, not the installed order. New
+arrivals need a changed query or reopening. Pending sources or missing profiles do
+not freeze a premature empty result. Local sources (members and agent choices)
+establish the list; the community directory never gates it. Directory people
+append below the rows already shown, so a late page never moves a visible row.
+While a new query waits or loads, still-matching people from the last settled
+page of the same chooser stay visible (one picker, or one inline `@` token; inline
+completion remounts per keystroke, so the page is kept per session outside it) and the chooser shows "Searching community…". Uncached queries
+reach the network only after a 200 ms typing pause. Settled first pages are cached
+per session and query (100 queries); errors are not cached, and Retry reads the
+current query again. Identity naming uses eligible candidates plus the
+current draft recipients, not every cached profile.
+
+Plain Space selects only a unique exact name/alias/label across the full uncapped
+candidate set, and only if that identity is displayed and still eligible. A known
+longer name beginning with that name plus a space prevents selection. Partial
+names, ambiguous names, modified Space, IME composition, code and protected literal
+ranges keep ordinary editing behavior. Selection rechecks available evidence and
+stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
+
+The composer rejects already-known archived recipients (never the viewer) at send entry and omits
+ineligible agents from the next draft. This is not an archive transaction: archive
+changes during enrollment, dispatch or retry are intentionally not covered. The
+existing relay membership/send/retry validator is unchanged.
 
 After an accepted send, the next draft starts with the exact selected agent-name
 mentions, deduplicated by key. Agent classification uses already-cached profile hints
@@ -140,12 +232,16 @@ of relay delivery or agent execution.
 
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 
-`session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
-`p` tags. Selection never invites someone. The native local-agent flow now offers
-same-community managed agents too: the composer enrolls a selected nonmember on
-Send, verifies the roster, then calls this unchanged message API. See
-[local agent controls](agent-control.md#normal-desktop-workflow). Ordinary nonmember
-people are not automatically added. Current roster membership is checked at
+`session.messages.send/reply` accepts up to 32 exact notification pubkeys and emits
+deduplicated `p` tags. In ordinary channels, Send pauses for selected nonmembers:
+**Invite** grants access only with permission and explicit consent, waits
+for confirmed membership, then sends notifications. **Do nothing** (or **Send
+anyway** without add permission) sends those identities as separate `mention`
+reference tags, without adding or notifying them. Close or Escape keeps the draft. Existing member mentions still notify in a
+mixed send. Reference keys are validated and bounded to 32. Selection itself never
+invites or starts anyone; confirmed outgoing notifications own agent wakeup. See
+[local agent controls](agent-control.md#normal-desktop-workflow). DM and session
+admission paths remain separate. Current notification-recipient membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this
@@ -168,7 +264,8 @@ not a substitute for relay authorization, a membership transaction, or the ACP
 listener's own admission rules. Network changes after transport dispatch remain
 possible. No ownership or running status is inferred from a member's name/profile.
 
-Wire compatibility is kind 9 + `h` + exact `p`; direct replies also carry
+Wire compatibility is kind 9 + `h` + exact `p` for notifications and `mention`
+for reference-only identities; direct replies also carry
 `["e", root, "", "reply"]`. Existing buzz-acp owns mention admission, replay,
 channel membership, pool wake and harness execution. This slice adds no wake loop,
 process launcher, configuration save or agent invitation operation. The local library and archive display are not mention authorization.
@@ -184,7 +281,7 @@ reply and packaged desktop acceptance are not established by these tests.
 
 ## Relay-scoped archive display
 
-`session.archives` is a lazy read-only NIP-IA snapshot capability, independent of
+`session.archives` is a lazy NIP-IA snapshot capability, independent of
 page/plugin lifetime. The dev broker passes `archiveAuthority` only when the
 community's NIP-11 advertises a valid explicit `self`; the legacy contact `pubkey`
 fallback continues to serve existing reads but cannot authenticate archive state.
@@ -202,10 +299,46 @@ Access purge, disconnect, cache clear and disposal clear evidence and cancel wor
 No startup request, periodic poll, event-union seeding or history filtering is added.
 
 This is finite evidence, not a live archive directory.
-My agents consumes it for display; the member mention picker relies on actual
-channel membership, not identity archive filtering. `not-archived` means absent from the read snapshot, not online,
-owned, authorized or guaranteed current at a later write. Archive/unarchive writes,
-delta processing, native discovery and packaged/live acceptance remain separate.
+My agents consumes it for display. As in base Buzz, mention autocomplete, the
+mention picker and member-add omit archived identities: fail-open while the
+snapshot is unknown, never hiding the viewer from themself, and never touching
+history or channel membership. `not-archived` means absent from the read snapshot, not online,
+owned, authorized or guaranteed current at a later write. Delta processing, native
+discovery and packaged/live acceptance remain separate.
+
+The profile pane's **Archive agent / Unarchive agent** actions (base Buzz copy) send
+exact 9035/9036 requests (`["-"]`, one `p`, optional `auth`) through dedicated broker
+sign/publish routes, never the outbox writer. The render guard and a fresh pre-sign
+check accept only the target itself (NIP-IA self request, no `auth`), a verified
+NIP-OA owner, or a relay owner/admin in the relay-signed 13534 roster; the relay
+re-verifies consent. An owner request copies the target's single live `auth` tag,
+verified against the target with `kind=` clauses ignored and `created_at` bounds
+checked against the request time. Success requires a fresh 13535 re-read showing
+the new state; a publish with an unknown outcome is reconciled by that re-read, and
+only a definitive relay rejection skips it. Rows are withheld while state is
+unknown; failed checks retry in the background and on window focus, as base Buzz
+does, and a mounted profile re-reads after a disconnect or cache reset.
+
+**Delete agent** (base Buzz `delete_managed_agent` copy) is shown only to the
+verified NIP-OA owner, for an agent with exactly one native record in this
+community. Base Buzz removes the record first and queues the archive in its native
+retention store; this app has no such store, so the irreversible step runs last:
+
+1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
+   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
+   channels. Each channel's own fresh roster must then omit the agent; a roster the
+   viewer cannot read leaves that channel unconfirmed.
+2. A fresh archive read runs; unless it already lists the identity, it is archived
+   through the request path above and confirmed.
+3. `agent_control_delete` (shared with **Agents → My agents**) checks the record
+   revision, stops the listener, then deletes this app's saved key before removing
+   the record; a key-deletion failure fails the delete and leaves it retryable.
+   Deployed remote records, which native refuses, get no Delete action.
+
+Any failure before step 3 leaves the record and Delete in place for retry. Closing
+or retargeting the profile admits no new removal, archive or native request; work
+already dispatched settles, and a native removal in flight completes without
+closing whatever profile is shown next.
 Protocol source: old Buzz `b9392d9` `docs/nips/NIP-IA.md`, especially relay identity,
 snapshot format and snapshot/delta consistency. Tests use the actual session and
 HTTP broker/verified transport, including corrupted signature rejection.
@@ -249,18 +382,32 @@ clear only the matching agent/channel/thread scope and suppress delayed typing
 for two seconds. Disconnect, channel-route failure, disable, access/cache clear
 and disposal drop typing evidence. A fresh observer frame does not refresh it.
 
-The sidebar shows a quiet working dot from fresh channel observer turns or
-channel-scoped typing. Thread-only typing never becomes a channel fallback.
-Observer records have no thread identity, so details remain explicitly
-channel-wide. No harness change, new subscription, directory or timer is added.
+The sidebar's quiet working dot has two independent sources. The plugin source
+is fresh channel observer turns or the channel-scoped typing above, and follows
+the plugin's lifecycle. Observer records have no thread identity, so its details
+remain explicitly channel-wide.
+
+The display-only source is `session.typing`, not the plugin's typing evidence:
+typing by one of the viewer's own agents (the local library) anywhere in the
+channel, threads included. App-managed agents run without observer telemetry, so
+typing is their working signal. Other people's agents, known only from a
+self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
+future timestamps instead of capping them, schedules its own expiry eight
+seconds after the signed timestamp and stays quiet for two seconds after the
+typer's message. It is display-only evidence, not ownership; while the plugin is
+off, the channel popover lists such an agent without a **View activity** action.
+A timeline thread summary shows the same dots from this source while one of the
+viewer's agents types in that thread; a thread with no replies yet has no summary to mark.
+No harness change, new subscription, directory or timer is added.
 The development broker loads subscription filters at startup: restart the
 existing dev server once to receive typing; frontend HMR alone is insufficient.
 
-A profile **View activity** action remains available before the first frame or
-after a working chip disappears. It preselects the exact identity and originating
-channel, not a thread. This action is not an agent/ownership badge and may show a
-waiting state for identities with no published owner-visible telemetry. Shared
-agents and new activity-view permissions are out of scope.
+A known agent's profile **View activity** action remains available before the
+first frame or after a working chip disappears; people's profiles offer none. It
+preselects the exact identity and originating channel, not a thread. The
+known-agent check is display-only evidence, not an ownership badge, and the action
+may show a waiting state for identities with no published owner-visible telemetry.
+Shared agents and new activity-view permissions are out of scope.
 
 The **Channel** selector filters raw entries and working-turn counts, or shows all
 channels including unscoped records. For a selected channel, batches are projected
@@ -314,8 +461,8 @@ Expand raw entries, close/reopen the panel, and toggle
 **Your profile → Settings → Plugins → Agent Activity** off/on. Re-enable starts
 empty. The feed is live-only, best-effort telemetry: the producer coalesces/batches
 and may elide oversized content. It is not a complete ACP transcript or archive.
-The development broker supports this slice; packaged/native signed transport
-without that broker reports unavailable. No runtime controller,
+The development broker and packaged native identity host support this slice;
+native decoding remains purpose-bound to the shared live stream. No runtime controller,
 recording export or old transcript renderer is included.
 
 ### Evidence and remaining acceptance
@@ -341,9 +488,8 @@ warm click-to-visible samples were 16.8–19.2ms in Chromium and 50–67ms in We
 with no new head read, below the unchanged 100ms budget. These are local Apple
 Silicon fixture measurements, not a live-network SLA.
 
-Packaged/native activity without the development broker remains unsupported;
-attended native/package acceptance and cross-platform CI are separate from these
-local results.
+Packaged/native activity uses the native observer decoder; attended native/package
+acceptance and cross-platform CI remain separate from these local results.
 
 ### Composer-entry feedback rounds
 
@@ -389,8 +535,8 @@ mounts real React in StrictMode rather than mocking hooks.
 
 These are targeted integration checks, not a completed `just scan`. The earlier
 scan was interrupted during browser tests; broader hosted CI, DCO and required
-review remain separate gates. Packaged native activity without the development
-broker remains unsupported.
+review remain separate gates. Packaged native activity now uses purpose-bound
+observer decoding; attended packaged and live-relay acceptance remain outstanding.
 
 ### Shared identity names
 
@@ -409,5 +555,21 @@ service. Each relay session binds its own view. A ready native record takes
 precedence only in its matching community; otherwise the ready legacy display
 inventory supplies the name, then the public profile. Plugin disable restores
 public-profile names. These labels never change identity keys, membership,
-credentials, or runtime admission. Profile panels consume this view; other name
-surfaces are being migrated separately.
+credentials, or runtime admission. Profile panels, messages, mention choices,
+activity, conversation labels and new notifications consume this view. Mention
+parsing still uses signed identity evidence before resolving its visible label.
+
+### Additive community inventory
+
+The active session reads the owner's kind-30175 profiles and kind-30177 identities
+from its accessible relay. It also retains the local library reader. The inventory
+joins exact public keys, not equal names; explicit profile references use the
+publisher's slug mapping only when local definitions do not collide. Local names
+and artwork win for matching keys. Native configuration still wins within its
+matching community. A failed source leaves the other source visible with a warning.
+
+Discovery is not global coverage, verified membership, credentials, or execution
+status. Native cards keep their controls. Other known identities appear in a
+read-only section. Each card offers its own Import; the separate installation
+browser appears only for repair.
+No keys, config, memory, membership, or runtime state are changed by discovery.

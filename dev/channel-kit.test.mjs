@@ -148,7 +148,23 @@ it("admits only bounded Canvas writes with one exact channel and no notification
     tags: [["h", "11111111-1111-4111-8111-111111111111"]],
   };
   expect(validCanvas(canvas)).toBe(true);
+  for (const revision of ["none", "a".repeat(64)])
+    expect(
+      validCanvas({
+        ...canvas,
+        tags: [...canvas.tags, ["expected-revision", revision]],
+      }),
+    ).toBe(true);
   for (const tags of [
+    [...canvas.tags, ["expected-revision", "bad"]],
+    [...canvas.tags, ["expected-revision", "A".repeat(64)]],
+    [...canvas.tags, ["expected-revision", "none", "extra"]],
+    [
+      ...canvas.tags,
+      ["expected-revision", "none"],
+      ["expected-revision", "none"],
+    ],
+    [...canvas.tags, null],
     [],
     [...canvas.tags, ...canvas.tags],
     [...canvas.tags, ["p", owner.pubkey]],

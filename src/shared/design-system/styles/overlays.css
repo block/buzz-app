@@ -6,6 +6,7 @@
     background: var(--bg-scrim);
   }
   .buzz-dialog {
+    @apply interaction-floating;
     --dialog-padding: var(--space-6);
     position: fixed;
     top: 50%;
@@ -18,12 +19,37 @@
     width: min(31rem, calc(100vw - 2rem));
     max-height: calc(100dvh - 3rem);
     overflow: auto;
+  }
+  .buzz-dialog,
+  .buzz-dialog-step {
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-panel);
     padding: var(--dialog-padding);
     background: var(--surface-popover);
     color: var(--text-standard);
     box-shadow: var(--shadow-sm);
+  }
+  /* Steps share one centered popup/backdrop; overlap only for the crossfade. */
+  .buzz-dialog[data-stepped] {
+    display: grid;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: none;
+    box-shadow: none;
+  }
+  .buzz-dialog-step {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    align-self: center;
+    min-width: 0;
+    max-height: inherit;
+    overflow: auto;
+  }
+  .buzz-dialog-step[inert] {
+    pointer-events: none;
   }
   .buzz-dialog[data-size="expanded"] {
     width: calc(100vw - 3rem);
@@ -81,6 +107,29 @@
       transform: translate(-50%, -50%);
     }
   }
+  /* Nested sheets and pointer-dismissible dialogs need a backdrop above the
+     parent popup. Matching its layer preserves parent, backdrop, child order. */
+  .buzz-dialog-backdrop[data-placement="right"],
+  .buzz-dialog-backdrop[data-outside-dismissal] {
+    z-index: var(--layer-dialog);
+  }
+  .buzz-dialog[data-placement="right"] {
+    inset: 0 0 0 auto;
+    transform: none;
+    width: min(26rem, 100vw);
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .buzz-dialog-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
+  .buzz-dialog-leading-actions {
+    margin-right: auto;
+  }
   .buzz-dialog-heading {
     min-width: 0;
     display: flex;
@@ -109,21 +158,48 @@
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
   }
+  .buzz-dialog-content[data-header-gap="compact"] {
+    padding-block-start: var(--space-3);
+  }
+  .buzz-dialog-content[data-footer-gap="compact"] {
+    padding-block-end: var(--space-2);
+  }
   .buzz-dialog-actions {
+    min-width: 0;
+    flex-shrink: 0;
     display: flex;
     flex-wrap: wrap;
-    justify-content: end;
+    /* Oversized controls must start inside the reachable scroll range. */
+    justify-content: safe end;
     gap: var(--space-3);
+    overflow-x: auto;
   }
+  /* Each step retains its own sizing while it exits, including when the next
+     step is content-sized. The transparent popup only owns their shared grid. */
   /* Opt in for searches and switching views, not content-sized forms. */
-  :where(.buzz-dialog[data-height="stable"]) {
+  :where(
+    .buzz-dialog:not([data-stepped])[data-height="stable"],
+    .buzz-dialog-step[data-height="stable"]
+  ) {
     height: min(36rem, calc(100dvh - 2 * var(--space-6)));
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-header,
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-actions {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-header,
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-actions {
     flex-shrink: 0;
   }
-  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-body {
+  :where(
+      .buzz-dialog:not([data-stepped])[data-height="stable"],
+      .buzz-dialog-step[data-height="stable"]
+    )
+    > .buzz-dialog-body {
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -131,10 +207,24 @@
     margin-inline: calc(-1 * var(--dialog-padding));
     padding-inline: var(--dialog-padding);
   }
-  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+  .buzz-dialog[data-size="expanded"] > .buzz-dialog-body,
+  .buzz-dialog[data-placement="right"] > .buzz-dialog-body {
     min-height: 0;
     flex: 1;
     overflow: auto;
+  }
+  /* Opt in when fixed controls and one inner scrollport share the body. */
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Without footer actions, the popup already supplies the bottom gutter. */
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
+  > .buzz-dialog-body:last-child {
+    padding-bottom: 0;
   }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
@@ -142,7 +232,7 @@
   .buzz-tooltip {
     @apply text-caption;
     max-width: min(24rem, calc(100vw - 2rem));
-    border-radius: var(--radius-pill);
+    border-radius: calc((1lh + 2 * var(--space-1)) / 2);
     padding: var(--space-1) var(--space-2);
     background: var(--affordance-prominent);
     color: var(--text-inverse);
@@ -204,15 +294,17 @@
     background: var(--surface-panel);
     color: var(--text-standard);
   }
-  .navigation-item:active {
-    background: var(--affordance-subtle-pressed);
+  .navigation-item:active:not([data-selected], [data-disabled], :disabled) {
+    --text-subtle: var(--interaction-selected-text);
+    --text-metadata: var(--interaction-selected-metadata);
+    background: var(--interaction-pressed);
   }
-  @media (max-width: 480px) {
+  @media (max-width: 30rem) {
     .buzz-dialog {
       --dialog-padding: var(--space-4);
     }
     .buzz-dialog-actions > .buzz-button {
-      flex: 1 1 auto;
+      flex: 1 0 auto;
     }
   }
 }
@@ -220,12 +312,9 @@
 /* Shared paint for anchored popups. Features retain layout and interaction. */
 @utility popover-surface {
   /* Selection must remain visible on the raised dark surface. */
-  --affordance-selected: var(--affordance-subtle-hover);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  background: var(--surface-popover);
+  --affordance-selected: var(--affordance-popover-selected);
+  @apply floating-surface;
   color: var(--text-standard);
-  box-shadow: var(--shadow-sm);
   z-index: var(--layer-popover);
 }
 
@@ -255,7 +344,7 @@
     /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
     pointer-events: none;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 43.75rem) {
     .buzz-toast-viewport {
       --toast-top: 12rem;
     }

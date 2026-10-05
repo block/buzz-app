@@ -49,8 +49,31 @@ const fixtureOrigin = instanceProbe
   : "https://relay.example.test";
 const archivedProbe = new URLSearchParams(location.search).has("archived");
 const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
+const logProbe = new URLSearchParams(location.search).has("harness-log");
+const memberMessageProbe = new URLSearchParams(location.search).has(
+  "member-message",
+);
+let dmOpened = false;
+const dmOpens: string[][] = [];
+const dmEvents = () => [
+  signed(authority, {
+    kind: 39000,
+    content: "",
+    tags: [
+      ["d", "member-dm"],
+      ["t", "dm"],
+      ["name", "Member conversation"],
+    ],
+  }),
+  roster(authority, "member-dm", [viewer.pubkey, mic.pubkey]),
+];
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
-const unknown = message(missing, "one", "Unknown author", 11);
+const unknown = signed(missing, {
+  kind: 40002,
+  content: "Unknown author",
+  created_at: 11,
+  tags: [["h", "one"]],
+});
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
   ["e", root.id, "", "reply"],
   ["p", pinky.pubkey],
@@ -73,6 +96,7 @@ let data = [
     kind: 0,
     content: JSON.stringify({
       name: "Pinky",
+      nip05: "pinky@example.test",
       about: "Agent profile",
       is_agent: true,
       picture: pinkyPicture,
@@ -88,19 +112,50 @@ async function attestAgentProfile() {
   const ownerSignature = bytesToHex(
     schnorr.sign(new Uint8Array(digest), viewer.secret),
   );
+  const micDigest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${mic.pubkey}:`),
+  );
+  const micSignature = bytesToHex(
+    schnorr.sign(new Uint8Array(micDigest), viewer.secret),
+  );
   data = data.map((head) =>
-    head.pubkey === pinky.pubkey
-      ? signed(pinky, {
+    head.pubkey === mic.pubkey && logProbe
+      ? signed(mic, {
           kind: 0,
           content: head.content,
-          tags: [["auth", viewer.pubkey, "", ownerSignature]],
+          tags: [["auth", viewer.pubkey, "", micSignature]],
         })
-      : head,
+      : head.pubkey === pinky.pubkey
+        ? signed(pinky, {
+            kind: 0,
+            content: head.content,
+            tags: [["auth", viewer.pubkey, "", ownerSignature]],
+          })
+        : head,
   );
 }
 function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
+    ...(memberMessageProbe
+      ? {
+          openDirectMessage: async (keys: readonly string[]) => {
+            dmOpens.push([...keys]);
+            dmOpened = true;
+            return "member-dm";
+          },
+          writer: {
+            kinds: [9],
+            sign: async (template: Parameters<typeof signed>[1]) =>
+              signed(viewer, template),
+            publish: async () => {
+              report.publications++;
+            },
+          },
+        }
+      : {}),
+    ...(logProbe ? { authorizeAgentLog: async () => "fixture-proof" } : {}),
     relayAuthor: authority.pubkey,
     archiveAuthority: authority.pubkey,
     subscribe(callbacks) {
@@ -133,6 +188,17 @@ function session() {
     },
     async query(filters) {
       return filters.flatMap((filter) => {
+        if (dmOpened && filter["#d"]?.includes("member-dm"))
+          return dmEvents().filter((event) =>
+            filter.kinds?.includes(event.kind),
+          );
+        if (filter.kinds?.includes(9) && filter["#h"]?.includes("member-dm"))
+          return [
+            bounds(authority, "member-dm", "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          ];
         if (filter.kinds?.includes(13535))
           return [
             signed(authority, {
@@ -165,6 +231,20 @@ function session() {
                 ["name", "Two"],
                 ["t", "stream"],
               ],
+            }),
+          ];
+        if (
+          filter.kinds?.includes(10100) &&
+          filter.authors?.includes(pinky.pubkey)
+        )
+          return [
+            signed(pinky, {
+              kind: 10100,
+              content: JSON.stringify({
+                agent_type: "codex-acp",
+                capabilities: ["code", "review"],
+              }),
+              tags: [],
             }),
           ];
         if (filter.kinds?.includes(30315))
@@ -246,6 +326,18 @@ context.provide("relay", relay);
 const navigationHost = provideNavigation(context, undefined);
 const native = controlFixture();
 native.agent.pubkey = mic.pubkey;
+if (logProbe)
+  native.host.readLog = async ({ id, pubkey, relayUrl, authorize }) => {
+    if (
+      id !== native.agent.id ||
+      pubkey !== mic.pubkey ||
+      relayUrl !== native.agent.relayUrl ||
+      (await authorize({ id, pubkey, relayUrl }, "fixture-nonce")) !==
+        "fixture-proof"
+    )
+      throw new Error("Unauthorized fixture log");
+    return "fixture harness output\n";
+  };
 native.agent.status = "stopped";
 native.agent.enabled = false;
 let releaseLaunch: (() => void) | undefined;
@@ -274,7 +366,7 @@ if (instanceProbe) {
   });
 }
 const agentControl = createAgentControl(
-  actionsProbe || instanceProbe ? native.host : null,
+  actionsProbe || instanceProbe || logProbe ? native.host : null,
 );
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
@@ -316,6 +408,7 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    navigation: context.navigation,
     async deleteSecond() {
       native.data.agents = native.data.agents.filter(
         (agent) => agent.id !== "second",
@@ -329,6 +422,7 @@ Object.assign(window, {
       releaseLaunch = undefined;
     },
     contexts,
+    dmOpens,
     targets: {
       viewer: profileTarget(viewer.pubkey),
       mic: profileTarget(mic.pubkey),

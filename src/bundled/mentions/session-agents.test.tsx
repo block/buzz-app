@@ -16,6 +16,15 @@ import { controlFixture } from "../../features/agents/control-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
+import { ComposerCompletions } from "../../features/conversation/ComposerCompletions";
+import type {
+  ComposerCompletion,
+  ComposerObservation,
+} from "../../features/conversation/contracts";
+import type { CompletionEditor } from "../../features/conversation/useCompletionEditor";
+import type { ComposerInputElement } from "../../features/messages/composer-dom";
+import type { Contribution } from "../../plugins/contributions";
+import { mentionQuery } from "./mention-query";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
@@ -33,7 +42,12 @@ import { createMessages } from "../../features/relay/messages";
 import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
-afterEach(cleanup);
+import { npubEncode } from "nostr-tools/nip19";
+import { MENTION_DIRECTORY_DELAY_MS } from "./useMentionDirectory";
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 function setup(parent: boolean | null = true, archived = false) {
   const key = "b".repeat(64),
     member = "a".repeat(64);
@@ -56,7 +70,34 @@ function setup(parent: boolean | null = true, archived = false) {
           ],
   };
   const profiles = new Map([[member, { name: "Member" }]]);
+  const listeners = new Set<() => void>();
+  let archiveSnapshot: ReturnType<RelaySession["archives"]["snapshot"]> = {
+    status: "ready",
+    archived: [],
+  };
+  const setArchived = (archived: string[]) => {
+    archiveSnapshot = { status: "ready", archived };
+    for (const listener of listeners) listener();
+  };
   const session = {
+    directMessages: {
+      people: vi.fn(async () => ({ people: [], hasMore: false })),
+    },
+    archives: {
+      snapshot: () => archiveSnapshot,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: async () => {},
+      refresh: async () => {},
+      state: (pubkey: string) =>
+        archiveSnapshot.status !== "ready"
+          ? ("unknown" as const)
+          : archiveSnapshot.archived.includes(pubkey)
+            ? ("archived" as const)
+            : ("not-archived" as const),
+    },
     channels: {
       list: () => list,
       subscribeList: () => () => {},
@@ -71,6 +112,7 @@ function setup(parent: boolean | null = true, archived = false) {
       subscribe: () => () => {},
       snapshot: () => 0,
       resolve: (_key: string, fallback: string) => fallback,
+      scope: () => () => undefined,
     },
     agentLibrary: library.queries,
     agentChoices: createAgentChoices({
@@ -80,7 +122,7 @@ function setup(parent: boolean | null = true, archived = false) {
     }),
     media: () => undefined,
   } as unknown as RelaySession;
-  return { session, library, key, member, profiles };
+  return { session, library, key, member, profiles, setArchived };
 }
 it("uses the same alphabetical and prefix ordering for typed and button mentions", async () => {
   const test = setup();
@@ -114,14 +156,18 @@ it("uses the same alphabetical and prefix ordering for typed and button mentions
     (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
       (item) => item.label,
     );
-  expect(completionNames()).toEqual(["Adam Avery", "Avery", "Zoe"]);
+  await waitFor(() =>
+    expect(completionNames()).toEqual(["Adam Avery", "Avery", "Zoe"]),
+  );
   view.rerender(
     <MentionCompletion
       {...props}
       query={{ start: 0, end: 6, query: "avery" }}
     />,
   );
-  expect(completionNames()).toEqual(["Avery", "Adam Avery"]);
+  await waitFor(() =>
+    expect(completionNames()).toEqual(["Avery", "Adam Avery"]),
+  );
   view.unmount();
   render(
     <MentionPicker
@@ -200,14 +246,14 @@ it("focuses search on open and supports clear, Escape, and outside dismissal", a
   const trigger = screen.getByRole("button", { name: "Mention a member" });
   await user.click(trigger);
   const search = screen.getByRole("searchbox", {
-    name: "Search members and your agents",
+    name: "Search community people and agents",
   });
-  expect(search).toHaveFocus();
+  await waitFor(() => expect(search).toHaveFocus());
   await user.type(search, "no matching name");
   expect(screen.getByText("No matching channel members.")).toBeVisible();
   await user.click(
     screen.getByRole("button", {
-      name: "Clear search members and your agents",
+      name: "Clear search community people and agents",
     }),
   );
   expect(search).toHaveFocus();
@@ -284,8 +330,15 @@ it("selects filtered results from search, ignores IME Enter, and keeps rejected 
   expect(search).toHaveFocus();
   expect(select).not.toHaveBeenCalled();
   await user.clear(search);
-  await user.type(search, test.member);
-  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  // Public keys are not completion matches; search by the member's name.
+  await user.type(search, "Member");
+  // Synthetic coverage checks the guard, not native IME behavior.
+  for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+    fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Enter", ...composition });
+    expect(select).not.toHaveBeenCalled();
+  }
   expect(fireEvent.keyDown(search, { key: "Enter", shiftKey: true })).toBe(
     false,
   );
@@ -417,6 +470,70 @@ it.each([true, false, null])(
     await waitFor(() => expect(result?.items).toHaveLength(0));
     view.unmount();
     test.library.dispose();
+  },
+);
+
+it.each([
+  "Member prose",
+  "Member](nostr:npub1d6t84ajeg9skp2609l2k6axgcme8x7g7u7luj352r03hcwreg7lqnxcsex) whats your name",
+])(
+  "hides recovery UI for completed mention query %s while keeping valid-query recovery",
+  async (staleQuery) => {
+    const test = setup();
+    const choices = {
+      ...test.session.agentChoices.snapshot(),
+      status: "error" as const,
+      error: "Agent directory unavailable",
+      pending: false,
+    };
+    const session = {
+      ...test.session,
+      agentChoices: {
+        ...test.session.agentChoices,
+        snapshot: () => choices,
+      },
+    };
+    let result: CompletionResult | undefined;
+    const props = {
+      session,
+      scope: "test",
+      channelId: "parent",
+      observation: {
+        revision: 1,
+        text: `@${staleQuery}`,
+        start: staleQuery.length + 1,
+        end: staleQuery.length + 1,
+      },
+      query: { start: 0, end: staleQuery.length + 1, query: staleQuery },
+      publish: (next: CompletionResult) => {
+        result = next;
+        return () => {};
+      },
+    };
+    const view = render(<MentionCompletion {...props} />);
+    try {
+      // Community lookup now owns an asynchronous loading state. Only its
+      // completed empty result can refute prose and retire unrelated recovery.
+      await waitFor(() => expect(result?.status).toBeUndefined());
+      expect(result?.items).toHaveLength(0);
+      expect(result?.retry).toBeUndefined();
+
+      view.rerender(
+        <MentionCompletion
+          {...props}
+          observation={{ revision: 2, text: "@Mem", start: 4, end: 4 }}
+          query={{ start: 0, end: 4, query: "Mem" }}
+        />,
+      );
+      await waitFor(() =>
+        expect(result?.status).toBe("Could not load agents. Retry to refresh."),
+      );
+      expect(result?.items).toHaveLength(1);
+      expect(result?.retry).toEqual(expect.any(Function));
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
   },
 );
 
@@ -708,7 +825,7 @@ it("opening and reopening an ordinary picker does not load the legacy library", 
   }
 });
 
-it("selects the exact recipient behind a context-aware owner label", async () => {
+it("prioritizes the viewer-owned namesake in both menus and selects the exact owner-labeled recipient", async () => {
   const test = setup();
   const viewer = "1".repeat(64),
     owner = "2".repeat(64),
@@ -725,6 +842,7 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
   };
   const session = {
     ...test.session,
+    viewer,
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
@@ -738,6 +856,23 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
     { viewer, profiles: session.profiles, agentLibrary: library.queries },
     { snapshot: () => [provider], subscribe: () => () => {} },
   );
+  const publish = vi.fn();
+  const completion = render(
+    <MentionCompletion
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      observation={{ revision: 1, text: "@hon", start: 4, end: 4 }}
+      query={{ start: 0, end: 4, query: "hon" }}
+      publish={publish}
+    />,
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.id,
+    ),
+  ).toEqual([mine, test.key]);
+  completion.unmount();
   const select = vi.fn(() => true);
   const view = render(
     <MentionPicker
@@ -750,6 +885,13 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "hon");
+  expect(
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label) => label?.endsWith(mine) || label?.endsWith(test.key)),
+  ).toEqual([`Honey ${mine}`, `Wes’s Honey ${test.key}`]);
   await user.click(
     await screen.findByRole("button", { name: `Wes’s Honey ${test.key}` }),
   );
@@ -831,3 +973,1249 @@ it("keeps an outside namesake discoverable and qualifies the actual choice set",
   library.dispose();
   test.library.dispose();
 });
+
+it("discovers outside humans from the selected directory in both menus, not cached profiles", async () => {
+  const t = setup();
+  const outsider = { pubkey: "e".repeat(64), name: "Outside human" };
+  const cached = "f".repeat(64);
+  const people = vi.fn(async () => ({ people: [outsider], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const profiles = new Map([[cached, { name: "Cache only" }]]);
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Outside", start: 8, end: 8 }}
+      query={{ start: 0, end: 8, query: "Outside" }}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.id,
+      ),
+    ).toEqual([outsider.pubkey]),
+  );
+  expect(people).toHaveBeenCalledWith("Outside", 1, expect.any(AbortSignal));
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = await screen.findByRole("button", {
+    name: `${outsider.name} ${outsider.pubkey}`,
+  });
+  expect(row).toHaveTextContent("Choose whether to add");
+  expect(
+    screen.queryByRole("button", { name: new RegExp(cached) }),
+  ).not.toBeInTheDocument();
+});
+
+it("qualifies outside directory namesakes that have no cached profile", async () => {
+  const t = setup();
+  const member = "a".repeat(64);
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: "e".repeat(64), name: "Larry" },
+      { pubkey: "f".repeat(64), name: "Larry", isAgent: true as const },
+    ],
+    hasMore: false,
+  }));
+  const profiles = new Map([[member, { name: "Larry" }]]);
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: t.library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={{ ...session, names }}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Larr", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "Larr" }}
+      publish={publish}
+    />,
+  );
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ) ?? [];
+  await waitFor(() => expect(labels()).toHaveLength(3));
+  expect(new Set(labels()).size).toBe(3);
+  expect(labels()).not.toContain("Larry");
+  names.dispose();
+});
+
+it("never expands session candidates from the community directory", async () => {
+  vi.useFakeTimers();
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Conversation",
+        channelType: "session" as const,
+        members: ["a".repeat(64)],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  // Neither surface passes inviteAgents, like a session media comment.
+  const publish = vi.fn();
+  render(
+    <>
+      <MentionPicker
+        session={session}
+        scope="test"
+        channelId="parent"
+        disabled={false}
+        select={() => true}
+      />
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+      />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Mention a member" }));
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: "Out" },
+  });
+  // Past the directory delay, so a search would have started.
+  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS * 2));
+  expect(people).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /Outside/ }),
+  ).not.toBeInTheDocument();
+  const result = publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  expect(result?.items.map((item) => item.label) ?? []).not.toContain(
+    "Outside",
+  );
+  expect(result?.status).toBeUndefined();
+});
+
+it("offers outside directory people in a DM, like a channel", async () => {
+  const t = setup();
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="dm"
+      observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+      publish={publish}
+      query={{ start: 0, end: 4, query: "Out" }}
+    />,
+  );
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toEqual(["Outside"]),
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items[0]
+      ?.detail,
+  ).toBe("Not in DM · Will not be notified");
+});
+
+it("labels outside directory people in the DM toolbar picker", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "dm",
+        name: "Conversation",
+        channelType: "dm" as const,
+        members: [t.member],
+        participants: [t.member],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="dm"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = await screen.findByRole("button", { name: /Outside/ });
+  expect(row).toHaveTextContent("Not in DM · Will not be notified");
+});
+
+it("shows local rows before the directory, appends outside rows, and reuses settled pages", async () => {
+  vi.useFakeTimers();
+  const t = setup();
+  const lara = { pubkey: "e".repeat(64), name: "Lara" };
+  const larry = { pubkey: "f".repeat(64), name: "Larry Outside" };
+  const pages = new Map<
+    string,
+    (value: {
+      people: { pubkey: string; name: string }[];
+      hasMore: boolean;
+    }) => void
+  >();
+  const people = vi.fn(
+    (query: string) =>
+      new Promise<{
+        people: { pubkey: string; name: string }[];
+        hasMore: boolean;
+      }>((resolve) => pages.set(query, resolve)),
+  );
+  const profiles = new Map([[t.member, { name: "Larkin" }]]);
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+  };
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@La", start: 3, end: 3 },
+    publish,
+  };
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const labels = () => last()?.items.map((item) => item.label);
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 3, query: "La" }} />,
+  );
+  // The member is usable before the network search starts or settles.
+  expect(labels()).toEqual(["Larkin"]);
+  expect(last()?.status).toBe("Searching community…");
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(people).toHaveBeenCalledTimes(1);
+  await act(async () =>
+    pages.get("La")?.({ people: [lara, larry], hasMore: false }),
+  );
+  expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
+  expect(last()?.status).toBeUndefined();
+  // A new query keeps still-matching people from the last page while it loads.
+  view.rerender(
+    <MentionCompletion
+      {...props}
+      query={{ start: 0, end: 4, query: "Larr" }}
+    />,
+  );
+  expect(labels()).toEqual(["Larry Outside"]);
+  expect(last()?.status).toBe("Searching community…");
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(people).toHaveBeenCalledTimes(2);
+  const newer = { pubkey: "d".repeat(64), name: "Larry Newer" };
+  await act(async () =>
+    pages.get("Larr")?.({ people: [newer, larry], hasMore: false }),
+  );
+  // Appended below, never inserted above a visible row.
+  expect(labels()).toEqual(["Larry Outside", "Larry Newer"]);
+  // Returning to a settled query is instant and does not read again.
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 3, query: "La" }} />,
+  );
+  expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
+  expect(last()?.status).toBeUndefined();
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(people).toHaveBeenCalledTimes(2);
+});
+
+it("waits for a typing pause before reading the directory", async () => {
+  const t = setup();
+  const people = vi.fn(async () => ({ people: [], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@Out", start: 4, end: 4 },
+    publish: vi.fn(),
+  };
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 2, query: "O" }} />,
+  );
+  for (const query of ["Ou", "Out"])
+    view.rerender(
+      <MentionCompletion {...props} query={{ start: 0, end: 4, query }} />,
+    );
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  expect(people).toHaveBeenCalledWith("Out", 1, expect.any(AbortSignal));
+});
+
+it("ignores a late directory result after the query changes and retries the current failure", async () => {
+  const t = setup();
+  let release = (_result: {
+    people: { pubkey: string; name: string }[];
+    hasMore: boolean;
+  }) => {};
+  const old = new Promise<{
+    people: { pubkey: string; name: string }[];
+    hasMore: boolean;
+  }>((resolve) => {
+    release = resolve;
+  });
+  const people = vi
+    .fn()
+    .mockReturnValueOnce(old)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      people: [{ pubkey: "e".repeat(64), name: "New person" }],
+      hasMore: false,
+    });
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@Old", start: 4, end: 4 },
+    publish,
+  };
+  const view = render(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "Old" }} />,
+  );
+  // Directory reads wait for a typing pause, so let the old query start first.
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "New" }} />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.status,
+    ).toMatch(/Could not search community/),
+  );
+  await act(async () =>
+    release({
+      people: [{ pubkey: "f".repeat(64), name: "Old person" }],
+      hasMore: false,
+    }),
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items,
+  ).toEqual([]);
+  act(() => {
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.retry?.();
+  });
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toEqual(["New person"]),
+  );
+});
+
+it("keeps installed rows and fresh authorization through rename, removal, arrivals and archive Retry", async () => {
+  const test = setup();
+  const a = "a".repeat(64),
+    b = "b".repeat(64),
+    c = "c".repeat(64);
+  let profiles = new Map([
+    [a, { name: "Alpha" }],
+    [b, { name: "Beta" }],
+    [c, { name: "Aaron Bee" }],
+  ]);
+  let list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", name: "Parent", members: [a, b] }],
+  };
+  let archive = { status: "ready" as const, archived: [] as string[] };
+  const listeners = new Set<() => void>();
+  const subscribe = (fn: () => void) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  };
+  const refresh = vi.fn(async () => {
+    for (const fn of listeners) fn();
+  });
+  const session = {
+    ...test.session,
+    channels: {
+      ...test.session.channels,
+      list: () => list,
+      subscribeList: subscribe,
+    },
+    profiles: { ...test.session.profiles, snapshot: () => profiles, subscribe },
+    archives: {
+      snapshot: () => archive,
+      subscribe,
+      state: (key: string) =>
+        archive.archived.includes(key) ? "archived" : "not-archived",
+      ensure: async () => {},
+      refresh,
+      writable: false,
+      consent: vi.fn(),
+      request: vi.fn(),
+    },
+  } as RelaySession;
+  let result: CompletionResult | undefined;
+  const publish = (value: CompletionResult) => {
+    result = value;
+    return () => {};
+  };
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    query: { start: 0, end: 1, query: "" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  const original = result?.items[0];
+  act(() => {
+    profiles = new Map([
+      [a, { name: "Zeta" }],
+      [b, { name: "Beta" }],
+      [c, { name: "Aaron Bee" }],
+    ]);
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  expect(result?.items[0]?.label).toBe("Zeta");
+  expect(result?.items[0]?.edit).toEqual({
+    mention: { pubkey: a, name: "Zeta" },
+  });
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "parent", name: "Parent", members: [b, c] }],
+    };
+    // Selection sees the new source even before subscriber callbacks/render.
+    expect(original?.canSelect?.("Enter")).toBe(false);
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  expect(result?.items[0]?.disabled).toBeTruthy();
+  act(() => {
+    archive = { ...archive, archived: [b] };
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items[1]?.disabled).toBe("Archived");
+  await act(() => refresh());
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 2, query: "a" }} />,
+  );
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  view.rerender(
+    <MentionCompletion
+      {...props}
+      query={{ start: 0, end: 8, query: "Aaron B" }}
+    />,
+  );
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "parent", name: "Parent", members: [] }],
+    };
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  expect(result?.items[0]?.disabled).toBeTruthy();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("retains button rows while disabling an archived member, then hides it on reopen", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  let archive = { status: "ready" as const, archived: [] as string[] };
+  const listeners = new Set<() => void>();
+  const session = {
+    ...test.session,
+    archives: {
+      snapshot: () => archive,
+      state: (key: string) =>
+        archive.archived.includes(key) ? "archived" : "not-archived",
+      subscribe: (fn: () => void) => {
+        listeners.add(fn);
+        return () => {
+          listeners.delete(fn);
+        };
+      },
+      ensure: async () => {},
+      refresh: async () => {},
+      writable: false,
+      consent: vi.fn(),
+      request: vi.fn(),
+    },
+  } as RelaySession;
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = screen.getByRole("button", { name: `Member ${"a".repeat(64)}` });
+  act(() => {
+    archive = { ...archive, archived: ["a".repeat(64)] };
+    for (const fn of listeners) fn();
+  });
+  expect(row).toBeDisabled();
+  await user.click(row);
+  expect(select).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    screen.queryByRole("button", { name: `Member ${"a".repeat(64)}` }),
+  ).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("offers usable partial agent choices without waiting for another source", async () => {
+  const test = setup();
+  const snapshot = {
+    ...test.session.agentChoices.snapshot(),
+    status: "ready" as const,
+    pending: true,
+    complete: false,
+    identities: [
+      { pubkey: "f".repeat(64), name: "Ready Agent", managed: true },
+    ],
+  };
+  const session = {
+    ...test.session,
+    agentChoices: { ...test.session.agentChoices, snapshot: () => snapshot },
+  };
+  const view = render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    await screen.findByRole("button", {
+      name: `Ready Agent ${"f".repeat(64)}`,
+    }),
+  ).toBeEnabled();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("archived identities leave completion and return on unarchive; the viewer is never hidden from themself", async () => {
+  const test = setup();
+  const publish = vi.fn();
+  const rows = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => [item.label, item.disabled],
+    );
+  const props = (query: string) => ({
+    scope: "test",
+    channelId: "parent",
+    observation: {
+      revision: 1,
+      text: `@${query}`,
+      start: query.length + 1,
+      end: query.length + 1,
+    },
+    query: { start: 0, end: query.length + 1, query },
+    publish,
+  });
+  const view = render(
+    <MentionCompletion session={test.session} {...props("")} />,
+  );
+  expect(rows()).toEqual([["Member", undefined]]);
+  // A shown row stays in place but cannot be chosen; the next query drops it.
+  act(() => test.setArchived([test.member]));
+  expect(rows()).toEqual([["Member", "Archived"]]);
+  view.rerender(<MentionCompletion session={test.session} {...props("M")} />);
+  expect(rows()).toEqual([]);
+  // Unarchive returns the row on the next query; installed rows never grow.
+  act(() => test.setArchived([]));
+  view.rerender(<MentionCompletion session={test.session} {...props("Me")} />);
+  expect(rows()).toEqual([["Member", undefined]]);
+  act(() => test.setArchived([test.member]));
+  view.rerender(
+    <MentionCompletion
+      session={{ ...test.session, viewer: test.member }}
+      {...props("Mem")}
+    />,
+  );
+  expect(rows()).toEqual([["Member", undefined]]);
+  test.library.dispose();
+});
+
+it("closes prose after an unknown name without status or recovery, and skips searches a complete empty prefix refutes", async () => {
+  const t = setup();
+  const people = vi.fn(async (query: string) => ({
+    people: query.startsWith("Ou")
+      ? [{ pubkey: "e".repeat(64), name: "Outside" }]
+      : [],
+    hasMore: false,
+  }));
+  const uncached = new Map();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    profiles: { ...t.session.profiles, snapshot: () => uncached },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.retry).toBeDefined());
+  for (const prose of ["Zed ", "Zed is", "Zed is typing"]) {
+    view.rerender(complete(prose));
+    await waitFor(() => expect(last()).toEqual({ items: [] }));
+  }
+  expect(people).toHaveBeenCalledTimes(1);
+  view.rerender(complete("Out"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("Out", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Outside"]),
+  );
+  view.rerender(complete("Outside "));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(3));
+});
+
+function directoryCompletion(people: RelaySessionPeople) {
+  const t = setup();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  const publish = vi.fn();
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const complete = (query: string) => (
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{
+        revision: 1,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  return { last, complete };
+}
+type RelaySessionPeople = (
+  query: string,
+) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
+
+it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
+  const key = "9".repeat(64);
+  const people = vi.fn(async (query: string) => ({
+    people: query === key ? [{ pubkey: key, name: "Keyholder" }] : [],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("9".repeat(10)));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.rerender(complete(key));
+  // The empty partial-key page does not refute the exact-key author lookup.
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith(key, 1, expect.any(AbortSignal)),
+  );
+  // Choices still match names only, never public keys.
+  await waitFor(() => expect(last()?.items).toEqual([]));
+});
+
+it("a failed multi-word directory search keeps its error and retry", async () => {
+  const people = vi
+    .fn<RelaySessionPeople>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue({
+      people: [{ pubkey: "f".repeat(64), name: "Mary Jane" }],
+      hasMore: false,
+    });
+  const { last, complete } = directoryCompletion(people);
+  render(complete("Mary J"));
+  await waitFor(() =>
+    expect(last()?.status).toBe(
+      "Could not search community people. Retry to refresh.",
+    ),
+  );
+  act(() => last()?.retry?.());
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Mary Jane"]),
+  );
+});
+
+it("a fresh search for a refuted name searches again, and non-word text refutes nothing", async () => {
+  let published = false;
+  const people = vi.fn(async (query: string) => ({
+    people: [
+      ...(published && query.startsWith("Zed")
+        ? [{ pubkey: "9".repeat(64), name: "Zed" }]
+        : []),
+      ...(query.startsWith("🐝 B")
+        ? [{ pubkey: "8".repeat(64), name: "🐝 Buzz Bot" }]
+        : []),
+    ],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete("Zed"));
+  await waitFor(() => expect(people).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  view.unmount();
+  published = true;
+  const fresh = render(complete("Zed"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Zed"]),
+  );
+  fresh.rerender(complete("🐝"));
+  await waitFor(() =>
+    expect(people).toHaveBeenLastCalledWith("🐝", 1, expect.any(AbortSignal)),
+  );
+  await waitFor(() => expect(last()?.items).toEqual([]));
+  fresh.rerender(complete("🐝 B"));
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["🐝 Buzz Bot"]),
+  );
+});
+
+it("uses base matches and visible lexical ties for Fizz in both chooser surfaces", async () => {
+  const test = setup();
+  const rows = [
+    { key: "3".repeat(64), name: "Fast Fizz", label: "Fast Fizz" },
+    { key: "0".repeat(64), name: "Fizz", label: "baxen’s Fizz · oncp" },
+    { key: "4".repeat(64), name: "Fizz", label: "baxen’s Fizz · s03j" },
+    { key: "5".repeat(64), name: "Fizz", label: "Kenny Lopez’s Fizz" },
+    { key: "b".repeat(64), name: "Fizz", label: "baxen’s Fizz · 4prr" },
+    { key: "c".repeat(64), name: "Fizz", label: "baxen’s Fizz · 06pl" },
+  ];
+  const profiles = new Map(
+    rows.map((row) => [row.key, { name: row.name, isAgent: true as const }]),
+  );
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "parent", name: "Parent", members: rows.map((row) => row.key) },
+    ],
+  };
+  const names = test.session.names;
+  if (!names) throw new Error("Missing fixture name service");
+  const session = {
+    ...test.session,
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+    channels: { ...test.session.channels, list: () => list },
+    names: {
+      ...names,
+      resolve: (key: string) => rows.find((row) => row.key === key)?.label,
+      scope: () => (key: string) => {
+        const name = rows.find((row) => row.key === key)?.label;
+        return name ? { name, source: "agent-directory" as const } : undefined;
+      },
+    },
+  } satisfies RelaySession;
+  const expected = [rows[5], rows[4], rows[1], rows[2], rows[3], rows[0]].map(
+    (row) => row?.label,
+  );
+  const publish = vi.fn();
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@fizz", start: 5, end: 5 }}
+      query={{ start: 0, end: 5, query: "fizz" }}
+      publish={publish}
+    />,
+  );
+  expect(
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ),
+  ).toEqual(expected);
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "fizz");
+  expect(
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label) => rows.some((row) => label?.endsWith(row.key)))
+      .map((label) => label?.slice(0, -65)),
+  ).toEqual(expected);
+  test.library.dispose();
+});
+
+it("does not complete public keys in either menu", async () => {
+  const test = setup();
+  const key =
+    "150b20bdf6130418df9239dd1bd082c71612c8d653b47c277200365b9be215dc";
+  const honey = "f".repeat(64);
+  const unnamed = "e".repeat(64);
+  const profiles = new Map([
+    [key, { name: "Bad Janet" }],
+    [honey, { name: "Honey" }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "parent", name: "Parent", members: [key, honey, unnamed] },
+    ],
+  };
+  const session = {
+    ...test.session,
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+    channels: { ...test.session.channels, list: () => list },
+  } satisfies RelaySession;
+  const publish = vi.fn();
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@h", start: 2, end: 2 },
+    query: { start: 0, end: 2, query: "h" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  const ids = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.id,
+    );
+  expect(ids()).toEqual([honey]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 65, query: key }} />,
+  );
+  expect(ids()).toEqual([]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 4, query: "eee" }} />,
+  );
+  expect(ids()).toEqual([]);
+  view.unmount();
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.type(screen.getByRole("searchbox"), "h");
+  expect(screen.queryByRole("button", { name: `Bad Janet ${key}` })).toBeNull();
+  expect(screen.getByRole("button", { name: `Honey ${honey}` })).toBeVisible();
+  await user.clear(screen.getByRole("searchbox"));
+  await user.type(screen.getByRole("searchbox"), key);
+  expect(screen.queryByRole("button", { name: `Bad Janet ${key}` })).toBeNull();
+  test.library.dispose();
+});
+
+it("keeps still-matching directory people across the inline host's per-keystroke remount", async () => {
+  // jsdom has no layout; the host positions its popup with these.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const t = setup();
+  const larry = { pubkey: "f".repeat(64), name: "Larry Outside" };
+  const lara = { pubkey: "e".repeat(64), name: "Lara" };
+  const resolvers = new Map<
+    string,
+    (value: { people: (typeof larry)[]; hasMore: boolean }) => void
+  >();
+  const people = vi.fn(
+    (query: string) =>
+      new Promise<{ people: (typeof larry)[]; hasMore: boolean }>((resolve) =>
+        resolvers.set(query, resolve),
+      ),
+  );
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  // The real mention provider behind the real host, which keys each provider
+  // mount by observation revision and query.
+  const provider: Contribution<ComposerCompletion> = {
+    id: "typeahead",
+    key: "buzz.mentions/typeahead",
+    pluginId: "buzz.mentions",
+    revision: "1",
+    title: "Mention",
+    match: ({ text, start }) => mentionQuery(text, start),
+    component: MentionCompletion,
+  };
+  const providers = [provider];
+  const registry = { snapshot: () => providers, subscribe: () => () => {} };
+  // The host reads only its attributes and position; valid() is stubbed.
+  const input = document.createElement(
+    "div",
+  ) as unknown as ComposerInputElement;
+  document.body.append(input);
+  const editor = (observation: ComposerObservation) =>
+    ({
+      observation,
+      valid: () => true,
+      observe: () => {},
+      invalidate: () => {},
+      keys: { current: undefined },
+      composing: { current: false },
+    }) as unknown as CompletionEditor;
+  const host = (revision: number, text: string) => (
+    <ComposerCompletions
+      registry={registry}
+      editor={editor({ revision, text, start: text.length, end: text.length })}
+      input={{ current: input }}
+      replace={() => true}
+      resolved={{ text, recipients: [] }}
+      session={session}
+      scope="test"
+      channelId="parent"
+    />
+  );
+  const options = () =>
+    screen.queryAllByRole("option").map((option) => option.textContent);
+  const view = render(host(1, "@La"));
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("La", 1, expect.anything()),
+  );
+  await act(async () =>
+    resolvers.get("La")?.({ people: [lara, larry], hasMore: false }),
+  );
+  await waitFor(() =>
+    expect(options()).toEqual([
+      expect.stringContaining("Lara"),
+      expect.stringContaining("Larry Outside"),
+    ]),
+  );
+  // Each keystroke remounts the provider. The still-matching person stays
+  // while the new search waits and loads; the non-matching one leaves.
+  view.rerender(host(2, "@Lar"));
+  view.rerender(host(3, "@Larr"));
+  expect(options()).toEqual([expect.stringContaining("Larry Outside")]);
+  expect(screen.getByRole("status")).toHaveTextContent("Searching community…");
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("Larr", 1, expect.anything()),
+  );
+  expect(options()).toEqual([expect.stringContaining("Larry Outside")]);
+  // A different `@` token is a new chooser lifetime and starts clean.
+  view.rerender(host(4, "@Larr @Bo"));
+  expect(options()).toEqual([]);
+  input.remove();
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+});
+
+it("the persistent toolbar picker reads an empty search again after close and reopen", async () => {
+  let published = false;
+  const people = vi.fn(async () => ({
+    people: published ? [{ pubkey: "9".repeat(64), name: "Zed" }] : [],
+    hasMore: false,
+  }));
+  const t = setup();
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  };
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Mention a member" });
+  await user.click(trigger);
+  await user.type(screen.getByRole("searchbox"), "Zed");
+  await waitFor(() =>
+    expect(people).toHaveBeenCalledWith("Zed", 1, expect.any(AbortSignal)),
+  );
+  const calls = people.mock.calls.length;
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("searchbox")).toBeNull());
+  published = true;
+  // The picker stays mounted while closed, so this is the same hook instance.
+  await user.click(trigger);
+  const search = screen.getByRole("searchbox");
+  if ((search as HTMLInputElement).value !== "Zed") {
+    await user.clear(search);
+    await user.type(search, "Zed");
+  }
+  await waitFor(() => expect(people.mock.calls.length).toBeGreaterThan(calls));
+  expect(people).toHaveBeenLastCalledWith("Zed", 1, expect.any(AbortSignal));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: `Zed ${"9".repeat(64)}` }),
+    ).toBeTruthy(),
+  );
+  t.library.dispose();
+});
+
+it("names the choice set only while the picker is shown, and qualifies namesakes in both menus", async () => {
+  const t = setup();
+  const member = "a".repeat(64),
+    namesake = "c".repeat(64);
+  const profiles = new Map([
+    [member, { name: "Larry" }],
+    [namesake, { name: "Larry" }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Parent",
+        channelType: "stream" as const,
+        members: [member, namesake],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    profiles: { ...t.session.profiles, snapshot: () => profiles },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: t.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const scope = vi.spyOn(names, "scope");
+  const labels = [member, namesake].map(
+    (key) => `Larry · ${npubEncode(key).slice(-4)}`,
+  );
+  const picker = (disabled: boolean) => (
+    <MentionPicker
+      scope="test"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={disabled}
+      select={() => true}
+    />
+  );
+  const view = render(picker(false));
+  view.rerender(picker(false));
+  expect(scope).not.toHaveBeenCalled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  for (const [index, key] of [member, namesake].entries())
+    expect(
+      await screen.findByRole("button", { name: `${labels[index]} ${key}` }),
+    ).toBeInTheDocument();
+  view.rerender(picker(true));
+  scope.mockClear();
+  view.rerender(picker(true));
+  expect(scope).not.toHaveBeenCalled();
+  view.unmount();
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={{ ...session, names }}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Larry", start: 6, end: 6 }}
+      query={{ start: 0, end: 6, query: "Larry" }}
+      publish={publish}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items
+        .map((item) => item.label)
+        .sort(),
+    ).toEqual([...labels].sort()),
+  );
+  names.dispose();
+  t.library.dispose();
+});
+
+it.each([false, true])(
+  "shows agent loading only without retained mention choices (warm=%s)",
+  async (warm) => {
+    const test = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = !warm;
+    const read = vi.fn(async () => {
+      if (held) await gate;
+      return {
+        definitions: [],
+        identities: [{ pubkey: test.key, name: "Outside agent" }],
+      };
+    });
+    const library = createAgentLibrary(read);
+    if (warm) await library.queries.refresh();
+    const session = {
+      ...test.session,
+      agentChoices: createAgentChoices({
+        scope: "test",
+        library: library.queries,
+        signal: new AbortController().signal,
+      }),
+    };
+    const view = render(
+      <MentionPicker
+        session={session}
+        scope="test"
+        channelId="parent"
+        disabled={false}
+        inviteAgents
+        select={() => true}
+      />,
+    );
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Mention a member" }));
+      if (warm) {
+        await screen.findByRole("button", {
+          name: `Outside agent ${test.key}`,
+        });
+        held = true;
+        act(() => {
+          void session.agentChoices.refresh();
+        });
+      }
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(warm ? 2 : 1));
+      expect(session.agentChoices.snapshot().status).toBe("loading");
+      if (warm) {
+        expect(
+          screen.getByRole("button", { name: `Member ${test.member}` }),
+        ).toBeVisible();
+        expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+      } else expect(screen.getByText("Loading agents…")).toBeVisible();
+      await act(async () => release());
+      await waitFor(() =>
+        expect(session.agentChoices.snapshot().status).toBe("ready"),
+      );
+      expect(
+        screen.getByRole("button", { name: `Outside agent ${test.key}` }),
+      ).toBeEnabled();
+      expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+    } finally {
+      await act(async () => release());
+      view.unmount();
+      library.dispose();
+      test.library.dispose();
+    }
+  },
+);

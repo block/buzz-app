@@ -1,24 +1,38 @@
 @import "./composer.css" layer(components);
 
 @layer components {
+  /* Optical alignment: lift Robot face artwork without moving its layout box. */
+  .tabler-icon-robot-face {
+    translate: 0 -1px;
+  }
+
   .buzz-button {
     position: relative;
-    display: inline-grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-width: 0;
+    flex-shrink: 0;
+    white-space: nowrap;
     /* The reference's 32/40/52px heights remain minimums for text scaling. */
     min-height: var(--size-control);
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-capsule);
     padding: var(--space-2) var(--space-6);
     background: transparent;
     color: var(--text-standard);
     font-family: inherit;
-    @apply text-label;
+    @apply text-label-sm;
     cursor: pointer;
     transition:
       background-color var(--duration-state) var(--easing-state),
       color var(--duration-state) var(--easing-state);
+  }
+  .buzz-button[data-button-shape="control"] {
+    border-radius: var(--radius-control);
+  }
+  .buzz-button[data-thread-summary] {
+    border-radius: var(--radius-icon-button);
   }
   .buzz-button-label {
     display: inline-flex;
@@ -26,7 +40,6 @@
     justify-content: center;
     min-width: 0;
     gap: var(--space-row-gap);
-    overflow-wrap: anywhere;
   }
   .buzz-button-label > svg,
   .buzz-button-spinner {
@@ -68,13 +81,13 @@
     color: var(--text-inverse);
   }
   .buzz-button[data-variant="subtle"] {
-    background: var(--affordance-subtle);
+    background: var(--interaction-fill);
   }
   .buzz-button[data-variant="inverted"] {
     background: var(--surface-panel);
   }
   .buzz-button[data-variant="outline"] {
-    box-shadow: inset 0 0 0 1px var(--border-prominent);
+    box-shadow: inset 0 0 0 1px var(--interaction-border);
   }
   .buzz-button[data-variant="destructive"] {
     background: var(--affordance-danger);
@@ -84,7 +97,8 @@
     text-underline-offset: var(--space-1);
   }
 
-  /* Only pointer devices get hover; keyboard focus remains the host's signal. */
+  /* Avatar controls keep the backdrop visible through their artwork cutouts.
+     Only pointer devices get hover; keyboard focus remains the host's signal. */
   @media (hover: hover) and (pointer: fine) {
     .buzz-button[data-variant="prominent"]:hover:not([data-disabled]) {
       background: var(--affordance-prominent-hover);
@@ -94,8 +108,13 @@
         [data-variant="outline"],
         [data-variant="ghost"],
         [data-variant="inverted"]
-      ):hover:not([data-disabled], [data-icon-variant="chrome"]) {
-      background: var(--affordance-subtle-hover);
+      ):hover:not(
+        [data-disabled],
+        [data-icon-variant="chrome"],
+        [data-icon-variant="avatar"],
+        [data-icon-variant="media"]
+      ) {
+      background: var(--interaction-hover);
     }
     .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {
       background: var(--affordance-danger-hover);
@@ -115,8 +134,15 @@
     [data-variant="outline"],
     [data-variant="ghost"],
     [data-variant="inverted"]
-  ):is(:active, [aria-expanded="true"]):not([data-disabled]) {
-    background: var(--affordance-subtle-pressed);
+  ):is(
+    :active,
+    [aria-expanded="true"]:not([data-highlight-expanded="false"])
+  ):not(
+    [data-disabled],
+    [data-icon-variant="avatar"],
+    [data-icon-variant="media"]
+  ) {
+    background: var(--interaction-pressed);
   }
   .buzz-button[data-variant="destructive"]:is(
     :active,
@@ -152,7 +178,7 @@
     min-height: 0;
     width: var(--size-control);
     height: var(--size-control);
-    border-radius: var(--radius-control);
+    border-radius: var(--radius-icon-button);
     flex: 0 0 auto;
     padding: 0;
   }
@@ -185,11 +211,48 @@
     border-radius: var(--radius-pill);
   }
 
+  /* Trailing row actions keep their size-selected width and fill the row height. */
+  .buzz-button[data-icon-variant][data-icon-shape="row-end"] {
+    --interaction-hover: var(--interaction-row-hover);
+    align-self: stretch;
+    height: auto;
+    border-radius: 0 var(--radius-row) var(--radius-row) 0;
+  }
+
+  /* Extend the state fill around the preceding row's right-hand corners.
+     These inverse corners are decorative; the adjacent profile keeps its hit area. */
+  .buzz-button[data-icon-shape="row-end"]::before,
+  .buzz-button[data-icon-shape="row-end"]::after {
+    content: "";
+    position: absolute;
+    right: 100%;
+    width: var(--radius-row);
+    height: var(--radius-row);
+    background: inherit;
+    pointer-events: none;
+  }
+  .buzz-button[data-icon-shape="row-end"]::before {
+    top: 0;
+    mask: radial-gradient(
+      circle at bottom left,
+      transparent var(--radius-row),
+      black var(--radius-row)
+    );
+  }
+  .buzz-button[data-icon-shape="row-end"]::after {
+    bottom: 0;
+    mask: radial-gradient(
+      circle at top left,
+      transparent var(--radius-row),
+      black var(--radius-row)
+    );
+  }
+
   .buzz-button[data-icon-variant="ghost"][data-selected],
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--affordance-selected);
+    background: var(--interaction-selected);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */
@@ -199,6 +262,9 @@
   }
   .buzz-button[data-icon-variant="chrome"] {
     @apply glass-primary-interactive;
+  }
+  .buzz-button[data-icon-variant="media"] {
+    @apply media-glass;
   }
   @media (hover: hover) and (pointer: fine) {
     .buzz-button[data-icon-variant="tint"]:hover:not([data-disabled]) {
@@ -236,8 +302,16 @@
 
   /* A preview is supplemental context; destination cards can also open it.
      It is portal-rendered by Base UI so a clipped parent cannot hide it. */
+  .buzz-preview-card-positioner[popover] {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+  }
+
   .buzz-preview-card {
-    z-index: var(--layer-popover);
     display: grid;
     width: max-content;
     max-width: min(18rem, 75vw);
@@ -251,8 +325,12 @@
       transform var(--duration-state) var(--easing-state);
   }
 
-  .buzz-preview-card[data-destination] {
+  .buzz-preview-card[data-destination],
+  .buzz-preview-card[data-interactive] {
     pointer-events: auto;
+  }
+
+  .buzz-preview-card[data-destination] {
     cursor: pointer;
     color: inherit;
     text-decoration: none;
@@ -262,6 +340,18 @@
   .buzz-preview-card[data-ending-style] {
     opacity: 0;
     transform: scale(0.98);
+  }
+
+  /* A closing preview still follows its trigger; it must not take the pointer
+     from what it passes over. A keyboard-focused trigger keeps its preview
+     through scrolling, hidden while the trigger is scrolled out of view unless
+     that would hide the focused action. */
+  .buzz-preview-card[data-ending-style] {
+    pointer-events: none;
+  }
+
+  .buzz-preview-card-positioner[data-anchor-hidden]:not(:focus-within) {
+    visibility: hidden;
   }
 
   .buzz-preview-card-name {
@@ -328,6 +418,51 @@
     opacity: 1;
   }
 
+  .buzz-avatar-status {
+    position: relative;
+    display: inline-grid;
+    flex: 0 0 auto;
+    width: max-content;
+    height: max-content;
+  }
+
+  .buzz-avatar-status[data-size="fill"] {
+    width: 100%;
+    height: 100%;
+  }
+
+  .buzz-avatar-status-dot {
+    position: absolute;
+    top: 85%;
+    left: 85%;
+    width: 25%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    --avatar-status-fill: var(--status-avatar-online);
+    background: var(--status-avatar-online-border);
+    pointer-events: none;
+  }
+
+  /* Online retains a same-hue outline while preserving the
+     requested step-10 center. Inheriting the mask also outlines squircles. */
+  .buzz-avatar-status[data-status="online"] .buzz-avatar-status-dot::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: inherit;
+    mask: inherit;
+    background: var(--avatar-status-fill);
+  }
+
+  .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
+    background: var(--status-away);
+  }
+
+  .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
+    background: var(--status-offline);
+  }
+
   /* A panel is the default opaque reading surface over the atmospheric
      backdrop. Its border and threshold shadow arrive together: taking only
      bg-panel would lose the boundary that lets it sit above the gradient. */
@@ -344,6 +479,7 @@
      variant can still override it without an escalation. */
   .panel,
   :where(.bento-workspace .dv-groupview) {
+    @apply interaction-panel;
     width: 100%;
     height: 100%;
     min-width: 0;
@@ -353,6 +489,14 @@
     border-radius: var(--radius-panel);
     background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
+  }
+
+  /* A joined surface keeps one outer edge; nested panels retain opaque
+     fills for responsive overlays while their layout owns the separators. */
+  .panel[data-joined] .panel {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   /* ============================================================
@@ -376,6 +520,27 @@
 
   /* --- Shared ------------------------------------------------ */
 
+  .buzz-tabs-item {
+    display: contents;
+  }
+  /* Match header artwork without changing compact tab-close hit areas. */
+  .buzz-tabs-item > .buzz-button[data-icon-size="xs"] .buzz-button-label svg {
+    width: var(--space-4);
+    height: var(--space-4);
+  }
+  .buzz-tabs-item[data-closable] {
+    display: inline-flex;
+    gap: var(--space-1);
+    align-items: center;
+    flex-shrink: 0;
+  }
+  @media (hover: hover) {
+    .buzz-tabs-item:not(:hover, :focus-within)
+      > [role="tab"][aria-selected="false"]
+      + .buzz-button {
+      opacity: 0;
+    }
+  }
   .buzz-tabs-list {
     position: relative;
     display: inline-flex;
@@ -539,6 +704,15 @@
     background: var(--text-standard);
   }
 
+  .buzz-tabs-item[data-closable] .buzz-tabs-tab {
+    max-width: 12rem;
+  }
+  .buzz-tabs-item[data-closable] .buzz-tabs-tab > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .panel-header {
     position: relative;
     display: flex;
@@ -546,26 +720,29 @@
     width: 100%;
     flex: 0 0 auto;
     flex-wrap: wrap;
-    padding-block: var(--space-2);
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
-    padding: 0 var(--space-panel-inset);
+    gap: var(--space-2);
+    padding-block: 0;
+    padding-inline: var(--space-1);
   }
 
   .panel-header::after {
     position: absolute;
-    right: var(--space-panel-inset);
-    bottom: 0;
-    left: var(--space-panel-inset);
+    inset-block-end: 0;
+    inset-inline: var(--space-1);
     height: 1px;
     background: var(--border-standard);
     content: "";
     pointer-events: none;
   }
 
+  .panel[data-joined] .panel-header::after {
+    inset-inline: 0;
+  }
+
   .panel-header[data-variant="compact"] {
-    min-height: 3rem;
+    min-height: var(--size-panel-header);
   }
 
   .panel-header-title,
@@ -582,6 +759,7 @@
   }
 
   .panel-header-actions {
+    gap: var(--space-1);
     flex: 0 1 auto;
     flex-wrap: wrap;
     margin-inline-start: auto;
@@ -702,13 +880,19 @@
   /* Hover is the lightest acknowledgement; selection is a persistent, one-step
      stronger statement. Keeping them separate prevents a selected destination
      from becoming indistinguishable the moment a pointer passes over it. */
-  .navigation-item:hover:not([data-selected]) {
-    background: var(--affordance-subtle);
-    color: var(--text-standard);
+  @media (hover: hover) and (pointer: fine) {
+    .navigation-item:hover:not([data-selected], [data-disabled], :disabled) {
+      --text-subtle: var(--interaction-row-text);
+      --text-metadata: var(--interaction-row-metadata);
+      background: var(--interaction-row-hover);
+      color: var(--text-standard);
+    }
   }
 
   .navigation-item[data-selected] {
-    background: var(--affordance-selected);
+    --text-subtle: var(--interaction-selected-text);
+    --text-metadata: var(--interaction-selected-metadata);
+    background: var(--interaction-selected);
     color: var(--text-standard);
   }
 
@@ -740,6 +924,80 @@
     color: var(--text-metadata);
   }
 
+  /* Compose the sidebar's NavigationItem as a tab; the sibling close action
+     overlays its reserved trailing space, so buttons are never nested. */
+  .buzz-tabs[data-variant="navigation"] {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    @apply text-body-sm;
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
+    min-width: 0;
+    height: var(--size-panel-header);
+    align-items: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: var(--space-1);
+    /* The scrollbar uses the bottom inset without moving the tab row. */
+    padding-block: var(--space-1) 0;
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
+    display: flex;
+    position: relative;
+    flex: 0 0 12rem;
+    width: 12rem;
+    max-width: 100%;
+  }
+  .buzz-tabs[data-variant="navigation"] .navigation-item {
+    border-radius: var(--radius-icon-button);
+    padding-inline-start: var(--space-2);
+    padding-inline-end: var(--space-2);
+  }
+  .buzz-tabs[data-variant="navigation"] .navigation-item[data-selected] {
+    background: var(--affordance-subtle);
+  }
+  .buzz-tabs[data-variant="navigation"][data-selection-hidden]
+    .navigation-item {
+    background: transparent;
+    cursor: default;
+  }
+  .buzz-tabs[data-variant="navigation"]
+    .buzz-tabs-item[data-closable]
+    .navigation-item {
+    padding-inline-end: var(--space-8);
+  }
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-item > .buzz-button {
+    position: absolute;
+    inset-inline-end: var(--space-1);
+    top: 50%;
+    translate: 0 -50%;
+  }
+  .panel-header-label {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-row-gap);
+    padding-inline: var(--space-2);
+    @apply text-body-sm;
+  }
+  .panel-header-label > h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: inherit;
+  }
+  .panel-header-label-icon,
+  .buzz-tabs-icon {
+    display: inline-flex;
+    flex: 0 0 1rem;
+    width: 1rem;
+    height: 1rem;
+    @apply text-caption;
+    align-items: center;
+    justify-content: center;
+  }
+
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
@@ -759,7 +1017,8 @@
 @layer components {
   /* The positioned portal owns the stacking context, not its popup child. */
   .buzz-menu-positioner,
-  .buzz-popover-positioner {
+  .buzz-popover-positioner,
+  .buzz-preview-card-positioner {
     z-index: var(--layer-popover);
   }
   .buzz-menu-popup {
@@ -779,7 +1038,7 @@
     min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
-    border-radius: var(--radius-pill);
+    border-radius: var(--floating-inner-radius);
     padding: var(--space-1) var(--space-2);
     color: var(--text-standard);
     cursor: default;
@@ -795,11 +1054,10 @@
      Supporting copy follows the brighter fill so it remains readable. */
   .buzz-menu-item[data-highlighted],
   .buzz-menu-item[data-popup-open],
-  .buzz-select-option[data-highlighted],
-  .buzz-popover-popup .navigation-item:hover:not([data-selected]) {
+  .buzz-select-option[data-highlighted] {
     --text-subtle: var(--text-standard);
     --text-metadata: var(--text-standard);
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
   }
   .buzz-menu-item[data-tone="danger"] {
     color: var(--text-danger);
@@ -849,9 +1107,8 @@
     overflow-wrap: anywhere;
   }
   .buzz-popover-popup {
-    /* Persistent navigation selection must remain visible on the raised fill. */
-    --affordance-selected: var(--affordance-subtle-hover);
     @apply floating-surface;
+    --floating-inset: var(--space-4);
     width: 20rem;
     max-width: min(var(--available-width), calc(100vw - var(--space-4)));
     max-height: var(--available-height);
@@ -862,29 +1119,35 @@
   .buzz-popover-popup[data-size="compact"] {
     width: 14rem;
   }
-  /* Short action surfaces pair 10px outer corners with 8px inner rows.
-     Content surfaces keep the panel recipe, regardless of viewport width. */
+  /* Short action surfaces use 8px corners and concentric inner fills.
+     Content surfaces keep 16px corners, regardless of viewport width. */
   .buzz-menu-popup[data-size="compact"],
   .buzz-popover-popup[data-size="compact"] {
-    --affordance-floating-hover: var(--affordance-subtle-hover);
-    border-radius: var(--radius-row);
+    --interaction-row-hover: var(--affordance-subtle-hover);
+    --interaction-selected: var(--affordance-subtle-pressed);
+    --floating-radius: var(--radius-row);
   }
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
   .buzz-popover-popup[data-size="compact"] .navigation-item {
-    border-radius: calc(var(--radius-row) * 0.8);
+    border-radius: var(--floating-inner-radius);
     transition: none;
   }
   .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
-    background: var(--affordance-floating-hover);
+    background: var(--interaction-row-hover);
     outline-offset: -2px;
   }
   .buzz-popover-popup[data-size="wide"] {
     width: 24rem;
   }
   .buzz-popover-popup[data-padding="list"] {
+    --floating-inset: var(--space-1);
     padding: var(--space-1);
   }
+  .buzz-popover-popup[data-padding="list"] .navigation-item {
+    border-radius: var(--floating-inner-radius);
+  }
   .buzz-popover-popup[data-padding="none"] {
+    --floating-inset: 0px;
     padding: 0;
   }
   .buzz-popover-title {
@@ -982,6 +1245,29 @@
       filter: none;
     }
   }
+  .buzz-popover-popup[data-channel-activity] {
+    filter: none;
+    transition:
+      opacity var(--duration-state) ease-out,
+      transform var(--duration-state) cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .buzz-popover-popup[data-channel-activity]:where(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    filter: none;
+  }
+  .buzz-popover-popup[data-channel-activity][data-ending-style] {
+    transition-duration: calc(var(--duration-fast) / 2);
+  }
+  html[data-keyboard-navigation] .buzz-popover-popup[data-channel-activity] {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-popover-popup[data-channel-activity] {
+      transition: none;
+    }
+  }
 }
 
 @layer components {
@@ -998,6 +1284,7 @@
     max-height: var(--available-height);
     overflow-y: auto;
     @apply floating-surface;
+    --floating-inset: var(--space-2);
     padding: var(--space-2);
     color: var(--text-standard);
     z-index: var(--layer-popover);
@@ -1046,7 +1333,7 @@
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-control);
+    border-radius: var(--floating-inner-radius);
     cursor: default;
   }
   .buzz-select-option[data-highlighted] {
@@ -1158,6 +1445,82 @@
   html[data-keyboard-navigation] .buzz-switch-control:focus-visible {
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
+  }
+
+  .buzz-preference-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-3) 0;
+  }
+  .buzz-preference-row[data-has-icon] {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .buzz-preference-row-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-5);
+    height: var(--space-5);
+    color: var(--text-subtle);
+  }
+  .buzz-preference-row-icon > svg {
+    width: 100%;
+    height: 100%;
+  }
+  .buzz-preference-row-trailing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+  }
+  .buzz-preference-row-content {
+    overflow-wrap: anywhere;
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .buzz-preference-row-label {
+    @apply text-label-sm;
+    color: var(--text-standard);
+  }
+  label.buzz-preference-row-label {
+    cursor: pointer;
+  }
+  @container (max-width: 24rem) {
+    .buzz-preference-row-trailing:has(
+        button:not([role="switch"]):not([role="checkbox"])
+      ),
+    .buzz-preference-row-trailing:has([role="combobox"]) {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+    }
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has(
+        button:not([role="switch"]):not([role="checkbox"])
+      ),
+    .buzz-preference-row[data-has-icon]
+      > .buzz-preference-row-trailing:has([role="combobox"]) {
+      grid-column: 2 / -1;
+    }
+  }
+  .buzz-preference-row-description {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+  .buzz-preference-row[data-disabled]
+    :is(
+      .buzz-preference-row-label,
+      .buzz-preference-row-description,
+      .buzz-preference-row-icon
+    ) {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
   }
 }
 

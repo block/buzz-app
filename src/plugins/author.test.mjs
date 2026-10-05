@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package exposes injected agentControl without host ownership", async () => {
+test("generated author package in a path with spaces exposes agentControl, host, and identity names", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -28,12 +28,19 @@ test("generated author package exposes injected agentControl without host owners
       join(dir, "node_modules"),
       "dir",
     );
-    run("node", ["scripts/build-author.mjs", join(dir, "author")]);
+    run("node", ["scripts/build-author.mjs", join(dir, "author package")]);
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, AgentControl, NamingPolicy } from "@buzz/author";
-export const inject = ["agentControl", "identityNames"];
+import type { Context, AgentControl, Host, PluginManifest, NamingPolicy } from "@buzz/author";
+export const manifest: PluginManifest = {
+  id: "example.plugin", name: "Example", apiVersion: 1,
+  host: {
+    commands: [{ id: "status", program: "example-cli", args: ["status"] }],
+    networkOrigins: ["https://api.example.com"],
+  },
+};
+export const inject = ["agentControl", "host", "identityNames"];
 export function apply(ctx: Context) {
   const policy: NamingPolicy = {
     id: "alternative",
@@ -43,8 +50,18 @@ export function apply(ctx: Context) {
   const control: AgentControl = ctx.agentControl;
   void control.refresh();
   void control.action("sample", "stop");
+  const host: Host = ctx.host;
+  void host.runCommand("status").then((output: string | null) => void output);
+  void host.request({
+    url: "https://api.example.com/graphql",
+    method: "POST",
+    headers: { Authorization: "Bearer sample" },
+    body: "{}",
+  }).then((response) => void response.status);
   // @ts-expect-error Native process lifetime is not plugin-owned.
   control.dispose();
+  // @ts-expect-error Programs must be declared in the manifest, not supplied at runtime.
+  host.runCommand("example-cli", ["status"]);
 }
 // @ts-expect-error Host construction is not exported to plugin authors.
 import type { provideAgentControl } from "@buzz/author";
@@ -61,7 +78,9 @@ import type { provideAgentControl } from "@buzz/author";
           skipLibCheck: true,
           noEmit: true,
           types: [],
-          paths: { "@buzz/author": ["./author/types/plugins/author.d.ts"] },
+          paths: {
+            "@buzz/author": ["./author package/types/plugins/author.d.ts"],
+          },
         },
         files: ["consumer.ts"],
       }),

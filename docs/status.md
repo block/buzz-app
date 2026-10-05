@@ -10,7 +10,10 @@ and acceptance gaps here; keep chronological results in the [archive](#historica
   owns its page/navigation/layout under `src/bundled/channels`; reusable conversation
   components live in `src/features/messages` ([ownership](channels.md#reusing-conversation-ui)).
 - Explicit public development-identity pin and typed secure relay origins. Live
-  access still uses the opt-in macOS development broker, not packaged sign-in.
+  development uses the opt-in broker. Native macOS, Windows and Linux have
+  [packaged identity, admission and relay access](identity.md). Installed-app
+  acceptance remains open, including the Windows/Linux secure-store and transport
+  paths.
 - React lifecycle repair, current-DOM scroll metrics and a checked-in Chromium/WebKit
   scrolling gate. [Browser testing](browser-testing.md) defines exactly what it proves.
 
@@ -52,7 +55,7 @@ and [contributing](contributing.md) for maintained commands and test organizatio
 | Gate | What is still needed |
 | --- | --- |
 | Native lifecycle acceptance | Agree app-data **and keyring** isolation, then exercise actual CLI install/update → running-app observation, on-disk rollback/backup, disable/recovery/safe mode and process restart. Browser fixture storage is not native IPC/filesystem evidence. |
-| Native identity and networking | Choose per-user packaged login/session behavior and a reviewed-origin policy or narrow host capability. Packaged real data must work without the development broker; private keys stay outside plugin JavaScript. Do not widen CSP to unrestricted networking. Hosted communities' Builderlab sign-in and identity binding are broker-only too, so they are unavailable in packaged builds. |
+| Native identity and networking | External plugins can declare exact commands and HTTPS origins for bounded native calls. Packaged real-data acceptance and per-user login/session behavior remain open. Hosted communities' Builderlab sign-in and identity binding are broker-only and unavailable in packaged builds. The declarations are disclosure, not plugin isolation; private keys stay outside plugin JavaScript. Do not widen CSP to unrestricted networking. |
 | Supported author contract | The conversation preview adds generated type-only `@buzz/author`, scaffold consumption and external Composer/Message reuse. Final validation, archived cross-host compatibility and native acceptance remain open; no stable SDK promise. |
 | Independent plugin acceptance | Independently build a real-data page and a non-GitHub panel without private host imports, copied contracts or bespoke host patches. In a packaged app: install disabled → enable/use → A/B switching → update/remount → disable → rollback → failed-start recovery. Include revocation, unknown/rejected writes and stalled cleanup. |
 | Distribution | PR CI is wired in `.github/workflows/ci.yml`; decide release signing, updating, provenance and compatibility support. Record packaged artifacts and platform-specific results. Native test targets at the recorded gate contain zero cases; compilation is not GUI acceptance. |
@@ -65,9 +68,10 @@ consent. Owner review decides expansion; this checklist does not authorize it.
 
 ## Known limits and deferred choices
 
-- Thread history currently traverses oldest-first (ten pages of 50). Automatic
-  loading and bottom positioning do not guarantee the newest reply in long threads;
-  a newest-page relay query remains separate work. [Thread behavior](channels.md#viewing-threads).
+- Thread windows open newest-first on supporting relays, capped at ten pages of
+  50. Legacy fallback still traverses oldest-first and cannot guarantee the newest
+  tail in long threads. Empty unsigned probes stay unavailable rather than imply
+  exhaustion. [Thread behavior](channels.md#viewing-threads).
 
 - Cold/oversized geometry may restore an offset while shifting the message being
   read. Exact cold message anchors need a separate product change; see

@@ -1,6 +1,7 @@
 // Adapted from block/buzz desktop workflow helpers at b9392d9d.
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
 
+import type { ParsedConditionExpression } from "./workflowConditionExpression";
 import { cronExpressionError } from "./cronExpression";
 import {
   formatDurationSeconds,
@@ -29,12 +30,14 @@ export function isThreadReplyEligibleTrigger(trigger: TriggerType): boolean {
   return trigger !== "schedule" && trigger !== "webhook";
 }
 
-export const ACTION_TYPES = ["delay", "send_message"] as const;
+export const ACTION_TYPES = ["delay", "send_message", "call_webhook"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
 export type TriggerConfig = {
   on: TriggerType;
   filter?: string | undefined;
+  /** Unsaved Basic rows, including incomplete inputs; never serialized. */
+  conditionRows?: ParsedConditionExpression[] | undefined;
   emoji?: string | undefined;
   cron?: string | undefined;
   interval?: string | undefined;
@@ -49,6 +52,11 @@ export type StepFormState = {
   text?: string | undefined;
   channel?: string | undefined;
   replyInThread?: boolean | undefined;
+  url?: string | undefined;
+  method?: string | undefined;
+  headers?: { id: string; name: string; value: string }[] | undefined;
+  body?: string | undefined;
+  condition?: string | undefined;
 };
 
 export type WorkflowFormState = {
@@ -70,6 +78,7 @@ export const DEFAULT_FORM_STATE: WorkflowFormState = {
 export const ACTION_LABELS: Record<ActionType, string> = {
   delay: "Delay",
   send_message: "Send Message",
+  call_webhook: "Call Webhook",
 };
 
 function parseTimeoutSecs(
@@ -84,11 +93,21 @@ function parseTimeoutSecs(
 
 function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
+  if (step.condition !== undefined) fields.if = step.condition;
   if (step.name?.trim()) fields.name = step.name.trim();
   const timeoutSecs = parseTimeoutSecs(step.timeoutSecs);
   if (timeoutSecs !== undefined) fields.timeout_secs = timeoutSecs;
 
   switch (step.action) {
+    case "call_webhook":
+      if (step.url) fields.url = step.url;
+      if (step.method) fields.method = step.method;
+      if (step.body) fields.body = step.body;
+      if (step.headers?.length)
+        fields.headers = Object.fromEntries(
+          step.headers.map(({ name, value }) => [name, value]),
+        );
+      break;
     case "delay":
       if (step.duration) fields.duration = step.duration;
       break;
@@ -178,6 +197,13 @@ const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
 const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
+  call_webhook: new Set([
+    ...COMMON_STEP_KEYS,
+    "url",
+    "method",
+    "headers",
+    "body",
+  ]),
   delay: new Set([...COMMON_STEP_KEYS, "duration"]),
   send_message: new Set([
     ...COMMON_STEP_KEYS,
@@ -187,10 +213,12 @@ const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
   ]),
 };
 const REQUIRED_ACTION_STRING_KEYS: Record<ActionType, readonly string[]> = {
+  call_webhook: ["url"],
   delay: ["duration"],
   send_message: ["text"],
 };
 const OPTIONAL_ACTION_STRING_KEYS: Record<ActionType, readonly string[]> = {
+  call_webhook: ["method", "body"],
   delay: [],
   send_message: ["channel"],
 };
@@ -377,10 +405,10 @@ export function yamlToFormState(
           error: `Unsupported ${action} step field "${stepUnknown}" — use the YAML editor`,
         };
       }
-      if (step.if !== undefined) {
+      if (step.if !== undefined && typeof step.if !== "string") {
         return {
           ok: false,
-          error: "Step conditions are only available in the YAML editor",
+          error: "Step conditions must be strings — use the YAML editor",
         };
       }
       const nameError = optionalOwnedStringError(
@@ -440,10 +468,35 @@ export function yamlToFormState(
         }
       }
 
+      if (action === "call_webhook" && step.headers !== undefined) {
+        const headers = objectRecord(step.headers);
+        if (
+          !headers ||
+          Object.values(headers).some((value) => typeof value !== "string")
+        ) {
+          return {
+            ok: false,
+            error: "Webhook headers must be a string map — use the YAML editor",
+          };
+        }
+      }
       steps.push({
         id: step.id,
         name: step.name as string | undefined,
         action,
+        condition: step.if as string | undefined,
+        url: step.url as string | undefined,
+        method: step.method as string | undefined,
+        body: step.body as string | undefined,
+        headers: step.headers
+          ? Object.entries(step.headers as Record<string, string>).map(
+              ([name, value], index) => ({
+                id: `header_${index}`,
+                name,
+                value,
+              }),
+            )
+          : undefined,
         timeoutSecs:
           step.timeout_secs === undefined
             ? undefined

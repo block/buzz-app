@@ -22,6 +22,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.deliveryError === right.deliveryError &&
     left.authorId === right.authorId &&
     left.createdAt === right.createdAt &&
+    left.createdAtMs === right.createdAtMs &&
     left.content === right.content &&
     left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
@@ -38,6 +39,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.attachmentContentRemoved === right.attachmentContentRemoved &&
     left.attachmentSourceId === right.attachmentSourceId &&
     sameArray(left.mentions, right.mentions) &&
+    sameArray(left.mentionReferences ?? [], right.mentionReferences ?? []) &&
     sameArray(
       left.attachments,
       right.attachments,
@@ -74,6 +76,8 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     ) &&
     left.threadRootId === right.threadRootId &&
     left.replyParentId === right.replyParentId &&
+    left.sentFromThread?.rootId === right.sentFromThread?.rootId &&
+    left.sentFromThread?.excerpt === right.sentFromThread?.excerpt &&
     left.replyCount === right.replyCount &&
     sameArray(left.participants, right.participants)
   );

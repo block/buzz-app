@@ -13,22 +13,29 @@ custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 saved harness/provider/model/workspace (labelled as saved settings, since
-environment overrides may change what is launched), collapsible instructions,
-saved-vs-running revision drift and diagnostics. Environment keys and
+environment overrides may change what is launched), saved-vs-running revision
+drift and diagnostics. Instructions are no longer displayed in the read-only
+summary; the verified owner opens the existing native editor in place with
+**Agent instructions**, without leaving the profile. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
-requests coalesce. This summary adds no polling and observes the profile actions'
-existing refresh. A failed read keeps the last evidence.
+requests coalesce. This summary adds no polling and observes the profile panel's
+periodic refresh. A failed read keeps the last evidence.
 The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
 are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
-Start/Stop/Restart are the separate profile actions above; harness logs stay on
-Agents.
+Start/Stop/Restart are the separate profile actions above. The owner-only
+**Agent instructions** ingress in Info requires a unique native record; harness
+logs are in Runtime for the exact owned local agent.
 
 ## Owner runtime tab
 
 **Runtime** appears only when the viewer is the verified NIP-OA owner and the
-active community has exactly one native record for the profile key. It follows
+active community has at least one native record for the profile key. It always
+shows **Instances**. Saved and running configuration requires an unambiguous
+record: the exact selected instance ID, or the only record for a bare profile.
+A bare multi-record profile shows the instance list without choosing a default;
+selecting one opens its configuration. It follows
 Buzz desktop's Runtime tab and copy: a Restart required notice with the native
 redacted saved-versus-running diff, Activity (status and the Start on launch
 switch), Agent configuration (runtime command, who can send instructions, ACP
@@ -43,8 +50,19 @@ servers, mode, token limits) are not read. The switch persists through the host;
 failures keep the confirmed value and expose Retry status. Losing ownership or the
 native record returns to Info. The owner check is presentation only: these fields
 come from the same app-wide snapshot as Local agent.
-When Agent Activity is enabled and the host supplies conversation context, **View
-activity** opens its raw panel for this exact identity and originating channel.
+Activity also offers a focused **Harness log** row for the exact local identity
+when the scoped development signer is available. It hides the profile body until
+Back, reads native private listener output through a one-use owner proof on each
+read, and polls every 30 seconds while mounted and visible. Native retention is
+bounded to 1 MiB; visible output is ANSI-stripped and clipped to the last 120
+lines/64 KiB. Changing community, losing ownership or the local record closes the
+view. Empty, loading, copy and generic error states do not expose native errors.
+A packaged app cannot obtain this development-broker proof and fails closed.
+
+When Agent Activity is enabled, the host supplies conversation context and the
+profile is a known agent (a self-declared agent profile hint or a local library
+record), **View activity** opens its raw panel for this exact identity and
+originating channel. People's profiles show neither the card nor the action.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
 messages or tool titles/statuses from the existing session-owned records, restricted
 to this exact public key and originating channel (including threads). Retained text
@@ -64,8 +82,9 @@ no preview, never an all-channel fallback. Connecting, disconnected, unavailable
 and empty states are explicit. Counts and detailed explanations stay in the
 activity panel; the preview does not infer idle state or successful completion.
 
-This action is offered for any public identity: it does not infer that the identity
-is an owned/running agent. Public agent hints never grant telemetry access. The
+The known-agent check is the same display-only evidence as the squircle avatar: it
+does not infer that the identity is an owned/running agent. Public agent hints
+never grant telemetry access. The
 existing observer admission and session access-reset/generation fences remain the
 authority; the child adds no library read, capture lease, socket, timer or store.
 Disabling Agent Activity removes the preview/action and clears capture. Profile
@@ -110,8 +129,36 @@ absent:
   not trusted; reopening the profile retries. The existing `isAgent` shape
   check, avatar shape and local library never supply an owner.
 
-Agent type and capabilities are not shown: buzz-app has no reader or contract
-for their source (old Buzz kind 10100). This row has no controls.
+Public metadata follows base Buzz's profile order: **Public key**, **Managed by**,
+**NIP-05**, **Agent type**, **Capabilities**. The existing npub copy control keeps
+its exact value and feedback. The other public fields are whole-row copy buttons,
+with hover/keyboard indicators, a 1.5-second success check and base Buzz's copy
+feedback. Runtime names use the base labels (Goose, Claude Code, Codex, Aider),
+while copying the raw agent type; capabilities display/copy comma-separated values.
+NIP-05 remains self-declared: the row matches base Buzz without a verification
+claim or badge. Display/copy never performs DNS verification.
+
+The typed `features/agents/public-metadata` projection consumes signature-verified
+session views scoped to the exact kind-10100 author. The newest event wins (lower
+id on timestamp ties), including removal/malformed replacements. Base's sparse
+legacy defaults apply. If the existing NIP-OA verifier establishes an owner, an
+exact owner-authored kind-30177 coordinate takes precedence: valid managed content
+shows type `agent` with no legacy capabilities; malformed winning policy suppresses
+legacy fallback. Owner verification and policy reads must settle before displaying
+that projection, including when the pane first opens.
+This is public presentation, not custody, runtime configuration or permission.
+
+The existing live profile route includes kinds 10100/30177; the panel adds no socket,
+polling loop or independent cache. Views refresh on reconnect/purge and dispose on
+profile/session replacement. The owner view acquires capacity before optional public
+enrichment; failed reads/view admission share one Retry profile control with the
+profile directory. Optional enrichment failure preserves the loaded profile without
+a whole-profile error. Completed copy toasts belong to the host stack and survive
+row replacement/navigation; late clipboard completions from retired rows are ignored.
+Runtime/actions/Activity/Instances retain their position before the public fields.
+Ordinary human
+profiles without agent metadata have no agent fields. A self-authored kind 10100
+supplies agent display metadata, not management authority.
 
 ## Boundaries
 
@@ -120,6 +167,17 @@ for their source (old Buzz kind 10100). This row has no controls.
   Channels resolves active contributions at click time and owns the right slot.
 - `nostr:npub…` is the exact public-key target, with no relay hint or authority.
   Opening uses the current community session, never another connection or cache.
+- Message avatars use an app-local `buzz:agent-profile:<pubkey>` target when
+  their existing display evidence identifies an agent, including kind-40002
+  messages without profile metadata. This preserves the avatar shape and an
+  unnamed **Unknown agent** heading. Other unnamed identities use `npub…xyz`.
+  The full copyable public key and profile-read retry remain available.
+  The navigation hint grants no ownership or native control and is not added
+  to the shared agent directory. Only the panel boundary accepts it; public
+  message links and composer tokens remain restricted to `nostr:npub…`.
+  Public metadata and configured names still win.
+  An empty confirmed native inventory says **Not managed on this device**;
+  it does not claim the agent is offline or absent from the whole community.
 - Display names bind only against the message's signed `p` keys, longest first.
   Unknown, ambiguous, untagged and incomplete names stay plain text. Code/link
   contexts are conservatively excluded on the full body, before URL rendering.
@@ -145,7 +203,7 @@ for their source (old Buzz kind 10100). This row has no controls.
 ## UI and iteration
 
 Avatar, name, about, self-declared NIP-05 (not DNS-verified), exact copyable
-npub, and an optional compact activity preview/action. **Message** is offered for a
+npub, and, for known agents, an optional compact activity preview/action. **Message** is offered for a
 foreign profile when the session can start direct messages; as in New message,
 a known agent qualifies only while this community's ready native control manages
 it, rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
@@ -248,7 +306,10 @@ unambiguous native match; an instance view selects that record by ID.
 Archive labels come from `session.archives`, keyed by identity, rather than native
 process status. Archived rows use the same explicit target and remain navigable.
 The existing public profile tabs and actions are reused, not replaced by an Agents
-page or a second editor. Browser fixtures exercise live/archived selection,
+page or a second editor. The owner-only ingress requires a verified NIP-OA
+owner and a ready, unique native match in this community; the versioned
+agent-identity route opens the existing editor, never a guessed sibling.
+Browser fixtures exercise live/archived selection,
 tabs, back, keyboard close/focus and deletion through the real plugin/Channels
 host in Chromium and WebKit. React tests cover exact actions, failed-read recovery,
 non-owner denial and scope changes with synthetic native data.
@@ -262,7 +323,10 @@ These files live under `desktop/src/features/profile/ui` and
 `desktop/src/features/agents` in `block/buzz`. Buzz-app's native records also
 need an ID because several records can share one identity.
 
-The Info tab keeps the public key and linked instances. The Channels tab offers
+The Info tab keeps the public key. Linked-instance discovery stays on Info only
+when no Runtime tab is eligible. Verified owners with native records see
+**Instances** in Runtime, with a collapsed count (“1 instance” / “N instances”)
+opening exact native rows. The Channels tab offers
 **Add to channel** only for an exact native-managed identity in this community
 that is also a managed session choice. It offers loaded, classified stream/forum
 channels with a roster, excluding archived, hidden, read-only and already-member
@@ -277,21 +341,26 @@ before attempting again. Neither list is a cross-community/global directory.
 ## Owned local agent actions
 
 `ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
-It mounts only in Info, alongside the linked-instance child; changing tabs releases
+It mounts only in Info; changing tabs releases
 the actions view without cancelling an admitted app-owned command. Returning to
 Info observes current host evidence without restoring focus from the retired view.
-In this composition, actions own controller errors and Retry status; linked instances
-suppress their duplicate error surface only when actions can present recovery
-(unknown inventory or one exact match). Known unmatched/ambiguous identities keep
-a single linked-instance status warning and Retry agents. Standalone
+In this composition, actions own controller errors and Retry status on Info;
+Runtime configuration provides its own error and Retry status for an exact record.
+Linked instances suppress a duplicate only when the host view presents recovery
+(unknown inventory or one exact match on Info, an exact record on Runtime).
+Ambiguous identities keep a single linked-instance status warning and Retry agents. Standalone
 linked-instance views retain their own recovery. Initial-read Retry remains available
 when native ownership is unknown.
 It matches the exact public key and canonical active-community scope to one native
 ID; namesakes, other-community identities, ambiguous matches and browser-only
 profiles get no runtime actions. It adds no controller, relay scan or agent editor.
-Profiles and Agents share `useAgentControl` for observation. While mounted it
-refreshes host evidence every five seconds when visible/ready; errors stop polling and expose explicit Retry status. Unmount
-releases observation, never native execution.
+Profiles and Agents use `useAgentControl` only to subscribe. One mounted panel
+owns `useAgentControlRefresh`; an exact-instance panel owns it for its nested
+profile too. Child Actions/Delete/Runtime controls do not install intervals.
+The panel refreshes host evidence every five seconds while visible, including
+after errors, matching Agents' read-only recovery policy. Explicit Retry status
+remains available; no poll starts, stops or restarts a process. Unmount releases
+observation and its refresh timer, never native execution.
 
 Start/Restart require ready host evidence, an available runtime and no pending
 operation or process transition. Stop uses the controller's existing recovery
@@ -308,8 +377,9 @@ Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 
-Info adds no edit ingress; the owner Runtime tab reuses the Agents editor
-dialog rather than a route or second editor. Mounted React regression tests exercise exact dispatch, pending/failure/
+Info adds an owner-gated route to the Agents editor for a unique native match;
+the owner Runtime tab also reuses the editor dialog. Mounted React regression
+tests exercise exact dispatch, pending/failure/
 recovery and profile/community lifecycle through the real controller projection
 with a synthetic native host. Live process/credential handover and rendered native
 acceptance remain attended checks, not established by these tests.

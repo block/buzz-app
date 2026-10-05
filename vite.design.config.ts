@@ -14,6 +14,8 @@ export default defineConfig({
           `${root}src/shared/design-system/`,
           `${root}tests/fixtures/design-system/`,
           `${root}tests/fixtures/design-system.html`,
+          // The shared Bestie icon owns this one public artwork asset.
+          `${root}public/bestie.png`,
         ];
         const forbidden = [...this.getModuleIds()].filter(
           (id) =>
@@ -40,6 +42,11 @@ export default defineConfig({
     outDir: "dist/design-system",
     emptyOutDir: true,
     sourcemap: false,
-    rollupOptions: { input: "tests/fixtures/design-system.html" },
+    rollupOptions: {
+      input: [
+        "tests/fixtures/design-system.html",
+        "tests/fixtures/design-system/thinking-avatar.html",
+      ],
+    },
   },
 });

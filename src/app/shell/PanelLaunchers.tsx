@@ -19,7 +19,6 @@ export function PanelLaunchers({
         type="button"
         key={`${panel.key}:${panel.revision}`}
         variant="chrome"
-        shape="round"
         aria-label={panel.title}
         title={panel.title}
         aria-expanded={panel === selected}
@@ -36,12 +35,12 @@ export function PanelLaunchers({
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
-    <SidebarIcon size={18} aria-hidden="true" />
+    <SidebarIcon size={16} aria-hidden="true" />
   ) : (
     <img
       src={src}
       alt=""
-      className="size-4 object-contain"
+      className="object-contain"
       onError={() => setFailed(true)}
     />
   );

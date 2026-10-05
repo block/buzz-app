@@ -3,9 +3,11 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { run } from "./run-command.mjs";
+import { nativeFixture } from "./native-fixture.mjs";
 import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { watchPageErrors } from "./page-errors.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
@@ -50,21 +52,7 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["build"], source);
     const code = await readFile(join(source, "dist/plugin.js"), "utf8");
     expect(code).not.toMatch(/^import\s|^export.*from\s/m);
-    run("cargo", [
-      "build",
-      "--locked",
-      "-p",
-      "buzzodz-plugins",
-      "--example",
-      "fixture-bridge",
-    ]);
-    const metadata = JSON.parse(
-      run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
-    );
-    const binary = join(
-      metadata.target_directory,
-      "debug/examples/fixture-bridge",
-    );
+    const binary = nativeFixture();
     const home = join(temp, "home");
     const native = (op, ...args) =>
       JSON.parse(run(binary, [home, op, ...args]));
@@ -138,8 +126,7 @@ test("independent packed author consumer and native-installed contribution survi
       server: { host: "127.0.0.1", port: 0, strictPort: false },
     });
     await server.listen();
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(String(error)));
+    const errors = watchPageErrors(page);
     await page.route("**/proof-media/**", (route) =>
       route.fulfill({
         contentType: "image/svg+xml",
@@ -205,7 +192,11 @@ test("independent packed author consumer and native-installed contribution survi
     await expect
       .poll(() => draft.evaluate((element) => element.value))
       .toMatch(/T.*Z/);
-    await draft.fill("base");
+    // Select through the editor after plugin insertion; WebKit fill can retain
+    // the inserted content when its DOM selection has been lost.
+    await draft.press("ControlOrMeta+A");
+    await draft.pressSequentially("base");
+    await expect(draft).toHaveJSProperty("value", "base");
     await draft.evaluate((el) => el.setSelectionRange(1, 3));
     await page
       .getByRole("button", { name: "Insert twice", exact: true })
@@ -276,6 +267,12 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
+    // The independently built page uses the host's date labels.
+    await expect(
+      page.getByText("Consumer dates Today, Yesterday, 5 minutes ago", {
+        exact: true,
+      }),
+    ).toBeVisible();
     // The independently built page consumes the host's registered Mentions tool.
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
@@ -480,7 +477,7 @@ test("independent packed author consumer and native-installed contribution survi
       .getByRole("button", { name: "Channels" })
       .click();
     await expect(draft).toHaveJSProperty("value", "B draft");
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
     await writeFile(
       test.info().outputPath("boundary-proof.json"),
       JSON.stringify(

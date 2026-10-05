@@ -69,6 +69,9 @@ function Control({
         }
       >
         <BaseCombobox.Input
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
           {...props}
           id={inputId}
           data-buzz-ui=""
@@ -80,7 +83,15 @@ function Control({
   );
 }
 
-function Popup({ children, empty }: { children: ReactNode; empty: ReactNode }) {
+function Popup({
+  children,
+  empty,
+  className = "",
+}: {
+  children: ReactNode;
+  empty: ReactNode;
+  className?: string | undefined;
+}) {
   return (
     <BaseCombobox.Portal>
       <BaseCombobox.Positioner
@@ -89,7 +100,7 @@ function Popup({ children, empty }: { children: ReactNode; empty: ReactNode }) {
       >
         <BaseCombobox.Popup
           data-buzz-ui=""
-          className="buzz-select-popup text-body"
+          className={`buzz-select-popup text-body ${className}`}
           data-variant="field"
         >
           <BaseCombobox.Empty className="buzz-combobox-empty">

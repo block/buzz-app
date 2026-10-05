@@ -11,7 +11,7 @@ import {
 } from "react";
 import {
   SmileyIcon,
-  SmileyStickerIcon,
+  SmileyPlusIcon,
 } from "../../shared/design-system/icons/index";
 import {
   PopoverRoot,
@@ -26,6 +26,7 @@ import {
 } from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
 import { GifPicker } from "./GifPicker";
+import type { EmojiSearchSelection } from "./emoji-mart";
 
 const EMOJI_SIZE = 36;
 const EMOJI_SLOT = 48;
@@ -54,6 +55,7 @@ export function EmojiPicker({
     finalFocus(): HTMLButtonElement | false;
   };
 }) {
+  const [colorMode, setColorMode] = useState<"light" | "dark">();
   const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
   const [gifAvailability, setGifAvailability] = useState<{
@@ -61,9 +63,10 @@ export function EmojiPicker({
     supported: boolean | undefined;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
-  const [{ perLine, availableWidth }, setLayout] = useState({
+  const [{ perLine, availableWidth, scale }, setLayout] = useState({
     perLine: 0,
     availableWidth: 0,
+    scale: 1,
   });
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
@@ -71,6 +74,7 @@ export function EmojiPicker({
   const controls = useRef<HTMLFieldSetElement>(null);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const search = useRef("");
+  const searchSelection = useRef<EmojiSearchSelection | undefined>(undefined);
   const onInsert = useRef(insert);
   onInsert.current = insert;
   const accepted = useRef(false);
@@ -87,29 +91,51 @@ export function EmojiPicker({
     session.emoji.snapshot,
   );
   useLayoutEffect(() => {
-    // The popover is positioned against the action row; intermediate tool groups
+    if (!open) return;
+    const origin = externalTrigger?.ref.current ?? controls.current;
+    const themedSurface = origin?.closest<HTMLElement>("[data-color-mode]");
+    const mode =
+      themedSurface === document.documentElement
+        ? undefined
+        : themedSurface?.dataset.colorMode;
+    setColorMode(mode === "dark" || mode === "light" ? mode : undefined);
+  }, [open, externalTrigger]);
+  useLayoutEffect(() => {
+    // The popover is positioned against the composer; intermediate tool groups
     // may be narrower and are not its available width.
     const container = reaction
       ? document.documentElement
-      : controls.current?.offsetParent;
+      : (controls.current?.closest("form") ?? controls.current?.offsetParent);
     if (!open || disabled || !(container instanceof HTMLElement)) return;
-    const resize = () =>
+    const root = document.documentElement;
+    const resize = () => {
+      const scale =
+        (Number.parseFloat(getComputedStyle(root).fontSize) || 16) / 16;
       setLayout({
+        scale,
         availableWidth: container.clientWidth,
         perLine: Math.max(
           1,
           Math.min(
             6,
             Math.floor(
-              (container.clientWidth - PICKER_COLUMN_CHROME) / EMOJI_SLOT,
+              (container.clientWidth - PICKER_COLUMN_CHROME * scale) /
+                (EMOJI_SLOT * scale),
             ),
           ),
         ),
       });
+    };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(container);
-    return () => observer.disconnect();
+    // Reaction pickers can keep the same viewport width while the root scale changes.
+    const appearance = new MutationObserver(resize);
+    appearance.observe(root, { attributes: true, attributeFilter: ["style"] });
+    return () => {
+      observer.disconnect();
+      appearance.disconnect();
+    };
   }, [open, disabled, reaction]);
   useEffect(() => {
     if (
@@ -153,11 +179,13 @@ export function EmojiPicker({
         if (cancelled) return;
         dispose = mountEmojiMart({
           host: container,
+          colorMode,
           scope,
           perLine,
-          emojiSize: EMOJI_SIZE,
-          emojiButtonSize: EMOJI_SLOT,
+          emojiSize: EMOJI_SIZE * scale,
+          emojiButtonSize: EMOJI_SLOT * scale,
           search: search.current,
+          searchSelection,
           searchChange: (value) => {
             search.current = value;
           },
@@ -184,10 +212,22 @@ export function EmojiPicker({
           ?.value ?? search.current;
       dispose?.();
     };
-  }, [open, disabled, session, scope, catalog, attempt, perLine, tab, host]);
+  }, [
+    open,
+    disabled,
+    session,
+    scope,
+    catalog,
+    attempt,
+    perLine,
+    scale,
+    tab,
+    host,
+    colorMode,
+  ]);
   const emojiContent = (
     <div className={styles.emojiMart}>
-      <div ref={setHost} />
+      <div ref={setHost} tabIndex={-1} />
     </div>
   );
   const gifContent = community && (
@@ -241,6 +281,7 @@ export function EmojiPicker({
   const button = (
     <IconButton
       size="toolbar"
+      shape={reaction ? "round" : "control"}
       ref={trigger}
       type="button"
       aria-label={reaction ? "Add reaction" : "Insert emoji"}
@@ -251,7 +292,7 @@ export function EmojiPicker({
       onFocus={() => setGifDiscoveryRequested(true)}
       icon={
         reaction ? (
-          <SmileyStickerIcon size={18} aria-hidden="true" />
+          <SmileyPlusIcon size={18} aria-hidden="true" />
         ) : (
           <SmileyIcon size={20} aria-hidden="true" />
         )
@@ -261,6 +302,7 @@ export function EmojiPicker({
   const controlsView = (
     <fieldset
       ref={controls}
+      data-external-trigger={!!externalTrigger || undefined}
       disabled={disabled}
       aria-label="Emoji controls"
       className={styles.emojiPicker}
@@ -284,7 +326,8 @@ export function EmojiPicker({
         <PopoverTrigger disabled={disabled} render={button} />
       )}
       <PopoverPopup
-        side={reaction ? "bottom" : "top"}
+        colorMode={colorMode}
+        side={reaction && !externalTrigger ? "bottom" : "top"}
         anchor={
           reaction
             ? externalTrigger?.ref
@@ -300,7 +343,7 @@ export function EmojiPicker({
         style={{
           width: Math.min(
             availableWidth,
-            perLine * EMOJI_SLOT + PICKER_CHROME + 2,
+            (perLine * EMOJI_SLOT + PICKER_CHROME) * scale + 2,
           ),
           overflow: "hidden",
         }}

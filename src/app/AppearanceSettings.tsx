@@ -1,8 +1,14 @@
+import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
-import { useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import {
   MonitorIcon,
   MoonIcon,
@@ -18,15 +24,28 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
+  const increaseButton = useRef<HTMLButtonElement>(null);
+  const pendingFocus = useRef<HTMLButtonElement | null>(null);
+  const resetRef = useCallback((node: HTMLButtonElement | null) => {
+    if (!node) return;
+    return () => {
+      if (document.activeElement === node)
+        pendingFocus.current = increaseButton.current;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    // At 200%, Increase is still disabled during Reset's ref cleanup.
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target?.isConnected) target.focus();
+  });
   const { preference, error, fontScale, fontError } = useSyncExternalStore(
     appearance.subscribe,
     appearance.snapshot,
   );
   return (
     <section aria-labelledby="appearance-settings-title">
-      <h2 id="appearance-settings-title" className="mt-0 mb-6 text-label">
-        Appearance
-      </h2>
+      <Header id="appearance-settings-title" title="Appearance" />
       <div>
         <Field label="Color mode">
           <RadioGroup
@@ -55,44 +74,55 @@ export function AppearanceSettings({
             ))}
           </RadioGroup>
         </Field>
-        <fieldset className="mt-6 min-w-0 border-0 p-0">
-          <legend className="mb-2 text-label">Text size</legend>
-          <p className="mt-0 mb-3 text-body-sm text-muted">
-            Resize text without zooming the window. Saved on this device.
-          </p>
+        <fieldset className="m-0 mt-6 min-w-0 border-0 p-0">
+          <legend className="mb-2 p-0 text-label-sm">Interface size</legend>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
-              aria-label="Decrease text size"
+              size="sm"
+              aria-label="Decrease interface size"
               disabled={fontScale <= 0.8}
               onClick={() => appearance.setFontScale(fontScale - 0.1)}
             >
               −
             </Button>
-            <output aria-label="Text size">
+            <output aria-label="Interface size" className="text-body-sm">
               {Math.round(fontScale * 100)}%
             </output>
             <Button
               type="button"
-              aria-label="Increase text size"
+              size="sm"
+              ref={increaseButton}
+              aria-label="Increase interface size"
               disabled={fontScale >= 2}
               onClick={() => appearance.setFontScale(fontScale + 0.1)}
             >
               +
             </Button>
-            <Button type="button" onClick={() => appearance.setFontScale(1)}>
-              Reset text size
-            </Button>
+            {fontScale !== 1 && (
+              <Button
+                size="sm"
+                type="button"
+                ref={resetRef}
+                aria-label="Reset interface size"
+                onClick={() => appearance.setFontScale(1)}
+              >
+                Reset
+              </Button>
+            )}
           </div>
         </fieldset>
         {active && fontError && (
-          <ToastNotice title="Text size wasn’t saved" description={fontError}>
+          <ToastNotice
+            title="Interface size wasn’t saved"
+            description={fontError}
+          >
             <Button
               type="button"
               size="sm"
               onClick={() => appearance.setFontScale(fontScale)}
             >
-              Retry saving text size
+              Retry saving interface size
             </Button>
           </ToastNotice>
         )}

@@ -1,4 +1,5 @@
 import type { VerifiedEvent } from "nostr-tools";
+import { publicationRefusal } from "../developer/traffic.ts";
 import { eventDto } from "./events.ts";
 
 /** False means proven non-delivery, not merely a negative or missing OK. */
@@ -6,6 +7,7 @@ export class SocketRequestError extends Error {
   constructor(
     message: string,
     readonly sent: boolean,
+    readonly refusal?: string,
   ) {
     super(message);
   }
@@ -105,12 +107,19 @@ export function createSocketPublications(wake: () => void) {
           /^(invalid|blocked|restricted|auth-required|rate-limited):/.test(
             data[3],
           ) ||
-          // Buzz workflow CAS/authority refusals precede domain mutation.
+          // Buzz workflow CAS/authority and Canvas/artifact CAS refusals precede
+          // domain mutation.
           ([30620, 46020].includes(job.event.kind) &&
-            /^(conflict|forbidden):/.test(data[3]));
+            /^(conflict|forbidden):/.test(data[3])) ||
+          ([40100, 45010].includes(job.event.kind) &&
+            data[3].startsWith("conflict:"));
         job.finish(
           undefined,
-          new SocketRequestError("Relay publication not confirmed", !rejected),
+          new SocketRequestError(
+            "Relay publication not confirmed",
+            !rejected,
+            publicationRefusal(data[3]),
+          ),
         );
       }
       return true;

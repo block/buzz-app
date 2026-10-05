@@ -21,8 +21,11 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
       .click();
     const profile = page.getByRole("region", { name: "Profile details" });
     await expect(profile).toBeVisible();
-    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar", exact: true }),
+    ).toBeVisible();
+    await expect(profile.locator(".buzz-avatar-status")).not.toHaveAttribute(
+      "data-status",
     );
     // Narrowing the timeline for the profile can demand an older page. This
     // fixture deliberately holds those pages; retire that foreground work first.
@@ -64,18 +67,34 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     expect(
       app.report.presenceSnapshots.some((snapshot) => snapshot.pending),
     ).toBe(true);
+    await expect(profile.getByText(/^(Active|Away|Offline)$/)).toHaveCount(0);
     app.relay.releasePresence();
+    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
     await expect(
-      profile.getByRole("img", { name: "Presence: Active" }),
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toBeVisible();
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "online",
+    );
+    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+      0,
+    );
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
     await expect
       .poll(() => app.report.presencePublications.length, { timeout: 75000 })
       .toBeGreaterThan(0);
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
-    ).toBe(false);
+      app.relay.requests.some(({ filters }) =>
+        filters.some(
+          (filter) =>
+            filter.kinds.includes(20001) &&
+            filter.limit === 0 &&
+            filter.authors.length <= 256,
+        ),
+      ),
+    ).toBe(true);
     await profile.screenshot({
       path: test.info().outputPath("presence-profile.png"),
     });
@@ -203,9 +222,9 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("conversation presence is not rendered or queried", () => {
-  test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
-  test("timeline and thread bylines do not acquire presence; an explicit profile does", async ({
+test.describe("human message bylines omit presence", () => {
+  test.use({ threadUnread: true, historyCounts: { alpha: 2, beta: 1 } });
+  test("timeline and thread omit badges while the profile retains presence", async ({
     page,
     app,
   }) => {
@@ -226,30 +245,55 @@ test.describe("conversation presence is not rendered or queried", () => {
     await expect(
       thread.getByText("Unread reply 0", { exact: true }),
     ).toBeVisible();
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    await expect(thread.getByRole("img", { name: /^Presence:/ })).toHaveCount(
-      0,
-    );
-    // Opening and resolving a profile exercises a real snapshot completion
-    // barrier, without keeping obsolete hidden byline subscribers alive.
+    await expect(
+      timeline
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).not.toHaveAttribute("data-status");
+    await expect(
+      thread
+        .getByRole("button", { name: "View Alice Fixture profile" })
+        .first()
+        .locator(".buzz-avatar-status"),
+    ).not.toHaveAttribute("data-status");
     await thread
       .getByRole("button", { name: "View Alice Fixture profile", exact: true })
       .first()
       .click();
     const profile = page.getByRole("region", { name: "Profile details" });
+    // Human bylines do not demand presence; opening the profile starts that read.
     await expect(
-      profile.getByRole("img", { name: "Presence: Active" }),
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toBeVisible();
-    expect(app.report.presenceSnapshots).toHaveLength(1);
-    expect(app.report.presenceSnapshots[0].filter.authors).toHaveLength(1);
-    await expect(timeline.getByRole("img", { name: /^Presence:/ })).toHaveCount(
+    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
+    app.presence("away");
+    await expect(profile.getByText("Away", { exact: true })).toBeVisible();
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar, away" }),
+    ).toBeVisible();
+    expect(
+      app.report.presenceSnapshots.some((snapshot) =>
+        snapshot.filter.authors.includes(root.pubkey),
+      ),
+    ).toBe(true);
+    await expect(profile.locator(".buzz-avatar-status")).toHaveAttribute(
+      "data-status",
+      "away",
+    );
+    await expect(profile.getByRole("img", { name: /^Presence:/ })).toHaveCount(
       0,
     );
     expect(
-      app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
-    ).toBe(false);
+      app.relay.requests.some(({ filters }) =>
+        filters.some(
+          (filter) =>
+            filter.kinds.includes(20001) &&
+            filter.limit === 0 &&
+            filter.authors.length <= 256,
+        ),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -271,8 +315,8 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     .toBe(1);
   const owner = (await presenceLocks(page)).held[0];
   const second = await context.newPage();
+  const pageErrors = app.watchPageErrors(second);
   const errors = [];
-  second.on("pageerror", (error) => errors.push(error.message));
   second.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
@@ -318,7 +362,7 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     expect(app.report.presencePublications.at(-1).event.content).toBe(
       "offline",
     );
-    expect(errors).toEqual([]);
+    expect([...pageErrors.unexplained(), ...errors]).toEqual([]);
     app.report.measurements.push({
       publisherLockHandoff: { owner: owner.clientId, successor },
     });
@@ -360,7 +404,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
     await expect(
       page
         .getByRole("region", { name: "Profile details" })
-        .getByRole("img", { name: "Presence: Active" })
+        .getByRole("img", { name: "Alice Fixture avatar, online" })
         .first(),
     ).toBeVisible();
     expect(app.report.unreadHolds.some((hold) => hold.pending)).toBe(true);
@@ -369,7 +413,7 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
         ([kind, id]) =>
           kind === "EOSE" &&
           app.relay.requests.some(
-            (req) => req.id === id && req.route === "alpha",
+            (req) => req.id === id && req.routes.includes("alpha"),
           ),
       ),
     ).toBe(false);
@@ -401,6 +445,32 @@ test("presence becomes usable during held HTTP work and unfinished subscription 
 
 // Real account controls -> shared activity -> retained session -> production
 // broker -> authenticated socket; real localStorage survives app reconstruction.
+test("profile trigger stays transparent through hover, press, and open menu", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const trigger = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    await trigger.hover();
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.mouse.down();
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.mouse.up();
+    await page.mouse.move(1, 1);
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
 test("avatar choices publish through the existing socket and persist across reload", async ({
   page,
   app,
@@ -410,20 +480,122 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
-  const account = page.getByRole("menu", { name: "Browser Fixture" });
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await composer.fill("My presence follows the shared directory");
+  await composer.press("Enter");
+  const ownRow = page
+    .locator("[data-message-id]")
+    .filter({ hasText: "My presence follows the shared directory" });
+  await expect(ownRow).toBeVisible();
+  const ownBadge = ownRow.locator(".buzz-avatar-status");
+  const badge = avatar.locator(".buzz-avatar-status-dot");
+  const account = page.getByRole("menu", { name: "Fixture Reader" });
   const published = (status) =>
     app.report.presencePublications.filter(
       ({ event }) => event.content === status,
     ).length;
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      avatar.locator(".buzz-avatar").evaluate(async (element) => {
+        const mask = getComputedStyle(element).maskImage;
+        const image = new Image();
+        image.src = mask.slice(4, -1).replace(/^["']|["']$/g, "");
+        try {
+          await image.decode();
+          return image.naturalWidth > 0;
+        } catch {
+          return false;
+        }
+      }),
+    )
+    .toBe(true);
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await expect(badge).toHaveCSS("background-color", "rgb(33, 131, 88)");
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-online.png"),
+  });
   await avatar.click();
-  await page.getByRole("button", { name: /^Availability:/ }).click();
-  await page.getByRole("menuitemradio", { name: "Away", exact: true }).click();
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "Availability: Online", exact: true }),
+  ).toHaveCSS("color", "rgb(25, 59, 45)");
+  await page.getByRole("button", { name: /^Availability:/ }).click();
+  const attempts = [];
+  const recordPresence = async (response) => {
+    if (response.url().endsWith("/stream-presence"))
+      attempts.push(await response.json());
+  };
+  page.on("response", recordPresence);
+  const commandedAt = performance.now();
+  const pendingPublication = Promise.withResolvers();
+  const releasePublication = Promise.withResolvers();
+  await page.route("**/stream-presence", async (route) => {
+    pendingPublication.resolve();
+    await releasePublication.promise;
+    await route.continue();
+  });
+  try {
+    await page
+      .getByRole("menuitemradio", { name: "Away", exact: true })
+      .click();
+    await pendingPublication.promise;
+    await expect(
+      page
+        .getByRole("status", { name: "" })
+        .filter({ hasText: "Updating to away" }),
+    ).toBeVisible();
+    await expect(
+      avatar.getByRole("img", { name: "Your status: Online" }),
+    ).toBeVisible();
+    await expect(ownBadge).not.toHaveAttribute("data-status");
+    await expect(
+      page.getByRole("menuitemradio", { name: "Online", exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("menuitemradio", { name: "Away", exact: true }),
+    ).not.toBeChecked();
+  } finally {
+    releasePublication.resolve();
+  }
+  await expect(
+    avatar.getByRole("img", { name: "Your status: Away" }),
+  ).toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByText("Updating to away…", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitemradio", { name: "Away", exact: true }),
+  ).toBeChecked();
+  await page.unroute("**/stream-presence");
+  page.off("response", recordPresence);
+  const sent = app.report.presencePublications.filter(
+    ({ community }) => community === "primary",
+  );
+  app.report.measurements.push({
+    presenceCommandToVisibleMs: performance.now() - commandedAt,
+    presenceSendGapMs: sent.at(-1).at - sent.at(-2).at,
+    presenceAttempts: attempts,
+    note: "includes the explicit pending-UI assertion gate and browser automation",
+  });
+  await expect(badge).toHaveCSS("background-color", "rgb(255, 186, 24)");
+  await expect(ownBadge).not.toHaveAttribute("data-status");
+  await expect
+    .poll(() =>
+      badge.evaluate((element) => getComputedStyle(element, "::after").content),
+    )
+    .toBe("none");
+  await expect(
+    page.getByRole("button", { name: "Availability: Away", exact: true }),
+  ).toHaveCSS("color", "rgb(79, 52, 34)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({ path: test.info().outputPath("avatar-away.png") });
   await expect.poll(() => published("away")).toBeGreaterThan(0);
   const editor = page.getByRole("textbox", {
     name: "Message #Alpha",
@@ -432,7 +604,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await editor.click();
   await editor.fill("Still away while typing");
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
@@ -440,10 +612,17 @@ test("avatar choices publish through the existing socket and persist across relo
     .getByRole("menuitemradio", { name: "Offline", exact: true })
     .click();
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
+  await expect(ownBadge).not.toHaveAttribute("data-status");
   await page.reload();
   await expect(
-    page.getByRole("img", { name: "Your status: Offline" }),
+    avatar.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
+  await expect(badge).toHaveCSS("background-color", "rgb(128, 128, 128)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-offline.png"),
+  });
   await avatar.click();
   await page.getByRole("button", { name: /^Availability:/ }).click();
   await expect(
@@ -451,10 +630,10 @@ test("avatar choices publish through the existing socket and persist across relo
   ).toBeChecked();
   const before = published("online");
   await page
-    .getByRole("menuitemradio", { name: "Automatic", exact: true })
+    .getByRole("menuitemradio", { name: "Online", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Your status: Online" }),
+    avatar.getByRole("img", { name: "Your status: Online" }),
   ).toBeVisible();
   await expect.poll(() => published("online")).toBeGreaterThan(before);
   await account.screenshot({

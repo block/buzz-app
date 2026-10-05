@@ -1,8 +1,15 @@
 import type { EventTemplate } from "nostr-tools";
 import { newer, type RelayEvent } from "./events.ts";
 
-export type ChannelLifecycleAction = "archive" | "delete" | "leave" | "hide";
-export const CHANNEL_LIFECYCLE_KINDS = [9002, 9008, 9022, 41012] as const;
+export type ChannelLifecycleAction =
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "leave"
+  | "hide";
+/** Join is not a confirmed member action: it starts from a nonmember preview. */
+export type ChannelLifecycleCommand = ChannelLifecycleAction | "join";
+export const CHANNEL_LIFECYCLE_KINDS = [9002, 9008, 9021, 9022, 41012] as const;
 export const DM_VISIBILITY_KIND = 30622;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PUBKEY = /^[0-9a-f]{64}$/;
@@ -14,19 +21,26 @@ export function lifecycleChannelId(value: string): string {
 }
 
 export function lifecycleTemplate(
-  action: ChannelLifecycleAction,
+  action: ChannelLifecycleCommand,
   channelId: string,
 ): EventTemplate {
-  const kind = { archive: 9002, delete: 9008, leave: 9022, hide: 41012 }[
-    action
-  ];
+  const kind = {
+    archive: 9002,
+    unarchive: 9002,
+    delete: 9008,
+    join: 9021,
+    leave: 9022,
+    hide: 41012,
+  }[action];
   const event = {
     kind,
     created_at: Math.floor(Date.now() / 1000),
     content: "",
     tags: [
       ["h", lifecycleChannelId(channelId)],
-      ...(action === "archive" ? [["archived", "true"]] : []),
+      ...(action === "archive" || action === "unarchive"
+        ? [["archived", action === "archive" ? "true" : "false"]]
+        : []),
     ],
   };
   validateLifecycleTemplate(event);
@@ -50,7 +64,10 @@ export function validateLifecycleTemplate(event: EventTemplate): void {
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
   if (
     event.kind === 9002 &&
-    JSON.stringify(event.tags[1]) !== JSON.stringify(["archived", "true"])
+    !["true", "false"].some(
+      (value) =>
+        JSON.stringify(event.tags[1]) === JSON.stringify(["archived", value]),
+    )
   )
     throw new Error("Only archive metadata may be changed here");
 }
@@ -82,7 +99,9 @@ export type ChannelLifecycleSettings = Readonly<{
   channelId: string;
   channelType: "stream" | "forum" | "dm";
   canArchive: boolean;
+  canUnarchive: boolean;
   canDelete: boolean;
+  deleteUnavailable?: boolean;
   canLeave: boolean;
   canHide: boolean;
   leaveReason?: string;
@@ -147,7 +166,11 @@ export function lifecycleSettings(
       type !== "dm" &&
       archived !== "true" &&
       (role === "owner" || role === "admin"),
-    canDelete: type !== "dm" && role === "owner",
+    canUnarchive:
+      type !== "dm" &&
+      archived === "true" &&
+      (role === "owner" || role === "admin"),
+    canDelete: type !== "dm" && archived !== "true" && role === "owner",
     canLeave: type !== "dm" && !lastOwner,
     canHide: type === "dm",
     ...(lastOwner && type !== "dm"

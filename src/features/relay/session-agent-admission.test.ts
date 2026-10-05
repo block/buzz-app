@@ -21,6 +21,7 @@ function setup() {
   let libraryFailure = false;
   let afterPublish = () => {};
   let omitMembership = false;
+  const archived: string[] = [];
   let holdRoster: Promise<void> | undefined;
   let releaseRoster: (() => void) | undefined;
   let rosterStarted: (() => void) | undefined;
@@ -58,6 +59,7 @@ function setup() {
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      archiveAuthority: relay.pubkey,
       media: () => undefined,
       readAgentLibrary: async () => {
         if (libraryFailure) throw new Error("Fixture library unavailable");
@@ -85,11 +87,22 @@ function setup() {
           rosterStarted?.();
           await holdRoster;
         }
+        if (
+          libraryFailure &&
+          filters.some((filter) => filter.kinds?.includes(30177))
+        )
+          throw new Error("Fixture inventory unavailable");
         if (foreignRoster && filters.some((filter) => filter["#d"]))
           return [
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),
           ];
         const events = [
+          signed(relay, {
+            kind: 13535,
+            created_at: clock,
+            content: "",
+            tags: [["-"], ...archived.map((key) => ["p", key])],
+          }),
           meta(parent, "stream"),
           meta(child, "stream", [
             ["private"],
@@ -121,6 +134,10 @@ function setup() {
       clock++;
       members = [viewer.pubkey, ...(parentMembers ? [agent.pubkey] : [])];
       childMembers = [viewer.pubkey, ...(sessionMembers ? [agent.pubkey] : [])];
+    },
+    archive: (key: string) => {
+      clock++;
+      archived.push(key);
     },
     returnForeignRoster: () => {
       foreignRoster = true;
@@ -287,6 +304,57 @@ it("rejects nonmember identities outside the agent library before adding anyone"
       ]),
     ).rejects.toThrow(/agent library/);
     expect(test.publish).not.toHaveBeenCalled();
+  } finally {
+    test.owner.dispose();
+  }
+});
+
+it("rejects a known-archived library agent before adding it to a session", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.archive(test.agent);
+    await test.owner.session.archives.ensure();
+    expect(test.owner.session.archives.state(test.agent)).toBe("archived");
+    await expect(
+      test.owner.session.workSessions.addAgents(test.child, [test.agent]),
+    ).rejects.toThrow(/archived/);
+    expect(test.publish).not.toHaveBeenCalled();
+  } finally {
+    test.owner.dispose();
+  }
+});
+
+it("rejects a known-archived parent member before inviting it to a child session", async () => {
+  const test = setup();
+  try {
+    test.setMembership(true, false);
+    await test.ready();
+    test.archive(test.agent);
+    await test.owner.session.archives.ensure();
+    expect(test.owner.session.archives.state(test.agent)).toBe("archived");
+    await expect(
+      test.owner.session.workSessions.addAgents(test.child, [test.agent]),
+    ).rejects.toThrow(/archived/);
+    expect(test.publish).not.toHaveBeenCalled();
+  } finally {
+    test.owner.dispose();
+  }
+});
+
+it("keeps the parent-member fallback while archive state is unknown", async () => {
+  const test = setup();
+  try {
+    test.setMembership(true, false);
+    test.failLibraryRefresh();
+    await test.ready().catch(() => {});
+    expect(test.owner.session.archives.state(test.agent)).toBe("unknown");
+    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
+    expect(test.publish).toHaveBeenCalledOnce();
+    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+      "h",
+      test.child,
+    ]);
   } finally {
     test.owner.dispose();
   }

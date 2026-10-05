@@ -23,9 +23,17 @@ impl DatabricksSettings {
         Ok(())
     }
 }
+/// The pinned engine keeps non-Unix OAuth tokens in memory only, so neither a
+/// later request nor a worker could reuse a sign-in. Deferred on Windows.
+pub const DATABRICKS_WINDOWS: &str =
+    "Databricks sign-in is not supported on Windows yet. Choose OpenAI for this agent";
 pub fn origin(raw: &str) -> Result<String> {
+    if raw.is_empty() {
+        return Err("Databricks workspace is not configured. Edit the agent, open Advanced → Model, and set Databricks workspace (HTTPS origin).".into());
+    }
     let invalid = || {
-        "Enter an HTTPS workspace origin without credentials, path, query or fragment".to_owned()
+        "Enter a Databricks HTTPS workspace origin without credentials, path, query or fragment"
+            .to_owned()
     };
     let authority = raw.strip_prefix("https://").ok_or_else(invalid)?;
     let authority = authority.strip_suffix('/').unwrap_or(authority);

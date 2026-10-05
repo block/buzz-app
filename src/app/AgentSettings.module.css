@@ -1,0 +1,40 @@
+.card {
+  min-width: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-card);
+  background: var(--surface-inset);
+}
+
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules targets the shared select inside Agent defaults. */
+.defaultsCard :global(.buzz-select-trigger) {
+  --border: var(--border-standard);
+  background: var(--surface-panel);
+}
+
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules preserves the shared select focus state. */
+.defaultsCard :global(.buzz-select-trigger:is(:focus, [data-popup-open])) {
+  --border: var(--border-prominent);
+}
+
+.rows {
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rows li + li {
+  border-top: 1px solid var(--border-standard);
+}
+
+.piSetup {
+  margin-top: var(--space-3);
+  margin-left: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border-standard);
+}
+
+.command {
+  overflow-wrap: anywhere;
+  user-select: all;
+}

@@ -135,6 +135,200 @@ fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
     assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
     assert_eq!(result["host"], "");
 }
+
+#[test]
+#[cfg(unix)]
+fn goose_connection_test_uses_the_draft_model_and_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let script = r#"#!/bin/sh
+if [ "$1" = acp ]; then
+  read request
+  case "$request" in *providers/list*) ;; *) exit 1;; esac
+  case "$TEST_DEFAULT" in
+    missing) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[]}}';;
+    mismatch) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"anthropic","defaultModel":"other-model"}]}}';;
+    invalid) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"openai","defaultModel":"bad\nmodel"}]}}';;
+    *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"openai","defaultModel":"provider-default"}]}}';;
+  esac
+  exit
+fi
+[ "$1 $2 $3" = 'run --text Reply OK.' ] || exit 1
+[ "$4 $5 $6 $7 $8 $9" = '--no-session --no-profile --max-turns 1 --quiet --output-format' ] || exit 1
+[ "${10}" = 'json' ] || exit 1
+[ "$GOOSE_PROVIDER" = 'openai' ] || exit 1
+case "$GOOSE_MODEL" in effective-model|provider-default) ;; *) exit 1;; esac
+[ "$(pwd)" = '__WORKSPACE__' ] || exit 1
+printf '%s\n' 'prompt' >> prompts
+if [ "$OPENAI_API_KEY" = 'draft-key' ]; then
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":4},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}'
+elif [ "$BAD_STYLE" = text ]; then
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":0},"messages":[{"role":"assistant","content":[{"type":"text","text":"Ran into this error: API key not valid."}]}]}'
+else
+  printf '%s\n' '{"metadata":{"status":"completed","total_tokens":4},"messages":[{"role":"assistant","content":[{"type":"error","error":"authentication failed"}]}]}'
+fi
+"#
+    .replace(
+        "__WORKSPACE__",
+        &dir.path().canonicalize().unwrap().display().to_string(),
+    );
+    std::fs::write(&goose, script).unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"openai","model":"visible-model"},
+        "environment":{"GOOSE_MODEL":"effective-model","OPENAI_API_KEY":"draft-key"}});
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":edit
+        }}),
+    );
+    let result = result.unwrap();
+    assert_eq!(result["models"], json!([]));
+    assert!(result.get("testedModel").is_none());
+    assert!(!result.to_string().contains("effective-model"));
+    let mut automatic = edit.clone();
+    automatic["harness"]["model"] = json!("");
+    automatic["environment"]
+        .as_object_mut()
+        .unwrap()
+        .remove("GOOSE_MODEL");
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"","filter":"","action":"test","edit":automatic
+        }}),
+    )
+    .unwrap();
+    assert_eq!(result["testedModel"], "openai/provider-default");
+    let prompts = std::fs::read_to_string(dir.path().join("prompts")).unwrap();
+    for case in ["missing", "mismatch", "invalid"] {
+        let mut unavailable = automatic.clone();
+        unavailable["environment"]["TEST_DEFAULT"] = json!(case);
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        assert!(
+            invoke(
+                &view,
+                "agent_models_run",
+                json!({"ticket":ticket,"request":{
+                    "host":"","filter":"","action":"test","edit":unavailable
+                }})
+            )
+            .is_err(),
+            "{case}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("prompts")).unwrap(),
+            prompts
+        );
+    }
+    let mut bad = automatic;
+    bad["environment"]["OPENAI_API_KEY"] = json!("bad-key");
+    for style in ["error-content", "text"] {
+        bad["environment"]["BAD_STYLE"] = json!(style);
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        let error = invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":bad
+            }}),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("could not complete a request"),
+            "{style}"
+        );
+    }
+
+    let mut bad = edit.clone();
+    let sidecar = dir.path().join("goose-acp");
+    let temporary = dir.path().join("temporary-session");
+    std::fs::write(
+        &sidecar,
+        r#"#!/bin/sh
+[ "$#" -eq 0 ] || exit 1
+read request
+case "$request" in *'"method":"_goose/unstable/providers/list"'*)
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"entries":[{"providerId":"openai","defaultModel":"provider-default"}]}}'
+  exit 0;; esac
+[ "$(pwd)" = '__WORKSPACE__' ] || exit 1
+[ "$GOOSE_PROVIDER $GOOSE_MODE" = 'openai chat' ] || exit 1
+case "$GOOSE_MODEL" in effective-model|provider-default) ;; *) exit 1;; esac
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"delete":{}}}}}'
+read request
+case "$request" in *'"hidden":true'*) ;; *) exit 1 ;; esac
+case "$request" in *'"enabledExtensions":[]'*) ;; *) exit 1 ;; esac
+: > '__TEMPORARY__'
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"temporary-test"}}'
+read request
+if [ "$OPENAI_API_KEY" = 'draft-key' ]; then
+  printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"temporary-test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"OK"}}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
+  read request
+  case "$request" in *'"method":"_goose/unstable/session/export"'*) ;; *) exit 1 ;; esac
+  printf '%s\n' '{"jsonrpc":"2.0","id":5,"result":{"data":"{\"id\":\"temporary-test\",\"conversation\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}]}"}}'
+else
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"DO_NOT_PROJECT_PROVIDER_SECRET"}}'
+fi
+read request
+case "$request" in *'"method":"session/delete"'*) ;; *) exit 1 ;; esac
+case "$request" in *'"sessionId":"temporary-test"'*) ;; *) exit 1 ;; esac
+rm '__TEMPORARY__'
+printf '%s\n' '{"jsonrpc":"2.0","id":4,"result":{}}'
+"#
+        .replace("__WORKSPACE__", &dir.path().canonicalize().unwrap().display().to_string())
+        .replace("__TEMPORARY__", &temporary.display().to_string()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o700)).unwrap();
+    bad["harness"]["command"] = json!(sidecar);
+    bad["harness"]["args"] = json!([]);
+    for (key, default_model) in [
+        ("draft-key", false),
+        ("bad-key", false),
+        ("draft-key", true),
+    ] {
+        if default_model {
+            bad["harness"]["model"] = json!("");
+            bad["environment"]
+                .as_object_mut()
+                .unwrap()
+                .remove("GOOSE_MODEL");
+        }
+        bad["environment"]["OPENAI_API_KEY"] = json!(key);
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        let result = invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":{
+                "host":"","filter":"","action":"test","edit":bad
+            }}),
+        );
+        if key == "draft-key" {
+            let result = result.unwrap();
+            assert_eq!(result["models"], json!([]));
+            if default_model {
+                assert_eq!(result["testedModel"], "openai/provider-default");
+            } else {
+                assert!(result.get("testedModel").is_none());
+            }
+        } else {
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("could not complete a request"));
+            assert!(!error.contains("DO_NOT_PROJECT_PROVIDER_SECRET"));
+        }
+        assert!(
+            !temporary.exists(),
+            "the test must delete its own temporary session before returning"
+        );
+    }
+}
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());
@@ -257,6 +451,140 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     .is_err());
 }
 #[test]
+fn browse_uses_write_only_agent_defaults_workspace_and_filter_through_ipc() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+            "environment":{"DATABRICKS_HOST":"https://inherited.example.com",
+                "DATABRICKS_MODEL_FILTER":"endpoint-*"}}}),
+    )
+    .unwrap();
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    // The UI cannot see write-only defaults, so it sends blanks and native
+    // supplies the inherited workspace and filter.
+    let mut req = request(dir.path(), &id, "refresh");
+    req["host"] = json!("");
+    req["inheritWorkspace"] = json!(true);
+    req["edit"]["harness"]["provider"] = json!("");
+    req["edit"]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("databricks");
+    let result = call(req.clone()).unwrap();
+    assert_eq!(
+        result["models"],
+        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+    );
+    assert_eq!(result["host"], ""); // The write-only inherited URL stays native.
+    assert!(!result.to_string().contains("https://inherited.example.com"));
+    assert!(!result.to_string().contains("endpoint-*"));
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://inherited.example.com"
+    );
+    // An explicit, different workspace still conflicts instead of silently
+    // browsing a workspace the launch would not use.
+    req["host"] = json!("https://other.example.com");
+    assert!(call(req.clone()).is_err());
+    req["host"] = json!("");
+    req["filter"] = json!("other-*");
+    assert!(call(req.clone()).is_err());
+    // Without the flag a blank is explicit and still conflicts with the
+    // inherited workspace, as before.
+    req["filter"] = json!("");
+    req["inheritWorkspace"] = json!(false);
+    assert!(call(req.clone()).is_err());
+
+    // An explicit per-agent workspace cannot be bypassed by a caller that
+    // manually sets inheritWorkspace, even while global env defaults exist.
+    req["edit"]["harness"]["databricks"] = json!({
+        "host":"https://agent.example.com", "filter":"agent-*"
+    });
+    req["inheritWorkspace"] = json!(true);
+    assert!(call(req.clone()).is_err());
+    req["inheritWorkspace"] = json!(false);
+    req["host"] = json!("https://agent.example.com");
+    req["filter"] = json!("agent-*");
+    let result = call(req).unwrap();
+    assert_eq!(result["host"], "https://agent.example.com");
+    assert_eq!(
+        fake.opened.lock().unwrap().last().unwrap().0,
+        "https://agent.example.com"
+    );
+}
+
+#[test]
+fn disconnect_recovers_an_inherited_workspace_without_revealing_it() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    invoke(
+        &view,
+        "agent_control_save_defaults",
+        json!({"edit":{"harness":"buzz-agent","provider":"databricks_v2","model":"","effort":"",
+            "environment":{"DATABRICKS_HOST":"https://inherited.example.com"}}}),
+    )
+    .unwrap();
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    // Browse signs in against the inherited workspace.
+    let mut browse = request(dir.path(), &id, "refresh");
+    browse["host"] = json!("");
+    browse["inheritWorkspace"] = json!(true);
+    browse["edit"]["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("databricks");
+    call(browse).unwrap();
+    let cache = dir.path().join("store/buzz-agent/oauth/databricks");
+    std::fs::create_dir_all(&cache).unwrap();
+    let key = "https://inherited.example.com/oidc/.well-known/oauth-authorization-server|databricks-cli|all-apis,offline_access";
+    use sha2::{Digest, Sha256};
+    let cached = cache.join(format!("{:x}.json", Sha256::digest(key.as_bytes())));
+    std::fs::write(&cached, "SYNTHETIC").unwrap();
+    // Disconnect carries no draft and a blank host, like the picker sends.
+    let disconnect = json!({"host":"","filter":"","action":"disconnect","inheritWorkspace":true});
+    let result = call(disconnect.clone()).unwrap();
+    assert_eq!(result["disconnected"], true);
+    assert_eq!(result["host"], "");
+    assert!(!result.to_string().contains("inherited.example.com"));
+    assert!(!cached.exists());
+    // Without the flag, a blank host is still refused.
+    let mut unflagged = disconnect;
+    unflagged["inheritWorkspace"] = json!(false);
+    assert!(call(unflagged).is_err());
+}
+
+#[test]
 fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overrides() {
     let fake = Arc::new(Fake::default());
     let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
@@ -298,6 +626,28 @@ fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overr
 }
 
 #[test]
+#[cfg(windows)]
+fn databricks_oauth_is_unsupported_on_windows() {
+    struct NoBrowser;
+    impl BrowserOpener for NoBrowser {
+        fn open(&self, _: &str) -> Result<(), String> {
+            panic!("Unsupported sign-in opened a browser");
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let connection = RuntimeFactory.open(
+        "https://workspace.example.invalid",
+        dir.path(),
+        Arc::new(NoBrowser),
+    );
+    assert_eq!(
+        connection.err().as_deref(),
+        Some(buzz_agent_controller::connection::DATABRICKS_WINDOWS)
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[test]
+#[cfg(unix)]
 fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
     struct NoBrowser;
     impl BrowserOpener for NoBrowser {
@@ -320,11 +670,11 @@ fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
             .await
             .unwrap();
         assert!(result.is_err());
-        // Actual production connect forwarding cannot silently become a no-op:
-        // a closed loopback endpoint must fail, never report authenticated.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // Actual production connect forwarding cannot silently become a no-op.
+        // Own the listener until it observes a TLS attempt, then close it rather
+        // than depending on platform-specific refused-connection retry timing.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        drop(listener);
         let connection = RuntimeFactory
             .open(
                 &format!("https://127.0.0.1:{port}"),
@@ -332,12 +682,16 @@ fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
                 Arc::new(NoBrowser),
             )
             .unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), connection.connect())
-                .await
-                .unwrap()
-                .is_err()
-        );
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(connection.connect(), async move {
+                let (peer, _) = listener.accept().await.unwrap();
+                let mut hello = [0u8; 1];
+                assert_eq!(peer.peek(&mut hello).await.unwrap(), 1);
+            })
+        })
+        .await
+        .unwrap();
+        assert!(result.is_err());
     });
     assert!(RuntimeFactory
         .open(
@@ -509,9 +863,11 @@ fn pi_catalog_uses_native_ticket_and_draft_configuration_without_saving() {
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
         std::fs::write(&file, r#"#!/bin/sh
+[ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1
+if [ "$1" = --version ]; then printf '0.99.1\n'; exit 0; fi
 read request
 [ "$PI_CODING_AGENT_DIR" -ef "./local-config" ] || exit 1
-[ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1
+[ "$BUZZ_ACP_AGENTS" = "10" ] || exit 1
 printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"extension","id":"namespace/model.v1"}]}}'
 "#).unwrap();
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -521,7 +877,7 @@ printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models
         "host":"","filter":"","action":"connect","edit":{
             "name":"Pi draft","systemPrompt":"","workspace":dir.path(),
             "harness":{"command":tools.join("buzz-pi-acp"),"args":[],"provider":"extension","model":"invalid-old-id"},
-            "environment":{"PI_CODING_AGENT_DIR":dir.path().join("local-config")}
+            "environment":{"PI_CODING_AGENT_DIR":dir.path().join("local-config"),"BUZZ_ACP_AGENTS":"10"}
         }
     }})).unwrap();
     assert_eq!(

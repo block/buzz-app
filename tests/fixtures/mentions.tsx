@@ -1,11 +1,17 @@
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
-import { MessageSettings } from "../../src/app/MessageSettings";
+import { AgentSettings } from "../../src/app/AgentSettings";
+import { createAgentControl } from "../../src/features/agents/control";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
+import { PagesService } from "../../src/features/pages/service";
+import { PanelsService } from "../../src/features/panels/service";
+import { SettingsCardsService } from "../../src/features/settings/service";
+import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
+import { provideNavigation } from "../../src/features/navigation/service";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { bindNames } from "../../src/features/identity-names/service";
@@ -19,6 +25,7 @@ import {
   roster,
   profile,
   message,
+  signed,
 } from "../../src/features/relay/testing";
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -26,7 +33,9 @@ import type { RelayEvent } from "../../src/features/relay/events";
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
-  second = keypair();
+  second = keypair(),
+  outsider = keypair();
+const browserControl = createAgentControl(null);
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
@@ -36,10 +45,35 @@ let libraryReads = 0;
 const reads: (readonly number[])[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
+const admission = new URLSearchParams(location.search).has(
+  "nonmember-admission",
+);
+// With nonmember-admission: make "General" a DM, which can never add members.
+const dm = new URLSearchParams(location.search).has("dm");
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
+const channels = new URLSearchParams(location.search).has("channels");
+const stream = new URLSearchParams(location.search).has("stream");
+// Opt-in roster scale for local typing diagnostics; ordinary journeys keep two channels.
+const channelCount = Math.min(
+  1000,
+  Math.max(
+    0,
+    Number(new URLSearchParams(location.search).get("channel-count")) || 0,
+  ),
+);
+const extraChannels = Array.from({ length: channelCount }, (_, index) => [
+  roster(relay, `scale-${index}`, [viewer.pubkey], time),
+  metadata(relay, `scale-${index}`, `general-${index}`, time, [
+    ["t", "stream"],
+  ]),
+]).flat();
+const searches: string[] = [];
+const heldSearches: string[] = [];
+let searchGate: Promise<void> | undefined;
+let releaseSearch = () => {};
 // Optional visual preview: real GIF search, with messages still local to this fixture.
 const gifRelay = new URLSearchParams(location.search).get("gif-community");
 const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
@@ -92,11 +126,46 @@ const owner = createRelaySession(
       try {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           await profileGate;
+        const search = filters.find((filter) => filter.search)?.search;
+        if (search !== undefined) {
+          searches.push(search);
+          if (searchGate) {
+            heldSearches.push(search);
+            await searchGate;
+            heldSearches.splice(heldSearches.indexOf(search), 1);
+          }
+        }
         const events = [
           roster(relay, "c", members, time),
-          metadata(relay, "c", "General"),
+          admission
+            ? signed(relay, {
+                kind: 39000,
+                content: JSON.stringify({
+                  name: "General",
+                  channel_type: dm ? "dm" : "stream",
+                }),
+                created_at: time,
+                tags: [
+                  ["d", "c"],
+                  ["name", "General"],
+                  ["t", dm ? "dm" : "stream"],
+                ],
+              })
+            : metadata(
+                relay,
+                "c",
+                "General",
+                undefined,
+                stream ? [["t", "stream"]] : [],
+              ),
           roster(relay, "other", [viewer.pubkey], time),
-          metadata(relay, "other", "Other"),
+          metadata(
+            relay,
+            "other",
+            "Other",
+            undefined,
+            channels ? [["t", "stream"], ["private"]] : [],
+          ),
           profile(viewer, { name: "Viewer" }),
           profile(first, {
             name: delayed ? "Mary Jane" : "Honey",
@@ -107,10 +176,23 @@ const owner = createRelaySession(
             is_agent: true,
             picture: "https://avatars.test/app-icon.png",
           }),
+          ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
+          ...extraChannels,
           ...publications,
         ];
         return events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
+          filters.some((filter) => {
+            const { search, search_mode: _mode, ...ordinary } = filter;
+            // Name-prefix directory search, like the relay's prefix mode.
+            return (
+              matchesEvent(event, ordinary) &&
+              (search === undefined ||
+                (event.kind === 0 &&
+                  String(JSON.parse(event.content).name ?? "")
+                    .toLowerCase()
+                    .startsWith(search.toLowerCase())))
+            );
+          }),
         );
       } finally {
         pendingReads--;
@@ -147,7 +229,11 @@ const disabledCalls: {
 const plugins = createPluginManager(context, {
   bundled: [
     ...bundledPlugins.filter(({ manifest }) =>
-      ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
+      [
+        "buzz.emoji",
+        "buzz.mentions",
+        ...(channels ? ["buzz.channels", "buzz.links"] : []),
+      ].includes(manifest.id),
     ),
     {
       manifest: {
@@ -185,6 +271,19 @@ const plugins = createPluginManager(context, {
   ],
 });
 const conversation = new ConversationService(context);
+if (channels) {
+  new PagesService(context);
+  new PanelsService(context);
+  new SettingsCardsService(context);
+  new TemplateProvidersService(context);
+  provideNavigation(context);
+  context.provide("agentControl", browserControl);
+  // Only the composer is mounted; the Channels page never consumes this service.
+  context.provide("relay", {
+    snapshot: () => ({ session: namedSession }),
+    subscribe: () => () => {},
+  });
+}
 Object.assign(window, {
   mentionFixture: {
     async collide(value: boolean) {
@@ -192,6 +291,7 @@ Object.assign(window, {
       await owner.session.agentLibrary.refresh();
     },
     qualifier: (key: string) => names?.lookup(key)?.qualifier,
+    outsider: outsider.pubkey,
     first: first.pubkey,
     second: second.pubkey,
     publications,
@@ -208,6 +308,17 @@ Object.assign(window, {
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
     reads: () => ({ kinds: reads, pending: pendingReads }),
+    searches: () => [...searches],
+    heldSearches: () => [...heldSearches],
+    holdSearches() {
+      searchGate = new Promise((resolve) => {
+        releaseSearch = resolve;
+      });
+    },
+    releaseSearches() {
+      searchGate = undefined;
+      releaseSearch();
+    },
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;
       return owner.session.agentLibrary.refresh();
@@ -271,7 +382,7 @@ function Fixture() {
         />
       </div>
       {new URLSearchParams(location.search).has("settings") && (
-        <MessageSettings />
+        <AgentSettings control={browserControl} />
       )}
     </main>
   );

@@ -1,4 +1,9 @@
-import { connectBrokerTransport } from "../relay/transport";
+import { nativeIdentityEnabled } from "../identity/service";
+import { nativeCommunityRequest } from "./native-api";
+import { connectCommunityTransport, registerCommunity } from "./connection";
+import { settledRefusal, type SettledRefusal } from "./leave-protocol";
+import { registerBrokerCommunity } from "../relay/transport";
+import type { RelaySession } from "../relay/session";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
   name?: string;
@@ -14,7 +19,16 @@ export async function communityRequest<T>(
   id: string,
   route: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
+  if (nativeIdentityEnabled())
+    return nativeCommunityRequest(id, route, body, signal) as Promise<T>;
+  signal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
+    : AbortSignal.timeout(25000);
+  // Scoped HTTP reads need broker registration, not an acquired relay session.
+  await registerBrokerCommunity(id, signal);
+  signal.throwIfAborted();
   const response = await fetch(
     `/api/relay/${encodeURIComponent(id)}/${route}`,
     {
@@ -25,7 +39,7 @@ export async function communityRequest<T>(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }),
-      signal: AbortSignal.timeout(25000),
+      signal,
     },
   );
   const result = await response.json();
@@ -35,16 +49,28 @@ export async function communityRequest<T>(
     );
   return result as T;
 }
-export async function inspectProfile(id: string) {
-  const transport = await connectBrokerTransport(
-    "",
-    AbortSignal.timeout(12000),
-    id,
-  );
-  const events = await transport.query(
-    [{ kinds: [0], authors: [transport.viewer], limit: 5 }],
-    AbortSignal.timeout(12000),
-  );
+export async function inspectProfile(id: string, session?: RelaySession) {
+  // Existing-community editors use the captured session so confirmed reads also
+  // update its shared profile directory. Joining uses the selected host adapter.
+  const transport =
+    session ??
+    (await connectCommunityTransport(id, AbortSignal.timeout(12000)));
+  if (!transport.viewer) throw new Error("Profile identity is unavailable");
+  const filters = [
+    {
+      kinds: [0],
+      authors: [transport.viewer],
+      limit: 5,
+      ...(nativeIdentityEnabled() ? { consistency: "strong" as const } : {}),
+    },
+  ];
+  const events =
+    "read" in transport
+      ? await transport.read(filters, {
+          signal: AbortSignal.timeout(12000),
+          fresh: true,
+        })
+      : await transport.query(filters, AbortSignal.timeout(12000));
   const event = events
     .filter((e) => e.kind === 0 && e.pubkey === transport.viewer)
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];
@@ -56,6 +82,7 @@ export async function inspectProfile(id: string) {
   const profile: PersonalProfile = {
     name: String(existing.display_name ?? existing.name ?? ""),
     picture: typeof existing.picture === "string" ? existing.picture : "",
+    about: typeof existing.about === "string" ? existing.about : "",
   };
   return { existing, profile, exists: !!event };
 }
@@ -71,4 +98,29 @@ export async function publishProfile(
   }>(id, "profile", { ...profile, existing });
   if (!receipt.accepted || !receipt.event_id)
     throw new Error(receipt.message ?? "Profile publication was not confirmed");
+}
+export type LeaveOutcome = "left" | SettledRefusal;
+/** Publishes a NIP-43 leave request to the community's relay by origin, without
+ * acquiring a session. Resolves only once the relay accepts it, answers that
+ * it holds no membership for the viewer, or refuses the viewer as banned (the
+ * membership stays on the relay, but no retry can reach it while the ban
+ * lasts); any other refusal, transport failure or timeout throws and leaves
+ * the membership for the caller to retry. */
+export async function requestLeave(id: string): Promise<LeaveOutcome> {
+  await registerCommunity(id, AbortSignal.timeout(12000));
+  try {
+    const receipt = await communityRequest<{
+      accepted: boolean;
+      event_id: string;
+      message?: string;
+    }>(id, "leave", {});
+    if (!receipt.accepted || !receipt.event_id)
+      throw new Error(receipt.message ?? "The leave request was not confirmed");
+    return "left";
+  } catch (error) {
+    const settled =
+      error instanceof Error ? settledRefusal(error.message) : undefined;
+    if (settled) return settled;
+    throw error;
+  }
 }

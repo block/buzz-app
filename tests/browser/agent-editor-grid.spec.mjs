@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
 
 test("existing grid opens the focused editor, selects a model and saves/reopens", async ({
   page,
@@ -12,8 +13,7 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
   await server.listen();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  const errors = watchPageErrors(page);
   try {
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
@@ -148,8 +148,8 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await dialog
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(dialog.getByRole("status")).toContainText("Saved.");
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await expect(
       card.getByRole("button", {
         name: "Actions for Fixture agent",
@@ -258,6 +258,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("custom.enter");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("custom.click-save");
     await expect(
       page.getByRole("option", { name: /custom.click-save/ }),
@@ -274,6 +278,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("custom.click-save");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("");
     await dialog
       .getByRole("textbox", {
@@ -290,6 +298,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     // Dirty write-only values receive the same incidental-dismissal protection.
     await dialog
       .getByRole("button", { name: "Environment", exact: true })
@@ -312,7 +324,7 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       .getByRole("textbox", { name: "Name", exact: true })
       .press("Escape");
     await expect(dialog).toHaveCount(0); // clean Escape still closes
-    expect(errors).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();
   }

@@ -2,7 +2,7 @@
 
 First visual experiment for link rendering, activated as a page plugin in the
 isolated `/tests/fixtures/link-lab.html` preview. Add `?theme=dark` for dark mode.
-Uses the design system's blue 11 text, blue 4 hover fill and Phosphor icons.
+Uses the design system's blue 11 text, blue 4 hover fill and Tabler icons.
 Links are transparent by default. Padding stays 2px on every side, including
 wrapped line fragments, with -2px inline margins so it adds no horizontal gap
 to surrounding text. Hovering does not move the surrounding text.
@@ -32,7 +32,9 @@ it does not mark messages read. Other-community previews do not connect or switc
 communities on hover. Mentions with signed recipient IDs and unambiguous loaded
 names share the hover styling; known local agent identities use a robot icon.
 Known channel names in `#channel` text open through the same host link path.
-Both legacy channel/message links and versioned `buzz://open` links are supported.
+The Buzz link forms `buzz://channel/<id>`, `buzz://channel/<id>/<event>` and
+`buzz://message?channel=<id>&id=<event>[&thread=<root>]` are supported; any other
+`buzz://` host stays plain text.
 The host opens them through scoped navigation; message links reveal the selected
 message in its verified thread after bounded history loading. Missing targets
 report navigation failure. The lab only previews their appearance.

@@ -19,6 +19,23 @@ pub struct Manifest {
     pub id: String,
     pub name: String,
     pub api_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostGrants>,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostGrants {
+    #[serde(default)]
+    pub commands: Vec<HostCommand>,
+    #[serde(default)]
+    pub network_origins: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostCommand {
+    pub id: String,
+    pub program: String,
+    pub args: Vec<String>,
 }
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
@@ -28,6 +45,41 @@ impl Manifest {
         }
         if self.api_version != 1 {
             return Err("Only page plugin API version 1 is supported".into());
+        }
+        if let Some(host) = &self.host {
+            if host.commands.len() > 16 || host.network_origins.len() > 16 {
+                return Err("Too many host declarations".into());
+            }
+            let mut command_ids = std::collections::HashSet::new();
+            for command in &host.commands {
+                valid_id(&command.id)?;
+                if !command_ids.insert(&command.id)
+                    || command.program.is_empty()
+                    || command.program.len() > 80
+                    || !command.program.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                    })
+                    || command.args.len() > 16
+                    || command
+                        .args
+                        .iter()
+                        .any(|argument| argument.len() > 1024 || argument.contains('\0'))
+                {
+                    return Err("Invalid host command declaration".into());
+                }
+            }
+            let mut origins = std::collections::HashSet::new();
+            for origin in &host.network_origins {
+                let url = url::Url::parse(origin).map_err(err)?;
+                if url.scheme() != "https"
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.origin().ascii_serialization() != *origin
+                    || !origins.insert(origin)
+                {
+                    return Err("Invalid HTTPS origin declaration".into());
+                }
+            }
         }
         Ok(())
     }
@@ -77,6 +129,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("channels manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
+            .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
@@ -85,6 +139,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("agents manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
+            .expect("feedback manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
             .expect("sessions manifest"),
         serde_json::from_str(include_str!(
@@ -192,6 +248,11 @@ pub struct Manager {
     safe_mode: bool,
 }
 impl Manager {
+    /// Host control-plane location that protected workers must not modify.
+    pub fn storage_root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     pub fn open(home: Option<PathBuf>, profile: &str, safe_mode: bool) -> Result<Self> {
         valid_id(profile)?;
         let home = home
@@ -296,9 +357,27 @@ impl Manager {
                         .bundled_overrides
                         .get(&manifest.id)
                         .copied()
-                        .unwrap_or(!matches!(
+                        // New bundles must opt in to the default-on policy.
+                        .unwrap_or(matches!(
                             manifest.id.as_str(),
-                            "buzz.channel-templates" | "buzz.todos"
+                            "buzz.channels"
+                                | "buzz.feedback"
+                                | "buzz.diffs"
+                                | "buzz.identity-naming"
+                                | "buzz.agent-activity"
+                                | "buzz.terminal"
+                                | "buzz.profiles"
+                                | "buzz.links"
+                                | "buzz.mentions"
+                                | "buzz.emoji"
+                                | "buzz.github"
+                                | "buzz.inbox"
+                                | "buzz.projects"
+                                | "buzz.agents"
+                                | "buzz.workflows"
+                                | "buzz.sessions"
+                                | "block.hosted-communities"
+                                | "buzz.moderation"
                         ));
                 PluginInfo {
                     manifest,
@@ -446,12 +525,20 @@ impl Manager {
                 .current_source
                 .clone()
                 .ok_or("Plugin was not installed from a reloadable folder")?;
-            (plugin.current.clone(), source, plugin.manifest.id.clone())
+            (
+                plugin.current.clone(),
+                source,
+                plugin.manifest.id.clone(),
+                plugin.manifest.host.clone().unwrap_or_default(),
+            )
         };
         let bytes = prepare_reload_artifact(&snapshot.1)?;
         let Artifact { manifest, .. } = serde_json::from_slice(&bytes).map_err(err)?;
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
+        }
+        if manifest.host.clone().unwrap_or_default() != snapshot.3 {
+            return Err("Host access changed; use Load from folder to review it".into());
         }
         let revision = hash(&bytes);
         before_commit();
@@ -484,6 +571,16 @@ impl Manager {
         self.catalog()
     }
     pub fn module(&self, id: &str, revision: &str) -> Result<String> {
+        Ok(self.current_artifact(id, revision)?.code)
+    }
+    pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
+        Ok(self
+            .current_artifact(id, revision)?
+            .manifest
+            .host
+            .unwrap_or_default())
+    }
+    fn current_artifact(&self, id: &str, revision: &str) -> Result<Artifact> {
         if self.safe_mode {
             return Err("External plugins are disabled in safe mode".into());
         }
@@ -493,7 +590,7 @@ impl Manager {
         if !p.enabled || p.current != revision {
             return Err("Plugin was disabled or updated; refresh the catalog".into());
         }
-        Ok(self.artifact(id, revision)?.code)
+        self.artifact(id, revision)
     }
     pub fn recover(&self) -> Result<Catalog> {
         {
@@ -637,53 +734,169 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::Manager;
+    use super::{artifact_from_text, Manager, Manifest};
     use std::fs;
 
     #[test]
-    fn todos_is_optional_and_keeps_explicit_enabled_intent() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = Manager::open(Some(temp.path().into()), "todos-test", false).unwrap();
-        let enabled = |manager: &Manager| {
-            manager
-                .catalog()
-                .unwrap()
-                .plugins
-                .into_iter()
-                .find(|plugin| plugin.manifest.id == "buzz.todos")
-                .unwrap()
-                .enabled
-        };
-        assert!(!enabled(&manager));
-        manager.change("enable", "buzz.todos").unwrap();
-        let reopened = Manager::open(Some(temp.path().into()), "todos-test", false).unwrap();
-        assert!(enabled(&reopened));
-        reopened.change("disable", "buzz.todos").unwrap();
-        assert!(!enabled(&manager));
+    fn validates_host_declarations_and_old_manifests() {
+        let old: Manifest =
+            serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
+                .unwrap();
+        assert_eq!(old.host, None);
+        assert!(old.validate().is_ok());
+        assert!(!serde_json::to_string(&old).unwrap().contains("host"));
+        let manifest = serde_json::json!({
+            "id": "example.page", "name": "Example", "apiVersion": 1,
+            "host": {
+                "commands": [{"id":"status","program":"example-cli","args":["status"]}],
+                "networkOrigins": ["https://api.example.com"]
+            }
+        });
+        assert!(artifact_from_text(&manifest.to_string(), "export const x = 1".into()).is_ok());
+        for invalid_origin in [
+            "http://api.example.com",
+            "https://api.example.com/path",
+            "https://user@api.example.com",
+            "https://api.example.com:443",
+        ] {
+            let mut invalid = manifest.clone();
+            invalid["host"]["networkOrigins"] = serde_json::json!([invalid_origin]);
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        let mut invalid = manifest.clone();
+        invalid["host"]["commands"][0]["program"] = serde_json::json!("/bin/sh");
+        assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        let mut invalid = manifest.clone();
+        invalid["host"]["commands"]
+            .as_array_mut()
+            .unwrap()
+            .push(manifest["host"]["commands"][0].clone());
+        assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
     }
 
     #[test]
-    fn templates_default_off_and_preserve_explicit_overrides() {
+    fn host_grants_follow_enabled_current_artifact() {
         let temp = tempfile::tempdir().unwrap();
-        let manager = Manager::open(Some(temp.path().into()), "templates-test", false).unwrap();
-        let enabled = |manager: &Manager| {
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"commands":[{"id":"first","program":"example-cli","args":["status"]}],"networkOrigins":["https://one.example"]}}"#,
+        )
+        .unwrap();
+        let first = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap()
+            .revision;
+        assert!(manager.host_grants("example.page", &first).is_err());
+        manager.change("enable", "example.page").unwrap();
+        assert_eq!(
             manager
-                .catalog()
+                .host_grants("example.page", &first)
                 .unwrap()
-                .plugins
-                .into_iter()
-                .find(|plugin| plugin.manifest.id == "buzz.channel-templates")
-                .unwrap()
-                .enabled
+                .commands[0]
+                .id,
+            "first"
+        );
+
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"commands":[{"id":"second","program":"example-cli","args":["status","--json"]}],"networkOrigins":["https://two.example"]}}"#,
+        )
+        .unwrap();
+        let second = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap()
+            .revision;
+        assert!(manager.host_grants("example.page", &first).is_err());
+        let grants = manager.host_grants("example.page", &second).unwrap();
+        assert_eq!(grants.commands[0].id, "second");
+        assert_eq!(grants.network_origins, ["https://two.example"]);
+        manager.change("disable", "example.page").unwrap();
+        assert!(manager.host_grants("example.page", &second).is_err());
+    }
+
+    #[test]
+    fn reload_rejects_changed_host_grants_before_enable() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+        )
+        .unwrap();
+        let first = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap()
+            .revision
+            .clone();
+
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"commands":[{"id":"status","program":"example-cli","args":["status"]}]}}"#,
+        )
+        .unwrap();
+        let error = match manager.reload("example.page") {
+            Ok(_) => panic!("reload should reject changed host grants"),
+            Err(error) => error,
         };
-        assert!(!enabled(&manager));
-        manager.change("enable", "buzz.channel-templates").unwrap();
-        let reopened = Manager::open(Some(temp.path().into()), "templates-test", false).unwrap();
-        assert!(enabled(&reopened));
-        reopened
-            .change("disable", "buzz.channel-templates")
+        assert!(error.contains("Load from folder"));
+
+        let catalog = manager.catalog().unwrap();
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
             .unwrap();
-        assert!(!enabled(&manager));
+        assert_eq!(plugin.revision, first);
+        assert!(plugin.previous.is_none());
+        manager.change("enable", "example.page").unwrap();
+        assert!(manager
+            .host_grants("example.page", &first)
+            .unwrap()
+            .commands
+            .is_empty());
+    }
+
+    #[test]
+    fn optional_plugins_default_off_and_preserve_explicit_overrides() {
+        for id in ["buzz.todos", "buzz.channel-templates"] {
+            let temp = tempfile::tempdir().unwrap();
+            let manager = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
+            let enabled = |manager: &Manager| {
+                manager
+                    .catalog()
+                    .unwrap()
+                    .plugins
+                    .into_iter()
+                    .find(|plugin| plugin.manifest.id == id)
+                    .unwrap()
+                    .enabled
+            };
+            assert!(!enabled(&manager), "{id} defaults off");
+            manager.change("enable", id).unwrap();
+            let reopened = Manager::open(Some(temp.path().into()), "optional-test", false).unwrap();
+            assert!(enabled(&reopened), "{id} retains enable after reopening");
+            reopened.change("disable", id).unwrap();
+            assert!(!enabled(&manager), "{id} exposes persisted disable");
+        }
     }
 
     #[test]

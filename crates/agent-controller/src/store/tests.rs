@@ -6,12 +6,16 @@ pub(crate) fn fixture() -> Agent {
     let pubkey = "ab".repeat(32);
     let relay_url = "wss://relay.example".to_owned();
     Agent {
+        picture: None,
         id: agent_id(&pubkey, &relay_url),
         pubkey,
         relay_url,
         name: "Test Brain".into(),
         system_prompt: "Take over the test world".into(),
-        workspace: "/tmp".into(),
+        session_policy: None,
+        session_policy_inherit: false,
+        // Only validated/serialized here; never used to launch a harness.
+        workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: HarnessEdit {
             databricks: None,
             command: "buzz-agent".into(),
@@ -31,9 +35,12 @@ pub(crate) fn fixture() -> Agent {
 }
 fn edit() -> AgentEdit {
     AgentEdit {
+        picture: None,
         name: "Edited Brain".into(),
         system_prompt: "New prompt".into(),
-        workspace: "/tmp".into(),
+        session_policy: Some(None),
+        // Only validated/serialized here; never used to launch a harness.
+        workspace: std::env::current_dir().unwrap().to_str().unwrap().into(),
         harness: fixture().harness,
         environment: BTreeMap::new(),
     }
@@ -94,6 +101,21 @@ fn snapshot_withholds_model_and_provider_environment_values() {
                     ("DATABRICKS_MODEL", "synthetic-combined-model"),
                 ],
             ),
+            agent(
+                "f6",
+                "/opt/tools/buzz-pi-acp",
+                "custom",
+                &[("BUZZ_ACP_MODEL", "synthetic-acp-pi-model")],
+            ),
+            agent(
+                "a7",
+                "goose-acp",
+                "custom",
+                &[
+                    ("BUZZ_ACP_MODEL", "synthetic-acp-goose-model"),
+                    ("GOOSE_MODEL", "synthetic-worker-goose-model"),
+                ],
+            ),
         ])
         .unwrap();
     let snapshot = store.snapshot().unwrap();
@@ -106,6 +128,9 @@ fn snapshot_withholds_model_and_provider_environment_values() {
         "synthetic-databricks-model",
         "synthetic-combined-provider",
         "synthetic-combined-model",
+        "synthetic-acp-pi-model",
+        "synthetic-acp-goose-model",
+        "synthetic-worker-goose-model",
     ] {
         assert!(!wire.contains(value), "projected {value}");
     }
@@ -123,6 +148,8 @@ fn snapshot_withholds_model_and_provider_environment_values() {
             Some("BUZZ_AGENT_PROVIDER"),
             Some("BUZZ_AGENT_PROVIDER"),
         ),
+        ("f6", Some("BUZZ_ACP_MODEL"), None),
+        ("a7", Some("BUZZ_ACP_MODEL"), None),
     ] {
         let view = snapshot
             .agents
@@ -143,7 +170,9 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     let mut store = Store::open(dir.path().to_owned()).unwrap();
     let agent = fixture();
     store.insert(vec![agent.clone()]).unwrap();
-    store.save(&agent.id, 1, edit()).unwrap();
+    let mut update = edit();
+    update.session_policy = Some(Some(crate::config::SessionPolicy::Thread));
+    store.save(&agent.id, 1, update).unwrap();
     let stale = store.save(&agent.id, 1, edit()).unwrap_err();
     assert!(stale.contains("Reload"));
     let view = serde_json::to_string(&store.snapshot().unwrap()).unwrap();
@@ -158,6 +187,7 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     }
     assert!(view.contains("TEST_TOKEN"));
     assert!(view.contains("Edited Brain"));
+    assert!(view.contains("\"sessionPolicy\":\"thread\""));
     assert_eq!(store.agents().unwrap()[0].revision, 2);
     let before = fs::read(store.path()).unwrap();
     assert!(Store::open(dir.path().to_owned()).is_err());
@@ -170,6 +200,10 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
     assert_eq!(saved.extra, agent.extra);
     assert_eq!(saved.auth_tag, agent.auth_tag);
     assert_eq!(saved.credential_id, agent.credential_id);
+    assert_eq!(
+        saved.session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
     let backup: Value =
         serde_json::from_slice(&fs::read(dir.path().join("agents.previous.json")).unwrap())
             .unwrap();
@@ -182,6 +216,76 @@ fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {
             0o600
         );
     }
+}
+#[test]
+fn explicitly_inheriting_context_can_replace_an_imported_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "thread"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
+    store.save(&agent.id, agent.revision, edit()).unwrap();
+    assert_eq!(store.snapshot().unwrap().agents[0].session_policy, None);
+    drop(store);
+    let saved = Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .remove(0);
+    assert!(saved.session_policy_inherit);
+    assert_eq!(saved.selected_session_policy(), None);
+    assert_eq!(saved.imported, agent.imported);
+}
+
+#[test]
+fn an_omitted_ipc_policy_preserves_the_imported_choice_but_null_inherits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let mut agent = fixture();
+    agent.imported = json!({"record": {"session_policy": "thread"}});
+    store.insert(vec![agent.clone()]).unwrap();
+    let mut payload = json!({
+        "name": "Renamed Brain",
+        "systemPrompt": agent.system_prompt,
+        "workspace": agent.workspace,
+        "harness": agent.harness,
+        "environment": {}
+    });
+    let omitted: AgentEdit = serde_json::from_value(payload.clone()).unwrap();
+    store.save(&agent.id, agent.revision, omitted).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].session_policy,
+        Some(crate::config::SessionPolicy::Thread)
+    );
+    payload["sessionPolicy"] = Value::Null;
+    let inherit: AgentEdit = serde_json::from_value(payload).unwrap();
+    store.save(&agent.id, agent.revision + 1, inherit).unwrap();
+    assert_eq!(store.snapshot().unwrap().agents[0].session_policy, None);
+}
+
+#[test]
+fn remove_requires_current_revision_and_persists_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let agent = fixture();
+    store.insert(vec![agent.clone()]).unwrap();
+    store.enabled(&agent.id, false).unwrap();
+    assert!(dir.path().join("agents.previous.json").exists());
+    assert!(store.remove(&agent.id, agent.revision + 1).is_err());
+    assert_eq!(store.agents().unwrap().len(), 1);
+    store.remove(&agent.id, agent.revision).unwrap();
+    assert!(store.agents().unwrap().is_empty());
+    assert!(!dir.path().join("agents.previous.json").exists());
+    drop(store);
+    assert!(Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap()
+        .is_empty());
 }
 #[test]
 fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writing() {
@@ -203,21 +307,141 @@ fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writin
     for key in [
         "BUZZ_PRIVATE_KEY",
         "buzz_auth_tag",
-        "BUZZ_ACP_LAZY_POOL",
+        "BUZZ_ACP_AGENT_COMMAND",
+        "BUZZ_ACP_AGENT_ARGS",
+        "BUZZ_ACP_MCP_COMMAND",
+        "buzz_acp_launch_prefix",
+        "BUZZ_ACP_RESPOND_TO",
+        "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
+        "BUZZ_ACP_ALLOWED_RESPOND_TO",
+        "BUZZ_ACP_AGENT_OWNER",
+        "BUZZ_ACP_DISPLAY_NAME",
+        "BUZZ_ACP_TEAM_INSTRUCTIONS",
+        "BUZZ_ACP_PRIVATE_KEY",
+        "BUZZ_ACP_API_TOKEN",
+        "BUZZ_RELAY_URL",
+        "BUZZ_ACP_SESSION_POLICY",
+        "BUZZ_ACP_IDLE_POOL_SLEEP",
+        "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
+        "BUZZ_ACP_NO_PRESENCE",
+        "BUZZ_ACP_SETUP_PAYLOAD",
+        "BUZZ_ACP_REPLAY_FLOOR",
+        "buzz_acp_agents",
+        "PI_ACP_PI_COMMAND",
+        "BUZZ_AGENT_CONFIG_DIR",
         "BUZZ_MANAGED_AGENT",
+        "buzz_managed_agent_start_nonce",
+        "BUZZ_APP_PROFILE",
         "GIT_CONFIG_COUNT",
         "NOSTR_PRIVATE_KEY",
         "bad=key",
+    ] {
+        for command in ["buzz-agent", "goose-acp", "/opt/tools/buzz-pi-acp"] {
+            let mut update = edit();
+            update.harness.command = command.into();
+            update
+                .environment
+                .insert(key.into(), Some("do-not-echo".into()));
+            let error = store.save(&a.id, 2, update).unwrap_err();
+            assert!(!error.contains("do-not-echo"));
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+    }
+    // The broader policy is scoped to Pi/Goose; Buzz Agent is unchanged.
+    for key in [
+        "BUZZ_ACP_MODEL",
+        "BUZZ_ACP_SYSTEM_PROMPT",
+        "BUZZ_ACP_LAZY_POOL",
+        "BUZZ_MANAGED_CUSTOM",
     ] {
         let mut update = edit();
         update
             .environment
             .insert(key.into(), Some("do-not-echo".into()));
-        let error = store.save(&a.id, 2, update).unwrap_err();
-        assert!(!error.contains("do-not-echo"));
+        assert!(store.save(&a.id, 2, update).is_err());
         assert_eq!(fs::read(store.path()).unwrap(), before);
     }
 }
+#[test]
+fn environment_override_removal_allows_a_harness_switch_without_weakening_validation() {
+    for command in ["goose-acp", "/opt/tools/buzz-pi-acp"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().to_owned()).unwrap();
+        let mut a = fixture();
+        a.harness.command = command.into();
+        a.environment
+            .insert("BUZZ_ACP_MODEL".into(), "private-model".into());
+        store.insert(vec![a.clone()]).unwrap();
+        let before = fs::read(store.path()).unwrap();
+
+        // Keeping or replacing the override is invalid for Buzz Agent.
+        for value in [None, Some("replacement")] {
+            let mut update = edit();
+            if let Some(value) = value {
+                update
+                    .environment
+                    .insert("BUZZ_ACP_MODEL".into(), Some(value.into()));
+            }
+            assert!(store.save(&a.id, a.revision, update).is_err());
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+        let mut update = edit();
+        update.environment.insert("BUZZ_ACP_MODEL".into(), None);
+        store.save(&a.id, a.revision, update).unwrap();
+        drop(store);
+        let saved = Store::open(dir.path().to_owned())
+            .unwrap()
+            .agents()
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.harness.command, "buzz-agent");
+        assert!(!saved.environment.contains_key("BUZZ_ACP_MODEL"));
+        assert_eq!(saved.environment["TEST_TOKEN"], "secret-env-value");
+    }
+}
+
+#[test]
+fn worker_count_override_persists_only_within_runtime_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    for count in ["1", "10", "32"] {
+        let revision = store.agents().unwrap()[0].revision;
+        let mut update = edit();
+        update
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), Some(count.into()));
+        store.save(&a.id, revision, update).unwrap();
+        assert_eq!(
+            store.agents().unwrap()[0].environment["BUZZ_ACP_AGENTS"],
+            count
+        );
+    }
+    let revision = store.agents().unwrap()[0].revision;
+    let before = fs::read(store.path()).unwrap();
+    for count in ["", "0", "33", "-1", "1.5", "invalid", "4294967296"] {
+        let mut update = edit();
+        update
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), Some(count.into()));
+        assert!(store.save(&a.id, revision, update).is_err());
+        assert_eq!(fs::read(store.path()).unwrap(), before);
+    }
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        store.agents().unwrap()[0].environment["BUZZ_ACP_AGENTS"],
+        "32"
+    );
+    let mut update = edit();
+    update.environment.insert("BUZZ_ACP_AGENTS".into(), None);
+    store.save(&a.id, revision, update).unwrap();
+    assert!(!store.agents().unwrap()[0]
+        .environment
+        .contains_key("BUZZ_ACP_AGENTS"));
+}
+
 #[test]
 fn malformed_store_never_becomes_empty_or_overwritten() {
     let dir = tempfile::tempdir().unwrap();
@@ -305,4 +529,286 @@ fn closing_store_releases_lock_even_with_inherited_file_description() {
     assert!(Store::open(dir.path().to_owned()).is_err());
     drop(reopened);
     Store::open(dir.path().to_owned()).unwrap();
+}
+
+#[test]
+fn avatar_save_preserve_clear_pending_cas_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 1, update).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().agents[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.save(&a.id, 2, edit()).unwrap(); // Omitted picture preserves the managed override.
+    assert_eq!(
+        store.agents().unwrap()[0].picture.as_deref(),
+        Some("https://images.example/brain.png")
+    );
+    assert!(store.profile_published(&a.id, 2).is_err());
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    store.profile_published(&a.id, 3).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending);
+    let mut update = edit();
+    update.picture = Some("https://images.example/brain.png".into());
+    store.save(&a.id, 3, update).unwrap();
+    assert!(!store.snapshot().unwrap().agents[0].profile_pending); // Unchanged does not republish.
+    let mut update = edit();
+    update.picture = Some(String::new());
+    store.save(&a.id, 4, update).unwrap();
+    assert!(store.snapshot().unwrap().agents[0].profile_pending);
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(store.agents().unwrap()[0].picture.as_deref(), Some(""));
+    assert_eq!(store.agents().unwrap()[0].imported, a.imported);
+}
+
+#[test]
+fn invalid_avatar_and_stale_save_leave_persistent_bytes_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    for value in [
+        "http://images.example/a.png",
+        "data:image/png;base64,AA==",
+        "https://user:secret@images.example/a.png",
+        "not a URL",
+    ] {
+        let mut update = edit();
+        update.picture = Some(value.into());
+        assert!(store.save(&a.id, 1, update).is_err());
+        assert_eq!(fs::read(store.path()).unwrap(), before);
+    }
+    let mut update = edit();
+    update.picture = Some("https://images.example/new.png".into());
+    assert!(store.save(&a.id, 0, update).is_err());
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+}
+
+#[test]
+fn agent_defaults_persist_owner_only_and_never_project_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("agent-controller");
+    let store = Store::open(root.clone()).unwrap();
+    assert_eq!(store.defaults().unwrap().harness, "buzz-agent");
+    let mut defaults = store.defaults().unwrap();
+    defaults.harness = "goose".into();
+    defaults.model = "global-model".into();
+    defaults.session_policy = crate::config::SessionPolicy::Thread;
+    defaults
+        .environment
+        .insert("API_TOKEN".into(), "secret-env-value".into());
+    store.save_defaults(&defaults).unwrap();
+    drop(store);
+    let store = Store::open(root.clone()).unwrap();
+    assert!(store.defaults().unwrap() == defaults);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(root.join("defaults.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let snapshot = serde_json::to_string(&store.snapshot().unwrap()).unwrap();
+    assert!(snapshot.contains("\"sessionPolicy\":\"thread\""));
+    assert!(snapshot.contains("\"environmentKeys\":[\"API_TOKEN\"]"));
+    assert!(!snapshot.contains("secret-env-value"));
+    fs::write(root.join("defaults.json"), b"{not json").unwrap();
+    assert!(store.defaults().is_err());
+}
+
+#[test]
+fn oversized_defaults_are_rejected_before_replacing_the_usable_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let mut defaults = store.defaults().unwrap();
+    defaults.model = "working-model".into();
+    store.save_defaults(&defaults).unwrap();
+    let original = fs::read(dir.path().join("defaults.json")).unwrap();
+
+    // Individual values are valid, but their combined JSON exceeds the read limit.
+    for index in 0..40 {
+        defaults
+            .environment
+            .insert(format!("TOKEN_{index}"), "x".repeat(32 * 1024));
+    }
+    assert_eq!(
+        store.save_defaults(&defaults).unwrap_err(),
+        "Agent defaults exceed the size limit"
+    );
+    assert_eq!(
+        fs::read(dir.path().join("defaults.json")).unwrap(),
+        original
+    );
+    assert_eq!(store.defaults().unwrap().model, "working-model");
+}
+
+#[test]
+fn protection_defaults_preserve_explicit_bindings_and_persist_copies() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let defaults = Binding {
+        provider: "default.provider".into(),
+        policy: json!({"network":"selected"}),
+    };
+    store
+        .set_launch_protection_defaults(0, Some(defaults.clone()))
+        .unwrap();
+    let mut agents: Vec<_> = ["a1", "b2", "c3"]
+        .into_iter()
+        .map(|key| {
+            let mut agent = fixture();
+            agent.pubkey = key.repeat(32);
+            agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+            agent
+        })
+        .collect();
+    agents[1].extra.insert(PROTECTION_KEY.into(), Value::Null);
+    let override_binding = json!({"provider":"agent.provider","policy":{"network":"deny_all"}});
+    agents[2]
+        .extra
+        .insert(PROTECTION_KEY.into(), override_binding.clone());
+    store.insert(agents.clone()).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store.set_launch_protection_defaults(0, None).unwrap_err(),
+        "Protection defaults changed; reload before saving"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    store.set_launch_protection_defaults(1, None).unwrap();
+    drop(store);
+    let store = Store::open(root.path().into()).unwrap();
+    let saved = store.agents().unwrap();
+    agents[0].extra.insert(
+        PROTECTION_KEY.into(),
+        serde_json::to_value(defaults).unwrap(),
+    );
+    assert_eq!(
+        serde_json::to_value(saved).unwrap(),
+        serde_json::to_value(agents).unwrap()
+    );
+    let snapshot = store.launch_protection_snapshot().unwrap();
+    assert_eq!(snapshot["revision"], 2);
+    assert!(snapshot["defaults"].is_null());
+}
+
+#[test]
+fn protection_defaults_and_team_repair_commit_as_one_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut repaired = fixture();
+    repaired.imported["record"] = json!({"team_id":"fixture-team"});
+    store.insert(vec![repaired.clone()]).unwrap();
+    let defaults = Binding {
+        provider: "default.provider".into(),
+        policy: json!({"network":"selected"}),
+    };
+    store
+        .set_launch_protection_defaults(0, Some(defaults.clone()))
+        .unwrap();
+    let mut incoming = fixture();
+    incoming.pubkey = "cd".repeat(32);
+    incoming.id = agent_id(&incoming.pubkey, &incoming.relay_url);
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store
+            .import(
+                vec![incoming.clone()],
+                vec![(
+                    repaired.id.clone(),
+                    repaired.revision + 1,
+                    "Team instructions".into()
+                )]
+            )
+            .unwrap_err(),
+        "Agent settings changed; preview the team import again"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    store
+        .import(
+            vec![incoming.clone()],
+            vec![(
+                repaired.id.clone(),
+                repaired.revision,
+                "Team instructions".into(),
+            )],
+        )
+        .unwrap();
+    repaired.imported["teamInstructions"] = json!("Team instructions");
+    repaired.revision += 1;
+    incoming.extra.insert(
+        PROTECTION_KEY.into(),
+        serde_json::to_value(defaults).unwrap(),
+    );
+    drop(store);
+    let store = Store::open(root.path().into()).unwrap();
+    assert_eq!(
+        serde_json::to_value(store.agents().unwrap()).unwrap(),
+        serde_json::to_value(vec![repaired, incoming]).unwrap()
+    );
+}
+
+#[test]
+fn protection_defaults_reject_malformed_values_without_inserting_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut doc = store.read().unwrap();
+    doc.extra
+        .insert(PROTECTION_KEY.into(), json!("malformed binding"));
+    store.write(&doc).unwrap();
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store.insert(vec![fixture()]).unwrap_err(),
+        "Saved protection is malformed"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+}
+
+#[test]
+fn protection_defaults_revision_limit_preserves_saved_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = Store::open(root.path().into()).unwrap();
+    let mut doc = store.read().unwrap();
+    doc.extra.insert(
+        "launchProtectionRevision".into(),
+        json!(9_007_199_254_740_990u64),
+    );
+    store.write(&doc).unwrap();
+    store
+        .set_launch_protection_defaults(9_007_199_254_740_990, None)
+        .unwrap();
+    assert_eq!(
+        store.launch_protection_snapshot().unwrap()["revision"],
+        9_007_199_254_740_991u64
+    );
+    let before = fs::read(store.path()).unwrap();
+    assert_eq!(
+        store
+            .set_launch_protection_defaults(9_007_199_254_740_991, None)
+            .unwrap_err(),
+        "Protection defaults revision exhausted"
+    );
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    let mut doc = store.read().unwrap();
+    doc.extra.insert(
+        "launchProtectionRevision".into(),
+        json!(9_007_199_254_740_992u64),
+    );
+    store.write(&doc).unwrap();
+    assert_eq!(
+        store.launch_protection_snapshot().unwrap_err(),
+        "Invalid protection revision"
+    );
 }

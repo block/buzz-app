@@ -1,8 +1,12 @@
+import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { useState } from "react";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { AgentControl } from "../../features/agents/control";
-import { useAgentControl } from "../../features/agents/control-react";
+import {
+  useAgentControl,
+  useAgentControlRefresh,
+} from "../../features/agents/control-react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PanelProps } from "../../features/panels/service";
 import {
@@ -11,7 +15,6 @@ import {
 } from "../../features/profiles/instance-target";
 import { profileTarget } from "../../features/profiles/target";
 import { Button } from "../../shared/design-system/ui/Button";
-import { useAgentOwnerEvidence } from "./ProfileAgentIdentity";
 import { ProfilePanel } from "./ProfilePanel";
 
 /** Host retains the exact target and owns replacement, close and focus restoration.
@@ -55,6 +58,7 @@ function InstanceDetails(
     connection.session,
     props.instance.pubkey,
   );
+  useAgentControlRefresh(props.control);
   const state = useAgentControl(props.control);
   const target = profileTarget(props.instance.pubkey) ?? "";
   const agent = connection.scope
@@ -71,9 +75,10 @@ function InstanceDetails(
     state.status === "idle";
   return (
     <>
-      {props.context?.canOpen(target) && (
+      {!props.context?.push && props.context?.canOpen(target) && (
         <Button
           size="compact"
+          shape="control"
           variant="ghost"
           onClick={() => props.context?.open(target)}
         >
@@ -83,7 +88,12 @@ function InstanceDetails(
       {ownership.status === "ready" &&
       ownership.owner === connection.viewer &&
       agent ? (
-        <ProfilePanel {...props} target={target} instanceId={agent.id} />
+        <ProfilePanel
+          {...props}
+          target={target}
+          instanceId={agent.id}
+          refreshControl={false}
+        />
       ) : (
         <>
           <p role={loading ? "status" : "alert"}>
@@ -92,6 +102,7 @@ function InstanceDetails(
           {!loading && (
             <Button
               size="compact"
+              shape="control"
               disabled={state.busy}
               onClick={() => {
                 void props.control.refresh();

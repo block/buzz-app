@@ -10,19 +10,29 @@ type NoticeData = {
 };
 
 /** One host-owned stack. Base UI owns announcements, focus and expiry. */
-export function ToastProvider({ children }: { children: ReactNode }) {
+export function ToastProvider({
+  children,
+  portalContainer,
+}: {
+  children: ReactNode;
+  portalContainer?: HTMLElement | undefined;
+}) {
   return (
     <BaseToast.Provider limit={Infinity}>
       {children}
-      <ToastViewport />
+      <ToastViewport portalContainer={portalContainer} />
     </BaseToast.Provider>
   );
 }
 
-function ToastViewport() {
+function ToastViewport({
+  portalContainer,
+}: {
+  portalContainer?: HTMLElement | undefined;
+}) {
   const { toasts } = BaseToast.useToastManager<NoticeData>();
   return (
-    <BaseToast.Portal>
+    <BaseToast.Portal container={portalContainer}>
       <BaseToast.Viewport
         data-buzz-ui=""
         className="buzz-toast-viewport"
@@ -148,4 +158,16 @@ export function ToastNotice({
     update(id, { timeout });
   }, [id, update, timeout]);
   return null;
+}
+
+/** Completed actions belong to the host stack, not the originating row's lifetime. */
+export function useToastNotification() {
+  const { add } = BaseToast.useToastManager<NoticeData>();
+  return (title: string, tone: "success" | "error" | "info") =>
+    add({
+      title,
+      type: tone,
+      timeout: 4000,
+      data: { dismissible: true, closeLabel: "Dismiss notification" },
+    });
 }

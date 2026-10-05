@@ -10,6 +10,7 @@ export type {
   TemplateProviders,
 } from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
+export type { Host, HostRequest, HostResponse } from "../features/host/service";
 export type {
   IdentityNames,
   NamingPolicy,
@@ -35,6 +36,7 @@ export type {
   ComposerCompletion,
   ComposerAccessory,
   ComposerAccessoryProps,
+  ComposerResource,
   ComposerToolProps,
   ComposerTool,
   InlineContent,
@@ -73,7 +75,6 @@ export type {
 } from "../features/navigation/controller";
 export type {
   OpenTarget,
-  SharedTarget,
   NavigationScope,
   JsonValue,
 } from "../features/navigation/targets";
@@ -95,3 +96,10 @@ export type {
   AgentImportPreview,
   ImportSource,
 } from "../features/agents/control";
+
+export type {
+  AgentSecurity,
+  SecurityBinding,
+  SecuritySnapshot,
+  SecurityProvider,
+} from "../features/agents/security";

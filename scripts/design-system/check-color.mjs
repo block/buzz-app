@@ -150,7 +150,14 @@ const MIXER_ALLOWED = new Map([
 ]);
 
 /** Specific `path:line` escapes, each with a reason. */
-const OVERRIDES = new Map();
+const OVERRIDES = new Map([
+  // Preserve the existing, designer-approved availability capsule when moving
+  // its recipe out of feature CSS. These are not new contrast exemptions:
+  // docs/presence.md records the measured Online shortfall in both themes.
+  ["styles/materials.css:188", "Availability resting status mix: 12%."],
+  ["styles/materials.css:193", "Availability hover status mix: 18%."],
+  ["styles/materials.css:198", "Availability pressed/open status mix: 24%."],
+]);
 
 const failures = [];
 
@@ -300,7 +307,7 @@ function auditLayers() {
   // Require every new semantic role to declare both modes and reference a token.
   const roles = [
     ...modes.light.matchAll(
-      /^\s*(--(?:surface|affordance|text|border)-[a-z0-9-]+):/gm,
+      /^\s*(--(?:surface|affordance|text|border|status)-[a-z0-9-]+):/gm,
     ),
   ];
   for (const [, name] of roles) {

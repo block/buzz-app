@@ -55,6 +55,10 @@ export function recordReaction(scope: string, emoji: string) {
     /* Preference failure must not block a reaction. */
   }
 }
+/** Forgets one community's shortcut history once the viewer has left it. */
+export function forgetQuickReactions(scope: string) {
+  localStorage.removeItem(key(scope));
+}
 /** Freeze shortcuts during use; reload or another window's update refreshes them. */
 export function useQuickReactions(
   scope: string,
@@ -62,7 +66,15 @@ export function useQuickReactions(
 ) {
   const [entries, setEntries] = useState(() => quickReactions(scope, catalog));
   useEffect(() => {
-    const update = () => setEntries(quickReactions(scope, catalog));
+    const update = () => {
+      const next = quickReactions(scope, catalog);
+      setEntries((current) =>
+        current.length === next.length &&
+        current.every((entry, index) => entry === next[index])
+          ? current
+          : next,
+      );
+    };
     update();
     const storage = (event: StorageEvent) => {
       if (event.key === key(scope)) update();

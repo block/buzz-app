@@ -1,4 +1,3 @@
-// DESIGN PASS PENDING: provisional black-and-white UI; not yet part of the design system.
 import { useEffect, useId, useRef } from "react";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { KeyBinding } from "./bindings";
@@ -53,11 +52,12 @@ export function KeyCaptureControl({
     input.current?.focus();
   }, []);
   return (
-    <div className={styles.listening} data-design-pass="pending">
+    <div className={styles.listening}>
       <span id={instructionId} className="sr-only">
         Press Escape to cancel, or Tab to leave shortcut capture.
       </span>
       <Input
+        controlSize="sm"
         ref={input}
         type="text"
         readOnly
@@ -67,7 +67,6 @@ export function KeyCaptureControl({
           .filter(Boolean)
           .join(" ")}
         data-state="listening"
-        data-design-pass="pending"
         onBlur={onCancel}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;

@@ -1,10 +1,15 @@
 @reference "../shared/styles/globals.css";
 
 .root {
+  --radius-capsule: var(--radius-control);
   height: 100%;
   min-height: 0;
   container-type: inline-size;
   overflow: hidden;
+}
+.root > [data-buzz-surface] {
+  height: 100%;
+  overflow-y: auto;
 }
 .layout {
   display: grid;
@@ -22,10 +27,12 @@
   border-right: 1px solid var(--border-standard);
   padding: var(--space-2);
 }
+.sidebarHeader {
+  padding: var(--space-3) var(--space-control-inset) var(--space-6);
+}
 .navigation {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
 }
 .detail {
   padding: var(--space-6);
@@ -47,9 +54,16 @@
     border-right: 0;
     border-bottom: 1px solid var(--border-standard);
   }
+  .sidebarHeader {
+    padding-bottom: var(--space-4);
+  }
   .navigation {
-    flex-direction: row;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: var(--space-4);
+  }
+  .navigation > section {
+    margin-top: 0;
   }
   .detail {
     padding: var(--space-4);
@@ -57,4 +71,37 @@
        panel's rounded, clipped bottom edge at short heights and large text. */
     padding-bottom: var(--space-16);
   }
+}
+
+.settingsSidebar {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block-start: var(--sidebar-padding);
+}
+.settingsNavigation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block: var(--space-3) var(--space-2);
+}
+.settingsGroupTitle {
+  margin: 0 0 var(--space-1);
+  padding-inline: var(--space-2);
+  color: var(--text-unavailable);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  font-weight: var(--type-weight-normal);
+}
+.settingsGroupItems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.navigationPane .layout {
+  display: block;
+}
+.navigationPane .sidebar {
+  display: none;
 }

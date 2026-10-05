@@ -1,4 +1,6 @@
 import { useId, useState } from "react";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { CronExpressionInput } from "./CronExpressionInput";
@@ -108,44 +110,39 @@ export function WorkflowScheduleFields({
 
   return (
     <div className="workflow-schedule">
-      <fieldset className="workflow-pills">
-        <legend className="buzz-field-label">Repeats</legend>
-        <div className="workflow-pill-grid" data-columns="2">
-          {SCHEDULE_FREQUENCIES.map((frequency) => {
-            const inputId = `${id}-frequency-${frequency}`;
-            return (
+      <Field label="Repeats">
+        <RadioGroup
+          value={schedule.frequency}
+          disabled={disabled}
+          onValueChange={(frequency) => {
+            const isCustom = frequency === "custom_cron";
+            setForceCustomCron(isCustom);
+            updateSchedule({
+              customCron: isCustom
+                ? customCronSeed(schedule)
+                : schedule.customCron,
+              frequency,
+            });
+          }}
+        >
+          <div className="workflow-pill-grid">
+            {SCHEDULE_FREQUENCIES.map((frequency) => (
               <div
                 key={frequency}
                 className="workflow-pill"
                 data-span={frequency === "custom_cron" ? "2" : undefined}
               >
-                <input
-                  type="radio"
-                  className="sr-only workflow-pill-input"
-                  id={inputId}
-                  name={`${id}-frequency`}
+                <Radio
+                  variant="card"
                   value={frequency}
-                  checked={schedule.frequency === frequency}
                   disabled={disabled}
-                  onChange={() => {
-                    const isCustom = frequency === "custom_cron";
-                    setForceCustomCron(isCustom);
-                    updateSchedule({
-                      customCron: isCustom
-                        ? customCronSeed(schedule)
-                        : schedule.customCron,
-                      frequency,
-                    });
-                  }}
+                  label={SCHEDULE_FREQUENCY_LABELS[frequency]}
                 />
-                <label htmlFor={inputId} className="workflow-pill-label">
-                  {SCHEDULE_FREQUENCY_LABELS[frequency]}
-                </label>
               </div>
-            );
-          })}
-        </div>
-      </fieldset>
+            ))}
+          </div>
+        </RadioGroup>
+      </Field>
 
       {schedule.frequency === "weekly" && (
         <fieldset className="workflow-pills">

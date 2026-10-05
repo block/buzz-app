@@ -11,10 +11,12 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_AGENT_ENV` | Native build: allowlisted multiline Databricks host/model/filter defaults. Runtime, OAuth/discovery and editor share one compiled floor. |
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
+| `BUZZ_BUILDERLAB_URL` | Vite build: public URL exposed as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL` in web and packaged desktop frontend code; no runtime override. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
+| `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. The macOS prerelease workflow supplies both (see [releases](releases.md)); other builds report automatic updates as unavailable. |
 
 The three native inputs read only repository-root `.env.local` plus explicit
 process values. Process presence wins, even empty. No `.env.production`, arbitrary
@@ -37,6 +39,26 @@ blank agent. The Create form retains its existing Databricks suggestion when no
 provider floor exists. Supplying a provider floor leaves the saved selector blank
 so later build defaults can take effect. Saved explicit settings remain explicit.
 
+## Builderlab URL build input
+
+Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
+the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+
+```sh
+BUZZ_BUILDERLAB_URL=https://builderlab.example.com bin/pnpm tauri build
+```
+
+Vite loads this public input through its existing `BUZZ_` allowlist and exposes it
+as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL`. Its standard mode-specific `.env`
+files also apply. The process environment takes precedence, including an explicit
+empty value. When unset, the value is an empty string; the repository supplies no
+deployment default. Never put credentials in it.
+
+Restart Vite after changing development inputs. Production web and desktop
+frontend builds substitute the value into compiled code: changing `.env.local`
+or the launched app's environment afterward cannot override it. Rebuild and
+redistribute to change a packaged value.
+
 ## Deliberate exclusions
 
 Inventory source: `block/buzz-releases` at
@@ -49,9 +71,9 @@ copied here.
 
 | OG/release input | Why it is not implemented here |
 | --- | --- |
-| `BUZZ_DESKTOP_BUILD_RELAY_URL`; packaged auto-connect | Packaged human signing/relay host capability is not implemented. Baking a URL cannot provide it. The existing dev broker and saved agent destinations remain separate. |
+| `BUZZ_DESKTOP_BUILD_RELAY_URL`; packaged auto-connect | No packaged default or auto-join is configured. Native macOS, Windows and Linux use the persisted identity and restore only the selected saved community; new admission uses Add a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
 | `BUZZ_BUILD_RELAY_RECONNECT_CMD` | No reconnect-command feature; arbitrary deployment command execution is not added. |
-| `BUZZ_UPDATER_ENDPOINT`, `BUZZ_UPDATER_PUBLIC_KEY` and helper fallback aliases | No updater feature. Public verification configuration belongs with that future feature; private signing keys never belong in app defaults. |
+| Updater helper fallback aliases | Only the two canonical updater names above are read. Private signing keys never belong in app defaults. |
 | `--features mesh-llm` | No mesh/provider integration in this local controller; unsupported imported mesh/team/remote agents still fail closed. |
 | `BUZZ_BUILD_OBSERVER_ARCHIVE_DEFAULT`, `BUZZ_BUILD_AGENT_METRIC_ARCHIVE_DEFAULT` | Already no-ops in inspected OG: its archive capability checks return true for all builds. This app does not claim equivalent archive collection by accepting inert flags. |
 | Build-command `BUZZ_ACP_ALLOWED_RESPOND_TO`, `BUZZ_ACP_ALLOWED_CHANNEL_ADD_POLICIES` | OG consumers are runtime-only; setting these around compilation does not bake them. The supported owner-only capability uses the existing local listener enforcement boundary instead. |

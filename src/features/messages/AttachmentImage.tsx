@@ -1,3 +1,5 @@
+import { prepareReviewEntrance } from "./use-review-entrance";
+import { useMediaCorners } from "./use-media-corners";
 import { useEffect, useRef, useState } from "react";
 import type { Attachment } from "../relay/contracts";
 import { validatedBlurhash } from "../relay/blurhash";
@@ -8,50 +10,88 @@ export function AttachmentImage({
   attachment,
   url,
   source,
+  cached = false,
   onOpenLink,
   onOpenReview,
+  thumbnail = false,
+  label = "Open image attachment",
 }: {
+  thumbnail?: boolean;
+  label?: string;
   attachment: Attachment;
   url: string;
-  source: string;
+  source: string | undefined;
+  cached?: boolean;
   onOpenLink(url: string): boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
 }) {
+  const corners = useMediaCorners();
+  const style =
+    !thumbnail && attachment.dimensions
+      ? {
+          width: Math.min(
+            360,
+            attachment.dimensions.width,
+            (320 * attachment.dimensions.width) / attachment.dimensions.height,
+          ),
+          aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+        }
+      : undefined;
+  if (!source)
+    return cached ? (
+      <span
+        ref={corners}
+        className={`${styles.attachmentImage} ${styles.mediaPlaceholder}`}
+        data-thumbnail={thumbnail || undefined}
+        style={style}
+        aria-hidden="true"
+      />
+    ) : (
+      <span
+        className={
+          thumbnail ? styles.imageUnavailable : styles.attachmentUnavailable
+        }
+        role="status"
+      >
+        Image unavailable
+      </span>
+    );
   return (
     <a
+      ref={corners}
       className={styles.attachmentImage}
-      style={
-        attachment.dimensions
-          ? {
-              width: Math.min(
-                360,
-                attachment.dimensions.width,
-                (320 * attachment.dimensions.width) /
-                  attachment.dimensions.height,
-              ),
-              aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
-            }
-          : undefined
-      }
+      data-thumbnail={thumbnail || undefined}
+      style={style}
       href={url}
       target="_blank"
       rel="noreferrer"
-      aria-label="Open image attachment"
+      aria-label={label}
+      data-media-preview=""
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey) return;
         if (onOpenReview) {
           event.preventDefault();
+          prepareReviewEntrance(event);
           onOpenReview(attachment, 0);
         } else if (onOpenLink(url)) event.preventDefault();
       }}
     >
       {/* Retargeting retires both the DOM pixels and all pending callbacks before
           the new source can paint. Session switches also remount the workspace. */}
-      <ImagePixels
-        key={JSON.stringify([source, attachment.blurhash])}
-        source={source}
-        blurhash={attachment.blurhash}
-      />
+      <span className={styles.attachmentImagePixels}>
+        <ImagePixels
+          key={JSON.stringify([source, attachment.blurhash])}
+          source={source}
+          blurhash={attachment.blurhash}
+        />
+      </span>
+      <svg
+        className={styles.imageOutline}
+        data-image-outline=""
+        aria-hidden="true"
+      >
+        <path />
+      </svg>
     </a>
   );
 }

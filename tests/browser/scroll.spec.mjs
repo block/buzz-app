@@ -43,6 +43,8 @@ async function observeWork(page) {
       longTasks: [],
       maxRows: 0,
       maxDomNodes: 0,
+      maxTimelineNodes: 0,
+      maxTimelineStructureNodes: 0,
       active: true,
       frame: 0,
     };
@@ -60,6 +62,18 @@ async function observeWork(page) {
         sample.maxDomNodes,
         document.getElementsByTagName("*").length,
       );
+      for (const timeline of document.querySelectorAll(
+        "[data-message-scroller]",
+      )) {
+        const nodes = timeline.getElementsByTagName("*").length;
+        sample.maxTimelineNodes = Math.max(sample.maxTimelineNodes, nodes);
+        // Keep SVG roots (icon instances), but separate library-owned artwork
+        // primitives from the row/control structure's growth budget.
+        sample.maxTimelineStructureNodes = Math.max(
+          sample.maxTimelineStructureNodes,
+          nodes - timeline.querySelectorAll("svg *").length,
+        );
+      }
       sample.frame = requestAnimationFrame(tick);
     };
     sample.frame = requestAnimationFrame(tick);
@@ -90,6 +104,8 @@ async function workSample(page) {
       longTasks: sample.longTasks,
       maxMountedRows: sample.maxRows,
       maxDomNodes: sample.maxDomNodes,
+      maxTimelineNodes: sample.maxTimelineNodes,
+      maxTimelineStructureNodes: sample.maxTimelineStructureNodes,
     };
   });
 }
@@ -114,6 +130,20 @@ readingTest(
         "value",
         cycle ? "B draft" : "",
       );
+      // A warm geometry cache can mask a lost anchor until cold reload. Check
+      // the real unmount write, not only today's coincidentally matching offset.
+      const persisted = await page.evaluate(() => {
+        const key = Object.keys(localStorage).find((key) => {
+          if (!key.startsWith("buzz-view.v1:")) return false;
+          const [scope, view] = JSON.parse(key.slice("buzz-view.v1:".length));
+          return (
+            scope.startsWith("https://primary.example:") &&
+            view === "scroll:alpha"
+          );
+        });
+        return key ? JSON.parse(localStorage.getItem(key)) : null;
+      });
+      expect(persisted?.anchor?.id).toBe(saved.id);
       await composer(page, "Alpha").fill("B draft");
       await button(page, "Switch to Primary").click();
       await expect(composer(page, "Alpha")).toHaveJSProperty(
@@ -136,7 +166,6 @@ readingTest(
     ]);
     const savedOffset = await history(page).evaluate((el) => el.scrollTop);
     await page.reload();
-    await button(page, "Messages").first().click();
     await composer(page, "Alpha").waitFor();
     await settle(page);
     await expectAnchor(page, saved);
@@ -158,10 +187,27 @@ readingTest(
     ).toBeAttached();
     await settle(page);
     await expectAnchor(page, reloadedAnchor);
-    await end(page);
+    const jumpToLatest = history(page).locator("button[data-jump-to-latest]");
+    await expect(jumpToLatest).toBeVisible();
+    await expect(jumpToLatest).toHaveCSS("border-radius", "12px");
+    await expect(jumpToLatest.locator("..")).toHaveCSS("border-radius", "12px");
+    await jumpToLatest.focus();
+    await page.keyboard.press("Enter");
+    await expect(history(page)).toBeFocused();
     await expect(
       history(page).locator(`[data-message-id="${held.id}"]`),
     ).toBeInViewport();
+    await expect(jumpToLatest).toHaveCount(1);
+    await expect(
+      jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+    ).toHaveAttribute("inert", "");
+    await expect(
+      jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+    ).toHaveAttribute("aria-hidden", "true");
+    await expect(
+      history(page).getByRole("button").and(jumpToLatest),
+    ).toHaveCount(0);
+    await expect(jumpToLatest).toBeHidden();
     const followed = app.append("primary", "alpha");
     await expect(
       history(page).locator(`[data-message-id="${followed.id}"]`),
@@ -180,6 +226,59 @@ readingTest(
       ...(await workSample(page)),
     });
     expect(app.pending).toHaveLength(0);
+  },
+);
+
+// Browser boundary: successful sends must not replay their reveal instruction
+// over Virtua's saved message/Y when the real sidebar remounts a conversation.
+const sendTest = readingTest.extend({
+  productionBroker: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
+sendTest(
+  "a prior send preserves the reading anchor on return, while a fresh send reveals",
+  async ({ page, app }) => {
+    await open(page, app);
+    const input = composer(page, "Alpha");
+    const publications = () =>
+      app.report.publications.filter(({ event }) => event.kind === 9);
+    await input.fill("First sent message");
+    await input.press("Enter");
+    await expect.poll(() => publications().length).toBe(1);
+    await expect(
+      history(page).locator(
+        `[data-message-id="${publications()[0].event.id}"]`,
+      ),
+    ).toBeInViewport();
+    await expect(input).toHaveJSProperty("value", "");
+    const saved = await upper(page);
+    await expectOutsidePrefetch(page);
+    await button(page, "Beta").click();
+    await composer(page, "Beta").waitFor();
+    await button(page, "Alpha").click();
+    await settle(page);
+    await expectAnchor(page, saved);
+    app.report.measurements.push({
+      scenario: "send-then-return",
+      before: saved,
+      after: await anchor(page),
+    });
+    await input.fill("Fresh send from reading position");
+    await input.press("Enter");
+    await expect.poll(() => publications().length).toBe(2);
+    await expect(
+      history(page).locator(
+        `[data-message-id="${publications()[1].event.id}"]`,
+      ),
+    ).toBeInViewport();
+    await settle(page);
+    await expect
+      .poll(() =>
+        history(page).evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        ),
+      )
+      .toBeLessThan(4);
   },
 );
 
@@ -334,7 +433,10 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   expect(sample.maxMountedRows).toBeLessThanOrEqual(100);
   // Structural growth guard, not a heap-leak claim. 640 unvirtualized rows
   // would exceed both limits; bounded rows must hold during movement too.
-  expect(sample.maxDomNodes).toBeLessThan(1800);
+  // Count only the timeline, so sidebar growth cannot mask or trip it.
+  // Main at 69a9af23 has 1573 raw / 1410 structure nodes in both engines.
+  // Preserve its eight-node allowance; retain the raw count in the report.
+  expect(sample.maxTimelineStructureNodes).toBeLessThan(1418);
   app.report.measurements.push({
     scenario: "640-row-paging-and-switches",
     retainedRows: loaded,

@@ -1,3 +1,4 @@
+import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
@@ -15,11 +16,17 @@ export type MessageReaction = Readonly<{
 export type ChannelSummary = Readonly<{
   id: string;
   name: string;
+  /** Ordinary channel prose; session machine metadata is not a description. */
+  description?: string | undefined;
+  /** Explicit signed visibility; absent means unknown, not public. */
+  visibility?: "public" | "private" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
+  /** Downloaded membership is display-only pending current relay confirmation. */
+  cached?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -74,8 +81,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
-  /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
+  /** Unix seconds from the signed event. */
   createdAt: number;
+  /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
+  createdAtMs?: number;
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;
@@ -96,6 +105,8 @@ export type ChannelMessage = Readonly<{
   attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
+  /** Signed two-field mention tags bind display only; never notification recipients. */
+  mentionReferences?: readonly string[];
   /** Authorized edit supplying current imeta; absent when sourced from the original. */
   attachmentSourceId?: string;
   attachments: readonly Attachment[];
@@ -106,6 +117,9 @@ export type ChannelMessage = Readonly<{
   threadRootId?: string | undefined;
   /** Immediate signed reply target; separate from the canonical thread root. */
   replyParentId?: string | undefined;
+  sentFromThread?:
+    | Readonly<{ rootId: string; excerpt?: string | undefined }>
+    | undefined;
   /** Relay-signed whole-thread reply total (including nested replies).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
@@ -137,13 +151,37 @@ export type ChannelWindow = Readonly<{
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
 }>;
+/** Post-write discovery opts into writer reads; browsing keeps the default. */
+export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
+export type PublicChannelSearch = Readonly<{
+  channels: readonly ChannelSummary[];
+  /** The relay returned a full metadata page, so some channels were not checked. */
+  partial: boolean;
+}>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
   list(): ChannelList;
   /** Bounded discovery lookup; never inserts public previews into list(). */
   get?(channelId: string): ChannelSummary | undefined;
-  resolve?(channelIds: readonly string[], options?: ReadOptions): Promise<void>;
+  resolve?(
+    channelIds: readonly string[],
+    options?: ChannelReadOptions,
+  ): Promise<void>;
+  /** Name lookup for active public channels the viewer has not joined. Matches
+   * become readable through `get`; they never enter list(). */
+  searchPublic?(
+    query: string,
+    options?: ReadOptions & { limit?: number },
+  ): Promise<PublicChannelSearch>;
+  /** Exact re-read of one already-listed channel's roster, merged into the
+   * ready list. `resolve` admits channels the list lacks; this confirms a
+   * membership change on one it already carries, without a full rediscovery.
+   * Returns true only when the read supplied a fresh roster. */
+  refreshRoster?(
+    channelId: string,
+    options?: ChannelReadOptions,
+  ): Promise<boolean>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
@@ -157,5 +195,5 @@ export interface ChannelQueries {
   /** Roster warming is optional for fixture-only query implementations. The
    * caller supplies preferred (e.g. starred) ids; the store orders the rest. */
   warm?(preferred: readonly string[]): void;
-  refreshList?(): void;
+  refreshList?(options?: Pick<ChannelReadOptions, "consistency">): void;
 }

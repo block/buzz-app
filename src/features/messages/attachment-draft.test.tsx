@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { File } from "node:buffer";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import type { UploadedAttachment } from "../relay/attachments";
@@ -259,4 +259,70 @@ it("accepts the 500 MiB source and 1,000 MiB shared retention boundaries, not ca
   );
   expect(() => a.result.current.store.add([file()])).toThrow(/at most 10/);
   expect(a.result.current.items).toHaveLength(10);
+});
+
+it("confirmed scoped cleanup aborts pending uploads and removes only that destination's files", async () => {
+  const h = fixture();
+  const key = "scope:draft:one";
+  const a = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  const sibling = renderHook(() =>
+    useAttachmentDraft(h.session, "scope:draft:two", "two"),
+  );
+  act(() => {
+    a.result.current.store.add([file("pending.txt")]);
+    sibling.result.current.store.add([file("sibling.txt")]);
+  });
+  let firstWork: Promise<readonly UploadedAttachment[]> | undefined;
+  let secondWork: Promise<readonly UploadedAttachment[]> | undefined;
+  await act(async () => {
+    firstWork = a.result.current.store.prepareForSend(
+      new AbortController().signal,
+    );
+    secondWork = sibling.result.current.store.prepareForSend(
+      new AbortController().signal,
+    );
+  });
+  if (!firstWork || !secondWork) throw new Error("Upload work was not started");
+  firstWork.catch(() => {});
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  const first = h.calls.find((call) => call.channel === "one");
+  const second = h.calls.find((call) => call.channel === "two");
+  assert.exists(first);
+  assert.exists(second);
+  const { clearAttachmentDraft } = await import("./attachment-draft");
+  act(() => clearAttachmentDraft(h.session, key));
+  expect(first.signal.aborted).toBe(true);
+  expect(second.signal.aborted).toBe(false);
+  expect(a.result.current.items).toEqual([]);
+  expect(sibling.result.current.items).toHaveLength(1);
+  await expect(firstWork).rejects.toThrow();
+  await act(async () => second.result.resolve(uploaded("sibling.txt")));
+  await expect(secondWork).resolves.toEqual([uploaded("sibling.txt")]);
+  expect(a.result.current.items).toEqual([]);
+});
+
+it("confirmed cleanup forgets a ready file after unmount and a reopened scoped draft starts empty", async () => {
+  const h = fixture();
+  const key = "scope:draft:one";
+  const before = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  act(() => before.result.current.store.add([file("ready.txt")]));
+  let work: Promise<readonly UploadedAttachment[]> | undefined;
+  await act(async () => {
+    work = before.result.current.store.prepareForSend(
+      new AbortController().signal,
+    );
+  });
+  if (!work) throw new Error("Upload work was not started");
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  const upload = h.calls[0];
+  assert.exists(upload);
+  await act(async () => upload.result.resolve(uploaded("ready.txt")));
+  await expect(work).resolves.toEqual([uploaded("ready.txt")]);
+  expect(before.result.current.items[0]?.status).toBe("ready");
+  before.unmount();
+  const { clearAttachmentDraft } = await import("./attachment-draft");
+  clearAttachmentDraft(h.session, key);
+  const after = renderHook(() => useAttachmentDraft(h.session, key, "one"));
+  expect(after.result.current.items).toEqual([]);
+  expect(h.calls).toHaveLength(1);
 });

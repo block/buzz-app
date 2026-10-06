@@ -1290,7 +1290,7 @@ it("runs operator-only date and author searches without a text predicate", async
     expect(
       screen.queryByRole("option", { name: /before the cutoff/ }),
     ).toBeNull();
-    mounted.rerender(<SearchResults {...props} query="from:alice" />);
+    mounted.rerender(<SearchResults {...props} query="from:alice " />);
     expect(
       await screen.findByRole("option", { name: /after the cutoff/ }),
     ).toBeVisible();
@@ -1298,6 +1298,83 @@ it("runs operator-only date and author searches without a text predicate", async
       expect.objectContaining({ authors: [alice.pubkey] }),
     ]);
     expect(reads.at(-1)?.[0]).not.toHaveProperty("search");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(["from:ba", "from:@ba"])(
+  "%s opens the same prefix picker and never reads messages before identity selection",
+  async (query) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      human = keypair();
+    const reads: Filter[][] = [];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          reads.push(filters as Filter[]);
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return Promise.resolve([profile(human, { display_name: "Baxen" })]);
+        return Promise.resolve([]);
+      },
+    });
+    const change = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={change}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      const people = within(screen.getByRole("group", { name: "People" }));
+      const choice = await people.findByRole("option", { name: /Baxen/ });
+      expect(reads).toHaveLength(0);
+      fireEvent.click(choice);
+      expect(change).toHaveBeenCalledWith(`from:${human.pubkey} `);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("requests a larger prefix page before declaring a short name absent", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    wes = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0))) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve([profile(wes, { display_name: "Wes" })]);
+      }
+      return Promise.resolve([]);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:@we"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(await screen.findByRole("option", { name: /Wes/ })).toBeVisible();
+    expect(reads).toContainEqual([
+      { kinds: [0], search: "we", search_mode: "prefix", limit: 500 },
+    ]);
   } finally {
     cleanup();
     owner.dispose();

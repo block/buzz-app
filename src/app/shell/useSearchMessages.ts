@@ -45,8 +45,12 @@ export function useSearchMessages(
     parsed.since !== null ||
     parsed.until !== null;
   // An unfinished author token is an identity prompt, not free-text search.
+  // Both from:name and from:@name take the same picker path until an exact key
+  // is selected (or the token is completed with a space).
+  const unfinishedAuthor = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
   const canSearch =
-    !/(?:^|\s)from:@?$/i.test(query) && (!!parsed.text || hasFilters);
+    !(unfinishedAuthor && !isHexPubkey(unfinishedAuthor[2] ?? "")) &&
+    (!!parsed.text || hasFilters);
   const owner = useMemo(
     () => ({ session, query, channelId, unresolvedChannel, attempt }),
     [session, query, channelId, unresolvedChannel, attempt],

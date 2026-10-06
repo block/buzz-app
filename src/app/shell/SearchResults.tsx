@@ -15,9 +15,9 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
-import { isChannelUuid, normalizeInChannel, parseSearchOperators } from "./parseSearchOperators";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
+import { isChannelUuid, isHexPubkey, normalizeInChannel, parseSearchOperators } from "./parseSearchOperators";
 
 function conversationName(
   channel: ChannelSummary,
@@ -62,10 +62,11 @@ export function SearchResults({
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
-  const authorPickerRequested =
-    /(?:^|\s)from:@?$/i.test(query) || /(?:^|\s)from:@[^\s]*$/i.test(query);
-  const agents = useAgentChoices(session, authorPickerRequested);
-  useMentionArchives(session, authorPickerRequested);
+  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
+  const authorNeedle = authorPrompt?.[2]?.toLowerCase();
+  const pickerPrompt = !!authorPrompt && !isHexPubkey(authorPrompt[2] ?? "");
+  const agents = useAgentChoices(session, pickerPrompt);
+  useMentionArchives(session, pickerPrompt);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -87,12 +88,7 @@ export function SearchResults({
     query: string;
     candidates: readonly { pubkey: string; profile: Profile }[];
   }>();
-  // Completing from: and from:@ uses signed profiles and confirmed channel membership.
-  // A selected identity is stored as its exact key, never as an ambiguous name.
-  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
-  const authorNeedle = authorPrompt?.[2]?.toLowerCase();
-  const pickerPrompt =
-    !!authorPrompt && (authorPrompt[1] === "@" || !authorPrompt[2]);
+  // Completing either from:name or from:@name selects an exact signed key.
   const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
   const showDateChoices =
     !!datePrompt && !/^\d{4}-\d{2}-\d{2}$/.test(datePrompt[2] ?? "");
@@ -160,7 +156,7 @@ export function SearchResults({
     : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
   const search = useSearchMessages(
     session,
-    query.trim(),
+    query,
     scopedChannelId,
     operatorChannelId,
   );
@@ -183,7 +179,7 @@ export function SearchResults({
                   kinds: [0],
                   search: authorNeedle,
                   search_mode: "prefix",
-                  limit: 40,
+                  limit: 500,
                 },
               ],
               {

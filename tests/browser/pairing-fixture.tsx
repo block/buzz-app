@@ -39,7 +39,11 @@ const native: PairingNative = {
   },
   async cancel(id) {
     fixture.calls.push({ action: "cancel", id });
-    fixture.status = { phase: "cancelled" };
+    if (fixture.status.phase === "transferring")
+      fixture.status = { phase: "uncertain" };
+    else if (!["uncertain", "complete", "error"].includes(fixture.status.phase))
+      fixture.status = { phase: "cancelled" };
+    return fixture.status;
   },
 };
 export function PairingFixture(props: PairingSettingsProps) {

@@ -302,6 +302,7 @@ async fn run(
     let setup = async {
         let relay_url = relay::discover(&origin).await?;
         let (session, qr) = PairingSession::new_source(relay_url.to_string());
+        let connection_started = tokio::time::Instant::now();
         let mut socket = relay::connect(&relay_url, Duration::from_secs(10)).await?;
         let (pending, auth) = relay::subscribe(&mut socket, &session, &relay_url).await?;
         let uri = Zeroizing::new(buzz_pairing::qr::encode_qr(&qr));
@@ -317,17 +318,18 @@ async fn run(
             pending,
             auth,
             svg,
+            connection_started,
         ))
     };
-    let (mut exchange, mut socket, relay_url, pending, mut auth, svg) = tokio::select! {
+    let (mut exchange, mut socket, relay_url, pending, mut auth, svg, connection_started) = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(()),
         result = tokio::time::timeout(Duration::from_secs(35), setup) =>
             result.map_err(|_| Failure::Transport("Pairing setup timed out. Check your connection and try again.".into()))??,
     };
-    // The protocol clock and visible QR start together, after setup has finished.
+    // Keep protocol expiry aligned with display, but renew before the transport cap.
     exchange.session.start_source_lifetime();
-    let deadline = tokio::time::Instant::from_std(exchange.session.deadline());
+    let deadline = exchange_deadline(&exchange.session, connection_started);
     pairing.update(id, Status::Qr { svg });
     exchange_until_deadline(
         ExchangeContext {
@@ -344,6 +346,18 @@ async fn run(
         deadline,
     )
     .await
+}
+
+// The supported sidecar closes connections after 120 seconds. Start before the
+// handshake and reserve five seconds so expiry wins over its disconnect. Setup
+// consumes this budget; arbitrary transport failures still remain errors.
+const CONNECTION_BUDGET: Duration = Duration::from_secs(115);
+
+fn exchange_deadline(
+    session: &PairingSession,
+    connection_started: tokio::time::Instant,
+) -> tokio::time::Instant {
+    tokio::time::Instant::from_std(session.deadline()).min(connection_started + CONNECTION_BUDGET)
 }
 
 struct ExchangeContext<'a> {

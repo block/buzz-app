@@ -228,3 +228,27 @@ test("reduced motion removes QR animation styles", async ({ page, app }) => {
     .poll(async () => decodeURIComponent(await qr.getAttribute("src")))
     .toContain("<style>");
 });
+
+test("cancel retains publication outcome before the next status poll", async ({
+  page,
+  app,
+}) => {
+  await settings(page, app);
+  await phone(page, { phase: "code", code: "001234", codeEntry: true });
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  await expect(cancel).toBeVisible();
+  // Publish and click in one renderer turn, before the client polls again.
+  await cancel.evaluate((button) => {
+    window.pairingFixture.status = { phase: "transferring" };
+    button.click();
+  });
+  await expect(
+    page.getByRole("heading", { name: "Check your phone" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start a new pairing" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Pairing was canceled.", { exact: true }),
+  ).toHaveCount(0);
+});

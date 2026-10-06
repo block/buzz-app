@@ -20,14 +20,18 @@ new plugin security sandbox. The frontend CSP is unchanged.
    from the current app identity. The user supplies a community address.
 2. Opening Pair mobile automatically verifies the public identity against the
    saved native account, opens a dedicated pairing socket, and waits for subscription
-   readiness before showing the QR. Each visible QR expires two minutes after
-   display and automatically renews while the section remains open. Connection failures show
-   **Try again** instead of retrying indefinitely.
+   readiness before showing the QR. QRs automatically renew while the section
+   remains open, before the supported sidecar’s 120-second connection cap. Desktop budgets 115 seconds from before
+   connecting, including setup, so the visible lifetime is shorter than two minutes.
+   The protocol also expires no later than two minutes after display. Connection
+   failures show **Try again** instead of retrying indefinitely.
 3. A compatible phone advertises encrypted `desktop-code-v1` support. Desktop
    generates a separate random six-digit code that is never sent in the QR or
    challenge. The phone submits the entered code; desktop verifies it with a
    five-attempt budget before sending the encrypted account payload.
-   The code protects against a captured QR, not a live observer: someone who can
+   In the code-entry flow, the code protects against a captured QR. A QR holder
+   can instead request legacy comparison, which still requires explicit desktop
+   approval. Code entry does not protect against a live observer: someone who can
    watch both the QR and the code can race the phone and enter the code. Do not
    pair while sharing, recording, or otherwise exposing the screen to an untrusted
    observer. `desktop-code-v1` extends NIP-AB; the NIP-AB/Tamarin

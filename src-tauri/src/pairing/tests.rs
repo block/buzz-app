@@ -629,3 +629,129 @@ fn denial_keeps_native_code_until_abort_has_finished() {
         Status::Error { .. }
     ));
 }
+
+#[tokio::test]
+async fn delayed_subscription_expires_before_sidecar_connection_cap() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut socket, mut server) = local_sockets().await;
+    let relay_url = url::Url::parse("wss://relay.test/pair").unwrap();
+    let (session, _) = PairingSession::new_source(relay_url.to_string());
+    let subscription = tokio::spawn(async move {
+        let (pending, auth) = relay::subscribe(&mut socket, &session, &relay_url)
+            .await
+            .unwrap();
+        (socket, session, relay_url, pending, auth)
+    });
+    assert!(server
+        .next()
+        .await
+        .unwrap()
+        .unwrap()
+        .to_text()
+        .unwrap()
+        .contains("REQ"));
+    assert!(!subscription.is_finished(), "QR must wait for EOSE");
+    server
+        .send(Message::Text(r#"["EOSE","pair"]"#.into()))
+        .await
+        .unwrap();
+    let (mut socket, mut session, relay_url, pending, mut auth) = subscription.await.unwrap();
+    session.start_source_lifetime();
+    // Model five seconds consumed by the held EOSE without waiting on wall time.
+    // Pause only after real subscription I/O, avoiding auto-advance during I/O.
+    tokio::time::pause();
+    let connection_started = tokio::time::Instant::now() - Duration::from_secs(5);
+    let deadline = exchange_deadline(&session, connection_started);
+    assert_eq!(
+        deadline - tokio::time::Instant::now(),
+        Duration::from_secs(110)
+    );
+    let task = tokio::spawn(async move {
+        let mut exchange = Exchange {
+            session,
+            payload: Some(Zeroizing::new("fixture".into())),
+            code_entry: false,
+        };
+        let (_tx, mut rx) = mpsc::channel(1);
+        exchange_until_deadline(
+            ExchangeContext {
+                pairing: &Pairing::default(),
+                id: "live",
+                relay_url: &relay_url,
+                pending,
+            },
+            &mut exchange,
+            &mut socket,
+            &mut auth,
+            &mut rx,
+            &CancellationToken::new(),
+            deadline,
+        )
+        .await
+    });
+    tokio::time::advance(Duration::from_secs(109)).await;
+    assert!(!task.is_finished());
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(matches!(task.await.unwrap(), Err(Failure::Expired)));
+    // The native expiry maps to Expired (covered above), which the existing UI
+    // renewal regression consumes. The sidecar cap has not arrived yet.
+    assert!(tokio::time::Instant::now() < connection_started + Duration::from_secs(120));
+    tokio::time::advance(Duration::from_secs(5)).await;
+    drop(server);
+}
+
+#[tokio::test]
+async fn early_connection_loss_is_error_before_publication_and_uncertain_after() {
+    for payload_sent in [false, true] {
+        let (mut socket, server) = local_sockets().await;
+        let (session, _) = PairingSession::new_source("wss://relay.test".into());
+        let manager = Pairing::default();
+        let (tx, mut rx) = mpsc::channel(1);
+        let cancel = CancellationToken::new();
+        *manager.0.lock().unwrap() = Some(Active {
+            id: "live".into(),
+            cancel: cancel.clone(),
+            finished: CancellationToken::new(),
+            confirm: tx,
+            status: Status::Qr {
+                svg: "fixture".into(),
+            },
+            payload_sent,
+        });
+        let deadline = exchange_deadline(&session, tokio::time::Instant::now());
+        let mut exchange = Exchange {
+            session,
+            payload: Some(Zeroizing::new("fixture".into())),
+            code_entry: false,
+        };
+        drop(server);
+        let result = exchange_until_deadline(
+            ExchangeContext {
+                pairing: &manager,
+                id: "live",
+                relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+                pending: vec![],
+            },
+            &mut exchange,
+            &mut socket,
+            &mut relay::Authentication::default(),
+            &mut rx,
+            &cancel,
+            deadline,
+        )
+        .await;
+        let Err(Failure::Transport(message)) = result else {
+            panic!("unexpected result: {result:?}");
+        };
+        manager.fail("live", Status::Error { message }, true);
+        let active = manager.0.lock().unwrap();
+        let status = &active.as_ref().unwrap().status;
+        if payload_sent {
+            assert_eq!(status, &Status::Uncertain);
+        } else {
+            assert!(matches!(status, Status::Error { .. }));
+        }
+    }
+}

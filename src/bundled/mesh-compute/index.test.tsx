@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginModule } from "../../plugins/api";
-import { apply } from "./index";
+import { apply, shareActionSettled } from "./index";
 const native = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: () => true }));
 vi.mock("@tauri-apps/api/core", () => ({
   ...native,
@@ -1030,12 +1030,16 @@ for (const retire of ["identity", "dispose"] as const) {
         dispose();
       }
     });
-    await act(async () => {
-      rejectRetry("Mesh shutdown timed out; restart Buzz");
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    const retired = shareActionSettled();
+    try {
+      await act(async () => {
+        rejectRetry("Mesh shutdown timed out; restart Buzz");
+        // Wait for the retired Off action itself to finish, not a timer tick.
+        await retired;
+      });
+    } finally {
+      rejectRetry("released");
+    }
     expect(
       native.invoke.mock.calls.some(([c]) => c === "mesh_compute_disarm"),
     ).toBe(false);

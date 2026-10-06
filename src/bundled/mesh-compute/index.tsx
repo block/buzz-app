@@ -41,6 +41,11 @@ const phaseLabels = {
 };
 
 export const inject = ["relay", "settingsCards", "agentControl"];
+
+// Settles when the most recent Share action has fully finished, so tests can
+// prove a retired action completed instead of waiting an arbitrary tick.
+let lastShareAction: Promise<void> = Promise.resolve();
+export const shareActionSettled = () => lastShareAction;
 export const apply: PluginModule["apply"] = (ctx) => {
   let lease: Promise<string | undefined> | undefined;
   let scope: string | undefined;
@@ -260,7 +265,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (!disposed) setBusy(false);
       }
     };
-    const share = async (clearSaved = false) => {
+    const share = (clearSaved = false) => {
+      const action = runShare(clearSaved);
+      lastShareAction = action;
+      return action;
+    };
+    const runShare = async (clearSaved: boolean) => {
       setBusy(true);
       setError(null);
       try {

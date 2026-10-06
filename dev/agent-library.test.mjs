@@ -1,6 +1,13 @@
 import { fixtureRelayUrl } from "../tests/relay-config.ts";
-import { expect, it } from "vitest";
-import { mkdtemp, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { expect, it, vi } from "vitest";
+import {
+  mkdtemp,
+  writeFile,
+  readFile,
+  rm,
+  symlink,
+  mkdir,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -117,72 +124,94 @@ it.each([
   },
 );
 
-it("actual broker and transport expose only the library projection, reject cross-origin reads, and retry failures", async () => {
-  const { createServer } = await import("node:http");
-  const { generateSecretKey, getPublicKey } = await import("nostr-tools");
-  const { relayBrokerPlugin } = await import("./relay-broker.mjs");
-  const { connectBrokerTransport } = await import(
-    "../src/features/relay/transport.ts"
-  );
-  const root = await mkdtemp(join(tmpdir(), "buzz-library-http-"));
-  const path = join(root, "managed-agents.json");
-  await writeFile(path, JSON.stringify(rows));
-  let handler,
-    reads = 0;
-  const server = createServer((req, res) =>
-    handler(req, res, () => {
-      res.writeHead(404);
-      res.end();
-    }),
-  );
-  await relayBrokerPlugin({
-    archiveFile: ":memory:",
-    relayUrl: fixtureRelayUrl,
-    identity: generateSecretKey,
-    authority: async () => ({ relayAuthor: getPublicKey(generateSecretKey()) }),
-    agentLibrary: () => {
-      reads++;
-      return readAgentLibrary(path);
-    },
-  }).configureServer({
-    httpServer: server,
-    config: { logger: { info() {} } },
-    middlewares: {
-      use(fn) {
-        handler = fn;
+it.each(["legacy", "current"])(
+  "actual broker and transport expose only the %s library projection, reject cross-origin reads, and retry failures",
+  async (format) => {
+    const { createServer } = await import("node:http");
+    const { generateSecretKey, getPublicKey } = await import("nostr-tools");
+    const { relayBrokerPlugin } = await import("./relay-broker.mjs");
+    const { connectBrokerTransport } = await import(
+      "../src/features/relay/transport.ts"
+    );
+    const root = await mkdtemp(join(tmpdir(), "buzz-library-http-"));
+    const path = join(root, "managed-agents.json");
+    const source =
+      format === "legacy"
+        ? rows
+        : {
+            version: 1,
+            agents: [
+              {
+                pubkey: key,
+                name: "Brain",
+                environment: { TOKEN: "secret" },
+                systemPrompt: "private instructions",
+              },
+            ],
+            parked: {
+              ["b".repeat(64)]: { pubkey: "b".repeat(64), name: "Old Bumble" },
+            },
+          };
+    await writeFile(path, JSON.stringify(source));
+    let handler,
+      reads = 0;
+    const server = createServer((req, res) =>
+      handler(req, res, () => {
+        res.writeHead(404);
+        res.end();
+      }),
+    );
+    await relayBrokerPlugin({
+      archiveFile: ":memory:",
+      relayUrl: fixtureRelayUrl,
+      identity: generateSecretKey,
+      authority: async () => ({
+        relayAuthor: getPublicKey(generateSecretKey()),
+      }),
+      agentLibrary: () => {
+        reads++;
+        return readAgentLibrary(path);
       },
-    },
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  try {
-    const transport = await connectBrokerTransport(base);
-    expect(reads).toBe(0);
-    expect(
-      await transport.readAgentLibrary(new AbortController().signal),
-    ).toEqual(projectAgentLibrary(rows));
-    const bad = await fetch(`${base}/api/relay/agent-library`, {
-      headers: { Origin: "https://evil.example" },
+    }).configureServer({
+      httpServer: server,
+      config: { logger: { info() {} } },
+      middlewares: {
+        use(fn) {
+          handler = fn;
+        },
+      },
     });
-    expect(bad.status).toBe(403);
-    expect(reads).toBe(1);
-    await writeFile(path, "secret malformed value");
-    await expect(
-      transport.readAgentLibrary(new AbortController().signal),
-    ).rejects.toThrow();
-    const error = await fetch(`${base}/api/relay/agent-library`);
-    expect(await error.text()).not.toContain("secret");
-    await writeFile(path, JSON.stringify(rows));
-    expect(
-      await transport.readAgentLibrary(new AbortController().signal),
-    ).toEqual(projectAgentLibrary(rows));
-    expect(await readFile(path, "utf8")).toBe(JSON.stringify(rows));
-  } finally {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const transport = await connectBrokerTransport(base);
+      expect(reads).toBe(0);
+      expect(
+        await transport.readAgentLibrary(new AbortController().signal),
+      ).toEqual(projectAgentLibrary(source));
+      const bad = await fetch(`${base}/api/relay/agent-library`, {
+        headers: { Origin: "https://evil.example" },
+      });
+      expect(bad.status).toBe(403);
+      expect(reads).toBe(1);
+      await writeFile(path, "secret malformed value");
+      await expect(
+        transport.readAgentLibrary(new AbortController().signal),
+      ).rejects.toThrow();
+      const error = await fetch(`${base}/api/relay/agent-library`);
+      expect(await error.text()).not.toContain("secret");
+      await writeFile(path, JSON.stringify(source));
+      expect(
+        await transport.readAgentLibrary(new AbortController().signal),
+      ).toEqual(projectAgentLibrary(source));
+      expect(await readFile(path, "utf8")).toBe(JSON.stringify(source));
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("projects current Buzz 1.0 saved agents without parked legacy identities or private fields", () => {
   const current = {
@@ -257,5 +286,63 @@ it.each([
   "rejects unsupported or malformed current agent storage without returning an empty inventory (%#)",
   (raw) => {
     expect(() => projectAgentLibrary(raw)).toThrow("Could not read");
+  },
+);
+
+it.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "the default reader uses current Buzz 1.0 storage and never falls back to Classic",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "buzz-default-library-"));
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_DATA_HOME", root);
+    const appData =
+      process.platform === "darwin"
+        ? join(root, "Library/Application Support")
+        : root;
+    const current = join(
+      appData,
+      "dev.local.buzz.foundation/agent-controller/agents.json",
+    );
+    const legacy = join(
+      appData,
+      "xyz.block.buzz.app/agents/managed-agents.json",
+    );
+    try {
+      await mkdir(join(appData, "dev.local.buzz.foundation/agent-controller"), {
+        recursive: true,
+      });
+      await mkdir(join(appData, "xyz.block.buzz.app/agents"), {
+        recursive: true,
+      });
+      await writeFile(legacy, JSON.stringify(rows));
+      await writeFile(
+        current,
+        JSON.stringify({ version: 1, agents: [{ pubkey: key, name: "Sol" }] }),
+      );
+      expect(await readAgentLibrary()).toEqual({
+        definitions: [],
+        identities: [{ pubkey: key, name: "Sol" }],
+      });
+      await rm(current);
+      await expect(readAgentLibrary()).rejects.toThrow("Could not read");
+      await writeFile(current, "private malformed config");
+      await expect(readAgentLibrary()).rejects.toThrow("Could not read");
+      await writeFile(
+        current,
+        JSON.stringify({
+          version: 1,
+          agents: [],
+          parked: { [key]: { pubkey: key, name: "Old Sol" } },
+        }),
+      );
+      expect(await readAgentLibrary()).toEqual({
+        definitions: [],
+        identities: [],
+      });
+      expect(await readFile(legacy, "utf8")).toBe(JSON.stringify(rows));
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
   },
 );

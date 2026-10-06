@@ -33,9 +33,13 @@ html[data-keyboard-navigation] .link:focus-visible {
   width: 1em;
   height: 1em;
   margin-right: calc(var(--space-half) * 1.5);
-  /* Centre on the label's x-height, as inline emoji do, instead of riding the
-     baseline with the glyph poking above the capitals. */
-  vertical-align: middle;
+  /* Centre the icon's ink on the cap-height midpoint, the mixed-case label
+     convention. Tabler ink is centred in its box (0.5em) and Inter's cap
+     height is 0.727em, so 0.727em / 2 − 0.5em ≈ −0.136em. */
+  vertical-align: -0.136em;
+  /* Inline icons align by their box alone; the robot-face optical lift in
+     design-system/styles/components.css is for standalone glyphs in rows. */
+  translate: none;
 }
 
 .lead {

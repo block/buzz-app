@@ -1545,8 +1545,8 @@ it("shows the separate Inbox scope without resetting attention filters", async (
   const archivedButton = within(scope).getByRole("button", {
     name: "Archived",
   });
-  expect(inboxButton).toHaveAttribute("aria-pressed", "true");
-  expect(archivedButton).toHaveAttribute("aria-pressed", "false");
+  expect(inboxButton).toHaveAttribute("aria-current", "page");
+  expect(archivedButton).not.toHaveAttribute("data-selected");
   expect(
     screen.getByRole("button", { name: "About Inbox archive" }),
   ).toBeInTheDocument();
@@ -1575,10 +1575,10 @@ it("shows the separate Inbox scope without resetting attention filters", async (
   );
   await waitFor(() => expect(rows()).toHaveLength(1));
 
-  expect(archivedButton).toHaveAttribute("aria-pressed", "false");
+  expect(archivedButton).not.toHaveAttribute("data-selected");
   fireEvent.click(archivedButton);
   await waitFor(() => expect(rows()).toHaveLength(1));
-  expect(archivedButton).toHaveAttribute("aria-pressed", "true");
+  expect(archivedButton).toHaveAttribute("aria-current", "page");
   expect(
     screen.getByRole("combobox", { name: "Activity type" }),
   ).toHaveTextContent("Mentions");
@@ -1589,8 +1589,8 @@ it("shows the separate Inbox scope without resetting attention filters", async (
 
   fireEvent.click(inboxButton);
   await waitFor(() => expect(rows()).toHaveLength(1));
-  expect(inboxButton).toHaveAttribute("aria-pressed", "true");
-  expect(archivedButton).toHaveAttribute("aria-pressed", "false");
+  expect(inboxButton).toHaveAttribute("aria-current", "page");
+  expect(archivedButton).not.toHaveAttribute("data-selected");
   expect(
     screen.getByRole("combobox", { name: "Activity type" }),
   ).toHaveTextContent("Mentions");
@@ -1601,7 +1601,7 @@ it("shows the separate Inbox scope without resetting attention filters", async (
 
   fireEvent.click(archivedButton);
   await waitFor(() => expect(rows()).toHaveLength(1));
-  expect(archivedButton).toHaveAttribute("aria-pressed", "true");
+  expect(archivedButton).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
 });
 

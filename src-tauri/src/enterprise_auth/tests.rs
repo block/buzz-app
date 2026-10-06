@@ -23,6 +23,12 @@ use tokio::{
 
 const FUTURE_EXPIRY: &str = "2030-01-01T00:00:00Z";
 
+#[derive(Clone, Copy, Debug)]
+enum BodyFailure {
+    Interrupted,
+    Stalled,
+}
+
 #[derive(Clone)]
 enum Reply {
     Valid {
@@ -46,13 +52,15 @@ enum Reply {
         release: Arc<Notify>,
         calls: Arc<AtomicUsize>,
     },
-    StalledSession {
+    BodyFailureThenValid {
+        failure: BodyFailure,
+        expiry: String,
         started: Arc<Notify>,
         release: Arc<Notify>,
+        calls: Arc<AtomicUsize>,
     },
     MalformedSession,
     OversizedSession,
-    TruncatedSession,
     Login {
         expiry: String,
     },
@@ -173,33 +181,50 @@ async fn handle_request(
             }
             Json(serde_json::json!({ "expires_at": expiry })).into_response()
         }
-        Reply::StalledSession {
+        Reply::BodyFailureThenValid {
+            failure,
+            ref expiry,
             ref started,
             ref release,
+            ref calls,
         } if path.ends_with("/v1/session") => {
-            let body = futures_lite::stream::unfold(
-                (false, started.clone(), release.clone()),
-                |(sent_partial, started, release)| async move {
-                    if sent_partial {
-                        started.notify_one();
-                        release.notified().await;
-                        None
-                    } else {
-                        Some((
-                            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
-                                b"{\"expires_at\":\"",
-                            )),
-                            (true, started, release),
-                        ))
+            if calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                Json(serde_json::json!({ "expires_at": expiry })).into_response()
+            } else {
+                match failure {
+                    BodyFailure::Interrupted => Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::CONTENT_LENGTH, 128)
+                        .body(Body::from(r#"{"expires_at":""#))
+                        .unwrap(),
+                    BodyFailure::Stalled => {
+                        let body = futures_lite::stream::unfold(
+                            (false, started.clone(), release.clone()),
+                            |(sent_partial, started, release)| async move {
+                                if sent_partial {
+                                    started.notify_one();
+                                    release.notified().await;
+                                    None
+                                } else {
+                                    Some((
+                                        Ok::<_, std::convert::Infallible>(
+                                            axum::body::Bytes::from_static(b"{\"expires_at\":\""),
+                                        ),
+                                        (true, started, release),
+                                    ))
+                                }
+                            },
+                        );
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::CONTENT_LENGTH, 128)
+                            .body(Body::from_stream(body))
+                            .unwrap()
                     }
-                },
-            );
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::CONTENT_LENGTH, 128)
-                .body(Body::from_stream(body))
-                .unwrap()
+                }
+            }
         }
         Reply::MalformedSession if path.ends_with("/v1/session") => Response::builder()
             .status(StatusCode::OK)
@@ -211,12 +236,6 @@ async fn handle_request(
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::CONTENT_LENGTH, MAX_SESSION_BODY + 1)
             .body(Body::empty())
-            .unwrap(),
-        Reply::TruncatedSession if path.ends_with("/v1/session") => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::CONTENT_LENGTH, 128)
-            .body(Body::from(r#"{"expires_at":""#))
             .unwrap(),
         Reply::Login { ref expiry } if path.ends_with("/v1/login/exchange") => {
             Json(serde_json::json!({
@@ -683,64 +702,84 @@ async fn malformed_or_oversized_session_responses_invalidate_the_saved_item() {
 }
 
 #[tokio::test]
-async fn interrupted_session_response_preserves_the_saved_item() {
-    let server = FixtureServer::spawn(Reply::TruncatedSession).await;
-    let _environment = BuilderLabEnv::new(&server.base);
-    let home = TempDir::new().unwrap();
-    let owner = make_owner(&home);
-    save(&owner, "interrupted-session", "interrupted-token", None).await;
+async fn body_transport_failures_preserve_committed_and_restored_sessions_for_retry() {
+    for restored_owner in [false, true] {
+        for failure in [BodyFailure::Interrupted, BodyFailure::Stalled] {
+            let started = Arc::new(Notify::new());
+            let release = Arc::new(Notify::new());
+            let server = FixtureServer::spawn(Reply::BodyFailureThenValid {
+                failure,
+                expiry: FUTURE_EXPIRY.into(),
+                started: started.clone(),
+                release: release.clone(),
+                calls: Arc::new(AtomicUsize::new(0)),
+            })
+            .await;
+            let _environment = BuilderLabEnv::new(&server.base);
+            let home = TempDir::new().unwrap();
+            let committed_owner = make_owner(&home);
+            save(
+                &committed_owner,
+                "body-failure-session",
+                "body-failure-token",
+                Some(FUTURE_EXPIRY),
+            )
+            .await;
+            let owner = if restored_owner {
+                make_owner(&home)
+            } else {
+                committed_owner
+            };
+            let http = reqwest::Client::builder()
+                .timeout(Duration::from_millis(250))
+                .build()
+                .unwrap();
 
-    assert!(get(&owner).await.is_err());
-    assert_eq!(
-        owner
-            .session_snapshot()
-            .await
-            .unwrap()
-            .unwrap()
-            .credential(),
-        "interrupted-token"
-    );
-}
+            let first_check = get_with_client(&owner, &http);
+            tokio::pin!(first_check);
+            let mut first_result = None;
+            let request_started = if matches!(failure, BodyFailure::Stalled) {
+                tokio::select! {
+                    _ = started.notified() => true,
+                    result = &mut first_check => {
+                        first_result = Some(result);
+                        false
+                    }
+                }
+            } else {
+                true
+            };
+            if matches!(failure, BodyFailure::Stalled) {
+                release.notify_one();
+            }
+            let first_result = match first_result {
+                Some(result) => result,
+                None => first_check.await,
+            };
+            assert!(
+                request_started,
+                "stalled response did not start before the client timeout ({failure:?}, restored={restored_owner})"
+            );
+            assert!(first_result.is_err());
 
-#[tokio::test]
-async fn stalled_session_response_timeout_preserves_the_saved_item() {
-    let started = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let server = FixtureServer::spawn(Reply::StalledSession {
-        started: started.clone(),
-        release: release.clone(),
-    })
-    .await;
-    let _environment = BuilderLabEnv::new(&server.base);
-    let home = TempDir::new().unwrap();
-    let owner = make_owner(&home);
-    save(&owner, "stalled-session", "stalled-session-token", None).await;
-    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_millis(250))
-        .build()
-        .unwrap();
+            let stored_after_failure = make_owner(&home).session_snapshot().await.unwrap().unwrap();
+            assert_eq!(stored_after_failure.credential(), "body-failure-token");
+            assert_eq!(stored_after_failure.expires_at(), Some(FUTURE_EXPIRY));
 
-    let response_started = started.notified();
-    let checking = {
-        let owner = owner.clone();
-        tokio::spawn(async move { check_saved_session(&owner, &snapshot, &http).await })
-    };
-    response_started.await;
-    let check = checking.await.unwrap();
-    release.notify_one();
+            let info = get_with_client(&owner, &http).await.unwrap().unwrap();
+            assert_eq!(info.expires_at, FUTURE_EXPIRY);
+            let stored_after_retry = make_owner(&home).session_snapshot().await.unwrap().unwrap();
+            assert_eq!(stored_after_retry.credential(), "body-failure-token");
+            assert_eq!(stored_after_retry.expires_at(), Some(FUTURE_EXPIRY));
 
-    assert!(matches!(check, SessionCheck::Transient(_)));
-    assert_eq!(
-        owner
-            .session_snapshot()
-            .await
-            .unwrap()
-            .unwrap()
-            .credential(),
-        "stalled-session-token"
-    );
-    assert_eq!(session_records(&server).len(), 1);
+            let records = session_records(&server);
+            assert_eq!(records.len(), 2);
+            assert!(records.iter().all(|record| {
+                record.authorization.as_deref() == Some("Bearer body-failure-token")
+            }));
+            drop(_environment);
+        }
+    }
 }
 
 #[tokio::test]

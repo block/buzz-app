@@ -101,6 +101,13 @@ pub(crate) fn refusal_service_name() -> &'static str {
 
 pub(crate) async fn get(owner: &SessionOwner) -> Result<Option<EnterpriseAuthInfo>> {
     let http = client()?;
+    get_with_client(owner, http).await
+}
+
+async fn get_with_client(
+    owner: &SessionOwner,
+    http: &reqwest::Client,
+) -> Result<Option<EnterpriseAuthInfo>> {
     for _ in 0..2 {
         let Some(snapshot) = owner.session_snapshot().await? else {
             return Ok(None);

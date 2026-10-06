@@ -9,6 +9,7 @@ use oauth_callback::{
 };
 #[cfg(test)]
 mod browser_permissions_tests;
+mod pairing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
@@ -399,6 +400,12 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        pairing::pairing_account,
+        pairing::pairing_start,
+        pairing::pairing_status,
+        pairing::pairing_confirm,
+        pairing::pairing_deny,
+        pairing::pairing_cancel,
         identity_restore,
         identity_import,
         identity_create,
@@ -569,6 +576,7 @@ pub fn run() {
     builder
         .manage(IdentityHost::default())
         .manage(archive::ArchiveHost::default())
+        .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -604,9 +612,13 @@ pub fn run() {
             {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<pairing::Pairing>().cancel_all();
+            }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

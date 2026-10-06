@@ -14,6 +14,15 @@ url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+buzz-pairing = { path = "../crates/pairing" }
+nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
+tokio-util = "0.7"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
 tauri = { version = "2", features = ["unstable"] }
 wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
@@ -28,7 +37,6 @@ hmac = "0.12"
 base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 bytes = "1"
-futures-util = { version = "0.3", default-features = false }
 url = "2"
 percent-encoding = "2"
 tauri-plugin-dialog = "2"
@@ -48,6 +56,7 @@ tempfile = "3"
 rusqlite = { version = "0.38", features = ["bundled"] }
 
 [dev-dependencies]
+hex = "0.4"
 tokio = { version = "1", features = ["test-util"] }
 secp256k1 = { version = "0.31", features = ["std"] }
 tauri = { version = "2", features = ["test"] }

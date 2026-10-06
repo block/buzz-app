@@ -286,3 +286,13 @@ fn home_child() {
     assert_eq!(lock_root().unwrap(), std::path::PathBuf::from(expected));
     println!("HOME_CHILD_CHECKED");
 }
+#[test]
+fn human_identity_slots_stay_separate() {
+    assert_eq!(HUMAN_ACCOUNT, "human");
+    assert_eq!(
+        human_service(true),
+        "dev.local.buzz.foundation.identity.debug"
+    );
+    assert_eq!(human_service(false), "dev.local.buzz.foundation.identity");
+    assert_eq!(HUMAN_SERVICE, human_service(cfg!(debug_assertions)));
+}

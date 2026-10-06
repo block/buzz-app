@@ -29,7 +29,19 @@ test("Use here opens a visible dialog at desktop and narrow widths", async ({
     });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 800 });
-      await page.getByRole("button", { name: "Use here", exact: true }).click();
+      const card = page
+        .getByRole("article", { name: "Agent Fixture agent" })
+        .first();
+      await card.getByRole("button", { name: /^Actions for / }).click();
+      await page
+        .getByRole("menuitem", { name: "Manage agent", exact: true })
+        .click();
+      const management = page.getByRole("dialog", {
+        name: "Manage Fixture agent",
+      });
+      await management
+        .getByRole("button", { name: "Use here", exact: true })
+        .click();
       const dialog = page.getByRole("dialog", { name: "Set up agent here" });
       await expect(dialog).toHaveCSS("position", "fixed");
       await expect(dialog).toBeInViewport({ ratio: 1 });
@@ -40,6 +52,10 @@ test("Use here opens a visible dialog at desktop and narrow widths", async ({
       await expect(close).toBeInViewport({ ratio: 1 });
       await close.click();
       await expect(dialog).toHaveCount(0);
+      await management
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+      await expect(management).toHaveCount(0);
     }
   } finally {
     await server.close();

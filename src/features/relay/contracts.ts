@@ -81,6 +81,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
+  /** Actual signing key when relay attribution makes authorId a different identity. */
+  signerId?: string | undefined;
+  /** Display-only owner attested by this community’s explicit relay signer. */
+  workflowOwnerId?: string | undefined;
   /** Unix seconds from the signed event. */
   createdAt: number;
   /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
@@ -172,7 +176,7 @@ export interface ChannelQueries {
    * become readable through `get`; they never enter list(). */
   searchPublic?(
     query: string,
-    options?: ReadOptions & { limit?: number },
+    options?: ReadOptions & { limit?: number; exact?: boolean },
   ): Promise<PublicChannelSearch>;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a

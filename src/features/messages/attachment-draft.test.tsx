@@ -24,12 +24,18 @@ function fixture() {
     file: globalThis.File;
     channel: string;
     signal: AbortSignal;
+    progress: ((sent: number, total: number) => void) | undefined;
     result: ReturnType<typeof deferred<UploadedAttachment>>;
   }[] = [];
   const upload = vi.fn(
-    (file: globalThis.File, channel: string, signal: AbortSignal) => {
+    (
+      file: globalThis.File,
+      channel: string,
+      signal: AbortSignal,
+      progress?: (sent: number, total: number) => void,
+    ) => {
       const result = deferred<UploadedAttachment>();
-      calls.push({ file, channel, signal, result });
+      calls.push({ file, channel, signal, progress, result });
       return result.promise;
     },
   );
@@ -108,6 +114,32 @@ it("retains files across navigation and starts work only after explicit retry/se
   });
   expect(returned.result.current.items[0]?.uploaded?.name).toBe("notes.txt");
   expect(returned.result.current.blocked).toBe(false);
+});
+
+it("ignores a host progress report after an upload fails", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() => draft.result.current.store.add([file()]));
+  const send = new AbortController();
+  let work!: Promise<readonly UploadedAttachment[]>;
+  await act(async () => {
+    work = draft.result.current.store.prepareForSend(send.signal);
+  });
+  const call = h.calls[0];
+  assert.exists(call);
+  act(() => call.progress?.(2, 5));
+  expect(draft.result.current.items[0]?.transfer).toEqual({
+    sent: 2,
+    total: 5,
+  });
+  await act(async () => {
+    call.result.reject(new Error("relay down"));
+    await expect(work).rejects.toThrow("relay down");
+  });
+  expect(draft.result.current.items[0]?.status).toBe("error");
+  expect(draft.result.current.items[0]?.transfer).toBeUndefined();
+  act(() => call.progress?.(5, 5));
+  expect(draft.result.current.items[0]?.transfer).toBeUndefined();
 });
 
 it("reuses successful descriptors after a partial upload failure", async () => {

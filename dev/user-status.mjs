@@ -1,13 +1,16 @@
+import {
+  USER_STATUS_KIND,
+  validStatusText,
+} from "../src/features/relay/user-status-policy.ts";
+
 /** The status write surface is only the NIP-38 general coordinate. */
 export function validStatusTemplate(
   event,
   now = Math.floor(Date.now() / 1000),
 ) {
   if (
-    event?.kind !== 30315 ||
+    event?.kind !== USER_STATUS_KIND ||
     typeof event.content !== "string" ||
-    event.content.length > 100 ||
-    /[\r\n]/.test(event.content) ||
     !Number.isSafeInteger(event.created_at) ||
     event.created_at < 0 ||
     event.created_at > now + 300 ||
@@ -31,8 +34,8 @@ export function validStatusTemplate(
     return false;
   const emoji = event.tags.find(([key]) => key === "emoji")?.[1];
   if (
-    emoji !== undefined &&
-    (!emoji.trim() || emoji.length > 100 || /[\r\n]/.test(emoji))
+    !validStatusText(event.content, emoji ?? "") ||
+    (emoji !== undefined && !emoji.trim())
   )
     return false;
   const expiration = event.tags.find(([key]) => key === "expiration")?.[1];

@@ -50,3 +50,24 @@ it("bounds future signing timestamps while allowing same-second replacements", (
     false,
   );
 });
+
+it.each([
+  ["text at limit", { content: "x".repeat(100) }, true],
+  ["UTF-16 emoji at limit", { content: "😀".repeat(50) }, true],
+  ["UTF-16 emoji over limit", { content: "😀".repeat(51) }, false],
+  ["untrimmed wire limit", { content: ` ${"x".repeat(100)} ` }, false],
+  ["line feed", { content: "one\ntwo" }, false],
+  ["carriage return", { content: "one\rtwo" }, false],
+  ["non-string content", { content: null }, false],
+  ["empty emoji tag", { tags: [...template.tags, ["emoji", ""]] }, false],
+  ["blank emoji tag", { tags: [...template.tags, ["emoji", " "]] }, false],
+  ["multiline emoji", { tags: [...template.tags, ["emoji", "x\ny"]] }, false],
+  [
+    "emoji at limit",
+    { tags: [...template.tags, ["emoji", "😀".repeat(50)]] },
+    true,
+  ],
+  ["non-string emoji", { tags: [...template.tags, ["emoji", 1]] }, false],
+])("preserves status wire policy: %s", (_name, patch, accepted) => {
+  expect(validStatusTemplate({ ...template, ...patch })).toBe(accepted);
+});

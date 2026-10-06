@@ -13,11 +13,14 @@ export type DraftAttachment = Readonly<{
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
+  /** Host-reported bytes for the current prepared transfer. */
+  transfer?: Readonly<{ sent: number; total: number }> | undefined;
 }>;
-type AttachmentDraft = {
+export type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
   subscribe(listener: () => void): () => void;
   add(files: readonly File[]): void;
+  adopt(files: readonly DraftAttachment[]): boolean;
   prepareForSend(signal: AbortSignal): Promise<readonly UploadedAttachment[]>;
   remove(id: string): void;
   retry(id: string): void;
@@ -29,7 +32,7 @@ const MAX_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
 /** Tab-local files survive navigation, not reload. Delivery remains outbox-owned. */
-function attachmentDraft(
+export function attachmentDraft(
   session: RelaySession,
   key: string,
   channelId: string,
@@ -71,6 +74,7 @@ function attachmentDraft(
             ...item,
             status: "error",
             error: "Upload paused. Retry to continue.",
+            transfer: undefined,
           }
         : item,
     );
@@ -109,13 +113,28 @@ function attachmentDraft(
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     active.set(item.id, controller);
-    replace(item.id, { status: "preparing", error: undefined });
+    replace(item.id, {
+      status: "preparing",
+      error: undefined,
+      transfer: undefined,
+    });
     try {
       const prepared = await prepareAttachment(item.file, combined);
       combined.throwIfAborted();
       replace(item.id, { status: "uploading" });
       const uploaded = await abortable(
-        attachments.upload(prepared, channelId, combined),
+        attachments.upload(prepared, channelId, combined, (sent, total) => {
+          if (
+            !combined.aborted &&
+            active.get(item.id) === controller &&
+            Number.isSafeInteger(sent) &&
+            Number.isSafeInteger(total) &&
+            total > 0 &&
+            sent >= 0 &&
+            sent <= total
+          )
+            replace(item.id, { transfer: { sent, total } });
+        }),
         combined,
       );
       combined.throwIfAborted();
@@ -124,10 +143,15 @@ function attachmentDraft(
     } catch (error) {
       if (combined.aborted) {
         if (signal.aborted && !controller.signal.aborted)
-          replace(item.id, { status: "queued", error: undefined });
+          replace(item.id, {
+            status: "queued",
+            error: undefined,
+            transfer: undefined,
+          });
       } else
         replace(item.id, {
           status: "error",
+          transfer: undefined,
           error:
             error instanceof Error
               ? error.message
@@ -181,6 +205,14 @@ function attachmentDraft(
       owners.set(key, store);
       emit();
     },
+    /** Moves already admitted files, with their results and errors, into an empty draft. */
+    adopt(files: readonly DraftAttachment[]) {
+      if (items.length || !files.length) return false;
+      items = files;
+      owners.set(key, store);
+      emit();
+      return true;
+    },
     async prepareForSend(signal: AbortSignal) {
       if (!items.length) return [];
       const uploaded: UploadedAttachment[] = [];
@@ -200,7 +232,7 @@ function attachmentDraft(
     retry(id: string) {
       if (!items.some((item) => item.id === id && item.status === "error"))
         return;
-      replace(id, { status: "queued", error: undefined });
+      replace(id, { status: "queued", error: undefined, transfer: undefined });
     },
     cancel: cancelActive,
     clear() {

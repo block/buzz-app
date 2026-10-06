@@ -5,14 +5,14 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
-// Each identity card keeps its public key in its own popover.
+// Each read-only library row keeps its exact public key in an overflow popover.
 async function openPublicKeys(page, agents) {
   const shown = [];
   for (const button of await agents
-    .getByRole("button", { name: /: public key$/ })
+    .getByRole("button", { name: /^Actions for / })
     .all()) {
     await button.click();
-    const popup = page.getByRole("dialog", { name: /public key$/ });
+    const popup = page.getByRole("dialog", { name: /identity details$/ });
     await expect(popup).toBeVisible();
     shown.push(...(await popup.locator("li").allInnerTexts()));
     await page.keyboard.press("Escape");
@@ -39,13 +39,14 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agents.html`,
     );
+    await page.getByText(/^Other agents \(/).click();
     const agents = page.getByRole("region", {
-      name: "Library identities",
+      name: "Agent library",
       exact: true,
     });
     await expect(
-      agents.getByRole("heading", { name: "A Brain", exact: true }),
-    ).toHaveCount(1);
+      agents.getByRole("heading", { name: /^A Brain identity/ }),
+    ).toHaveCount(2);
     const keys = await page.evaluate(() => window.agentFixture.agents);
     const npubs = keys.map((key) => npubEncode(key));
     await expect
@@ -158,9 +159,13 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).click();
     await expect(
       page.getByText("No visible identities in your Buzz library."),
     ).toBeVisible();
+    await page.getByText(/^Other agents \(/).evaluate((el) => {
+      if (!el.parentElement.open) el.click();
+    });
     await expect(agents.getByRole("article")).toHaveCount(0);
     await page
       .getByRole("button", { name: "Toggle empty", exact: true })
@@ -178,6 +183,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Toggle error", exact: true })
       .click();
     await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.getByText(/^Other agents \(/).evaluate((el) => {
+      if (!el.parentElement.open) el.click();
+    });
     await expect(agents.getByRole("article")).toHaveCount(2);
     await page
       .getByRole("button", { name: "Toggle archive", exact: true })
@@ -185,6 +193,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).evaluate((el) => {
+      if (!el.parentElement.open) el.click();
+    });
     await expect(agents.getByRole("article")).toHaveCount(1);
     await expect(agents.getByText(npubs[0], { exact: true })).toHaveCount(0);
     await page
@@ -196,6 +207,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).evaluate((el) => {
+      if (!el.parentElement.open) el.click();
+    });
     await expect(agents.getByRole("article")).toHaveCount(2);
     expect([...(await openPublicKeys(page, agents))].sort()).toEqual(
       [...npubs].sort(),
@@ -207,6 +221,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).click();
     await expect(page.getByText(/Archive visibility is unknown/)).toHaveCount(
       0,
     );
@@ -220,6 +235,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).evaluate((el) => {
+      if (!el.parentElement.open) el.click();
+    });
     await expect(agents.getByRole("article")).toHaveCount(2);
     expect(await page.evaluate(() => window.agentFixture.reads())).toBe(
       reads + 3,
@@ -239,13 +257,15 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Release reads", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).click();
     await expect(
-      agents.getByRole("heading", { name: "B Brain", exact: true }),
-    ).toHaveCount(1);
+      agents.getByRole("heading", { name: /^B Brain identity/ }),
+    ).toHaveCount(2);
     await expect(page.getByText("A Brain", { exact: true })).toHaveCount(0);
     await page
       .getByRole("button", { name: "Community A", exact: true })
       .click();
+    await page.getByText(/^Other agents \(/).click();
     await expect(
       agents.getByRole("heading", { name: /^A Brain identity/ }),
     ).toHaveCount(2);

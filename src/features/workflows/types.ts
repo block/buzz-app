@@ -64,6 +64,8 @@ export type WorkflowOperation = Readonly<{
   eventId: string;
   workflow: WorkflowReference;
   action: "save" | "delete" | "trigger";
+  /** Unix seconds from the signed command. */
+  createdAt: number;
   delivery: Delivery;
   outcome: "pending" | "succeeded" | "rejected" | "unknown";
   error?: string;

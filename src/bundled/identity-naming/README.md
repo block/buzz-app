@@ -96,7 +96,7 @@ can legitimately change a label.
 | --- | --- |
 | Channel or thread identities | Channel members, plus the requested identity for a historical/non-member reference |
 | Mention picker | All actual selectable mention choices, before text-search filtering; not only matching search results |
-| Composer's selected mentions | Channel members, available agent choices (including invitation choices where offered), and already selected recipient keys |
+| Composer's selected mentions | The destination's members (or its explicit recipient roster), minus known-archived identities, plus already selected recipient keys; not the chooser's agent or invitation choices |
 | DM participant labels | That DM's participants |
 | Agent directory/management | The displayed collection's keys and all displayed configured aliases, including cross-community aliases |
 | Local activity/filter choices | The local choice set; unknown keys use the surface's existing key-label fallback |

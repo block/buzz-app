@@ -5,7 +5,7 @@ import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { outsideMentionDetail } from "../../features/messages/mention-candidates";
+import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery } from "./mention-query";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue

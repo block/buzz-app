@@ -34,7 +34,7 @@ function localOutbox(viewer: string) {
   const writer = {
     sign: vi.fn(async (event) => signed(alice, event)),
     publish: vi.fn(async () => {}),
-    kinds: [9, 40003],
+    kinds: [9, 40003, 5],
   };
   return createOutbox(viewer, writer, memoryStorage()).outbox;
 }
@@ -330,4 +330,89 @@ it("rejects unavailable or unrelated attachment sources without queuing an edit"
       /Reload the message/,
     );
   expect(outbox.snapshot()).toEqual([]);
+});
+
+it("edits and removes attributed messages using trusted relay signing authority only", async () => {
+  const attributed = signed(relay, {
+    kind: 9,
+    content: "Original",
+    created_at: 20,
+    tags: [["h", channel], ["actor", alice.pubkey], fileIMeta()],
+  });
+  const media = signed(alice, {
+    kind: 40003,
+    content: "Media",
+    created_at: 21,
+    tags: [["h", channel], ["e", attributed.id], imageIMeta()],
+  });
+  const events = [attributed, media];
+  const outbox = localOutbox(alice.pubkey);
+  await outbox.ready();
+  const command = (authority?: string) =>
+    createMessages(
+      outbox,
+      alice.pubkey,
+      (id) => events.find((event) => event.id === id),
+      () => [],
+      () => {},
+      () => true,
+      undefined,
+      undefined,
+      authority,
+    );
+  expect(
+    foldMessages(channel, relay.pubkey, events, {
+      signingAuthority: relay.pubkey,
+    })[0],
+  ).toMatchObject({
+    authorId: alice.pubkey,
+    attachmentSourceId: media.id,
+  });
+  for (const authority of [undefined, keypair().pubkey]) {
+    expect(() =>
+      command(authority).edit(attributed.id, "Next", media.id),
+    ).toThrow(/Only your own/);
+    expect(() => command(authority).remove([attributed.id])).toThrow(
+      /Only your own/,
+    );
+  }
+  const trusted = command(relay.pubkey);
+  const editId = trusted.edit(attributed.id, "Next", media.id);
+  const edit = outbox
+    .snapshot()
+    .find((entry) => entry.event.id === editId)?.event;
+  expect(edit?.tags).toContainEqual(imageIMeta());
+  const removeId = trusted.remove([attributed.id]);
+  const deletion = outbox
+    .snapshot()
+    .find((entry) => entry.event.id === removeId)?.event;
+  expect(deletion?.tags).toContainEqual(["e", attributed.id]);
+  expect(
+    foldMessages(
+      channel,
+      relay.pubkey,
+      [
+        attributed,
+        media,
+        ...(edit ? [edit] : []),
+        ...(deletion ? [deletion] : []),
+      ],
+      {
+        signingAuthority: relay.pubkey,
+      },
+    ),
+  ).toEqual([]);
+  const untrusted = signed(keypair(), {
+    kind: 9,
+    content: "Spoof",
+    tags: [
+      ["h", channel],
+      ["actor", alice.pubkey],
+    ],
+  });
+  events.push(untrusted);
+  expect(() => trusted.edit(untrusted.id, "No", untrusted.id)).toThrow(
+    /Only your own/,
+  );
+  expect(() => trusted.remove([untrusted.id])).toThrow(/Only your own/);
 });

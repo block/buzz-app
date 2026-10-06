@@ -322,3 +322,40 @@ it("fences an aborted save preflight before accepting its old-session result", a
   expect(queries.snapshot().size).toBe(0);
   expect(sign).not.toHaveBeenCalled();
 });
+
+it("trims local status edits before checking limits but bounds incoming wire text before trimming", async () => {
+  const { owner, queries, publish } = setup();
+  await queries.save({ text: ` ${"x".repeat(100)}\n`, emoji: " 🚌\r" });
+  expect(publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "x".repeat(100),
+    tags: [
+      ["d", "general"],
+      ["emoji", "🚌"],
+    ],
+  });
+  owner.accept([status(` ${"x".repeat(100)} `, "", now + 2)]);
+  expect(queries.snapshot().get(alice.pubkey)?.emoji).toBe("🚌");
+  owner.accept([status("Incoming", "  ", now + 3)]);
+  expect(queries.snapshot().get(alice.pubkey)).toMatchObject({
+    text: "Incoming",
+    emoji: "",
+  });
+});
+
+it.each([
+  { text: "x".repeat(101), emoji: "" },
+  { text: "😀".repeat(51), emoji: "" },
+  { text: "", emoji: "😀".repeat(51) },
+  { text: "one\ntwo", emoji: "" },
+  { text: "", emoji: "one\rtwo" },
+])(
+  "rejects invalid status text before signing and when receiving: %j",
+  async (input) => {
+    const { owner, queries, sign } = setup();
+    owner.accept([status("Before")]);
+    owner.accept([status(input.text, input.emoji, now + 1)]);
+    expect(queries.snapshot().get(alice.pubkey)?.text).toBe("Before");
+    await expect(queries.save(input)).rejects.toThrow("one short line");
+    expect(sign).not.toHaveBeenCalled();
+  },
+);

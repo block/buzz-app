@@ -23,9 +23,15 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- The library shows one tile per exact identity, grouped only by explicit profile
-  links. Each tile discloses its full public key. Profiles with no linked identity
-  appear separately; an archived identity does not become an empty profile.
+- The main individual-agent grid is reserved for native local agents; teams follow
+  it, with old/importable/relay inventory below. Browser-only hosts cannot establish
+  current local custody: their read-only library lives in a collapsed **Other
+  agents** section below teams, not in the individual-agent grid.
+- The compatibility library shows one compact row per exact identity. Identity
+  details are available from its overflow button, not an exposed Public key link.
+  Explicit profile links still supply artwork; names never join identities.
+  Profiles with no linked identity appear separately; an archived identity does
+  not become an empty profile.
 - Only distinct keys with the same displayed name need a short npub suffix. Names
   alone never create a profile group. Suffix collisions extend deterministically using
   the complete inventory, including identities hidden by archive filtering.
@@ -124,7 +130,7 @@ Action policy stays explicit: ordinary member mentions use the channel roster an
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
-access. Session invitations retain their existing rules, including legacy choices.
+access. A pasted mention of a known profile is offered the same way. Session invitations retain their existing rules, including legacy choices.
 Templates additionally require verified non-archived state (`templateAgentChoices`
 returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.
@@ -158,15 +164,31 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 ### Chooser rules
 
-Both the toolbar picker and inline completion use `mention-candidates.ts` and
-`mention-ranking.ts`. Membership permits notification, not a promise that an agent
-will accept or answer the prompt. DMs, like channels, can name outside people;
-they become references because nobody can be added to a DM. Ordinary
-nonmember consent and session invitation rules remain the access owners;
-selection itself neither grants access nor starts an agent. Invalid recipient
-keys, known-archived identities, and archived/read-only destinations are excluded.
-The viewer is never hidden from themself. Unknown archive state does not block
-selection. Optional archive reads are lazy.
+Two parts of the app decide who you can mention:
+
+- **The Mentions plugin decides what the chooser shows.** This covers both the
+  toolbar picker and the inline `@` list: who is listed, in what order, and when
+  Space picks a name (`src/bundled/mentions/`).
+- **The composer decides who a message can address.** It checks every mention
+  before it goes into the draft, whatever added it (`mention-admission.ts`). The
+  plugin lists only people that this check accepts.
+
+The composer accepts these people:
+
+| Where you write | Who you can mention |
+| --- | --- |
+| Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
+| DM | Anyone. People outside the DM are named but not notified. |
+| Session | Session members, plus your agents when the session invites agents. |
+| New DM, before it is created | Only the people you chose for the DM. |
+| Archived or read-only channel | Nobody. |
+
+Everywhere, the composer refuses invalid keys and people known to be archived.
+You can always mention yourself. If archive state is unknown, the mention is
+allowed.
+
+A mention notifies a member. It does not promise that an agent will answer, and
+choosing someone does not give them access or start an agent.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,
@@ -203,8 +225,9 @@ page of the same chooser stay visible (one picker, or one inline `@` token; inli
 completion remounts per keystroke, so the page is kept per session outside it) and the chooser shows "Searching community…". Uncached queries
 reach the network only after a 200 ms typing pause. Settled first pages are cached
 per session and query (100 queries); errors are not cached, and Retry reads the
-current query again. Identity naming uses eligible candidates plus the
-current draft recipients, not every cached profile.
+current query again. Chooser identity naming uses eligible candidates plus the
+current draft recipients, not every cached profile. Composer chips name their
+recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
@@ -213,8 +236,8 @@ names, ambiguous names, modified Space, IME composition, code and protected lite
 ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
 
-The composer rejects already-known archived recipients (never the viewer) at send entry and omits
-ineligible agents from the next draft. This is not an archive transaction: archive
+The composer rejects already-known archived recipients (never the viewer) at
+send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 
@@ -230,7 +253,12 @@ turning it back on does not restore old recipients. Session auto-recipient rules
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Saved teams from Templates & teams are available in both mention choosers. A team
+**Refresh teams** on Agents reloads the provider-owned catalog, including changes
+made in another window or device. After a save/delete revision conflict, close the
+dialog, refresh, and reopen the current team before retrying; stale drafts never
+silently overwrite a newer revision.
+
+Saved teams from the Agents page are available in both mention choosers. A team
 is a shortcut, not a group identity: explicit selection inserts its saved agent
 keys as individual mentions in one undoable edit. Names never resolve membership.
 Typing a team name or Space alone does not select it. Team names also prevent
@@ -376,8 +404,16 @@ feedback on them. Broader agent architecture proposals are outside the V1 scope.
 ## Raw Agent Activity plugin
 
 **Agent Activity** is an independently toggleable bundled plugin. Compact
-avatar/name/status rows sit below messages and above the channel and thread
-composers. Hover/focus shows an owner-only summary; click, tap, Enter or Space
+avatar/name/status rows sit below messages and above the thread composer. The
+channel composer instead shows a collapsed **Channel-wide activity** summary
+with an agent count. Expand it to inspect all channel activity, including work
+in threads and unknown statuses; it does not imply another job is running in
+the channel conversation. Sidebar and thread-summary working dots are unchanged.
+Observer turns have no thread identity, so thread typing never hides channel
+telemetry for that agent, including simultaneous work. Channel navigation resets
+the disclosure; ordinary activity updates preserve its open state while activity
+remains. When the last evidence disappears, the disclosure unmounts and resets.
+Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
 opens that exact agent's **channel activity** in the right panel, including work
 in other threads. Optional names and avatars reuse shared background profile
 queries; key fragments distinguish identities without profiles.

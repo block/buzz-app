@@ -419,6 +419,10 @@ confirmedPresence(
         sections.getByRole("button", { name: "Builderlab", exact: true }),
       ).toBeFocused();
       await tab();
+      await expect(
+        sections.getByRole("button", { name: "Pair mobile", exact: true }),
+      ).toBeFocused();
+      await tab();
       await expect(hostedCommunities).toBeFocused();
       await tab();
       await expect(
@@ -487,6 +491,10 @@ confirmedPresence(
       await tab();
       await expect(
         sections.getByRole("button", { name: "Builderlab", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Pair mobile", exact: true }),
       ).toBeFocused();
       await tab();
       await expect(hostedCommunities).toBeFocused();

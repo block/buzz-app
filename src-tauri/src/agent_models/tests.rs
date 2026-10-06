@@ -93,19 +93,16 @@ fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
 #[test]
 #[cfg(unix)]
 fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, _, _app, view) = fixture();
     let goose = dir.path().join("goose");
     let invoked = dir.path().join("invoked");
-    std::fs::write(
+    crate::test_executable::write_executable(
         &goose,
         format!(
             "#!/bin/sh\n: > '{}'\nread request\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}}}'\n",
             invoked.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
         "harness":{"command":goose,"args":["acp"],"provider":"databricks_v2","model":""},
         "environment":{}});
@@ -139,7 +136,6 @@ fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
 #[test]
 #[cfg(unix)]
 fn goose_connection_test_uses_the_draft_model_and_environment() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, _, _app, view) = fixture();
     let goose = dir.path().join("goose");
     let script = r#"#!/bin/sh
@@ -173,8 +169,7 @@ fi
         "__WORKSPACE__",
         &dir.path().canonicalize().unwrap().display().to_string(),
     );
-    std::fs::write(&goose, script).unwrap();
-    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&goose, script);
     let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
         "harness":{"command":goose,"args":["acp"],"provider":"openai","model":"visible-model"},
         "environment":{"GOOSE_MODEL":"effective-model","OPENAI_API_KEY":"draft-key"}});
@@ -249,7 +244,7 @@ fi
     let mut bad = edit.clone();
     let sidecar = dir.path().join("goose-acp");
     let temporary = dir.path().join("temporary-session");
-    std::fs::write(
+    crate::test_executable::write_executable(
         &sidecar,
         r#"#!/bin/sh
 [ "$#" -eq 0 ] || exit 1
@@ -284,9 +279,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":4,"result":{}}'
 "#
         .replace("__WORKSPACE__", &dir.path().canonicalize().unwrap().display().to_string())
         .replace("__TEMPORARY__", &temporary.display().to_string()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     bad["harness"]["command"] = json!(sidecar);
     bad["harness"]["args"] = json!([]);
     for (key, default_model) in [
@@ -855,22 +848,23 @@ async fn unstarted_ticket_expires_and_old_run_cannot_claim_its_replacement() {
 #[cfg(unix)]
 #[test]
 fn pi_catalog_uses_native_ticket_and_draft_configuration_without_saving() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, _host, _app, view) = fixture();
     std::fs::create_dir(dir.path().join("local-config")).unwrap();
     let tools = dir.path().join("tools");
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(&file, r#"#!/bin/sh
+        crate::test_executable::write_executable(
+            &file,
+            r#"#!/bin/sh
 [ "$BUZZ_PRIVATE_KEY" = "" ] || exit 1
 if [ "$1" = --version ]; then printf '0.99.1\n'; exit 0; fi
 read request
 [ "$PI_CODING_AGENT_DIR" -ef "./local-config" ] || exit 1
 [ "$BUZZ_ACP_AGENTS" = "10" ] || exit 1
 printf '%s\n' '{"id":"catalog","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"extension","id":"namespace/model.v1"}]}}'
-"#).unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+"#,
+        );
     }
     let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
     let result=invoke(&view,"agent_models_run",json!({"ticket":ticket,"request":{

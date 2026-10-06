@@ -50,6 +50,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { createTyping } from "./typing";
+import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
@@ -68,7 +69,11 @@ import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
-import { UploadError, type UploadedAttachment } from "./attachments";
+import {
+  UploadError,
+  type UploadedAttachment,
+  type UploadProgress,
+} from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
@@ -89,6 +94,7 @@ import {
   type OutboxStorage,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
+import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -450,7 +456,10 @@ export function createRelaySession(
       channelTraffic &&
       filters.every(
         (filter) =>
-          filter.search !== undefined &&
+          (filter.search !== undefined ||
+            !!filter.authors?.length ||
+            filter.since !== undefined ||
+            filter.until !== undefined) &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
           filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
@@ -685,6 +694,7 @@ export function createRelaySession(
           read: (filters, settings) => readVerified(filters, settings, false),
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
+          archiveAuthority: transport.archiveAuthority,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
@@ -828,7 +838,9 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
+    workflowAuthority: transport?.archiveAuthority,
     notify,
+    follows: browserThreadFollows(readScope),
   });
   const inboxFeed = createInboxFeed({
     // A withheld auxiliary event is not proof of an exhausted history page.
@@ -1528,6 +1540,7 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,
     scope: readScope,
@@ -1593,7 +1606,12 @@ export function createRelaySession(
     attachments:
       uploadAttachment && writes?.outbox.supports(9)
         ? Object.freeze({
-            async upload(file: File, channelId: string, signal: AbortSignal) {
+            async upload(
+              file: File,
+              channelId: string,
+              signal: AbortSignal,
+              progress?: UploadProgress,
+            ) {
               const combined = AbortSignal.any([
                 signal,
                 lifetime.signal,
@@ -1602,7 +1620,7 @@ export function createRelaySession(
               combined.throwIfAborted();
               if (!channelId || closed || !channels.canParticipate(channelId))
                 throw new UploadError("denied");
-              const result = await uploadAttachment(file, combined);
+              const result = await uploadAttachment(file, combined, progress);
               combined.throwIfAborted();
               if (!channels.canParticipate(channelId))
                 throw new UploadError("denied");
@@ -1664,6 +1682,7 @@ export function createRelaySession(
             await Promise.race([writer.publish(signed, signal), aborted]);
           }
         : undefined,
+      transport?.archiveAuthority,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -1679,6 +1698,7 @@ export function createRelaySession(
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
+        signingAuthority: transport?.archiveAuthority,
         reader: options?.exact
           ? {
               async read(filters, settings) {
@@ -2295,6 +2315,7 @@ export function createRelaySession(
               messageId: event.id,
               createdAt: event.created_at,
               authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
             }),
           ];

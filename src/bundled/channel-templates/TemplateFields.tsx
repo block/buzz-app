@@ -188,7 +188,7 @@ export function TemplateFields({
                     ))}
                     {!teams.length && !missing.length && (
                       <p className="text-secondary">
-                        Create reusable teams in Templates & teams.
+                        Create reusable teams on the Agents page.
                       </p>
                     )}
                   </fieldset>

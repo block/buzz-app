@@ -552,6 +552,55 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   gap: var(--space-2);
   padding-top: var(--space-1);
 }
+.backgroundUpload {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+.backgroundUploadBar {
+  position: relative;
+  overflow: hidden;
+  width: 64px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+.backgroundUploadFill,
+.backgroundUploadSweep {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--primary);
+}
+.backgroundUploadFill {
+  transform-origin: left;
+  transition: transform var(--duration-fast) linear;
+}
+.backgroundUploadSweep {
+  width: 33%;
+  animation: background-upload-sweep 1.2s ease-in-out infinite;
+}
+@keyframes background-upload-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .backgroundUploadFill {
+    transition: none;
+  }
+  .backgroundUploadSweep {
+    width: 100%;
+    opacity: 0.4;
+    animation: none;
+  }
+}
 .delivery {
   display: flex;
   align-items: center;
@@ -2298,4 +2347,24 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-size: var(--text-caption);
   color: var(--text-secondary);
   margin-block: var(--space-1);
+}
+
+.workflowOwner {
+  color: var(--text-subtle);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflowDetails {
+  margin-block: var(--space-3);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.workflowDetails dt {
+  color: var(--text-subtle);
+  margin-top: var(--space-2);
+}
+.workflowDetails dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }

@@ -82,6 +82,8 @@ export type ComposerInputElement = HTMLDivElement & {
     text: string,
     recipient?: MentionRecipient | readonly MentionRecipient[],
     range?: { start: number; end: number },
+    /** A typed closing colon is recorded before conversion for one-step undo. */
+    terminator?: ":",
   ): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;

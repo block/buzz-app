@@ -333,6 +333,8 @@ Hermes also appears in the main list once its executable is detected:
   The pinned `buzz-acp` owns Claude system-prompt append, channel/thread sessions,
   permissions, cancellation and cleanup. Create, Start/Stop/Restart and retry use
   the existing native controller, without another identity or lifecycle owner.
+  See [View a Claude Code session](view-claude-session.md) for local transcripts
+  and tool activity.
 
 Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
 owned by the controller and read by both Rust and TypeScript. Native discovery

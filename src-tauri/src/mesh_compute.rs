@@ -584,6 +584,13 @@ mod persistence_tests {
             Some("unsloth/Real-GGUF:Q4")
         );
         assert_eq!(entries[3].model_name.as_deref(), Some("Friendly"));
+        // Non-ASCII ids must not split a character.
+        let mut odd = vec![entry("local-gguf/sha256-aaaaaaaaaaaé-tail", None)];
+        apply_names(&mut odd, &serde_json::Map::new());
+        assert_eq!(
+            odd[0].model_name.as_deref(),
+            Some("Model name unavailable (aaaaaaaaaaaé)")
+        );
     }
 
     #[test]
@@ -737,23 +744,6 @@ async fn name_entries(host: &MeshHost, entries: &mut [buzz_mesh_compute::invento
             }
         }
     }
-    // 2. Cold consumer: Mesh's local model inventory names GGUFs on this machine.
-    // Bounded; never starts Mesh.
-    if entries
-        .iter()
-        .any(|e| unnamed(e) && !names.contains_key(&e.model_id))
-    {
-        if let Ok(Ok(local)) = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            tokio::task::spawn_blocking(buzz_mesh_compute::catalog::local_display_names),
-        )
-        .await
-        {
-            for (key, name) in local {
-                names.entry(key).or_insert(serde_json::Value::String(name));
-            }
-        }
-    }
     apply_names(entries, &names);
 }
 
@@ -770,11 +760,13 @@ fn apply_names(
         if let Some(name) = names.get(&entry.model_id).and_then(|v| v.as_str()) {
             entry.model_name = Some(name.to_owned());
         } else if let Some(hash) = entry.model_id.strip_prefix("local-gguf/") {
-            let short = hash.trim_start_matches("sha256-");
-            entry.model_name = Some(format!(
-                "Model name unavailable ({})",
-                &short[..short.len().min(12)]
-            ));
+            // Character-safe: signed adverts carry arbitrary strings.
+            let short: String = hash
+                .trim_start_matches("sha256-")
+                .chars()
+                .take(12)
+                .collect();
+            entry.model_name = Some(format!("Model name unavailable ({short})"));
         }
     }
 }

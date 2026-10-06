@@ -56,12 +56,6 @@ pub struct Entry {
     pub fit: &'static str,
 }
 
-/// Mesh's own names for content-addressed (`local-gguf/sha256-…`) GGUFs on this
-/// machine, from its local model inventory. Blocking; callers must use a blocking task.
-pub fn local_display_names() -> std::collections::HashMap<String, String> {
-    models::scan_local_inventory_snapshot_with_progress(|_| {}).display_name_by_name
-}
-
 /// Runs blocking hardware/cache/catalog I/O; callers must use a blocking task.
 pub fn catalog() -> anyhow::Result<Catalog> {
     // The remote layer catalog enriches choices; it does not own Buzz's GGUF ladder.

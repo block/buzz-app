@@ -167,18 +167,31 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    struct Fixture {
+        port: u16,
+        stop: tokio::sync::oneshot::Sender<()>,
+        server: tokio::task::JoinHandle<Vec<String>>,
+    }
+    impl Fixture {
+        /// Stop only after the awaited probe, then return the recorded requests.
+        async fn finish(self) -> Vec<String> {
+            let _ = self.stop.send(());
+            self.server.await.unwrap()
+        }
+    }
+
     /// Loopback fixture answering `/v1/models` and `/v1/chat/completions` by path.
-    async fn fixture(
-        catalog: (u16, &'static str),
-        chat: u16,
-    ) -> (u16, tokio::task::JoinHandle<Vec<String>>) {
+    async fn fixture(catalog: (u16, &'static str), chat: u16) -> Fixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             let mut seen = Vec::new();
-            while let Ok(Ok((mut socket, _))) =
-                tokio::time::timeout(std::time::Duration::from_millis(500), listener.accept()).await
-            {
+            loop {
+                let mut socket = tokio::select! {
+                    _ = &mut stopped => break,
+                    accepted = listener.accept() => accepted.unwrap().0,
+                };
                 let mut request = Vec::new();
                 loop {
                     let mut buf = [0; 1024];
@@ -217,7 +230,7 @@ mod tests {
             }
             seen
         });
-        (port, server)
+        Fixture { port, stop, server }
     }
 
     fn client() -> reqwest::Client {
@@ -233,42 +246,42 @@ mod tests {
 
     #[tokio::test]
     async fn successful_inference_is_ready_even_without_a_context_budget() {
-        let (port, server) = fixture((200, BUDGETLESS), 200).await;
-        assert_eq!(probe(&client(), port, "auto").await.unwrap(), "mesh");
-        assert_eq!(server.await.unwrap(), vec!["chat:mesh"]);
+        let f = fixture((200, BUDGETLESS), 200).await;
+        assert_eq!(probe(&client(), f.port, "auto").await.unwrap(), "mesh");
+        assert_eq!(f.finish().await, vec!["chat:mesh"]);
     }
 
     #[tokio::test]
     async fn catalog_failure_or_missing_entry_does_not_gate_working_inference() {
-        let (port, server) = fixture((500, "oops"), 200).await;
-        assert_eq!(probe(&client(), port, "auto").await.unwrap(), "mesh");
-        server.await.unwrap();
-        let (port, server) = fixture((200, BUDGETLESS), 200).await;
+        let f = fixture((500, "oops"), 200).await;
+        assert_eq!(probe(&client(), f.port, "auto").await.unwrap(), "mesh");
+        assert_eq!(f.finish().await, vec!["chat:mesh"]);
+        let f = fixture((200, BUDGETLESS), 200).await;
         assert_eq!(
-            probe(&client(), port, "lagging/model:Q4").await.unwrap(),
+            probe(&client(), f.port, "lagging/model:Q4").await.unwrap(),
             "lagging/model:Q4"
         );
-        assert_eq!(server.await.unwrap(), vec!["chat:lagging/model:Q4"]);
+        assert_eq!(f.finish().await, vec!["chat:lagging/model:Q4"]);
     }
 
     #[tokio::test]
     async fn failed_inference_uses_the_catalog_only_to_explain() {
-        let (port, server) = fixture((200, BUDGETLESS), 503).await;
-        let error = probe(&client(), port, "lagging/model:Q4")
+        let f = fixture((200, BUDGETLESS), 503).await;
+        let error = probe(&client(), f.port, "lagging/model:Q4")
             .await
             .unwrap_err();
         assert!(
             error.contains("503") && error.contains("not yet visible"),
             "{error}"
         );
-        server.await.unwrap();
-        let (port, server) = fixture((200, BUDGETLESS), 503).await;
-        let error = probe(&client(), port, "auto").await.unwrap_err();
+        assert_eq!(f.finish().await, vec!["chat:lagging/model:Q4", "models"]);
+        let f = fixture((200, BUDGETLESS), 503).await;
+        let error = probe(&client(), f.port, "auto").await.unwrap_err();
         assert!(
             error.contains("503") && !error.contains("not yet visible"),
             "{error}"
         );
-        server.await.unwrap();
+        assert_eq!(f.finish().await, vec!["chat:mesh", "models"]);
     }
 }
 

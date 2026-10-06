@@ -88,18 +88,26 @@ motion with Tailwind's `motion-reduce` variant.
 
 Tauri uses `titleBarStyle: Overlay` and `hiddenTitle` on macOS. Native traffic
 lights have a reserved 104px left area before the community switcher only in the
-macOS desktop runtime. Web gets no
-inset or imitation window controls. Linux desktop uses an undecorated window
-with app-owned minimize, maximize/restore and close buttons in the header,
-including during identity setup. Windows retains its native decorations. Drag regions are limited to the
-header background; controls remain clickable. On macOS, double-clicking that
+macOS desktop runtime. Web gets no inset or imitation window controls. Linux
+and Windows desktop use undecorated windows with app-owned minimize,
+maximize/restore and close buttons in the header, including during identity
+setup. While the parser-loaded launch overlay keeps app content inert, a
+window-control header is portalled to the document body above the overlay; the
+launch owner removes it when the normal identity or shell header becomes usable.
+Drag regions are limited to the header background; controls remain clickable.
+On macOS, double-clicking that
 background follows the current system title-bar preference (Fill/Zoom, Minimize,
 or no action); changing the preference does not require restarting Buzz. Other
 platforms retain Tauri's native drag-region behavior. The main-window capability
 grants titlebar dragging and the internal maximize action used by that
-handler. A Linux-only main-webview capability also grants minimize,
+handler. A Linux and Windows main-webview capability also grants minimize,
 maximize/restore and close for the integrated controls. These actions do not
-change the app’s existing close lifecycle. The main capability includes scoped HTTP(S) opening for
+change the app’s existing close lifecycle. On Windows, the custom maximize
+button does not expose native maximize-hover Snap Layouts, and right-clicking
+the custom header does not open the native system menu. Keyboard and edge-snap
+behavior remain native and require per-platform acceptance testing.
+The main capability includes scoped
+HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 

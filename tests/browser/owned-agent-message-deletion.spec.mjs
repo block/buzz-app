@@ -20,6 +20,7 @@ test.use({
   readState: true,
   historyCounts: { alpha: 2, beta: 1 },
   agentMessageDeletion: true,
+  viewport: { width: 1280, height: 720 },
   video: "on",
 });
 

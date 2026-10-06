@@ -182,6 +182,13 @@ function wrap(format: CopyFormat, inner: string, tag: string): string {
 function markdown(node: Node, range?: Range): string {
   const container = (node.ownerDocument ?? document).createElement("div");
   container.innerHTML = serializeNode(node, "html", range);
+  // Rendered paragraphs are separated by blank lines; editor paragraphs are
+  // individual source lines. Preserve that distinction only for timeline HTML.
+  const origin = node instanceof Element ? node : node.parentElement;
+  if (origin?.closest('[data-buzz-copy="timeline"]')) {
+    for (const paragraph of container.querySelectorAll("p + p"))
+      paragraph.before(container.ownerDocument.createElement("p"));
+  }
   // Tables remain tab-separated source in the composer, whose schema has no table.
   for (const row of container.querySelectorAll("tr"))
     for (const cell of [...row.children].slice(1)) cell.prepend("\t");
@@ -259,7 +266,11 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
   let text = "";
   let previous: Node | undefined;
   for (const child of node.childNodes) {
-    if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
+    if (
+      (range && !range.intersectsNode(child)) ||
+      (format === "html" && formatting(child))
+    )
+      continue;
     const value = serialize(
       child,
       format,
@@ -268,7 +279,12 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
     );
     const separator =
       previous && format !== "html" ? siblingSeparator(previous, child) : "";
-    if (separator === "\t") text += separator;
+    if (separator === "\n\n" && text && value) {
+      const existing =
+        (text.match(/\n*$/)?.[0].length ?? 0) +
+        (value.match(/^\n*/)?.[0].length ?? 0);
+      text += "\n".repeat(Math.max(0, 2 - existing));
+    } else if (separator === "\t") text += separator;
     else if (
       text &&
       value &&
@@ -278,7 +294,7 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
     )
       text += separator;
     text += value;
-    previous = child;
+    if (!formatting(child)) previous = child;
   }
   return text;
 }
@@ -293,6 +309,7 @@ function siblingSeparator(previous: Node, current: Node) {
   const currentTag = current instanceof Element ? current.tagName : "";
   if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
     return "\t";
+  if (previousTag === "P" && currentTag === "P") return "\n\n";
   return blockTag.test(previousTag) || blockTag.test(currentTag) ? "\n" : "";
 }
 

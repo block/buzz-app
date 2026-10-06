@@ -2536,6 +2536,18 @@ function readBack(html: string | undefined) {
   return serializeNode(template.content, "markdown");
 }
 
+it.each(["First\nSecond", "First\n\nSecond", "  First\t  \n\n\nSecond  "])(
+  "preserves composer whitespace %j through rich copy and paste",
+  (source) => {
+    const h = mount(source);
+    act(() => h.input.setSelectionRange(0, h.input.value.length));
+    const copied = clipboard(h.input, "copy");
+    const target = mount();
+    paste(target.input, copied.text ?? "", copied.html);
+    expect(target.markdown()).toBe(source);
+  },
+);
+
 it.each(["italic", "bold", "strike"] as const)(
   "round-trips punctuation-only %s next to letters",
   (format) => {
@@ -2605,6 +2617,8 @@ it("uses plain text when pasting rich content into an existing code block", asyn
 });
 
 it.each([
+  ["First\n\nSecond", "First\n\nSecond"],
+  ["> First\n>\n> Second", "First\n\nSecond"],
   ["- one\n- two", "one\ntwo"],
   ["3. first\n4. second", "first\nsecond"],
   ["> quoted", "quoted"],
@@ -2613,7 +2627,7 @@ it.each([
   ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2"],
   [
     "intro\n\n- one\n- two\n\n> quoted\n\nouter",
-    "intro\none\ntwo\nquoted\nouter",
+    "intro\n\none\ntwo\n\n\nquoted\n\nouter",
   ],
 ])(
   "copies real timeline structure through the composer: %s",
@@ -2636,9 +2650,22 @@ it.each([
         onOpenLink={() => false}
       />,
     );
+    const walker = document.createTreeWalker(
+      view.container,
+      NodeFilter.SHOW_TEXT,
+    );
+    const nodes: Text[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode())
+      if (/\S/.test(node.textContent ?? "")) nodes.push(node as Text);
+    const range = document.createRange();
+    const first = nodes[0],
+      last = nodes.at(-1);
+    if (!first || !last) throw new Error("Missing rendered text");
+    range.setStart(first, 0);
+    range.setEnd(last, last.length);
     const copied = {
-      text: serializeNode(view.container, "text"),
-      html: `<div data-buzz-copy="timeline">${serializeNode(view.container, "html")}</div>`,
+      text: serializeNode(view.container, "text", range),
+      html: `<div data-buzz-copy="timeline">${serializeNode(view.container, "html", range)}</div>`,
     };
     expect(copied.text).toBe(plain);
     const target = mount();

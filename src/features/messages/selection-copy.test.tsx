@@ -185,6 +185,26 @@ describe("serializeNode", () => {
     );
   });
 
+  it.each(["", "\n", "\n\n\n"])(
+    "preserves paragraph spacing with DOM separator %j",
+    (spacing) => {
+      const body = mount(row(`<p>First</p>${spacing}<p>Second</p>`));
+      const { selection } = select(
+        lastText(query("p", body)),
+        1,
+        lastText(query("p:last-child", body)),
+        3,
+      );
+      expect(serializeSelection(selection, "text")).toBe(
+        `irst${spacing.length > 2 ? spacing : "\n\n"}Sec`,
+      );
+      const html = document.createElement("div");
+      html.dataset.buzzCopy = "timeline";
+      html.innerHTML = serializeSelection(selection, "html");
+      expect(serializeNode(html, "markdown")).toBe("irst\n\nSec");
+    },
+  );
+
   it("writes custom emoji as shortcodes", () => {
     const paragraph = query(
       "p",

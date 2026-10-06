@@ -749,13 +749,13 @@ async fn body_transport_failures_preserve_committed_and_restored_sessions_for_re
             } else {
                 true
             };
-            if matches!(failure, BodyFailure::Stalled) {
-                release.notify_one();
-            }
             let first_result = match first_result {
                 Some(result) => result,
                 None => first_check.await,
             };
+            if matches!(failure, BodyFailure::Stalled) {
+                release.notify_one();
+            }
             assert!(
                 request_started,
                 "stalled response did not start before the client timeout ({failure:?}, restored={restored_owner})"

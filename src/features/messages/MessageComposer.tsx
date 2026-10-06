@@ -10,6 +10,7 @@ import {
   allowsOutsideMentions,
   archivedMention,
   mentionAdmission,
+  pastedMentionRecipient,
 } from "./mention-admission";
 import { rememberMention } from "./mention-history";
 import {
@@ -1392,25 +1393,20 @@ function Composer({
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
-              // Pasted identity links notify the people the picker would offer,
-              // under their current names; edits never add recipients. In a
-              // stream or forum, a cached profile outside the channel counts as
-              // a picked directory row, so Send asks before adding them. The
-              // pasted label is never the name: it could disguise the invitee.
-              acceptRecipient={(pubkey) => {
-                if (editing.target) return null;
-                const name = session.profiles.snapshot().get(pubkey)?.name;
-                return (
-                  mentionCandidates(
-                    session,
-                    channelId,
-                    agentChoices,
-                    mentionRoster,
-                    name ? [{ pubkey, name }] : [],
-                  ).find((c) => c.recipient.pubkey === pubkey)?.recipient ??
-                  null
-                );
-              }}
+              // Pasted identity links notify admitted recipients under their
+              // current names; edits never add recipients. Send still asks
+              // before adding someone outside the channel.
+              acceptRecipient={(pubkey) =>
+                editing.target
+                  ? null
+                  : pastedMentionRecipient(
+                      session,
+                      channelId,
+                      pubkey,
+                      agentChoices,
+                      mentionRoster,
+                    )
+              }
               data-single-emoji={largeEmojiDraft || undefined}
               maxLength={16000}
               aria-label={label}

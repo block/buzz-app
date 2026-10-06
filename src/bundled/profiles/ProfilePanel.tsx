@@ -1,3 +1,4 @@
+import type { AgentTypes } from "../../features/agent-types/service";
 import {
   usePanelTabHost,
   usePanelTabTitle,
@@ -71,6 +72,7 @@ export function ProfilePanel({
   context,
   navigation,
   control,
+  agentTypes,
   instanceId,
   close,
   refreshControl = true,
@@ -78,6 +80,7 @@ export function ProfilePanel({
   relay: RelayData;
   navigation?: Navigation;
   control?: AgentControl;
+  agentTypes?: AgentTypes | undefined;
   instanceId?: string | undefined;
   /** An enclosing exact-instance panel already owns status refresh. */
   refreshControl?: boolean;
@@ -98,6 +101,7 @@ export function ProfilePanel({
       context={context}
       navigation={navigation}
       control={control}
+      agentTypes={agentTypes}
       scope={connection.scope}
       viewer={connection.viewer}
       close={close}
@@ -122,6 +126,7 @@ function ProfileDetails({
   context,
   navigation,
   control,
+  agentTypes,
   scope,
   viewer,
   instanceId,
@@ -136,6 +141,7 @@ function ProfileDetails({
   context: PanelProps["context"];
   navigation: Navigation | undefined;
   control: AgentControl | undefined;
+  agentTypes: AgentTypes | undefined;
   scope: string | undefined;
   viewer: string | undefined;
   close(): void;
@@ -433,6 +439,7 @@ function ProfileDetails({
                   {control && scope && (
                     <ProfileAgentRuntime
                       control={control}
+                      agentTypes={agentTypes}
                       onOpenHarnesses={openHarnesses}
                       scope={scope}
                       pubkey={pubkey}
@@ -555,6 +562,7 @@ function ProfileDetails({
                 runtimeAgent ? (
                   <ProfileRuntime
                     control={control}
+                    agentTypes={agentTypes}
                     onOpenHarnesses={openHarnesses}
                     agent={runtimeAgent}
                     session={session}

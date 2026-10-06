@@ -92,7 +92,8 @@ export type AgentType<Config = unknown> = {
     agent: Pick<AgentIdentity, "pubkey" | "owner">,
   ): AgentFilter | readonly AgentFilter[];
   run(delivery: AgentDelivery<Config>): void | Promise<void>;
-  /** Per-run deadline in milliseconds; defaults to 30 seconds. */
+  /** Per-run deadline in milliseconds, from 1 to 30 minutes' worth; defaults
+   * to 30 seconds. */
   timeoutMs?: number;
   /** How many runs one agent may have in progress at once, from 1 to 16. Defaults
    * to 1, so each agent handles its events in order. */
@@ -132,6 +133,8 @@ const SEEN_LIMIT = 512;
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const CONCURRENCY_LIMIT = 16;
+/** Matches native's longest run lease. */
+const TIMEOUT_LIMIT_MS = 30 * 60_000;
 /** The names native accepts for a saved value. */
 const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const strings = (value: unknown) =>
@@ -243,7 +246,18 @@ export class AgentTypesService extends Service implements AgentTypes {
       throw new Error(
         "Agent types need an id, a title, Configure, subscription and run",
       );
-    const { concurrency, secrets = [] } = type;
+    const { concurrency, timeoutMs, secrets = [] } = type;
+    if (
+      timeoutMs !== undefined &&
+      !(
+        Number.isInteger(timeoutMs) &&
+        timeoutMs >= 1 &&
+        timeoutMs <= TIMEOUT_LIMIT_MS
+      )
+    )
+      throw new Error(
+        `Agent type timeoutMs must be a whole number from 1 to ${TIMEOUT_LIMIT_MS}`,
+      );
     if (
       concurrency !== undefined &&
       !(
@@ -478,8 +492,13 @@ export class AgentTypesService extends Service implements AgentTypes {
 
   // A run's hold on its agent. It is made for one run and rejects once that run has
   // ended, so a function that outlives its deadline can neither publish nor read a
-  // secret while the next run is in progress.
-  private identity(instance: Instance, signal: AbortSignal): AgentIdentity {
+  // secret while the next run is in progress. Native enforces the same boundary
+  // with the run's lease, including for a call already in flight when it ends.
+  private identity(
+    instance: Instance,
+    signal: AbortSignal,
+    lease: Promise<number> | undefined,
+  ): AgentIdentity {
     const { agent, type, binding } = instance;
     const running = () => {
       if (signal.aborted || binding.signal.aborted)
@@ -494,7 +513,8 @@ export class AgentTypesService extends Service implements AgentTypes {
         running();
         if (!this.control.publishAs)
           throw new Error("Agents can publish only from the desktop app");
-        return this.control.publishAs(agent.id, {
+        if (!lease) throw new Error("This run has no native lease");
+        return this.control.publishAs(agent.id, await lease, {
           kind: event.kind,
           content: event.content,
           tags: event.tags ?? [],
@@ -508,7 +528,8 @@ export class AgentTypesService extends Service implements AgentTypes {
           throw new Error(
             "Agent secrets are available only in the desktop app",
           );
-        return this.control.secret(agent.id, name);
+        if (!lease) throw new Error("This run has no native lease");
+        return this.control.secret(agent.id, await lease, name);
       },
     });
   }
@@ -516,11 +537,15 @@ export class AgentTypesService extends Service implements AgentTypes {
   private async execute(instance: Instance, job: Job) {
     const id = instance.agent.id;
     const ended = new AbortController();
+    const timeoutMs = instance.type.timeoutMs ?? 30_000;
     const signal = AbortSignal.any([
       instance.controller.signal,
-      AbortSignal.timeout(instance.type.timeoutMs ?? 30_000),
+      AbortSignal.timeout(timeoutMs),
       ended.signal,
     ]);
+    const lease = this.control.runBegin?.(id, timeoutMs);
+    // A refused lease surfaces from publish or secret; it never rejects unheard.
+    lease?.catch(() => {});
     this.count(id, (now) => ({
       ...now,
       fired: now.fired + 1,
@@ -534,7 +559,7 @@ export class AgentTypesService extends Service implements AgentTypes {
             Object.freeze({
               event: job.event,
               ...(job.channelId ? { channelId: job.channelId } : {}),
-              agent: this.identity(instance, signal),
+              agent: this.identity(instance, signal, lease),
               config: instance.agent.plugin?.config,
               signal,
             }),
@@ -557,6 +582,11 @@ export class AgentTypesService extends Service implements AgentTypes {
       }));
     } finally {
       ended.abort();
+      const end = this.control.runEnd;
+      if (lease && end)
+        void lease.then(end).catch(() => {
+          // The lease is already gone, or native will expire it at its deadline.
+        });
     }
   }
 }

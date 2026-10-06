@@ -86,6 +86,8 @@ fn main() {
             "agent_control_create_commit",
             "agent_control_creation_profile",
             "agent_identity_publish",
+            "agent_identity_run_begin",
+            "agent_identity_run_end",
             "agent_identity_secret",
             "agent_control_snapshot",
             "agent_control_log_challenge",

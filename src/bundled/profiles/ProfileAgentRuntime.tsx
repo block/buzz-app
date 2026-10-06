@@ -1,3 +1,4 @@
+import type { AgentTypes } from "../../features/agent-types/service";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
 import type { OpenResult } from "../../features/navigation/controller";
@@ -12,6 +13,7 @@ import styles from "./Profiles.module.css";
  * native identity is unambiguous; the caller supplies ownership evidence. */
 export function ProfileAgentRuntime({
   control,
+  agentTypes,
   onOpenHarnesses,
   scope,
   pubkey,
@@ -19,6 +21,7 @@ export function ProfileAgentRuntime({
   owned = false,
 }: {
   control: AgentControl;
+  agentTypes?: AgentTypes | undefined;
   onOpenHarnesses?: (() => Promise<OpenResult>) | undefined;
   scope: string;
   pubkey: string;
@@ -101,6 +104,7 @@ export function ProfileAgentRuntime({
         <AgentEditor
           agent={agent}
           control={control}
+          agentTypes={agentTypes}
           state={state}
           onClose={() => setEditing(false)}
           onOpenHarnesses={

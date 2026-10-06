@@ -1,3 +1,4 @@
+import type { AgentTypes } from "../../features/agent-types/service";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -23,9 +24,11 @@ const MANAGEMENT_QUEUE_LIMIT = 200;
 export function AgentUpdateReview({
   relay,
   control,
+  agentTypes,
 }: {
   relay: RelayData;
   control: AgentControl;
+  agentTypes?: AgentTypes | undefined;
 }) {
   const connection = useSyncExternalStore(
     relay.subscribe,
@@ -37,6 +40,7 @@ export function AgentUpdateReview({
       key={messageViewKey(connection.session, connection.scope)}
       connection={connection}
       control={control}
+      agentTypes={agentTypes}
     />
   );
 }
@@ -44,9 +48,11 @@ export function AgentUpdateReview({
 function SessionAgentUpdateReview({
   connection,
   control,
+  agentTypes,
 }: {
   connection: RelaySnapshot;
   control: AgentControl;
+  agentTypes: AgentTypes | undefined;
 }) {
   const controlState = useSyncExternalStore(
     control.subscribe,
@@ -261,6 +267,7 @@ function SessionAgentUpdateReview({
       key={request.value.requestId}
       agent={agent}
       control={control}
+      agentTypes={agentTypes}
       state={controlState}
       initialDraft={initial}
       disabled={!confirmed}

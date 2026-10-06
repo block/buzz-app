@@ -1,3 +1,4 @@
+import type { AgentTypes } from "../../features/agent-types/service";
 import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { useState } from "react";
 import { relayPartition } from "../../features/relay/partition";
@@ -25,6 +26,7 @@ export function InstanceProfilePanel(
     instance: InstanceTarget;
     relay: RelayData;
     control: AgentControl;
+    agentTypes?: AgentTypes | undefined;
     navigation?: Navigation;
   },
 ) {
@@ -52,6 +54,7 @@ function InstanceDetails(
     instance: InstanceTarget;
     relay: RelayData;
     control: AgentControl;
+    agentTypes?: AgentTypes | undefined;
     navigation?: Navigation;
   },
 ) {

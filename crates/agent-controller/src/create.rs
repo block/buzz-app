@@ -161,6 +161,8 @@ impl CreationProfile {
 }
 /// Native-only signing input for a plugin agent, never serialized across IPC.
 pub struct PluginIdentity {
+    /// Saved settings revision; a run lease is bound to it.
+    pub revision: u64,
     pub credential_id: String,
     pub pubkey: String,
     pub url: String,

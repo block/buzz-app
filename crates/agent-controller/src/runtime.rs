@@ -954,6 +954,7 @@ impl Controller {
         let auth = agent.auth_tag.ok_or("Missing owner authorization")?;
         crate::secret::validate_attestation(&auth, &agent.pubkey)?;
         Ok(crate::create::PluginIdentity {
+            revision: agent.revision,
             credential_id: agent.credential_id,
             pubkey: agent.pubkey,
             url: format!(

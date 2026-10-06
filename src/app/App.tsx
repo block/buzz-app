@@ -231,6 +231,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <AgentUpdateReview
             relay={services.relay}
             control={services.agentControl}
+            agentTypes={services.agentTypes}
           />
           <UpdateNotice updates={services.updates} />
           {startup === "recovery" && !settings ? (

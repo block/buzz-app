@@ -1026,6 +1026,16 @@ already streams: the channel kinds in `features/relay/live.ts` for the channels 
 owner has joined, plus the global routes. Replayed history, finite reads and local
 unsent intent never run it.
 
+Input is what this window accepts, not every event on the wire:
+
+- The stream is the visibility-filtered output of `accept()`. A reaction, edit or
+  deletion whose `e` target this window has not loaded can be dropped even with a
+  valid `h` tag, so two windows can hand an agent different inputs.
+- Previewed channels stream too, not only joined ones.
+- Leaving a channel stops new delivery from it, but events already queued for an
+  agent still run; the service receives no channel-access revocation.
+- Nothing is caught up after a disconnect or while the app is closed.
+
 `run` receives the event, the route's channel when known, the config, a signal and
 `agent`: `{ id, pubkey, name, owner, publish, secret }`. It receives no key, session
 or UI object.
@@ -1041,7 +1051,11 @@ or UI object.
   the session is replaced. `signal` aborts at that moment.
 - `agent` is made for one run. `agent.publish` and `agent.secret` reject once that
   run has ended, so a function that ignores `signal` and outlives its deadline cannot
-  act while the next run is in progress.
+  act while the next run is in progress. Native enforces the same boundary: each run
+  opens a lease (`agent_identity_run_begin`) bound to the saved revision and the
+  run's deadline. Publish and secret reads check it before and after reading the
+  key, and Stop, Start, save and delete end it, so a call already waiting on the
+  credential store when its run ends is never sent.
 - A thrown error or rejection is logged and counted; it does not stop the agent or
   affect others. The agent's screen shows run, failure and skip counts, the last
   failure, and the subscription in force.
@@ -1051,7 +1065,8 @@ or UI object.
 its key from the credential store, signs the event with the owner's `auth` tag
 attached, and posts it to the community's `/events` endpoint with NIP-98, the same
 route agent profiles use. Only kinds 9 (message), 40003 (edit), 7 (reaction) and 5
-(deletion) are signed. It resolves to the accepted event's `id` and `created_at`.
+(deletion) are signed. A publish never reopens an unlock the user refused; Stop and
+Start the agent to ask again. It resolves to the accepted event's `id` and `created_at`.
 The key never enters the WebView. The owner's socket is not used, because the relay
 accepts an event only from the identity that authenticated the connection.
 

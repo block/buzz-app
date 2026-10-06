@@ -948,6 +948,172 @@ mod overlap {
             .unwrap()
     }
 
+    // One enabled plugin agent whose key the Gated credential store can return.
+    fn seed_plugin(dir: &std::path::Path) -> String {
+        let pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        let id =
+            format!("{pubkey}-733db93c5a38b650794422a480fab67f1dd8f6f40112c360f9814dfaec3bfcbb");
+        let auth = "[\"auth\",\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"\",\"6fd97eb61e46846e184a567429e66cbb76e84aa4f70b51cdf41e18b423679952433e952ae1fc344c74c6beaad0055a7a276d512823fcba8c6512407bb1558dce\"]";
+        let agent = json!({"id":id, "pubkey":pubkey, "relayUrl":"wss://relay.example",
+            "name":"Plugin", "systemPrompt":"", "workspace":"",
+            "harness":{"command":"","args":[],"model":"","provider":""},
+            "plugin":{"type":"example/assistant","config":{}},
+            "environment":{}, "revision":1, "enabled":true, "startOnAppLaunch":false,
+            "credentialId":"cred-plugin", "authTag":auth, "imported":{}});
+        std::fs::write(
+            dir.join("store/agents.json"),
+            serde_json::to_vec(&json!({"version":1,"agents":[agent]})).unwrap(),
+        )
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn a_run_ended_during_the_key_read_never_publishes() {
+        let (dir, host, _app, view) = fixture();
+        let id = seed_plugin(dir.path());
+        let gate = Gate::install(&host, dir.path(), &["cred-plugin"]);
+        // Stop then Start while the key is being read: the agent is enabled again
+        // at the same revision, but the run that asked has ended.
+        let lease = invoke(
+            &view,
+            "agent_identity_run_begin",
+            json!({"id":id,"timeoutMs":60_000}),
+        )
+        .unwrap();
+        let publish = {
+            let (owner, id, run_id) = (host.clone(), id.clone(), lease.as_u64().unwrap());
+            tokio::spawn(async move {
+                let event = PluginEvent {
+                    kind: 9,
+                    content: "late".into(),
+                    tags: vec![vec!["h".into(), "c1".into()]],
+                };
+                publish_as(owner, id, run_id, event).await
+            })
+        };
+        assert_eq!(gate.entered().await, "cred-plugin");
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"stop"}),
+        )
+        .unwrap();
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"start"}),
+        )
+        .unwrap();
+        gate.release["cred-plugin"].send(()).unwrap();
+        let refused = within(publish).await.unwrap_err();
+        assert_eq!(refused, "This run has ended");
+        // The ended lease reads no secret either, and a fresh run may proceed.
+        assert_eq!(
+            invoke(
+                &view,
+                "agent_identity_secret",
+                json!({"id":id,"runId":lease,"name":"apiKey"})
+            )
+            .unwrap_err(),
+            json!("This run has ended")
+        );
+        let fresh = invoke(
+            &view,
+            "agent_identity_run_begin",
+            json!({"id":id,"timeoutMs":60_000}),
+        )
+        .unwrap();
+        assert_ne!(fresh, lease);
+        invoke(&view, "agent_identity_run_end", json!({"runId":fresh})).unwrap();
+        assert_eq!(
+            invoke(
+                &view,
+                "agent_identity_secret",
+                json!({"id":id,"runId":fresh,"name":"apiKey"})
+            )
+            .unwrap_err(),
+            json!("This run has ended")
+        );
+        assert!(gate.idle());
+    }
+
+    #[tokio::test]
+    async fn automated_publishes_never_reopen_a_refused_unlock() {
+        static RETRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        struct Refusing;
+        impl Credentials for Refusing {
+            fn retry(&self) {
+                RETRIES.fetch_add(1, Ordering::SeqCst);
+            }
+            fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+                panic!("not a deletion")
+            }
+            fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+                panic!("not an import")
+            }
+            fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+                panic!("not a write")
+            }
+            fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
+                Err(REFUSAL.into())
+            }
+        }
+        let (dir, host, _app, view) = fixture();
+        let id = seed_plugin(dir.path());
+        host.with(|h| {
+            h.controller = Controller::new(
+                Store::open(dir.path().join("replacement"))?,
+                Arc::new(Refusing),
+                Err("placeholder".into()),
+                dir.path().join("ownership"),
+            );
+            h.controller = Controller::new(
+                Store::open(dir.path().join("store"))?,
+                Arc::new(Refusing),
+                Err("No runtime".into()),
+                dir.path().join("ownership"),
+            );
+            h.credentials = Arc::new(Refusing);
+            Ok(())
+        })
+        .unwrap();
+        let lease = invoke(
+            &view,
+            "agent_identity_run_begin",
+            json!({"id":id,"timeoutMs":60_000}),
+        )
+        .unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                invoke(
+                    &view,
+                    "agent_identity_publish",
+                    json!({"id":id,"runId":lease,
+                    "event":{"kind":9,"content":"hi","tags":[["h","c1"]]}})
+                )
+                .unwrap_err(),
+                json!(REFUSAL)
+            );
+        }
+        assert_eq!(RETRIES.load(Ordering::SeqCst), 0);
+        // Only a deliberate Start may ask again.
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"stop"}),
+        )
+        .unwrap();
+        assert_eq!(RETRIES.load(Ordering::SeqCst), 0);
+        invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":"start"}),
+        )
+        .unwrap();
+        assert_eq!(RETRIES.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn stop_during_pi_version_probe_fences_the_late_result() {
         let (dir, host, _app, view) = fixture();

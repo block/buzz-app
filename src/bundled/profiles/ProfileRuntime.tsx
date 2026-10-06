@@ -1,3 +1,4 @@
+import type { AgentTypes } from "../../features/agent-types/service";
 import {
   type ReactNode,
   useEffect,
@@ -59,6 +60,7 @@ const noState = () => null;
 /** Owner-only saved and running configuration. The caller verifies ownership. */
 export function ProfileRuntime({
   control,
+  agentTypes,
   onOpenHarnesses,
   agent,
   session,
@@ -68,6 +70,7 @@ export function ProfileRuntime({
   onOpenLog,
 }: {
   control: AgentControl;
+  agentTypes?: AgentTypes | undefined;
   onOpenHarnesses?: (() => Promise<OpenResult>) | undefined;
   agent: AgentView;
   session: RelaySession;
@@ -139,15 +142,18 @@ export function ProfileRuntime({
               {statusLabel(agent.status)}
             </span>
           </div>
-          <div className={styles.activityRow}>
-            <Switch
-              label="Start on launch"
-              checked={agent.startOnAppLaunch}
-              disabled={blocked}
-              onCheckedChange={toggle}
-            />
-          </div>
-          {control.readLog && authorizeLog && onOpenLog && (
+          {/* A plugin agent has no process: nothing launches and no log exists. */}
+          {!agent.plugin && (
+            <div className={styles.activityRow}>
+              <Switch
+                label="Start on launch"
+                checked={agent.startOnAppLaunch}
+                disabled={blocked}
+                onCheckedChange={toggle}
+              />
+            </div>
+          )}
+          {!agent.plugin && control.readLog && authorizeLog && onOpenLog && (
             <div className={styles.logEntry}>
               <Button
                 size="compact"
@@ -232,6 +238,7 @@ export function ProfileRuntime({
         <AgentEditor
           agent={agent}
           control={control}
+          agentTypes={agentTypes}
           state={state}
           onClose={() => setEditing(false)}
           onOpenHarnesses={

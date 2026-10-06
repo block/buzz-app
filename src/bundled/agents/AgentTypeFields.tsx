@@ -5,6 +5,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agent-types/service";
 import type { AgentView } from "../../features/agents/control";
+import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { AgentDraft } from "./agent-edit";
@@ -61,6 +62,16 @@ function withSecret(
   return value ? { ...rest, [name]: value } : rest;
 }
 
+/** Marks a saved value for removal on save (`null`), or takes that mark back. */
+function withRemoval(
+  environment: AgentDraft["environment"],
+  name: string,
+  remove: boolean,
+) {
+  const { [name]: _, ...rest } = environment;
+  return remove ? { ...rest, [name]: null } : rest;
+}
+
 /** A plugin agent's whole form: the host asks for a name, the type for the rest. */
 export function AgentTypeFields({
   draft,
@@ -78,6 +89,7 @@ export function AgentTypeFields({
 }) {
   const plugin = draft.plugin;
   const type = types.find((type) => type.key === plugin?.type);
+  const savedKeys = agent?.harness.environmentKeys ?? [];
   return (
     <div className="min-w-0 space-y-4">
       <Field label="Name">
@@ -98,26 +110,75 @@ export function AgentTypeFields({
               onChange({ plugin: { type: plugin.type, config } })
             }
           />
-          {type.secrets?.map((secret) => (
-            <SecretField
-              key={secret.name}
-              label={secret.label}
-              noun="value"
-              value={draft.environment[secret.name]}
-              saved={!!agent?.harness.environmentKeys.includes(secret.name)}
-              disabled={disabled}
-              emptyPlaceholder={secret.optional ? "Optional" : ""}
-              onChange={(value) =>
-                onChange({
-                  environment: withSecret(
-                    draft.environment,
-                    secret.name,
-                    value,
-                  ),
-                })
-              }
-            />
-          ))}
+          {type.secrets?.map((secret) => {
+            const saved = savedKeys.includes(secret.name);
+            const removing = draft.environment[secret.name] === null;
+            return (
+              <div key={secret.name} className="min-w-0 space-y-2">
+                <SecretField
+                  label={secret.label}
+                  noun="value"
+                  value={draft.environment[secret.name]}
+                  saved={saved}
+                  disabled={disabled}
+                  emptyPlaceholder={secret.optional ? "Optional" : ""}
+                  onChange={(value) =>
+                    onChange({
+                      environment: withSecret(
+                        draft.environment,
+                        secret.name,
+                        value,
+                      ),
+                    })
+                  }
+                />
+                {/* A required value can be replaced but not removed. */}
+                {saved && secret.optional && (
+                  <RemoveSaved
+                    label={secret.label}
+                    removing={removing}
+                    disabled={disabled}
+                    onToggle={() =>
+                      onChange({
+                        environment: withRemoval(
+                          draft.environment,
+                          secret.name,
+                          !removing,
+                        ),
+                      })
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
+          {/* Values saved under names this version of the type no longer asks for. */}
+          {savedKeys
+            .filter((name) => !type.secrets?.some((s) => s.name === name))
+            .map((name) => (
+              <div
+                key={name}
+                className="flex min-w-0 items-center justify-between gap-2"
+              >
+                <span className="text-body-sm text-secondary">
+                  Saved value <code>{name}</code> is no longer used
+                </span>
+                <RemoveSaved
+                  label={name}
+                  removing={draft.environment[name] === null}
+                  disabled={disabled}
+                  onToggle={() =>
+                    onChange({
+                      environment: withRemoval(
+                        draft.environment,
+                        name,
+                        draft.environment[name] !== null,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            ))}
         </fieldset>
       ) : (
         <p role="status" className="text-body-sm text-secondary">
@@ -127,5 +188,30 @@ export function AgentTypeFields({
         </p>
       )}
     </div>
+  );
+}
+
+function RemoveSaved({
+  label,
+  removing,
+  disabled,
+  onToggle,
+}: {
+  label: string;
+  removing: boolean;
+  disabled: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="compact"
+      variant="ghost"
+      disabled={disabled}
+      aria-label={removing ? `Keep saved ${label}` : `Remove saved ${label}`}
+      onClick={onToggle}
+    >
+      {removing ? "Keep saved value" : "Remove saved value"}
+    </Button>
   );
 }

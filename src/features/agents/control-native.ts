@@ -14,8 +14,13 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     commitCreate: (requestId, edit, auth) =>
       invoke("agent_control_create_commit", { requestId, edit, auth }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),
-    publishAs: (id, event) => invoke("agent_identity_publish", { id, event }),
-    secret: (id, name) => invoke("agent_identity_secret", { id, name }),
+    runBegin: (id, timeoutMs) =>
+      invoke("agent_identity_run_begin", { id, timeoutMs }),
+    runEnd: (runId) => invoke("agent_identity_run_end", { runId }),
+    publishAs: (id, runId, event) =>
+      invoke("agent_identity_publish", { id, runId, event }),
+    secret: (id, runId, name) =>
+      invoke("agent_identity_secret", { id, runId, name }),
     setStartOnAppLaunch: (id, enabled) =>
       invoke("agent_control_start_on_app_launch", { id, enabled }),
     snapshot: () => invoke("agent_control_snapshot"),

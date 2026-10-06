@@ -57,7 +57,7 @@ it("selects the SDK-backed recommendation and discloses the download before shar
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(screen.getByRole("combobox")).toHaveTextContent("recommended");
   expect(
-    screen.getByText("Downloads 6GB when you share. Memory fit: comfortable."),
+    screen.getByText("Downloads 6GB when sharing starts · fits comfortably."),
   ).toBeInTheDocument();
   expect(invoke).toHaveBeenCalledWith("mesh_compute_catalog");
 });

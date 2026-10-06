@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
 import { Button } from "../../shared/design-system/ui/Button";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { CpuIcon } from "../../shared/design-system/icons";
 import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
@@ -388,10 +389,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
           <section aria-label="Share compute">
             <h2 className="text-body">Share your compute</h2>
             <p className="text-body-sm text-secondary">
-              Community prompts run on your hardware. Auto chooses the model;
-              Advanced lets you override it. Sharing resumes when you reopen
-              Buzz. Stop sharing keeps it off.
+              Let {community?.name ?? "this community"} run prompts on this
+              machine. Auto picks the best model for your hardware; Advanced
+              lets you choose. Sharing resumes when you reopen Buzz.
             </p>
+            <Switch
+              label="Share this machine"
+              checked={Boolean(status.sharing || status.savedSharing?.enabled)}
+              disabled={
+                busy ||
+                phase === "starting" ||
+                phase === "stopping" ||
+                snapshot.status !== "ready" ||
+                (!status.sharing &&
+                  !status.savedSharing?.enabled &&
+                  !auto &&
+                  !model.trim())
+              }
+              onCheckedChange={(next) => {
+                if (next) void share();
+                else void share(!status.sharing);
+              }}
+            />
+            <p aria-live="polite" className="text-body-sm">
+              {shareStatus(status, phase, community?.name)}
+            </p>
+            {status.sharing && status.download && !status.download.done && (
+              <DownloadProgress download={status.download} />
+            )}
             <ShareModelPicker
               model={model}
               auto={auto}
@@ -410,70 +435,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 Boolean(status.sharing)
               }
             />
-            {status.sharing && status.download && (
-              <p role="status">
-                {status.download.done
-                  ? "File downloaded; preparing model…"
-                  : `Downloading ${status.download.file ?? status.download.label} (this file)`}
-                {!status.download.done &&
-                  status.download.downloadedBytes != null &&
-                  ` · ${(status.download.downloadedBytes / 1e9).toFixed(2)} GB`}
-                {!status.download.done &&
-                  status.download.totalBytes != null &&
-                  status.download.totalBytes > 0 &&
-                  ` / ${(status.download.totalBytes / 1e9).toFixed(2)} GB`}
-              </p>
-            )}
-            {!status.sharing && (status.savedSharing || phase === "failed") && (
-              <p className="text-body-sm text-secondary">
-                {phase === "failed" ? "Sharing failed. " : ""}
-                {auto
-                  ? "Auto will choose the device recommendation on the next start."
-                  : `Saved model: ${status.savedSharing?.model}. Resume sharing to verify the weights; missing assets may download.`}
-                {phase === "failed" &&
-                  " Restart Buzz before resuming if shutdown cannot be confirmed."}
-              </p>
-            )}
-            {!status.sharing &&
-              status.savedSharing?.enabled &&
-              phase === "failed" && (
-                <Button disabled={busy} onClick={() => void share(true)}>
-                  Stop sharing
-                </Button>
-              )}
-            {status.sharing && (
-              <p role="status">
-                {phase === "ready"
-                  ? status.modelReady
-                    ? `Sharing ${status.sharing}`
-                    : `Preparing to share ${status.sharing} — not serving yet`
-                  : phase === "starting"
-                    ? `Starting sharing ${status.sharing}…`
-                    : phase === "failed"
-                      ? `Sharing failed for ${status.sharing}. Stop sharing to clear the selection; restart Buzz if shutdown cannot be confirmed.`
-                      : phase === "stopping"
-                        ? `Stopping sharing ${status.sharing}…`
-                        : `Selected for sharing: ${status.sharing}`}
-              </p>
-            )}
-            <Button
-              onClick={() => void share()}
-              disabled={
-                busy ||
-                phase === "starting" ||
-                phase === "stopping" ||
-                snapshot.status !== "ready" ||
-                (!status.sharing && !auto && !model.trim())
-              }
-            >
-              {status.sharing
-                ? "Stop sharing"
-                : auto
-                  ? "Auto share"
-                  : status.savedSharing?.model === model
-                    ? "Resume sharing"
-                    : "Share compute"}
-            </Button>
           </section>
         )}
         {community &&
@@ -505,3 +466,56 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: CommunityComputePage,
   });
 };
+
+/** One status line in the style of the original Compute page. */
+function shareStatus(
+  status: MeshStatus,
+  phase: string | undefined,
+  communityName: string | undefined,
+): string {
+  const where = communityName ?? "your community";
+  const model = status.sharing;
+  if (phase === "failed")
+    return `Sharing failed${model ? ` for ${model}` : ""}. Turn sharing off to clear it; restart Buzz if shutdown cannot be confirmed.`;
+  if (!model)
+    return status.savedSharing?.enabled
+      ? "Sharing is on but not running. Turn it off and on to retry."
+      : "Sharing is off.";
+  if (phase === "stopping")
+    return status.finishingJoin
+      ? "Stopping, finishing a peer connection…"
+      : "Stopping sharing…";
+  if (phase === "starting") return `Starting ${model}…`;
+  if (phase === "ready")
+    return status.modelReady
+      ? `Sharing ${model} with ${where}.`
+      : `Preparing ${model} — not serving yet.`;
+  return `Selected for sharing: ${model}`;
+}
+
+function DownloadProgress({
+  download,
+}: {
+  download: NonNullable<MeshStatus["download"]>;
+}) {
+  const received = download.downloadedBytes ?? 0;
+  const total = download.totalBytes ?? 0;
+  const percent =
+    total > 0 ? Math.min(100, Math.round((received / total) * 100)) : undefined;
+  return (
+    <div>
+      <progress
+        aria-label="Model download"
+        max={100}
+        value={percent}
+        className="w-full"
+      />
+      <span className="text-body-sm text-secondary">
+        {`Downloading ${download.file ?? download.label}`}
+        {percent === undefined
+          ? "…"
+          : ` · ${percent}% (${(received / 1e9).toFixed(2)} GB / ${(total / 1e9).toFixed(2)} GB)`}
+      </span>
+    </div>
+  );
+}

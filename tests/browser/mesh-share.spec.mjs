@@ -31,12 +31,10 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
     await expect(page.getByRole("option", { name: /Gemma E4B/ })).toBeVisible();
     await expect(page.getByRole("option", { name: /Qwen 9B/ })).toBeVisible();
     await page.getByRole("option", { name: /Qwen 27B/ }).click();
-    await page
-      .getByRole("button", { name: "Share compute", exact: true })
-      .click();
+    await page.getByRole("switch", { name: "Share this machine" }).click();
     await expect(
-      page.getByRole("button", { name: "Stop sharing", exact: true }),
-    ).toBeVisible();
+      page.getByRole("switch", { name: "Share this machine" }),
+    ).toHaveAttribute("aria-checked", "true");
     expect(
       await page.evaluate(
         () =>
@@ -56,7 +54,7 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
         mode,
       );
       await expect(
-        page.getByRole("button", { name: "Stop sharing", exact: true }),
+        page.getByRole("switch", { name: "Share this machine" }),
       ).toBeInViewport();
       await expect
         .poll(() =>
@@ -72,12 +70,10 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
         fullPage: true,
       });
     }
-    await page
-      .getByRole("button", { name: "Stop sharing", exact: true })
-      .click();
+    await page.getByRole("switch", { name: "Share this machine" }).click();
     await expect(
-      page.getByRole("button", { name: "Share compute", exact: true }),
-    ).toBeVisible();
+      page.getByRole("switch", { name: "Share this machine" }),
+    ).toHaveAttribute("aria-checked", "false");
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();

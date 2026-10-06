@@ -19,6 +19,13 @@ type Catalog = {
 };
 const CUSTOM = "__custom__";
 
+const FIT_LABELS: Record<string, string> = {
+  comfortable: "fits comfortably",
+  tight: "fits, tight on memory",
+  tradeoff: "may be slow on this machine",
+  too_large: "too large for this machine",
+};
+
 export function ShareModelPicker({
   model,
   onChange,
@@ -179,11 +186,11 @@ export function ShareModelPicker({
       {entry && (
         <p className="text-body-sm text-secondary">
           {entry.installed
-            ? "GGUF cached; Mesh may need additional serving files"
-            : `Downloads ${entry.size ?? "model weights"} when you share`}
+            ? "Downloaded"
+            : `Downloads ${entry.size ?? "the model"} when sharing starts`}
           {entry.fit === "unknown"
-            ? ". Model size estimate unavailable."
-            : `. Memory fit: ${entry.fit.replaceAll("_", " ")}.`}
+            ? "."
+            : ` · ${FIT_LABELS[entry.fit] ?? entry.fit.replaceAll("_", " ")}.`}
         </p>
       )}
       {advanced &&

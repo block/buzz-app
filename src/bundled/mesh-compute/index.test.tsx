@@ -302,14 +302,16 @@ it("starts sharing the selected model through the existing community lease", asy
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await screen.findByRole("button", { name: "Auto share" });
+  await screen.findByRole("switch", { name: "Share this machine" });
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  expect(screen.getByRole("button", { name: "Auto share" })).toBeEnabled();
+  expect(
+    screen.getByRole("switch", { name: "Share this machine" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/models/local.gguf" } },
   );
-  fireEvent.click(screen.getByRole("button", { name: "Share compute" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Share this machine" }));
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
       lease: "share-lease",
@@ -321,8 +323,8 @@ it("starts sharing the selected model through the existing community lease", asy
 });
 
 it.each([
-  ["starting", "Starting sharing /models/local.gguf…", true],
-  ["ready", "Preparing to share /models/local.gguf", false],
+  ["starting", "Starting /models/local.gguf…", true],
+  ["ready", "Preparing /models/local.gguf", false],
   ["failed", "Sharing failed for /models/local.gguf", false],
 ] as const)(
   "shows serving intent truthfully in %s",
@@ -365,9 +367,9 @@ it.each([
     expect(
       screen.getByLabelText("Model reference or local GGUF path"),
     ).toBeDisabled();
-    const stop = screen.getByRole("button", { name: "Stop sharing" });
+    const stop = screen.getByRole("switch", { name: "Share this machine" });
     if (disabled) {
-      expect(stop).toBeDisabled();
+      expect(stop).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(stop);
       expect(
         native.invoke.mock.calls.filter(
@@ -375,7 +377,7 @@ it.each([
         ),
       ).toHaveLength(0);
     } else {
-      expect(stop).toBeEnabled();
+      expect(stop).not.toHaveAttribute("aria-disabled", "true");
       fireEvent.click(stop);
       await waitFor(() =>
         expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
@@ -425,7 +427,9 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
+  fireEvent.click(
+    await screen.findByRole("switch", { name: "Share this machine" }),
+  );
   await screen.findByText("Shutdown not confirmed");
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() =>
@@ -434,8 +438,8 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
     ).toBeEnabled(),
   );
   expect(
-    screen.queryByRole("button", { name: "Stop sharing" }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("switch", { name: "Share this machine" }),
+  ).toHaveAttribute("aria-checked", "false");
 });
 
 it("restores a disarmed model hint and sends sharing only on explicit resume", async () => {
@@ -468,7 +472,9 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  const resume = await screen.findByRole("button", { name: "Resume sharing" });
+  const resume = await screen.findByRole("switch", {
+    name: "Share this machine",
+  });
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
     screen.getByLabelText("Model reference or local GGUF path"),
@@ -624,8 +630,10 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
     auto: true,
     resetOnly: true,
   });
-  fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Auto share" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Share this machine" }));
+  fireEvent.click(
+    await screen.findByRole("switch", { name: "Share this machine" }),
+  );
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
       lease: "lease",
@@ -675,7 +683,7 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
   render(<Component />);
   await screen.findByText("Native model startup failed: fixture cause");
   expect(screen.getByText(/Sharing failed\./)).toHaveTextContent(
-    "Auto will choose the device recommendation",
+    "Turn sharing off to clear it",
   );
   expect(screen.queryByText(/Saved model:/)).not.toBeInTheDocument();
 });
@@ -719,7 +727,7 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await screen.findByText("Sharing fixture-model");
+  await screen.findByText(/^Sharing fixture-model/);
   const navigate = async (scope: string) =>
     act(async () => {
       snapshot = { ...snapshot, scope };
@@ -731,10 +739,10 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
     screen.queryByRole("button", { name: "Reset to Auto" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Stop sharing" }),
+    screen.queryByRole("switch", { name: "Share this machine" }),
   ).not.toBeInTheDocument();
   await navigate("https://a.example:viewer");
-  await screen.findByText("Sharing fixture-model");
+  await screen.findByText(/^Sharing fixture-model/);
   expect(
     native.invoke.mock.calls.filter(([name]) => name === "mesh_compute_select"),
   ).toHaveLength(1);

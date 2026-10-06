@@ -126,7 +126,7 @@
   box-shadow: var(--shadow-sm);
 }
 .teamAvatar + .teamAvatar {
-  margin-inline-start: -1.5rem;
+  margin-inline-start: calc(-1 * var(--space-6));
 }
 .teamAvatar:nth-child(1) {
   transform: rotate(-15deg) translateY(0.2rem);

@@ -17,8 +17,8 @@ type Notice = Readonly<{ id: string; message: string; retry?: () => void }>;
 export type BackgroundUploads = Readonly<{
   uploading: boolean;
   phase: "Preparing" | "Uploading" | "Finishing";
-  /** Completed-file bytes; uploads report no byte-level progress. */
-  percentage: number;
+  /** Fraction of bytes sent, or null while the host reports no byte counts. */
+  progress: number | null;
   notices: readonly Notice[];
   host: object | undefined;
 }>;
@@ -51,7 +51,7 @@ function queueFor(session: RelaySession) {
       snapshot: {
         uploading: false,
         phase: "Preparing",
-        percentage: 0,
+        progress: null,
         notices: [],
         host: undefined,
       },
@@ -67,10 +67,23 @@ function queueFor(session: RelaySession) {
 
 function update(queue: Queue) {
   const files = queue.jobs.flatMap((job) => job.store.snapshot());
-  const total = files.reduce((sum, item) => sum + item.file.size, 0);
-  const done = files
-    .filter((item) => item.status === "ready")
-    .reduce((sum, item) => sum + item.file.size, 0);
+  // A queued or preparing file has no trustworthy transfer total. Completed
+  // files have a validated descriptor even when their host emitted no reports.
+  const known = files.every(
+    (item) => item.status === "ready" || item.transfer !== undefined,
+  );
+  const total = files.reduce(
+    (sum, item) => sum + (item.uploaded?.size ?? item.transfer?.total ?? 0),
+    0,
+  );
+  const sent = files.reduce(
+    (sum, item) =>
+      sum +
+      (item.status === "ready"
+        ? (item.uploaded?.size ?? 0)
+        : (item.transfer?.sent ?? 0)),
+    0,
+  );
   queue.snapshot = Object.freeze({
     uploading: queue.jobs.length > 0,
     phase: files.some((item) => item.status === "uploading")
@@ -78,7 +91,7 @@ function update(queue: Queue) {
       : files.every((item) => item.status === "ready")
         ? "Finishing"
         : "Preparing",
-    percentage: total ? Math.round((done / total) * 100) : 0,
+    progress: known && total ? sent / total : null,
     notices: queue.notices,
     host: queue.hosts[0],
   });

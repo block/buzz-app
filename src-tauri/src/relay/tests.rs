@@ -1868,6 +1868,7 @@ async fn upload_signs_the_exact_bytes_it_sends() {
         url.clone(),
         Some("image/png"),
         body.clone(),
+        None,
     )
     .await
     .unwrap();
@@ -1885,9 +1886,82 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
     assert_strict(&event, "upload", server);
     assert_eq!(tag(&event, "x"), [hash.as_str()]);
-    assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
-        .await
-        .is_err());
+    assert!(
+        upload(&IdentityHost::fixture(), url, None, Vec::new(), None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn upload_reports_bytes_handed_to_the_connection() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+    );
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let channel = tauri::ipc::Channel::new(move |message| {
+        let tauri::ipc::InvokeResponseBody::Json(json) = message else {
+            panic!("progress must be JSON");
+        };
+        sink.lock()
+            .unwrap()
+            .push(serde_json::from_str::<serde_json::Value>(&json).unwrap());
+        Ok(())
+    });
+    // Four 64 KiB chunks, ASCII for the fixture server's text comparison.
+    let body = vec![b'a'; 3 * UPLOAD_CHUNK + 1];
+    let result = upload(
+        &IdentityHost::fixture(),
+        base.join("/upload").unwrap(),
+        Some("image/png"),
+        body.clone(),
+        Some(channel),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.status, 200);
+    let (headers, sent) = task.join().unwrap();
+    assert_eq!(sent.as_bytes(), body);
+    assert!(headers
+        .lines()
+        .any(|line| line == format!("content-length: {}", body.len())));
+    let total = body.len();
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UPLOAD_CHUNK, 2 * UPLOAD_CHUNK, 3 * UPLOAD_CHUNK, total]
+            .map(|sent| serde_json::json!({ "sent": sent, "total": total }))
+    );
+}
+
+#[test]
+fn single_chunk_upload_reports_its_whole_body() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 5263], move |sent| sink.lock().unwrap().push(sent));
+    assert_eq!(chunks.count(), 1);
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UploadSent {
+            sent: 5263,
+            total: 5263
+        }]
+    );
+}
+
+#[test]
+fn progress_reports_change_by_whole_percent_only() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 1000 * UPLOAD_CHUNK], move |sent| {
+        sink.lock().unwrap().push(sent.sent)
+    });
+    assert_eq!(chunks.count(), 1000);
+    let reports = reports.lock().unwrap();
+    // Percent 0 (first nine chunks) through 100, once each.
+    assert_eq!(reports.len(), 101);
+    assert!(reports.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(reports.last(), Some(&(1000 * UPLOAD_CHUNK as u64)));
 }
 
 #[test]
@@ -2081,56 +2155,47 @@ async fn preference_batches_reject_invalid_ciphertext_after_signature_verificati
 }
 
 #[test]
-fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries() {
-    let channel = vec![
-        "h".to_string(),
-        "11111111-1111-4111-8111-111111111111".to_string(),
-    ];
-    let event = |tags| EventTemplate {
+fn canvas_signing_shape_matches_broker_contract() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/features/channel-templates/canvas-signing-contract.json"
+    ))
+    .unwrap();
+    for case in cases.as_array().unwrap() {
+        // Tag shape plus EventTemplate deserialization, not IPC wiring, broker
+        // freshness, the native signing budget or publication.
+        let event = serde_json::from_value::<EventTemplate>(serde_json::json!({
+            "kind": 40100, "created_at": 100, "content": "# Plan", "tags": case["tags"]
+        }));
+        let accepted = if case["deserializes"] == false {
+            assert!(event.is_err(), "{}", case["name"]);
+            false
+        } else {
+            let event = event.unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+            validate_event("https://relay.test", &event).is_ok()
+        };
+        assert_eq!(
+            accepted,
+            case["accepted"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+#[test]
+fn canvas_content_is_bounded_in_utf8_bytes() {
+    let mut event = EventTemplate {
         kind: 40100,
-        content: "# Plan".into(),
         created_at: 100,
-        tags,
+        content: "é".repeat(12 * 1024),
+        tags: vec![vec![
+            "h".into(),
+            "11111111-1111-4111-8111-111111111111".into(),
+        ]],
     };
-    assert!(validate_event("https://relay.test", &event(vec![channel.clone()])).is_ok());
-    for revision in ["none".to_string(), "a".repeat(64)] {
-        assert!(validate_event(
-            "https://relay.test",
-            &event(vec![
-                channel.clone(),
-                vec!["expected-revision".into(), revision]
-            ])
-        )
-        .is_ok());
-    }
-    for tags in [
-        vec![],
-        vec![channel.clone(), channel.clone()],
-        vec![channel.clone(), vec!["p".into(), "a".repeat(64)]],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "bad".into()],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "A".repeat(64)],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "none".into(), "extra".into()],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "none".into()],
-            vec!["expected-revision".into(), "none".into()],
-        ],
-        vec![channel.clone(), vec![]],
-    ] {
-        assert!(validate_event("https://relay.test", &event(tags)).is_err());
-    }
-    let mut too_large = event(vec![channel]);
-    too_large.content = "é".repeat(13 * 1024);
-    assert!(validate_event("https://relay.test", &too_large).is_err());
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    event.content.push('x');
+    assert!(validate_event("https://relay.test", &event).is_err());
 }
 
 #[test]

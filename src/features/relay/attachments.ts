@@ -19,9 +19,12 @@ export type UploadedAttachment = Readonly<{
   size: number;
   sha256: string;
 }>;
+/** Bytes of the transferred file handed to the connection so far. */
+export type UploadProgress = (sent: number, total: number) => void;
 export type AttachmentUpload = (
   file: File,
   signal: AbortSignal,
+  progress?: UploadProgress,
 ) => Promise<UploadedAttachment>;
 export const UPLOAD_FAILURES = {
   unavailable: "Uploads are unavailable on this connection.",
@@ -186,11 +189,15 @@ export function brokerUpload(
 /** Shared upload policy for any host that signs and sends the exact bytes it
  * is given: limits, timeout, error mapping and descriptor validation. */
 export function hostUpload(
-  send: (file: File, signal: AbortSignal) => Promise<Response>,
+  send: (
+    file: File,
+    signal: AbortSignal,
+    progress?: UploadProgress,
+  ) => Promise<Response>,
   origin: string,
   prepare?: (file: File, signal: AbortSignal) => Promise<File>,
 ): AttachmentUpload {
-  return async (file, signal) => {
+  return async (file, signal, progress) => {
     signal.throwIfAborted();
     if (!file.size || file.size > UPLOAD_MAX_BYTES)
       throw new UploadError("size");
@@ -200,7 +207,7 @@ export function hostUpload(
       signal,
       AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     ]);
-    const response = await send(file, bounded);
+    const response = await send(file, bounded, progress);
     bounded.throwIfAborted();
     const body = await readUploadResponse(response);
     bounded.throwIfAborted();

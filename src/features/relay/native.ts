@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import {
@@ -14,6 +14,7 @@ import {
   UploadError,
   UPLOAD_MAX_BYTES,
   validateUploadResult,
+  type UploadProgress,
 } from "./attachments";
 import { eventDto, type RelayEvent } from "./events";
 import {
@@ -142,6 +143,7 @@ async function nativeUpload(
   file: File,
   signal: AbortSignal,
   preparation?: string,
+  progress?: UploadProgress,
 ) {
   const bytes = await file.arrayBuffer();
   signal.throwIfAborted();
@@ -167,6 +169,12 @@ async function nativeUpload(
           "x-buzz-community": origin,
           "x-buzz-content-type": file.type || "application/octet-stream",
           ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+          ...(progress && {
+            "x-buzz-upload-progress": new Channel<{
+              sent: number;
+              total: number;
+            }>(({ sent, total }) => progress(sent, total)).toJSON(),
+          }),
         },
       }),
       aborted,
@@ -186,6 +194,7 @@ async function nativeAttachmentUpload(
   origin: string,
   file: File,
   signal: AbortSignal,
+  progress?: UploadProgress,
 ) {
   signal.throwIfAborted();
   if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
@@ -202,9 +211,10 @@ async function nativeAttachmentUpload(
   if (!demuxer) {
     if (voice || file.type.startsWith("video/")) throw new UploadError("video");
     return hostUpload(
-      (item, bounded) => nativeUpload(origin, item, bounded),
+      (item, bounded, report) =>
+        nativeUpload(origin, item, bounded, undefined, report),
       origin,
-    )(file, signal);
+    )(file, signal, progress);
   }
   // Native preparation has its own 600 s deadline; leave a separate upload
   // budget, as broker prepareMedia + hostUpload do.
@@ -217,6 +227,7 @@ async function nativeAttachmentUpload(
     file,
     bounded,
     `${heic ? "image" : voice ? "voice" : "video"}:${demuxer}`,
+    progress,
   );
   bounded.throwIfAborted();
   const body = await readUploadResponse(response);
@@ -757,8 +768,8 @@ export async function connectNativeTransport(
         "background",
       );
     },
-    uploadAttachment: (file, signal) =>
-      nativeAttachmentUpload(origin, file, signal),
+    uploadAttachment: (file, signal, progress) =>
+      nativeAttachmentUpload(origin, file, signal, progress),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

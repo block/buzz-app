@@ -164,7 +164,9 @@ test("pasting copied messages into the composer restores chips, the recipient an
       html: clipboardData.getData("text/html"),
     };
   });
-  expect(payload.text).toBe("one\ntwo\nfirst\nquoted\necho hi\na\tb\n1\t2");
+  expect(payload.text).toBe(
+    "one\ntwo\n\nfirst\n\nquoted\n\necho hi\n\na\tb\n1\t2",
+  );
   await expect(input).toHaveJSProperty("value", "");
   await pasteInto(input, payload);
   await input.press("Enter");

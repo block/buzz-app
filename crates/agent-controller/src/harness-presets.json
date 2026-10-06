@@ -5,6 +5,6 @@
     "command": "hermes-acp",
     "args": [],
     "setupUrl": "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/",
-    "setupHint": "Install Hermes with ACP support. Configure its model and sign-in with `hermes model`, then run `hermes acp --check` in your terminal. Buzz looks for the `hermes-acp` launcher."
+    "setupHint": "Install Hermes with ACP support and configure it with `hermes model`. Store provider API keys in `~/.hermes/.env`; Buzz doesn’t inherit shell exports. Verify with `hermes acp --check`."
   }
 ]

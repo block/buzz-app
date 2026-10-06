@@ -96,7 +96,9 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
-        if agent.extra.get("profilePending") != Some(&Value::Bool(true)) {
+        let profile_pending = agent.extra.get("profilePending") == Some(&Value::Bool(true));
+        let name_pending = agent.extra.get("profileNamePending") == Some(&Value::Bool(true));
+        if !profile_pending && !name_pending {
             return Err("No pending profile update".into());
         }
         let auth = agent.auth_tag.ok_or("Missing owner authorization")?;
@@ -111,6 +113,7 @@ impl Controller {
             auth,
             name: agent.name,
             picture: agent.picture,
+            name_pending,
             revision: agent.revision,
         })
     }
@@ -126,6 +129,7 @@ pub struct CreationProfile {
     pub auth: String,
     pub name: String,
     pub picture: Option<String>,
+    pub name_pending: bool,
     pub revision: u64,
 }
 impl CreationProfile {
@@ -133,12 +137,18 @@ impl CreationProfile {
         if key.pubkey() != self.pubkey {
             return Err("Profile identity changed".into());
         }
-        key.profile(&self.name, self.picture.as_deref(), &self.auth, existing)
+        key.profile(
+            &self.name,
+            self.picture.as_deref(),
+            self.name_pending,
+            &self.auth,
+            existing,
+        )
     }
     pub fn confirm(&self, existing: &[Value], event_id: &str) -> Result<()> {
         let current = crate::profile::current(existing, &self.pubkey)?;
         if current.as_ref().map(|profile| profile.id.as_str()) != Some(event_id) {
-            return Err("A different profile is current; saved avatar remains pending. Refresh and retry publication.".into());
+            return Err("A different profile is current; saved profile remains pending. Refresh and retry publication.".into());
         }
         Ok(())
     }

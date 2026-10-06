@@ -537,6 +537,7 @@ impl Store {
             return Err("Saved settings changed; retry the profile".into());
         }
         agent.extra.remove("profilePending");
+        agent.extra.remove("profileNamePending");
         self.write(&doc)
     }
     /// One atomic import batch; repairs add only the missing team snapshot.

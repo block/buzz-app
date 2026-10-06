@@ -89,6 +89,10 @@ export function controlFixture() {
       }
       Object.assign(agent, {
         name: edit.name,
+        ...(edit.name !== agent.name ||
+        (edit.picture !== undefined && edit.picture !== agent.picture)
+          ? { profilePending: true }
+          : {}),
         ...(edit.picture === undefined || edit.picture === agent.picture
           ? {}
           : { picture: edit.picture, profilePending: true }),

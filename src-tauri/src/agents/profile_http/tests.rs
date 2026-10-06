@@ -89,6 +89,7 @@ fn profile(origin: &str) -> CreationProfile {
         auth: json!(["auth", "owner", "", "signature"]).to_string(),
         name: "Fixture".into(),
         picture: Some("https://images.example/a.png".into()),
+        name_pending: false,
         revision: 1,
     }
 }
@@ -144,6 +145,10 @@ async fn actual_http_query_publish_and_verified_readback() {
             1 => {
                 assert_eq!(request.path, "/events");
                 let event: Value = serde_json::from_slice(&request.body).unwrap();
+                let content: Value =
+                    serde_json::from_str(event["content"].as_str().unwrap()).unwrap();
+                assert_eq!(content["name"], "Luna");
+                assert_eq!(content["display_name"], "Luna");
                 *seen.lock().unwrap() = event.clone();
                 json_reply(json!({"accepted":true,"event_id":event["id"]}))
             }
@@ -154,9 +159,12 @@ async fn actual_http_query_publish_and_verified_readback() {
         }
     });
     *origin_ref.lock().unwrap() = origin.clone();
+    let mut publication = profile(&origin);
+    publication.name = "Luna".into();
+    publication.name_pending = true;
     publish(
         &client(),
-        &profile(&origin),
+        &publication,
         &Secret::parse(KEY, PUB).unwrap(),
         || async { Ok(()) },
     )
@@ -224,6 +232,58 @@ async fn refused_malformed_or_unbounded_reads_and_wrong_receipts_do_not_succeed(
         assert!(outcome.is_err(), "{mode}");
         worker.join().unwrap();
     }
+}
+
+#[tokio::test]
+async fn native_rename_publishes_luna_and_clears_pending_after_verified_readback() {
+    use crate::agents::{publish_acquired, tests::fixture};
+    let (dir, owner, _app, _view) = fixture();
+    let auth = test_attestation();
+    let id = format!("{PUB}-733db93c5a38b650794422a480fab67f1dd8f6f40112c360f9814dfaec3bfcbb");
+    std::fs::write(dir.path().join("store/agents.json"), serde_json::to_vec(&json!({"version":1,"agents":[{
+        "id":id,"pubkey":PUB,"relayUrl":"wss://relay.example","name":"GLM","picture":null,"systemPrompt":"test","workspace":dir.path().to_str().unwrap(),
+        "harness":{"command":"buzz-agent","args":[],"model":"test","provider":"test"},"environment":{},"revision":1,"enabled":false,"credentialId":"fixture","authTag":auth,"imported":{}
+    }]})).unwrap()).unwrap();
+    let edit = serde_json::from_value(json!({"name":"Luna","systemPrompt":"test","workspace":dir.path().to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"test","provider":"test"},"environment":{}})).unwrap();
+    owner
+        .with(|host| host.controller.save(&id, 1, edit).map(|_| ()))
+        .unwrap();
+    assert!(owner
+        .with(|host| Ok(host.controller.snapshot()?.agents[0].profile_pending))
+        .unwrap());
+
+    let mut saved = Value::Null;
+    let (origin, worker) = server(3, move |index, request| match index {
+        0 => json_reply(json!([])),
+        1 => {
+            saved = serde_json::from_slice(&request.body).unwrap();
+            let content: Value = serde_json::from_str(saved["content"].as_str().unwrap()).unwrap();
+            assert_eq!(content["name"], "Luna");
+            assert_eq!(content["display_name"], "Luna");
+            json_reply(json!({"accepted":true,"event_id":saved["id"]}))
+        }
+        _ => json_reply(json!([saved.clone()])),
+    });
+    let (publication, mut profile, _) = owner.begin_profile(&id).await.unwrap();
+    profile.url = format!("{origin}/events");
+    publish_acquired(
+        &owner,
+        &id,
+        &profile,
+        &Secret::parse(KEY, PUB).unwrap(),
+        &client(),
+        publication,
+    )
+    .await
+    .unwrap();
+    worker.join().unwrap();
+    assert!(!owner
+        .with(|host| Ok(host.controller.snapshot()?.agents[0].profile_pending))
+        .unwrap());
+    let stored: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("store/agents.json")).unwrap())
+            .unwrap();
+    assert!(stored["agents"][0].get("profileNamePending").is_none());
 }
 
 #[tokio::test]

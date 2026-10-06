@@ -133,6 +133,33 @@ it("closes the ordinary editor and keeps its success toast visible", async () =>
   control.dispose();
 });
 
+it("keeps the editor open when renamed profile publication is unconfirmed", async () => {
+  const fixture = controlFixture();
+  fixture.failProfile(true);
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const onClose = vi.fn();
+  render(
+    <AgentEditor
+      agent={fixture.agent}
+      control={control}
+      state={control.snapshot()}
+      onClose={onClose}
+      initialDraft={{ ...agentDraft(fixture.agent), name: "Luna" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "profile publication is unconfirmed",
+    ),
+  );
+  expect(onClose).not.toHaveBeenCalled();
+  expect(fixture.agent.name).toBe("Luna");
+  expect(fixture.agent.profilePending).toBe(true);
+  control.dispose();
+});
 it("keeps the editor open when saved profile publication is unconfirmed", async () => {
   const fixture = controlFixture();
   fixture.failProfile(true);

@@ -148,7 +148,7 @@ export function AgentEditor({
                     (item) => item.id === agent.id,
                   )?.profilePending;
                   if (pending && control.publishProfile) {
-                    setNotice("Settings saved. Publishing avatar…");
+                    setNotice("Settings saved. Publishing profile update…");
                     try {
                       await control.publishProfile(agent.id);
                     } catch {

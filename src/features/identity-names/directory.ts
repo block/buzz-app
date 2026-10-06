@@ -40,11 +40,18 @@ export function createNameProvider(
     if (library.status === "ready") {
       for (const row of library.identities) {
         const key = row.pubkey.toLowerCase();
-        if (!names.has(key))
+        if (!names.has(key)) {
+          const profileName = profiles.get(key)?.name.trim();
           names.set(
             key,
-            row.name.trim() || profiles.get(key)?.name.trim() || "Agent",
+            // A signed public agent profile is the cross-client name source. The
+            // host's saved-library alias remains a fallback; same-community
+            // native settings still override it below.
+            profiles.get(key)?.isAgent && profileName
+              ? profileName
+              : row.name.trim() || profileName || "Agent",
           );
+        }
       }
     }
     if (relayUrl && native?.status === "ready") {

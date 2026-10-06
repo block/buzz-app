@@ -195,7 +195,8 @@ impl Agent {
             error: None,
             diagnostics: Vec::new(),
             configured: self.configured(),
-            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
+            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true))
+                || self.extra.get("profileNamePending") == Some(&Value::Bool(true)),
             start_on_app_launch: self.starts_on_launch(),
             respond_to: self.respond_to(defaults.owner_only).ok().map(str::to_owned),
             backend: (self.imported["record"]["backend"]["type"] == "provider")
@@ -276,6 +277,10 @@ impl Agent {
                 self.extra
                     .insert("profilePending".into(), Value::Bool(true));
             }
+        }
+        if self.name != edit.name {
+            self.extra
+                .insert("profileNamePending".into(), Value::Bool(true));
         }
         self.name = edit.name;
         self.system_prompt = edit.system_prompt;

@@ -184,6 +184,10 @@
   background: var(--surface-inset);
 }
 
+.scopeSwitch button[aria-pressed="true"] {
+  background: var(--surface-panel);
+}
+
 .scroll {
   flex: 1;
   min-height: 0;

@@ -94,7 +94,12 @@ async fn publish(
         return Ok(());
     }
     let status = if host.lifecycle.phase() == Phase::Ready {
-        Some(host.lifecycle.status().await.map_err(|e| e.to_string())?)
+        let mut status = host.lifecycle.status().await.map_err(|e| e.to_string())?;
+        // Mesh's own catalog maps content-addressed GGUF keys to readable refs.
+        if let Some(names) = display_names(&status.console_url).await {
+            status.payload[publication::DISPLAY_NAMES_KEY] = names;
+        }
+        Some(status)
     } else {
         None
     };
@@ -116,6 +121,20 @@ async fn publish(
         .await;
     }
     Ok(())
+}
+
+/// Best-effort read of the local node's `/api/models`; publication never waits on it long.
+pub(super) async fn display_names(console_url: &str) -> Option<serde_json::Value> {
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/models", console_url.trim_end_matches('/')))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let models: serde_json::Value = serde_json::from_slice(&response.bytes().await.ok()?).ok()?;
+    Some(publication::display_names_from_models(&models))
 }
 
 async fn send(

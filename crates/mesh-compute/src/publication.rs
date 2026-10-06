@@ -140,13 +140,69 @@ fn ready_models(status: Option<&Value>) -> Vec<MeshModelOption> {
                 collect(model, &mut models);
             }
         }
+        // Mesh keys a cached GGUF as `local-gguf/sha256-…`; its own model
+        // catalog (`/api/models` `display_name`) carries the readable ref.
+        if let Some(names) = status[DISPLAY_NAMES_KEY].as_object() {
+            for model in &mut models {
+                let unnamed = model.name.as_deref().is_none_or(|name| name == model.id);
+                if let (true, Some(name)) = (unnamed, names.get(&model.id).and_then(Value::as_str))
+                {
+                    model.name = Some(name.to_owned());
+                }
+            }
+        }
     }
     dedupe_models(models)
+}
+
+/// Host-injected `{mesh model name: display name}` from Mesh's `/api/models`.
+pub const DISPLAY_NAMES_KEY: &str = "buzz_display_names";
+
+/// Project Mesh's `/api/models` response into the display-name map.
+pub fn display_names_from_models(models: &Value) -> Value {
+    let mut names = serde_json::Map::new();
+    for model in models["mesh_models"].as_array().into_iter().flatten() {
+        if let (Some(name), Some(display)) =
+            (model["name"].as_str(), model["display_name"].as_str())
+        {
+            if name != display && !display.trim().is_empty() {
+                names.insert(name.to_owned(), Value::String(display.to_owned()));
+            }
+        }
+    }
+    Value::Object(names)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_gguf_models_advertise_meshs_own_display_name() {
+        // Shapes captured from a live Mesh 0.78.1 node serving a cached HF GGUF.
+        let hash =
+            "local-gguf/sha256-7756e8943d5ec98b1cd76895d33d20b8c8bf7609a71540fc9b6fa512bdedd0de";
+        let catalog = json!({"mesh_models": [
+            {"name": hash, "display_name": "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"},
+            {"name": "unsloth/Qwen3.5-9B-GGUF:Q4_K_M", "display_name": "unsloth/Qwen3.5-9B-GGUF:Q4_K_M"},
+        ]});
+        let mut raw = json!({
+            "models": [hash],
+            "runtime": {"models": [{"name": hash, "status": "ready"}]},
+        });
+        raw[DISPLAY_NAMES_KEY] = display_names_from_models(&catalog);
+        let models = ready_models(Some(&raw));
+        assert_eq!(models.len(), 1);
+        // The routing id stays exactly what Mesh serves; only the label changes.
+        assert_eq!(models[0].id, hash);
+        assert_eq!(
+            models[0].name.as_deref(),
+            Some("unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M")
+        );
+        // Without Mesh's catalog the id is still published unchanged.
+        raw.as_object_mut().unwrap().remove(DISPLAY_NAMES_KEY);
+        assert_eq!(ready_models(Some(&raw))[0].name, None);
+    }
     use crate::discovery::{availability_from_events, owner_ids_from_events};
     use nostr::event::FinalizeEvent;
     use nostr::key::Keys;

@@ -480,17 +480,19 @@ mod queue_tests {
 /// Signed relay advertisements, not live node health. Does not start Mesh.
 #[tauri::command]
 pub async fn mesh_compute_inventory(
+    host: tauri::State<'_, MeshHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     community: String,
 ) -> Result<serde_json::Value, String> {
     #[cfg(feature = "mesh")]
     {
-        let inventory = discovery::inventory(identity.inner(), &community).await?;
+        let mut inventory = discovery::inventory(identity.inner(), &community).await?;
+        name_entries(&host, &mut inventory.entries).await;
         serde_json::to_value(inventory).map_err(|error| error.to_string())
     }
     #[cfg(not(feature = "mesh"))]
     {
-        let _ = (identity, community);
+        let _ = (host, identity, community);
         Err("Mesh native runtime is not included in this build".into())
     }
 }
@@ -558,6 +560,38 @@ mod persistence_tests {
     }
 }
 
+/// Label `local-gguf/sha256-…` advertisements (older publishers) with the readable
+/// ref from this node's own Mesh catalog, when Mesh is running here.
+#[cfg(feature = "mesh")]
+async fn name_entries(host: &MeshHost, entries: &mut [buzz_mesh_compute::inventory::Entry]) {
+    if !entries
+        .iter()
+        .any(|e| e.model_name.as_deref().map_or(true, |n| n == e.model_id))
+    {
+        return;
+    }
+    if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
+        return;
+    }
+    let Ok(status) = host.lifecycle.status().await else {
+        return;
+    };
+    let Some(names) = publisher::display_names(&status.console_url).await else {
+        return;
+    };
+    for entry in entries {
+        if entry
+            .model_name
+            .as_deref()
+            .map_or(true, |n| n == entry.model_id)
+        {
+            if let Some(name) = names.get(&entry.model_id).and_then(|v| v.as_str()) {
+                entry.model_name = Some(name.to_owned());
+            }
+        }
+    }
+}
+
 /// Read verified community advertisements without starting a node or touching cloud credentials.
 pub(crate) async fn agent_models<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -591,8 +625,9 @@ pub(crate) async fn agent_models<R: tauri::Runtime>(
                 return Err("Select the agent’s community before browsing shared models".into());
             }
         }
-        let inventory = discovery::inventory(&identity, &community).await?;
+        let mut inventory = discovery::inventory(&identity, &community).await?;
         host.lease.community(&lease)?;
+        name_entries(&host, &mut inventory.entries).await;
         if let Some(error) = inventory.unavailable {
             return Err(error);
         }

@@ -40,6 +40,7 @@ export function ActivityAccessory({
       entry.channelId === channelId && entry.threadRootId === threadRootId,
   );
   const keys = [...new Set([...turns, ...typing].map((entry) => entry.agent))]
+    .filter((agent) => canOpen(activityTarget(agent, channelId)))
     .sort()
     .join(":");
   useEffect(() => {
@@ -59,6 +60,61 @@ export function ActivityAccessory({
     profiles.snapshot,
   );
   if (!keys) return null;
+  const agents = (
+    <div className={styles.agents}>
+      {keys.split(":").map((agent) => {
+        const target = activityTarget(agent, channelId);
+        const name = resolveName(
+          agent,
+          identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
+        );
+        const active = turns.filter((turn) => turn.agent === agent);
+        const working = active.filter(
+          (turn) => turn.state === "working",
+        ).length;
+        const unknown = active.length - working;
+        const isWorking =
+          working > 0 || typing.some((entry) => entry.agent === agent);
+        const picture = identities.get(agent)?.picture;
+        return (
+          <ActivityEntry
+            key={agent}
+            tooltip={
+              <>
+                <p className="text-body-sm">
+                  {threadRootId ? (
+                    "Working in this thread. Details show channel activity, including other threads."
+                  ) : (
+                    <>
+                      {working
+                        ? `${working} working turn(s)`
+                        : "No fresh working evidence"}
+                      {unknown ? ` · ${unknown} with unknown status` : ""} in
+                      this channel, including threads.
+                      {isWorking && !working
+                        ? " Fresh channel typing signal."
+                        : ""}
+                    </>
+                  )}
+                </p>
+                <p className="text-body-sm">
+                  Owner-only activity. Select to inspect.
+                </p>
+                <code className="font-mono text-mono">{agent}</code>
+              </>
+            }
+            session={session}
+            agent={agent}
+            src={picture ? (session.media(picture) ?? null) : null}
+            name={name}
+            isWorking={isWorking}
+            target={target}
+            open={open}
+          />
+        );
+      })}
+    </div>
+  );
   return (
     <section
       className={styles.root}
@@ -69,60 +125,19 @@ export function ActivityAccessory({
           : "Agent activity in this channel"
       }
     >
-      <div className={styles.agents}>
-        {keys.split(":").map((agent) => {
-          const target = activityTarget(agent, channelId);
-          if (!canOpen(target)) return null;
-          const name = resolveName(
-            agent,
-            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
-          );
-          const active = turns.filter((turn) => turn.agent === agent);
-          const working = active.filter(
-            (turn) => turn.state === "working",
-          ).length;
-          const unknown = active.length - working;
-          const isWorking =
-            working > 0 || typing.some((entry) => entry.agent === agent);
-          const picture = identities.get(agent)?.picture;
-          return (
-            <ActivityEntry
-              key={agent}
-              tooltip={
-                <>
-                  <p className="text-body-sm">
-                    {threadRootId ? (
-                      "Working in this thread. Details show channel activity, including other threads."
-                    ) : (
-                      <>
-                        {working
-                          ? `${working} working turn(s)`
-                          : "No fresh working evidence"}
-                        {unknown ? ` · ${unknown} with unknown status` : ""} in
-                        this channel, including threads.
-                        {isWorking && !working
-                          ? " Fresh channel typing signal."
-                          : ""}
-                      </>
-                    )}
-                  </p>
-                  <p className="text-body-sm">
-                    Owner-only activity. Select to inspect.
-                  </p>
-                  <code className="font-mono text-mono">{agent}</code>
-                </>
-              }
-              session={session}
-              agent={agent}
-              src={picture ? (session.media(picture) ?? null) : null}
-              name={name}
-              isWorking={isWorking}
-              target={target}
-              open={open}
-            />
-          );
-        })}
-      </div>
+      {threadRootId ? (
+        agents
+      ) : (
+        // Observer turns have no thread identity. Keep all of them accessible
+        // without presenting a second full list as conversation-local work.
+        <details key={channelId}>
+          <summary className={`text-body-sm ${styles.summary}`}>
+            Channel-wide activity · {keys.split(":").length}{" "}
+            {keys.includes(":") ? "agents" : "agent"}
+          </summary>
+          {agents}
+        </details>
+      )}
     </section>
   );
 }

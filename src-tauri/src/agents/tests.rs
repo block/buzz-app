@@ -111,6 +111,17 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
     id
 }
 #[test]
+fn native_host_provisions_cli_skill_before_agent_controls_are_used() {
+    let (dir, _host, _app, _view) = fixture();
+    let skill = dir
+        .path()
+        .join("workspace/.agents/skills/buzz-cli/SKILL.md");
+    assert!(std::fs::read_to_string(skill)
+        .unwrap()
+        .contains("name: buzz-cli"));
+}
+
+#[test]
 fn production_acl_allows_delete_to_reach_native_credentials() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());
@@ -128,12 +139,12 @@ fn production_acl_allows_delete_to_reach_native_credentials() {
 }
 #[test]
 fn harnesses_classify_cli_and_adapter_separately() {
-    assert_eq!(pi_status(false, false, false), "cli-needed");
-    assert_eq!(pi_status(false, true, true), "cli-needed");
-    assert_eq!(pi_status(true, false, false), "cli-needed");
-    assert_eq!(pi_status(true, true, false), "cli-needed");
-    assert_eq!(pi_status(true, false, true), "adapter-needed");
-    assert_eq!(pi_status(true, true, true), "ready");
+    assert_eq!(npm_status(false, false, false), "cli-needed");
+    assert_eq!(npm_status(false, true, true), "cli-needed");
+    assert_eq!(npm_status(true, false, false), "cli-needed");
+    assert_eq!(npm_status(true, true, false), "cli-needed");
+    assert_eq!(npm_status(true, false, true), "adapter-needed");
+    assert_eq!(npm_status(true, true, true), "ready");
 }
 
 #[test]
@@ -159,22 +170,22 @@ fn hermes_is_a_manual_preset_with_presence_based_availability() {
 #[test]
 fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_node() {
     let path = |name| Some(PathBuf::from(format!("/fixture/{name}")));
-    let empty = || PiTools {
+    let empty = || NpmTools {
         cli: None,
         adapter: None,
         node: None,
     };
-    let managed = || PiTools {
+    let managed = || NpmTools {
         cli: path("managed-pi"),
         adapter: path("managed-adapter"),
         node: path("managed-node"),
     };
-    let (command, status, managed_selected) = pi_choice(empty(), managed());
+    let (command, status, managed_selected) = npm_choice(empty(), managed());
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             adapter: path("user-adapter"),
             node: path("user-node"),
@@ -184,12 +195,12 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("user-adapter"));
     assert_eq!(status, "ready");
     assert!(!managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             ..empty()
         },
-        PiTools {
+        NpmTools {
             cli: None,
             ..managed()
         },
@@ -197,9 +208,9 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
+    let (command, status, managed_selected) = npm_choice(
         empty(),
-        PiTools {
+        NpmTools {
             node: None,
             ..managed()
         },
@@ -334,10 +345,8 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let goose = dir.path().join("goose");
-        std::fs::write(&goose, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&goose, "#!/bin/sh\n");
         host.with(|host| {
             host.controller
                 .save_defaults(
@@ -471,7 +480,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],
-        pi_status(
+        npm_status(
             buzz_agent_controller::installed("pi").is_some(),
             buzz_agent_controller::installed("buzz-pi-acp").is_some(),
             buzz_agent_controller::installed("node").is_some(),
@@ -655,7 +664,6 @@ struct PiProbeGate(PathBuf);
 #[cfg(unix)]
 impl PiProbeGate {
     fn new(root: &std::path::Path) -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let tools = root.join("pi-tools");
         std::fs::create_dir(&tools).unwrap();
         let fifo =
@@ -671,8 +679,7 @@ impl PiProbeGate {
                 "#!/bin/sh\nexit 0\n".into()
             };
             let file = tools.join(name);
-            std::fs::write(&file, script).unwrap();
-            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_executable::write_executable(&file, script);
         }
         Self(tools)
     }
@@ -794,7 +801,6 @@ mod overlap {
     // Verified manifest over inert scripts. Credential refusal precedes any spawn.
     fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
         use sha2::{Digest, Sha256};
-        use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(directory).unwrap();
         let source: Value =
             serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
@@ -802,8 +808,7 @@ mod overlap {
         for tool in source["tools"].as_array().unwrap() {
             let name = tool.as_str().unwrap();
             let path = directory.join(name);
-            std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
             let digest = Sha256::digest(std::fs::read(&path).unwrap());
             files.insert(name.to_owned(), format!("{digest:x}"));
         }
@@ -2195,14 +2200,12 @@ fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
 #[cfg(unix)]
 #[test]
 fn pi_model_lookup_waits_out_brief_host_contention() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, host, _app, view) = fixture();
     let tools = dir.path().join("tools");
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n");
     }
     // Another native operation (for example a snapshot refresh) briefly holds
     // the host while the lookup reads its settings.
@@ -2239,13 +2242,12 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
 #[cfg(unix)]
 #[test]
 fn pi_connection_test_prompts_the_draft_selection() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, _host, _app, view) = fixture();
     let tools = dir.path().join("tools");
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(
+        crate::test_executable::write_executable(
             &file,
             r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '0.99.1\n'; exit 0; fi
@@ -2268,8 +2270,7 @@ read request
 case "$request" in *prompt*) ;; *) exit 1;; esac
 printf '{"type":"message_end","message":{"role":"assistant","provider":"%s","model":"%s","content":[{"type":"text","text":"OK"}],"stopReason":"%s","errorMessage":"%s"}}\n' "$provider" "$model" "$stop" "$error"
 "#,
-        ).unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
     }
     let test = |provider: &str, model: &str| {
         let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
@@ -2565,12 +2566,7 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let executable = dir.path().join("launcher");
-    std::fs::write(&executable, "synthetic launcher bytes").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    crate::test_executable::write_executable(&executable, "synthetic launcher bytes");
     let mut registration = std::pin::pin!(run(host.clone(), move |h| {
         counted.fetch_add(1, Ordering::SeqCst);
         h.controller.security(Request::Register {
@@ -2613,6 +2609,125 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
             } else {
                 "Synthetic initialization failure"
             }
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_claude_manual_setup_uses_runnable_launchers() {
+    if let Some(root) = std::env::var_os("BUZZ_DISCOVERY_FIXTURE") {
+        let root = PathBuf::from(root);
+        let app_data = root.join("app-data");
+        let setup = claude_setup(&app_data);
+        assert_eq!(setup.status, "ready");
+        assert!(!setup.install_supported);
+        assert_eq!(setup.cli, Some(root.join("claude.cmd")));
+        assert!(setup
+            .login_command
+            .unwrap()
+            .ends_with("claude.cmd' auth login"));
+        assert!(claude_setup(&app_data)
+            .login_command
+            .unwrap()
+            .starts_with("& '"));
+        // Do not activate Windows Pi paths that its preflight does not support.
+        assert_eq!(buzz_agent_controller::installed("node"), None);
+        assert!(
+            !harness_options(&app_data)
+                .iter()
+                .find(|h| h.label == "Pi")
+                .unwrap()
+                .available
+        );
+        // Native CLI wins within a directory; a later PATH entry did not outrank .cmd.
+        std::fs::write(root.join("claude.exe"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).cli, Some(root.join("claude.exe")));
+        std::fs::remove_file(root.join("claude-agent-acp.cmd")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "adapter-needed");
+        std::fs::write(root.join("claude-agent-acp.bat"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).status, "ready");
+        std::fs::remove_file(root.join("node.exe")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "cli-needed");
+        return;
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("Buzz tools ")
+        .tempdir()
+        .unwrap();
+    let root = directory.path();
+    let later = root.join("later");
+    std::fs::create_dir(&later).unwrap();
+    for name in [
+        "claude",
+        "claude.cmd",
+        "node.exe",
+        "claude-agent-acp",
+        "claude-agent-acp.cmd",
+        "pi.cmd",
+        "buzz-pi-acp.cmd",
+    ] {
+        std::fs::write(root.join(name), "fixture bytes").unwrap();
+    }
+    std::fs::write(later.join("claude.exe"), "fixture bytes").unwrap();
+    // A subprocess isolates discovery from the developer and parallel native tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::windows_claude_manual_setup_uses_runnable_launchers",
+            "--nocapture",
+        ])
+        .env("BUZZ_DISCOVERY_FIXTURE", root)
+        .env("HOME", root.join("empty-home"))
+        .env(
+            "PATH",
+            std::env::join_paths([root, later.as_path()]).unwrap(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn claude_auth_check_exposes_only_confirmed_status() {
+    let directory = tempfile::Builder::new()
+        .prefix("Claude tools ")
+        .tempdir()
+        .unwrap();
+    let cli = directory.path().join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
+    for (output, exit, expected) in [
+        (
+            r#"{"loggedIn":true,"email":"private@example.com"}"#,
+            0,
+            Some(true),
+        ),
+        (r#"{"loggedIn":false}"#, 1, Some(false)),
+        (r#"{"loggedIn":false}"#, 0, None),
+        (r#"{"loggedIn":true}"#, 1, None),
+        (r#"{"loggedIn":false}"#, 2, None),
+        (r#"{"loggedIn":"true"}"#, 0, None),
+        (r#"{"email":"private@example.com"}"#, 0, None),
+        ("not JSON", 0, None),
+    ] {
+        #[cfg(unix)]
+        {
+            crate::test_executable::write_executable(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n"));
+        }
+        #[cfg(windows)]
+        std::fs::write(&cli, format!("@echo off\r\nif not \"%~1\"==\"auth\" exit /b 3\r\nif not \"%~2\"==\"status\" exit /b 3\r\necho {output}\r\nexit /b {exit}\r\n")).unwrap();
+        assert_eq!(
+            probe_claude_auth(&cli, &crate::host_command::effective_path()).await,
+            expected
         );
     }
 }

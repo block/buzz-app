@@ -47,3 +47,19 @@ it("invalidates row geometry when resolved author or mention labels change", () 
   names.set(author.pubkey, "Longer author");
   expect(geometrySignature(rows, new Map(), resolve)).not.toBe(renamedMention);
 });
+
+it("invalidates cached heights when the workflow owner name arrives or changes", () => {
+  const signer = keypair();
+  const rows = foldMessages("room", "relay", [
+    message(signer, "room", "workflow", 20),
+  ]).map((row) => ({ ...row, workflowOwnerId: "owner" }));
+  const before = new Map();
+  const after = new Map([["owner", { name: "A much longer workflow owner" }]]);
+  expect(geometrySignature(rows, before)).not.toBe(
+    geometrySignature(rows, after),
+  );
+  const resolve = (_id: string, fallback: string) => fallback;
+  expect(geometrySignature(rows, before, resolve)).not.toBe(
+    geometrySignature(rows, after, resolve),
+  );
+});

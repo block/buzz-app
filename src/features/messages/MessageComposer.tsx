@@ -9,12 +9,13 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
   archivedMention,
-  mentionCandidates,
-  rememberMention,
-} from "./mention-candidates";
+  mentionAdmission,
+} from "./mention-admission";
+import { rememberMention } from "./mention-history";
 import {
   readComposerSnapshot,
   composerMarkdownContext,
+  markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { npubEncode } from "nostr-tools/nip19";
@@ -726,6 +727,7 @@ function Composer({
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
+    terminator?: ":",
   ) {
     if (
       !permitted.current ||
@@ -746,9 +748,12 @@ function Composer({
     }
     if (
       recipient &&
-      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [
-        recipient,
-      ]).some((c) => c.recipient.pubkey === recipient.pubkey)
+      !mentionAdmission(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+      )(recipient.pubkey)
     ) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
@@ -760,7 +765,7 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range)) {
+    if (!input.current.insertText(text, recipient, range, terminator)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -819,16 +824,13 @@ function Composer({
         undefined,
         range,
       );
-    const eligible = new Set(
-      mentionCandidates(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-        unique,
-      ).map((choice) => choice.recipient.pubkey),
+    const admits = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
     );
-    if (unique.some((person) => !eligible.has(person.pubkey))) {
+    if (unique.some((person) => !admits(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -869,11 +871,14 @@ function Composer({
       valueRef.current.text !== observation.text
     )
       return false;
-    if (key === " ") {
+    // A typed terminator (Space, the closing emoji colon) stays literal in code.
+    if (key === " " || key === ":") {
       const doc = readComposerSnapshot(valueRef.current.document);
+      const context = doc
+        ? composerMarkdownContext(doc)
+        : { text: observation.text, protected: [] };
       if (
-        doc &&
-        composerMarkdownContext(doc).protected.some(
+        [...context.protected, ...markdownRanges(context.text).literal].some(
           (r) => query.start < r.end && query.end > r.start,
         )
       )
@@ -889,6 +894,7 @@ function Composer({
         `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
         undefined,
         query,
+        key === ":" ? key : undefined,
       )
     );
   }
@@ -1058,12 +1064,8 @@ function Composer({
           ? captured.recipients.filter(
               (item) =>
                 agents.has(item.pubkey) &&
-                mentionCandidates(
-                  session,
-                  channelId,
-                  agentChoices,
-                  mentionRoster,
-                ).some((c) => c.recipient.pubkey === item.pubkey),
+                recipients.includes(item.pubkey) &&
+                !archivedMention(session, item.pubkey),
             )
           : [],
       );
@@ -1380,7 +1382,6 @@ function Composer({
           )}
           <div className={styles.composerInput}>
             <RichComposerInput
-              inviteAgents={agentChoices}
               ref={input}
               id={inputId}
               disabled={editingDisabled}
@@ -1397,6 +1398,25 @@ function Composer({
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
+              // Pasted identity links notify the people the picker would offer,
+              // under their current names; edits never add recipients. In a
+              // stream or forum, a cached profile outside the channel counts as
+              // a picked directory row, so Send asks before adding them. The
+              // pasted label is never the name: it could disguise the invitee.
+              acceptRecipient={(pubkey) => {
+                if (editing.target) return null;
+                const name = session.profiles.snapshot().get(pubkey)?.name;
+                return (
+                  mentionCandidates(
+                    session,
+                    channelId,
+                    agentChoices,
+                    mentionRoster,
+                    name ? [{ pubkey, name }] : [],
+                  ).find((c) => c.recipient.pubkey === pubkey)?.recipient ??
+                  null
+                );
+              }}
               data-single-emoji={largeEmojiDraft || undefined}
               maxLength={16000}
               aria-label={label}

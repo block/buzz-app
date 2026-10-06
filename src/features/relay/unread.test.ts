@@ -7,7 +7,7 @@ import {
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
@@ -37,6 +37,7 @@ function setup(
   options: ChannelStoreOptions = {},
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
+  workflowAuthority = false,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -96,6 +97,7 @@ function setup(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      ...(workflowAuthority ? { archiveAuthority: relay.pubkey } : {}),
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
@@ -2720,9 +2722,18 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
   },
 );
 
-it("catch-up keeps the message marks older clients read; only a channel mark replaces them", async () => {
+const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
+  signed(h.relay, {
+    kind: 39000,
+    content: "",
+    created_at: 20,
+    tags: [["d", "room"], ["name", "room"], ...(type ? [["t", type]] : [])],
+  });
+
+it("catch-up replaces the ordinary message marks it reads; attention marks stay", async () => {
   const h = setup();
   h.grant("room");
+  h.emit([channelMetadata(h, "stream")]);
   const first = message(h.alice, "room", "first", 11);
   const mention = message(h.alice, "room", "mention", 12, [
     ["p", h.viewer.pubkey],
@@ -2731,26 +2742,75 @@ it("catch-up keeps the message marks older clients read; only a channel mark rep
   h.emit([first, mention, bottom]);
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id, mention.id]);
-  // Older clients ignore `activity:`; they read these messages through
-  // their own marks, so catch-up must not replace them.
+  // Catch-up reads the ordinary message, so its own mark goes. The timeline
+  // does not prove the mention was seen, so the mention keeps its mark.
   await lease.catchUp(bottom.id);
   expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${first.id}`]: 11,
     [`msg:${mention.id}`]: 12,
     "activity:room": 13,
   });
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   lease.dispose();
-  // A channel mark covers everything, including its own catch-up mark.
-  clock(30);
-  await h.session.unread.markChannelRead("room");
-  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
   // Reading a covered message again saves nothing new.
   const revision = h.journal()?.revision;
   const again = h.session.unread.reading("room");
   await again.observe([first.id, mention.id]);
   again.dispose();
   expect(h.journal()?.revision).toBe(revision);
+  // A channel mark covers everything, including its own catch-up mark.
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+});
+
+it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([channelMetadata(h, "dm")]);
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBe("dm");
+  const first = message(h.alice, "room", "first", 11);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // A DM never gets an `activity:` mark; its own channel mark covers it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
+  lease.dispose();
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", bottom.id).unread).toBe(false);
+});
+
+it("catch-up keeps message marks while the channel type is unknown", async () => {
+  const h = setup();
+  // The roster lists the channel before its metadata says it is a DM.
+  h.grant("room");
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBeUndefined();
+  const first = message(h.alice, "room", "first", 11);
+  const second = message(h.alice, "room", "second", 12);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, second, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // Pruning keeps the existing mark, and a later read still writes its own.
+  await lease.observe([second.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${first.id}`]: 11,
+    [`msg:${second.id}`]: 12,
+    "activity:room": 13,
+  });
+  h.emit([channelMetadata(h, "dm")]);
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", second.id).unread).toBe(false);
 });
 
 it("pruning keeps every mark that still reads something, and unread does not change", async () => {
@@ -3112,3 +3172,35 @@ it("a DM dwell with no verified message does not read the DM", async () => {
   lease.dispose();
   expect(h.journal()?.state.frontiers.dm).toBeUndefined();
 });
+
+it.each([false, true])(
+  "projects workflow ownership into Inbox/activity only with explicit authority: %s",
+  (trusted) => {
+    const h = setup({}, true, undefined, trusted);
+    h.grant("room");
+    const parent = eventDto(message(h.viewer, "room", "my thread", 11));
+    const reply = eventDto(
+      message(h.relay, "room", "workflow output", 12, [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", h.viewer.pubkey],
+        ["p", h.viewer.pubkey],
+        ["e", parent.id, "", "reply"],
+      ]),
+    );
+    h.emit([parent, reply]);
+    for (const item of [
+      h.session.unread.inbox().items[0],
+      h.session.unread.activity("room").items?.[0],
+    ]) {
+      expect(item?.authorId).toBe(h.relay.pubkey);
+      expect(item?.workflowOwnerId).toBe(trusted ? h.viewer.pubkey : undefined);
+    }
+    expect(h.session.unread.attention("room", reply.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    });
+    expect(
+      h.session.unread.attention("room", reply.id).mentioned,
+    ).toBeUndefined();
+  },
+);

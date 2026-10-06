@@ -21,6 +21,7 @@ const operation: WorkflowOperation = {
   eventId: "deletion",
   workflow: fixtureDefinition,
   action: "delete",
+  createdAt: 1,
   outcome: "succeeded",
   delivery: "accepted",
 };

@@ -3,8 +3,8 @@ import { eventDto, type RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
-export const USER_STATUS_KIND = 30315;
-export const STATUS_TEXT_LIMIT = 100;
+import { USER_STATUS_KIND, validStatusText } from "./user-status-policy";
+export { USER_STATUS_KIND, STATUS_TEXT_LIMIT } from "./user-status-policy";
 export type UserStatus = Readonly<{
   userId: string;
   text: string;
@@ -23,12 +23,7 @@ function parse(event: RelayEvent): UserStatus | undefined {
   )
     return;
   const emoji = event.tags.find(([key]) => key === "emoji")?.[1] ?? "";
-  if (
-    event.content.length > STATUS_TEXT_LIMIT ||
-    emoji.length > 100 ||
-    /[\r\n]/.test(event.content + emoji)
-  )
-    return;
+  if (!validStatusText(event.content, emoji)) return;
   const expiration = event.tags.find(([key]) => key === "expiration")?.[1];
   const expiresAt = expiration === undefined ? undefined : Number(expiration);
   if (
@@ -221,11 +216,7 @@ export function createUserStatuses(
     if (saving) throw new Error("A status update is already in progress.");
     const text = input.text.trim();
     const emoji = input.emoji.trim();
-    if (
-      text.length > STATUS_TEXT_LIMIT ||
-      emoji.length > 100 ||
-      /[\r\n]/.test(text + emoji)
-    )
+    if (!validStatusText(text, emoji))
       throw new Error("Keep your status to one short line (100 characters).");
     const expiresAt = text || emoji ? input.expiresAt : undefined;
     if (

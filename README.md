@@ -72,6 +72,12 @@ per-platform steps and limits.
 
 ## Relay channels
 
+For manual testing of shipped behavior, use `BUZZ_DEV_VIEWER= just desktop` to
+exercise the native path, even if `.env.local` contains a public viewer pin.
+Broker-backed runs do not prove native acceptance. Browser capabilities remain
+supported; consolidate shared policy rather than maintain parallel feature logic.
+See [host boundaries and testing guidance](docs/contributing.md#shared-logic-and-host-boundaries).
+
 Live **browser/broker development** requires an existing Buzz account in the OS credential
 store: the `buzz-desktop` / `secrets` Keychain entry on macOS, or the same entry in
 the freedesktop secret service on Linux (read with libsecret's `secret-tool`, so

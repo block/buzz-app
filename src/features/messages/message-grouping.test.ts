@@ -63,3 +63,12 @@ it("keeps thread shares separate from adjacent authored messages", () => {
   expect(continuesMessageGroup(first, shared)).toBe(false);
   expect(continuesMessageGroup(shared, first)).toBe(false);
 });
+
+it("keeps automation bylines on every row, even for a common signer and owner", () => {
+  const workflow = { ...first, workflowOwnerId: "owner" };
+  expect(continuesMessageGroup(first, workflow)).toBe(false);
+  expect(continuesMessageGroup(workflow, first)).toBe(false);
+  expect(continuesMessageGroup(workflow, { ...workflow, id: "next" })).toBe(
+    false,
+  );
+});

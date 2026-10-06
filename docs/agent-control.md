@@ -17,25 +17,30 @@ quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents** for discovered and imported identities grouped by known community
-associations. Each identity card keeps the configured destinations’ **Start / Stop**
-controls. **Edit**, **Duplicate**, and **Delete** are in the card’s three-dot menu.
+associations. Compact individual-agent cards open **View profile** on click, without
+expanding the grid. The three-dot menu keeps **Manage agent**, **Edit**, **Duplicate**,
+and **Delete** separate. **Manage agent** opens the configured destinations’
+**Start / Stop**, recovery, and identity/source controls in a dialog; it is also
+the card-click fallback when no profile panel is available. Closing Manage does not
+cancel Start/Stop or discard its failure reason. Reopening retains that result
+until another action from Manage or Edit, or an observed process-status transition,
+supersedes it. Retained failures expose **Review agent status** on the card.
 Duplicate seeds Create with editable settings and a fresh identity; write-only
 environment values require re-entry. Delete stops the local process and removes
 this app's settings and Keychain key after confirmation. The key remains while
 another setup of the same identity still uses it. Delete does not archive the
 relay identity or erase messages. Deployed remote records are refused. Actions
 use native ID/revision, never the display name. Older hosts without parked
-inventory retain the **My agents** and read-only library sections. Managed
+inventory retain the **Individual agents** and collapsed read-only **Other agents** sections. Managed
 controls remain available when discovery is disconnected, unavailable or archived.
 
-**Add agent** shares the Edit fields and model browser. In the development desktop,
+**Create agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
 saves the agent, starts it, then publishes its profile. A failed Start or profile
 publication retains the saved identity and offers a retry for that step; it never
 creates another identity. A native Start response can confirm a saved agent while
 reporting that its process could not run. During Create, Start, or profile setup,
-**Close** leaves the operation running and exposes the existing cards' recovery
-Stop. Late completion never closes a subsequently opened dialog. If an operation
+**Close** leaves the operation running and keeps recovery **Stop** available through **Manage agent**. Late completion never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
 
 Create is blocked with an explanation if this app’s runtime is unavailable;
@@ -87,7 +92,8 @@ agent stopped. The source is read-only and no legacy credential access occurs.
 
 **Import** preserves the selected old-installation identity and private key. It
 requires an explicit destination and a fresh source/destination-bound preview.
-Successful import saves a configured, stopped setup. It does not start a listener,
+Successful import saves a configured, stopped setup and moves keyboard focus to
+the persistent card’s **Review agent status** button (or Actions for a row). It does not start a listener,
 invite an agent, or modify the source installation. An identity already held
 locally cannot be imported again into another community; use **Clone** instead.
 The native prepare and commit boundaries both enforce that exact-key rule.
@@ -244,8 +250,9 @@ installation guidance and device-wide defaults.
 
 ### Harnesses
 
-The **Harnesses** card always lists the Tier 1 options **Buzz Agent**, **Goose**,
-and **Pi**. **Add harness** opens the Tier 2 Hermes chooser and setup details.
+The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
+**Claude Code**. Claude Code supports installation only in this slice; it is
+not yet a choice when creating an agent. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected:
 
 - **Buzz Agent** is bundled and shows **Ready**.
@@ -274,8 +281,46 @@ Hermes also appears in the main list once its executable is detected:
 - **Hermes Agent** shows **Ready** or **CLI needed** in **Add harness**, with a
   manual setup guide and no Install/Update action. **Check again** updates the
   chooser and main list; removing its executable hides the main row again.
-  Discovery searches for the exact `hermes-acp` launcher name. Windows `.exe`/`.cmd`/`.bat` launchers are a known discovery
-  limitation in this slice; saved absolute paths remain recognizable/editable.
+  Discovery searches for the exact `hermes-acp` launcher name. Windows
+  `.exe`/`.cmd`/`.bat` launchers are a known discovery limitation in this slice;
+  saved absolute paths remain recognizable/editable.
+
+- **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
+  **Sign-in needed** when its CLI reports signed out, and **Ready** once tools
+  and sign-in are confirmed. A failed auth check shows **Sign-in unconfirmed**.
+  On macOS/Linux x64 and arm64, **Install** reuses the checksum-verified managed
+  Node and installs `@anthropic-ai/claude-code@2.1.289` and
+  `@agentclientprotocol/claude-agent-acp@0.85.1` into a new app-owned
+  `claude-tools/releases` directory. Both launchers must pass `--version` before
+  activation; a failed install preserves the previous release. Pi and Claude
+  use separate release storage and share the native install/quit owner, so only
+  one installation runs at a time. Stop remains available for running agents.
+  The result and private log survive leaving Settings, and completion refreshes
+  native detection. Complete external installations take precedence and remain
+  untouched. Windows and unsupported architectures retain manual setup with
+  Node.js 22 or newer. The fallback commands are:
+
+  ```sh
+  npm install -g @anthropic-ai/claude-code@2.1.289
+  npm install -g @agentclientprotocol/claude-agent-acp@0.85.1
+  ```
+
+  Windows discovery resolves `node.exe` and native/Windows npm launchers;
+  the PowerShell sign-in command uses the selected `.exe`/`.cmd`/`.bat` path.
+  While installation runs, Install keeps keyboard focus but blocks activation.
+  Failure leaves it focused for retry. Success moves focus to the status if
+  Install still owns focus, without taking it from another control.
+
+  **Sign in to Claude Code** shows the resolved CLI's `auth login` command,
+  including managed Node on PATH when needed. Settings checks the selected CLI
+  with a bounded, read-only `auth status` command on opening, Check again, and
+  after installation. Only its `loggedIn` boolean is exposed; account metadata
+  is discarded. Ready rows hide setup guidance; failed installs retain their
+  error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
+  runtime; the separate CLI provides the sign-in command. This PR does not
+  launch Claude agents, discover models or restart agents.
+  Native reports this setup separately through `claudeSetup`, outside
+  `harnessOptions`, so it cannot become a creation or default-harness choice.
 
 Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
 owned by the controller and read by both Rust and TypeScript. Native discovery
@@ -737,6 +782,29 @@ download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
 
+### Bundled CLI skill
+
+Before restoring local agents, the native host installs the embedded `buzz-cli`
+skill at `~/.buzz/.agents/skills/buzz-cli/SKILL.md`, including on a fresh machine.
+Development builds also use `~/.buzz`, so a desktop dev run writes to this real
+workspace and may migrate a legacy Claude-only skill there.
+On macOS/Linux, Claude, Codex and Goose discover it through relative directory
+symlinks under `.claude/skills`, `.codex/skills` and `.goose/skills` in that workspace.
+Windows receives the canonical file, matching the old desktop's Unix-only links.
+Existing real provider directories and valid links are preserved; dangling links
+are repaired. A redirected provider directory is reported and skipped without
+blocking the canonical file or the other providers' links. The old Claude-only
+layout moves to the canonical location, preserving edited content and supporting files.
+
+`crates/agent-controller/src/buzz_cli_skill.md` is copied from the old desktop at
+the revision in `runtime/agent-runtime.json`. Its installer uses the old desktop's
+`.skill-version` marker: current or newer installations stay untouched, while
+missing content is repaired and older templates are refreshed atomically.
+Update `CLI_SKILL_VERSION` in `skills.rs` when adopting a newer template, keeping
+it aligned with the upstream template version. No skill download or old-app
+installation is required. Custom agent workspaces are not modified. Installation
+errors are logged without preventing the app from opening.
+
 ### Updating the agent runtime
 
 Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
@@ -744,6 +812,12 @@ Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
 dependency upgrades. The runtime integration test checks that both pins name the
 same repository and immutable revision; the native synthetic manifest reads the
 runtime spec rather than carrying another copy of the pin.
+
+When changing the Buzz revision, re-copy
+`desktop/src-tauri/src/managed_agents/nest_skill.md` from that revision into
+`crates/agent-controller/src/buzz_cli_skill.md`. Set `CLI_SKILL_VERSION` in
+`skills.rs` to upstream's `NEST_SKILL_VERSION`, preserving its shared version
+policy with the old desktop. Check the new file against the pinned CLI behavior.
 
 Goose upgrades change only the `goose` source/build settings in the runtime spec;
 they do not require changing the Buzz library or tool revision. Logical

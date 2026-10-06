@@ -12,11 +12,9 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
-import {
-  archivedMention,
-  mentionCandidates,
-  mentionHistory,
-} from "../../features/messages/mention-candidates";
+import { archivedMention } from "../../features/messages/mention-admission";
+import { mentionHistory } from "../../features/messages/mention-history";
+import { mentionCandidates } from "./mention-candidates";
 import {
   exactMention,
   rankMentions,

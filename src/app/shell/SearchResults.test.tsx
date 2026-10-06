@@ -14,6 +14,7 @@ import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
+import { eventDto } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
 import {
   keypair,
@@ -2549,3 +2550,68 @@ it("treats bare in:# as no channel operator", async () => {
     owner.dispose();
   }
 });
+
+it.each([true, false])(
+  "only shows relay-attested workflow ownership in ranked search (relay signer: %s), keeping from: signer-based",
+  async (relaySigned) => {
+    vi.useFakeTimers();
+    const relay = keypair(),
+      viewer = keypair(),
+      workflowOwner = keypair();
+    const signer = relaySigned ? relay : keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      archiveAuthority: relay.pubkey,
+      query(filters, signal) {
+        if (filters.some((filter) => filter.search !== undefined))
+          return wire.transport.query(filters, signal);
+        return Promise.resolve(
+          [
+            metadata(relay, "crew", "crew"),
+            roster(relay, "crew", [viewer.pubkey]),
+            profile(workflowOwner, { display_name: "Workflow owner" }),
+            profile(signer, { display_name: "Actual signer" }),
+          ].filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+    });
+    const open = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={`deploy in:#crew from:${signer.pubkey} `}
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={open}
+        />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      const request = wire.next();
+      expect(request.filters[0]?.authors).toEqual([signer.pubkey]);
+      const hit = eventDto(
+        message(signer, "crew", "deploy automated", 1700000001, [
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", workflowOwner.pubkey],
+        ]),
+      );
+      await act(async () => request.respond([hit]));
+      const option = screen.getByRole("option", { name: /deploy automated/ });
+      if (relaySigned) {
+        expect(option).toHaveTextContent("Workflow · owned by Workflow owner");
+      } else {
+        expect(option).toHaveTextContent("Actual signer");
+        expect(option).not.toHaveTextContent("Workflow");
+      }
+      fireEvent.click(option);
+      expect(open).toHaveBeenCalledExactlyOnceWith("crew", hit.id);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);

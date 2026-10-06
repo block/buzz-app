@@ -1,3 +1,6 @@
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { LightningIcon } from "../../shared/design-system/icons";
+import { WorkflowByline } from "./WorkflowByline";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
@@ -208,6 +211,13 @@ export const MessageRow = memo(function MessageRow({
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
   );
+  const workflowOwnerName = row.workflowOwnerId
+    ? resolveName(
+        row.workflowOwnerId,
+        directory.profiles.get(row.workflowOwnerId)?.name ??
+          `${row.workflowOwnerId.slice(0, 10)}…`,
+      )
+    : undefined;
   const picture = profile?.picture
     ? media(profile.picture, "small")
     : undefined;
@@ -220,7 +230,9 @@ export const MessageRow = memo(function MessageRow({
       ? "squircle"
       : "circle";
   const presence = usePresenceStatus(
-    avatarShape === "squircle" ? session?.presence : undefined,
+    !row.workflowOwnerId && avatarShape === "squircle"
+      ? session?.presence
+      : undefined,
     row.authorId,
   );
   const presenceId = useId();
@@ -326,6 +338,20 @@ export const MessageRow = memo(function MessageRow({
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />
           </span>
+        ) : row.workflowOwnerId ? (
+          <Avatar
+            alt="Workflow"
+            fallback="Workflow"
+            fallbackContent={<LightningIcon size={20} />}
+            shape="squircle"
+            size={
+              compactAvatar
+                ? "small"
+                : layout === "timeline"
+                  ? "large"
+                  : "default"
+            }
+          />
         ) : clickable ? (
           <IconButton
             size={layout === "timeline" ? "default" : "sm"}
@@ -485,7 +511,17 @@ export const MessageRow = memo(function MessageRow({
             <div
               className={layout === "continuation" ? "sr-only" : styles.byline}
             >
-              <strong className={styles.author}>{name}</strong>
+              {row.workflowOwnerId && workflowOwnerName ? (
+                <WorkflowByline
+                  ownerId={row.workflowOwnerId}
+                  ownerName={workflowOwnerName}
+                  signer={row.signerId ?? row.authorId}
+                  canOpenLink={canOpenLink}
+                  onOpenLink={onOpenLink}
+                />
+              ) : (
+                <strong className={styles.author}>{name}</strong>
+              )}
               {layout !== "continuation" && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}

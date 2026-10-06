@@ -1,4 +1,4 @@
-import type { mentionCandidates } from "../../features/messages/mention-candidates";
+import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
 };

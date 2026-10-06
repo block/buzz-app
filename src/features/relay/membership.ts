@@ -42,6 +42,7 @@ export function rowProfileIds(row: ChannelMessage): readonly string[] {
     ? [row.membership.actor, row.membership.target]
     : [
         row.authorId,
+        ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
         ...row.mentions,
         ...(row.mentionReferences ?? []),
         ...row.participants,

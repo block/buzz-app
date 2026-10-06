@@ -8,6 +8,7 @@ export const inject = [
   "agentControl",
   "navigation",
   "communityReader",
+  "channelTemplates",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
@@ -32,6 +33,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         panels={ctx.panels}
         open={ctx.navigation.open}
         communities={communities}
+        templates={ctx.channelTemplates}
       />
     ),
   });

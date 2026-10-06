@@ -83,7 +83,7 @@ pub(super) async fn test(mut context: GooseModelContext) -> Result<String, Strin
     let mut child = CheckChild(
         command
             .spawn()
-            .map_err(|_| "Could not start Goose to test the model".to_owned())?,
+            .map_err(|error| format!("Could not start Goose to test the model: {error}"))?,
     );
     let stdout = child.0.stdout.take().ok_or(TEST_FAILURE)?;
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -226,7 +226,7 @@ async fn test_acp(context: GooseModelContext) -> Result<(), String> {
     let mut child = CheckChild(
         command
             .spawn()
-            .map_err(|_| "Could not start Goose to test the model".to_owned())?,
+            .map_err(|error| format!("Could not start Goose to test the model: {error}"))?,
     );
     let input = child.0.stdin.take().ok_or(TEST_FAILURE)?;
     let output = BufReader::new(
@@ -356,7 +356,7 @@ async fn rpc(context: &GooseModelContext, method: &str, params: Value) -> Result
     let mut child = CheckChild(
         command
             .spawn()
-            .map_err(|_| "Could not start Goose to list models".to_owned())?,
+            .map_err(|error| format!("Could not start Goose to list models: {error}"))?,
     );
     let mut stdin = child
         .0
@@ -533,7 +533,7 @@ mod tests {
     async fn acp_connection_test_checks_reply_and_cleans_up_on_failure_or_cancel() {
         use std::{
             io::{BufRead, Read, Write},
-            os::{fd::FromRawFd, unix::fs::PermissionsExt},
+            os::fd::FromRawFd,
         };
         const SOCKET: &str = "BUZZ_GOOSE_TEST_SOCKET";
         const CASE: &str = "BUZZ_GOOSE_TEST_CASE";
@@ -678,11 +678,13 @@ mod tests {
         let socket = dir.path().join("gate");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         let command = dir.path().join("goose-acp");
-        std::fs::write(&command, r#"#!/bin/sh
+        crate::test_executable::write_executable(
+            &command,
+            r#"#!/bin/sh
 [ "$#" -eq 0 ] || exit 1
 exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_checks_reply_and_cleans_up_on_failure_or_cancel --nocapture 3>&1 >/dev/null
-"#).unwrap();
-        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+"#,
+        );
         for case in [
             "success",
             "max-tokens",
@@ -823,7 +825,7 @@ exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_che
         use std::{
             future::Future,
             io::{BufRead, Read, Write},
-            os::{fd::FromRawFd, unix::fs::PermissionsExt},
+            os::fd::FromRawFd,
         };
         const SOCKET: &str = "BUZZ_GOOSE_TEST_SOCKET";
         if let Ok(socket) = std::env::var(SOCKET) {
@@ -875,11 +877,15 @@ exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::acp_connection_test_che
             ("goose-acp", vec![], r#"[ "$#" -eq 0 ] || exit 1"#),
         ] {
             let command = dir.path().join(name);
-            std::fs::write(&command, format!(r#"#!/bin/sh
+            crate::test_executable::write_executable(
+                &command,
+                format!(
+                    r#"#!/bin/sh
 {argument_check}
 exec "$BUZZ_GOOSE_TEST_EXE" --exact goose_models::tests::one_shot_acp_request_reads_catalog_before_closing_stdin --nocapture 3>&1 >/dev/null
-"#)).unwrap();
-            std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+"#
+                ),
+            );
             let context = GooseModelContext {
                 command,
                 args,

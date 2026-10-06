@@ -1,5 +1,28 @@
 import { expect, it } from "vitest";
-import { searchEmoji, searchCustomEmoji } from "./emoji-search";
+import { exactEmoji, searchEmoji, searchCustomEmoji } from "./emoji-search";
+
+it("verifies one exact shortcode for the closing colon, not ranking ties or namesakes", async () => {
+  const party = [{ shortcode: "party", url: "https://a.test/party.png" }];
+  const smile = [{ shortcode: "smile", url: "https://a.test/smile.png" }];
+  for (const [query, id] of [
+    ["-1", "unicode/-1"],
+    ["+1", "unicode/+1"],
+    ["SMILE", "unicode/smile"],
+    ["party", "custom/party"],
+  ] as const)
+    expect(exactEmoji(query, await searchEmoji(query, party))).toBe(id);
+  // Separator-insensitive search ranks -1 first for "1", but the name differs.
+  const one = await searchEmoji("1", []);
+  expect(one[0]?.shortcode).toBe("-1");
+  expect(exactEmoji("1", one)).toBeUndefined();
+  expect(exactEmoji("smil", await searchEmoji("smil", []))).toBeUndefined();
+  expect(
+    exactEmoji("smile", await searchEmoji("smile", smile)),
+  ).toBeUndefined();
+  expect(exactEmoji("smile", searchCustomEmoji("smile", smile))).toBe(
+    "custom/smile",
+  );
+});
 
 it("searches native names, aliases and separator-insensitive shortcodes", async () => {
   expect((await searchEmoji("smile", []))[0]?.shortcode).toBe("smile");

@@ -1,3 +1,4 @@
+import { workflowLabel } from "../relay/workflow-attribution";
 import type { ChannelSummary, Profile } from "../relay/contracts";
 import type { IncomingMessage } from "../relay/incoming";
 import { scanMarkdown } from "../relay/message-content";
@@ -50,9 +51,10 @@ export function messageNotificationText(
   profile: Profile | undefined,
   resolvedName?: string | undefined,
 ): NotificationText {
-  const sender =
+  const name =
     shortText(resolvedName ?? profile?.name ?? "", 64) ||
-    message.authorId.slice(0, 10);
+    (message.workflowOwnerId ?? message.authorId).slice(0, 10);
+  const sender = message.workflowOwnerId ? workflowLabel(name) : name;
   const destination =
     channel?.channelType === "dm"
       ? "a direct message"

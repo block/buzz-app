@@ -1,3 +1,6 @@
+import { eventDto } from "../../../src/features/relay/events";
+import { foldMessages } from "../../../src/features/relay/fold";
+import { keypair, signed } from "../../../src/features/relay/testing";
 import type {
   ChannelMessage,
   Profile,
@@ -9,7 +12,11 @@ import avatar from "../design-system/assets/avatar.png";
 export const reader = "a".repeat(64);
 export const teammate = "b".repeat(64);
 export const agent = "c".repeat(64);
+const workflowRelay = keypair();
+const workflowOwner = keypair();
+const missingWorkflowOwner = keypair();
 export const profiles = new Map<string, Profile>([
+  [workflowOwner.pubkey, { name: "Wes" }],
   [reader, { name: "Alex Morgan", picture: "https://fixture.test/avatar" }],
   [teammate, { name: "Sam Rivera" }],
   [agent, { name: "Studio assistant", isAgent: true }],
@@ -63,6 +70,72 @@ const single = (
   patch: Partial<ChannelMessage> = {},
 ): Example => ({ id, title, description, rows: [message(id, content, patch)] });
 export const groups: Group[] = [
+  {
+    id: "workflow",
+    title: "Workflow attribution",
+    description:
+      "Local signed examples using the real message fold and renderer. No relay connection or workflow execution.",
+    examples: [
+      {
+        id: "workflow-owner",
+        title: "Automated message",
+        description:
+          "Automation leads; owner navigation is labelled. Open the information icon to inspect the separate owner and relay keys.",
+        rows: foldMessages(
+          "studio",
+          workflowRelay.pubkey,
+          [
+            eventDto(
+              signed(workflowRelay, {
+                kind: 9,
+                created_at: 1_790_078_400,
+                content: "Scheduled check-in: what needs attention today?",
+                tags: [
+                  ["p", workflowOwner.pubkey],
+                  ["h", "studio"],
+                  ["buzz:workflow", "true"],
+                  ["buzz:workflow-owner", workflowOwner.pubkey],
+                ],
+              }),
+            ),
+          ],
+          { signingAuthority: workflowRelay.pubkey },
+        ),
+      },
+      {
+        id: "workflow-missing-profile",
+        title: "Owner profile unavailable",
+        description:
+          "Ownership remains explicit without guessing a name or borrowing the relay’s profile.",
+        rows: foldMessages(
+          "studio",
+          workflowRelay.pubkey,
+          [
+            eventDto(
+              signed(workflowRelay, {
+                kind: 9,
+                created_at: 1_790_078_460,
+                content: "The weekly summary is ready.",
+                tags: [
+                  ["p", missingWorkflowOwner.pubkey],
+                  ["h", "studio"],
+                  ["buzz:workflow", "true"],
+                  ["buzz:workflow-owner", missingWorkflowOwner.pubkey],
+                ],
+              }),
+            ),
+          ],
+          { signingAuthority: workflowRelay.pubkey },
+        ),
+      },
+      single(
+        "human-comparison",
+        "Human message, unchanged",
+        "Human authors keep their own avatar and name.",
+        "I’ll review it this afternoon.",
+      ),
+    ],
+  },
   {
     id: "content",
     title: "Content and identity",

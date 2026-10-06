@@ -61,6 +61,12 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
+  buzzCopyMarkdown,
+  composerClipboard,
+  identityLink,
+} from "./composer-clipboard";
+import {
+  mentionBoundary,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
@@ -154,6 +160,9 @@ export type EditableInputProps = Omit<
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
+  /** Vet a pasted identity link as a notification recipient: the recipient under
+   * its current name, or null to keep the display-only chip. */
+  acceptRecipient?(pubkey: string): MentionRecipient | null;
 };
 
 /** ProseMirror owns native editing, composition, selection and a single history.
@@ -169,6 +178,7 @@ export function EditableInput({
   onDraftChange,
   onFormatsChange,
   onEditLink,
+  acceptRecipient,
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -183,6 +193,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onEditLink,
+    acceptRecipient,
     disabled,
     placeholder,
   });
@@ -193,6 +204,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onEditLink,
+    acceptRecipient,
     disabled,
     placeholder,
   };
@@ -452,10 +464,41 @@ export function EditableInput({
       text: string,
       recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
+      terminator?: ":",
     ) => {
-      if (!editable() || composing.current) return false;
-      if (range) setRange(range.start, range.end);
-      const { from, to, $from } = editor.state.selection;
+      if (!editable() || composing.current || editor.composing) return false;
+      if (terminator) {
+        const source = projection();
+        if (
+          !range ||
+          recipient ||
+          !editor.state.selection.empty ||
+          source.source(editor.state.selection.from) !== range.end
+        )
+          return false;
+        // Like inline input rules, keep the typed source as the undo target.
+        const typed = editor.state.tr.insertText(terminator);
+        if (
+          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
+          current.current.maxLength
+        )
+          return false;
+        const previous = editor.state;
+        editor.dispatch(typed);
+        if (editor.state === previous) return false;
+        range = { start: range.start, end: range.end + terminator.length };
+        openTokens(range.start, range.end);
+      } else if (range) setRange(range.start, range.end);
+      const source = projection();
+      // Do not select the shortcode in a separate transaction: undo must retain
+      // the collapsed caret following the colon, not the replacement range.
+      const from = range
+        ? source.position(range.start)
+        : editor.state.selection.from;
+      const to = range
+        ? source.position(range.end, -1)
+        : editor.state.selection.to;
+      const $from = editor.state.doc.resolve(from);
       const marks = $from.parent.type
         .allowedMarks(editor.state.storedMarks ?? $from.marks())
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
@@ -507,8 +550,10 @@ export function EditableInput({
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength
       )
-        return false;
+        return !!terminator; // The typed colon landed even if conversion cannot.
+      const unconverted = editor.state;
       editor.dispatch(tr.scrollIntoView());
+      if (terminator && editor.state !== unconverted) separateHistory = true;
       editor.focus();
       return true;
     };
@@ -836,7 +881,8 @@ export function EditableInput({
         remove: () => commit(text),
       };
     };
-    const copySelection = (from: number, to: number) => {
+    const copySelection = (event: ClipboardEvent) => {
+      const { from, to } = editor.state.selection;
       const content = editor.state.doc.slice(from, to, true).content;
       const doc = composerSchema.nodes.doc.create(
         null,
@@ -844,7 +890,53 @@ export function EditableInput({
           ? content
           : composerSchema.nodes.paragraph.create(null, content),
       );
-      return composerMarkdown(projectComposerDocument(doc).draft);
+      const { text, html } = composerClipboard(doc, editor.dom.ownerDocument);
+      event.clipboardData?.setData("text/plain", text);
+      event.clipboardData?.setData("text/html", html);
+      event.preventDefault();
+    };
+    /** Pasted identity links become recipients when the host accepts them; the
+     * rest stay display chips. One transaction, so undo removes the paste whole. */
+    const promoteRecipients = (start: number, end: number) => {
+      const accept = current.current.acceptRecipient;
+      if (!accept) return;
+      const { tokens, draft } = projection();
+      const tr = editor.state.tr;
+      let count = draft.recipients.length;
+      // Later tokens first: earlier positions stay valid, and each boundary
+      // check sees the text that now follows the token.
+      for (const token of [...tokens].reverse()) {
+        if (
+          token.start < start ||
+          token.end > end ||
+          !token.editAsText ||
+          token.node.attrs.recipient
+        )
+          continue;
+        const identity = identityLink(token.node.attrs.source);
+        if (
+          !identity ||
+          count >= 32 ||
+          !mentionBoundary(
+            projectComposerDocument(tr.doc).draft.text,
+            token.end,
+          )
+        )
+          continue;
+        const recipient = accept(identity.pubkey);
+        if (!recipient) continue;
+        tr.replaceWith(
+          token.from,
+          token.to,
+          composerSchema.nodes.token.create(
+            { source: `@${recipient.name}`, recipient, editAsText: false },
+            null,
+            token.node.marks,
+          ),
+        );
+        count++;
+      }
+      if (tr.docChanged) editor.dispatch(tr);
     };
     const historyCommand = (forward: boolean) => {
       if (!editable() || composing.current || editor.composing) return;
@@ -1342,15 +1434,11 @@ export function EditableInput({
             return false;
           },
           copy(_view, event) {
-            const { from, to } = editor.state.selection;
-            event.clipboardData?.setData("text/plain", copySelection(from, to));
-            event.preventDefault();
+            copySelection(event);
             return true;
           },
           cut(_view, event) {
-            const { from, to } = editor.state.selection;
-            event.clipboardData?.setData("text/plain", copySelection(from, to));
-            event.preventDefault();
+            copySelection(event);
             if (editable())
               editor.dispatch(closeHistory(editor.state.tr.deleteSelection()));
             return true;
@@ -1364,26 +1452,36 @@ export function EditableInput({
               )
             )
               return true;
-            let text = event.clipboardData?.getData("text/plain") ?? "";
+            const code = editor.state.selection.$from.parent.type.spec.code;
+            // Code takes visible text verbatim. Outside code, only this app's
+            // own payload is read as HTML; other apps paste as text.
+            let text =
+              (!code &&
+                buzzCopyMarkdown(
+                  event.clipboardData?.getData("text/html") ?? "",
+                )) ||
+              event.clipboardData?.getData("text/plain") ||
+              "";
             if (!text) return true;
             let link = false;
-            if (!editor.state.selection.$from.parent.type.spec.code)
+            if (!code)
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });
             const source = projection(),
+              start = source.source(editor.state.selection.from),
               end = source.source(editor.state.selection.to);
             const reuse = link && source.draft.text[end] === " ";
             if (
               link &&
               !reuse &&
-              source.draft.text.length -
-                (end - source.source(editor.state.selection.from)) +
-                text.length <
+              source.draft.text.length - (end - start) + text.length <
                 current.current.maxLength
             )
               text += " ";
-            if (insert(text) && reuse) {
+            if (!insert(text)) return true;
+            const inserted = projection().source(editor.state.selection.to);
+            if (reuse) {
               const pos = editor.state.selection.to + 1;
               editor.dispatch(
                 editor.state.tr.setSelection(
@@ -1391,6 +1489,7 @@ export function EditableInput({
                 ),
               );
             }
+            promoteRecipients(start, inserted);
             return true;
           },
           drop(_view, event) {

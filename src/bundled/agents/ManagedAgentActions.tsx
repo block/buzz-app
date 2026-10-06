@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   agentFailureReason,
   canStopAgent,
@@ -16,6 +16,7 @@ export function ManagedAgentActions({
   state,
   control,
   imported,
+  action,
   destination = "",
   owner = "",
   showCommunity = true,
@@ -25,63 +26,17 @@ export function ManagedAgentActions({
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
+  action: ManagedAction;
   destination?: string;
   owner?: string;
   showCommunity?: boolean;
   onUseHere?: ((pubkey: string, action: "use" | "clone") => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
-  const details = useRef<HTMLDivElement>(null);
-  const [checking, setChecking] = useState(false);
-  // Describes one refreshed status; any later status change supersedes it.
-  const [notice, setNotice] = useState<{
-    text: string;
-    status: AgentView["status"];
-  } | null>(null);
-  // Retire on an observed transition away from the notice's status, from any
-  // surface (editor, mention start), so returning to it cannot revive the notice.
-  const [observed, setObserved] = useState(agent.status);
-  if (observed !== agent.status) {
-    setObserved(agent.status);
-    if (notice && notice.status !== agent.status) setNotice(null);
-  }
-  useEffect(() => {
-    if (imported) {
-      details.current?.scrollIntoView?.({ block: "nearest" });
-      details.current?.focus();
-    }
-  }, [imported]);
+  const { checking, notice, act } = action;
   const startBlock = agentLaunchBlock(state, agent);
-  const act = (action: "start" | "stop") => {
-    setNotice(null);
-    void control.action(agent.id, action).catch(async (problem: unknown) => {
-      setChecking(true);
-      await control.refresh();
-      setChecking(false);
-      const refreshed = control.snapshot();
-      const current = refreshed.data?.agents.find(
-        (item) => item.id === agent.id,
-      );
-      // A recorded agent error already explains the outcome on this card.
-      if (!current || current.error) return;
-      if (
-        action === "start"
-          ? current.status === "running"
-          : current.status === "stopped" && !current.enabled
-      )
-        return;
-      const reason = agentFailureReason(problem);
-      setNotice({
-        status: current.status,
-        text:
-          refreshed.status === "ready"
-            ? `The agent didn't ${action}.${reason && ` ${reason}`} Try again.`
-            : `We couldn't confirm whether the agent ${action === "start" ? "started" : "stopped"}. Refresh status before trying again.`,
-      });
-    });
-  };
   return (
-    <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
         {showCommunity && (
           <p className="m-0 break-all text-body-sm text-secondary">
@@ -131,9 +86,7 @@ export function ManagedAgentActions({
         </p>
       )}
       {checking && <p role="status">Checking agent status…</p>}
-      {!checking && notice?.status === agent.status && !agent.error && (
-        <p role="alert">{notice.text}</p>
-      )}
+      {!checking && notice && !agent.error && <p role="alert">{notice}</p>}
       {agent.profilePending && (
         <div className="space-y-2">
           <p role="status" className="m-0 text-body-sm">
@@ -175,4 +128,104 @@ export function ManagedAgentActions({
       )}
     </div>
   );
+}
+
+export type ManagedAction = {
+  checking: boolean;
+  notice: string | null;
+  act(action: "start" | "stop"): void;
+};
+
+/** Owned by the card/list, not the disposable Manage dialog body. */
+export function useManagedAgentActions(
+  state: AgentControlState,
+  control: AgentControl,
+) {
+  const [outcomes, setOutcomes] = useState<
+    Record<
+      string,
+      {
+        status: AgentView["status"];
+        version: number | undefined;
+        checking: boolean;
+        notice: string | null;
+      }
+    >
+  >({});
+  const [observed, setObserved] = useState(state);
+  if (
+    observed.data?.agents !== state.data?.agents ||
+    observed.actionVersions !== state.actionVersions
+  ) {
+    setObserved(state);
+    setOutcomes((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(
+          ([id, outcome]) =>
+            state.actionVersions?.[id] === outcome.version &&
+            state.data?.agents.some(
+              (agent) => agent.id === id && agent.status === outcome.status,
+            ),
+        ),
+      ),
+    );
+  }
+  return (agent: AgentView): ManagedAction => ({
+    checking: outcomes[agent.id]?.checking ?? false,
+    notice: outcomes[agent.id]?.notice ?? null,
+    act(action) {
+      const pending = control.action(agent.id, action);
+      const version = control.snapshot().actionVersions?.[agent.id];
+      const currentAttempt = () =>
+        control.snapshot().actionVersions?.[agent.id] === version;
+      setOutcomes((current) => ({
+        ...current,
+        [agent.id]: {
+          status: agent.status,
+          version,
+          checking: false,
+          notice: null,
+        },
+      }));
+      void pending.catch(async (problem: unknown) => {
+        if (!currentAttempt()) return;
+        setOutcomes((current) => ({
+          ...current,
+          [agent.id]: {
+            status: agent.status,
+            version,
+            checking: true,
+            notice: null,
+          },
+        }));
+        await control.refresh();
+        if (!currentAttempt()) return;
+        const refreshed = control.snapshot();
+        const current = refreshed.data?.agents.find(
+          (item) => item.id === agent.id,
+        );
+        const succeeded =
+          current &&
+          (action === "start"
+            ? current.status === "running"
+            : current.status === "stopped" && !current.enabled);
+        const reason = agentFailureReason(problem);
+        setOutcomes((outcomes) => {
+          const next = { ...outcomes };
+          delete next[agent.id];
+          if (current && !current.error && !succeeded)
+            next[agent.id] = {
+              status: current.status,
+              version,
+              checking: false,
+              notice:
+                refreshed.status === "ready"
+                  ? `The agent didn't ${action}.${reason && ` ${reason}`} Try again.`
+                  : `We couldn't confirm whether the agent ${action === "start" ? "started" : "stopped"}. Refresh status before trying again.`,
+            };
+          return next;
+        });
+      });
+    },
+  });
 }

@@ -25,31 +25,56 @@ const errorText = (error) =>
 export function watchPageErrors(page) {
   const webkit = page.context().browser()?.browserType().name() === "webkit";
   const errors = [];
+  // Access-control logs that the old document reported while the main frame
+  // was navigating away (see `unexplained`).
+  const leaving = new Set();
   const cancelled = [];
-  page.on("pageerror", (error) => errors.push(errorText(error)));
-  if (webkit)
+  // The main-frame navigation request that is replacing the current document.
+  let navigation;
+  page.on("pageerror", (error) => {
+    errors.push(errorText(error));
+    if (navigation) leaving.add(errors.length - 1);
+  });
+  if (webkit) {
+    page.on("request", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+        navigation = request;
+    });
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) navigation = undefined;
+    });
     page.on("requestfailed", (request) => {
+      if (request === navigation) navigation = undefined;
       if (cancellations.has(request.failure()?.errorText))
         cancelled.push(request.url());
     });
+  }
   return {
     errors,
     unexplained() {
       if (!webkit) return [...errors];
       const unmatched = [...cancelled];
-      return errors.filter((message) => {
+      return errors.filter((message, index) => {
         // A layout warning that WebKit reports as a page error.
         if (message === resizeObserverLoop) return false;
         // When a reload or navigation cancels a fetch, WebKit logs the fetch as
         // an access-control failure even though the caller handles the
         // rejection. An unhandled rejection is a separate page error named
-        // "Unhandled Promise Rejection". Accept the log only for a request that
-        // Playwright saw cancelled, once per cancellation.
+        // "Unhandled Promise Rejection".
         const url = cancelledLoad.exec(message)?.[1];
-        const match = url ? unmatched.indexOf(url) : -1;
-        if (match < 0) return true;
-        unmatched.splice(match, 1);
-        return false;
+        if (!url) return true;
+        // Accept the log for a request that Playwright saw cancelled, once per
+        // cancellation. Use up a matching cancellation first, even during a
+        // navigation, so it cannot explain a later log for the same URL.
+        const match = unmatched.indexOf(url);
+        if (match >= 0) {
+          unmatched.splice(match, 1);
+          return false;
+        }
+        // A fetch that the old document starts after the main-frame navigation
+        // request and before the new document commits is refused inside
+        // fetch(). Playwright sees no request for it.
+        return !leaving.has(index);
       });
     },
   };

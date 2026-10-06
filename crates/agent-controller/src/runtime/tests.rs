@@ -174,7 +174,9 @@ fn bundle(directory: &Path) -> RuntimeBundle {
             fs::copy(std::env::current_exe().unwrap(), &path).unwrap();
             continue;
         }
-        fs::write(&path, r#"#!/bin/sh
+        crate::test_executable::write_executable(
+            &path,
+            r#"#!/bin/sh
 if [ -n "$BUZZ_ACP_LAUNCH_PREFIX" ]; then
   exec /usr/bin/env python3 -c 'import json,os; p=json.loads(os.environ["BUZZ_ACP_LAUNCH_PREFIX"]); os.execv(p[0],p+[os.environ["BUZZ_ACP_AGENT_COMMAND"]]+[x for x in os.environ.get("BUZZ_ACP_AGENT_ARGS", "").split(",") if x])'
 fi
@@ -185,12 +187,8 @@ printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FIL
 printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
-"#).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-        }
+"#,
+        );
     }
     let files: BTreeMap<_, _> = names
         .iter()
@@ -1008,7 +1006,10 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
-    fs::copy(tools.path().join("buzz-agent"), tools.path().join("goose")).unwrap();
+    crate::test_executable::copy_executable(
+        &tools.path().join("buzz-agent"),
+        &tools.path().join("goose"),
+    );
     for (worker, model_key, provider_key) in [
         ("buzz-agent", "BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"),
         ("goose", "GOOSE_MODEL", "GOOSE_PROVIDER"),
@@ -1077,7 +1078,7 @@ fn hermes_launch_requires_defaults_and_preserves_saved_values_for_recovery() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = bundle(dir.path());
     let launcher = dir.path().join("hermes-acp");
-    fs::copy(dir.path().join("buzz-agent"), &launcher).unwrap();
+    crate::test_executable::copy_executable(&dir.path().join("buzz-agent"), &launcher);
     let key = Secret::parse(KEY, PUB).unwrap();
     let mut saved = agent(dir.path());
     saved.harness.command = launcher.to_string_lossy().into_owned();
@@ -1668,11 +1669,9 @@ fn external_harnesses_never_receive_buzz_agent_build_defaults() {
 #[test]
 #[cfg(unix)]
 fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let goose = dir.path().join("goose");
-    fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&goose, "#!/bin/sh\nexit 0\n");
     let controller = Controller::new(
         Store::open(dir.path().join("config")).unwrap(),
         Arc::new(Memory),
@@ -1847,7 +1846,6 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
 #[test]
 #[cfg(unix)]
 fn pi_launch_rejects_old_user_global_cli() {
-    use std::os::unix::fs::PermissionsExt;
     // Keep the parent-credential fixture out of the parallel test process.
     if std::env::var("BUZZ_PRIVATE_KEY").as_deref() != Ok("synthetic-version-probe-test") {
         let output = Command::new(std::env::current_exe().unwrap())
@@ -1869,8 +1867,7 @@ fn pi_launch_rejects_old_user_global_cli() {
     let adapter = dir.path().join("buzz-pi-acp");
     let pi = dir.path().join("pi");
     for path in [&adapter, &pi, &dir.path().join("node")] {
-        fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(path, "#!/bin/sh\nexit 0\n");
     }
     let runtime = bundle(dir.path());
     let mut selected = agent(dir.path());
@@ -1926,24 +1923,20 @@ fn pi_launch_rejects_old_user_global_cli() {
 #[test]
 #[cfg(unix)]
 fn pi_version_probe_times_out_and_retires_helpers() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     for name in ["buzz-pi-acp", "node"] {
         let file = dir.path().join(name);
-        fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(file, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&file, "#!/bin/sh\nexit 0\n");
     }
     let pi = dir.path().join("pi");
     let pid_file = dir.path().join("helper.pid");
-    fs::write(
+    crate::test_executable::write_executable(
         &pi,
         format!(
             "#!/bin/sh\nprintf '0.99.1\\n'\n/bin/sleep 30 &\nprintf '%s' $! > '{}'\nwait\n",
             pid_file.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let runtime = bundle(dir.path());
     let mut selected = agent(dir.path());
     selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
@@ -2000,7 +1993,6 @@ fn worker_environment_override_beats_imported_parallelism_and_removal_restores_i
 #[test]
 #[cfg(unix)]
 fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
-    use std::os::unix::fs::PermissionsExt;
     for harness in ["goose-acp", "buzz-pi-acp"] {
         let dir = tempfile::tempdir().unwrap();
         let tools = tempfile::tempdir().unwrap();
@@ -2008,8 +2000,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
         if harness == "buzz-pi-acp" {
             for name in ["buzz-pi-acp", "pi", "node"] {
                 let path = tools.path().join(name);
-                fs::write(&path, "#!/bin/sh\nprintf '0.99.1\\n'\n").unwrap();
-                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                crate::test_executable::write_executable(&path, "#!/bin/sh\nprintf '0.99.1\\n'\n");
             }
         }
         let mut a = agent(dir.path());
@@ -2094,13 +2085,11 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
 #[test]
 #[cfg(unix)]
 fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
     let adapter = tools.path().join("buzz-pi-acp");
-    fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&adapter, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&adapter, "#!/bin/sh\nexit 0\n");
     let extension = tools.path().join("extension with spaces.ts");
     fs::write(&extension, "export default function() {};").unwrap();
     let mut a = agent(dir.path());
@@ -2113,14 +2102,11 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         "--extension".into(),
         extension.display().to_string(),
     ];
-    for tool in ["pi", "node"] {
-        fs::copy(&adapter, tools.path().join(tool)).unwrap();
-    }
-    fs::write(
-        tools.path().join("pi"),
+    crate::test_executable::write_executable(
+        &tools.path().join("pi"),
         "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; fi\n",
-    )
-    .unwrap();
+    );
+    crate::test_executable::write_executable(&tools.path().join("node"), "#!/bin/sh\nexit 0\n");
     a.environment.insert(
         "PI_CODING_AGENT_DIR".into(),
         dir.path().display().to_string(),
@@ -2446,7 +2432,6 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
 #[cfg(unix)]
 #[test]
 fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let app_data = dir.path();
     let prefix = app_data.join("node-tools/bin");
@@ -2473,8 +2458,7 @@ fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
         } else {
             "#!/usr/bin/env node\n"
         };
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&path, script);
     }
     assert_eq!(
         managed_tool(app_data, "buzz-pi-acp"),
@@ -3010,7 +2994,6 @@ const PROTECTION_WORKERS: &[ProtectionWorkerFixture] = &[
 #[cfg(unix)]
 fn plugin_protection_copies_defaults_and_fails_closed_when_provider_retires() {
     use crate::security::{Binding, Request};
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let mut controller = Controller::new(
         Store::open(dir.path().join("config")).unwrap(),
@@ -3019,8 +3002,7 @@ fn plugin_protection_copies_defaults_and_fails_closed_when_provider_retires() {
         dir.path().join("ownership"),
     );
     let executable = dir.path().join("protection");
-    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&executable, "#!/bin/sh\nexit 0\n");
     let register = || Request::Register {
         provider: "test.security".into(),
         executable: executable.clone(),
@@ -3131,7 +3113,6 @@ fn provider_runs_through_controller_start_restart_and_missing_provider_fails_clo
 #[cfg(unix)]
 fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
     use crate::security::{Binding, Request};
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
@@ -3143,7 +3124,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
         // A generic external harness owns its provider/model configuration.
         saved.harness.model.clear();
         saved.harness.provider.clear();
-        fs::copy(tools.path().join("buzz-agent"), &worker_path).unwrap();
+        crate::test_executable::copy_executable(&tools.path().join("buzz-agent"), &worker_path);
         worker_path.display().to_string()
     };
     saved.harness.args = worker.args.iter().map(|arg| (*arg).into()).collect();
@@ -3173,7 +3154,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
     let provider = provider_dir.join("launcher");
     // Exercise the real launch boundary without requiring a plugin:
     // check the --launch protocol, record each context, and stay alive for restart/stop.
-    fs::write(
+    crate::test_executable::write_executable(
         &provider,
         r#"#!/bin/sh
 [ "$1" = --launch ] || exit 2
@@ -3181,9 +3162,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
 trap 'exit 0' TERM INT
 while :; do /bin/sleep 0.1; done
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let lease = controller
         .security(Request::Register {
             provider: "test.provider".into(),

@@ -4,7 +4,7 @@ import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { knownAgentPubkeys } from "../../features/agents/known";
 import {
   allowsOutsideMentions,
-  archivedMention,
+  mentionAdmission,
 } from "../../features/messages/mention-admission";
 
 /** Managed agents offered outside a stream or forum when the viewer can add members. */
@@ -14,7 +14,6 @@ function availableMentionAgents(
   canInvite: boolean | undefined,
 ) {
   return channel?.members &&
-    !channel.archived &&
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     canInvite
     ? agents.filter(
@@ -52,32 +51,29 @@ export function mentionCandidates(
     identities: agents,
   });
   const choices = new Map<string, MentionRecipient>();
-  if (!channel?.archived && !channel?.readOnly) {
-    for (const person of roster ??
-      (inviteAgents && channel?.channelType !== "dm"
-        ? agents
-        : availableMentionAgents(
-            channel,
-            agents,
-            session.outbox?.supports(9000),
-          )))
-      choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    if (!roster && !inviteAgents && allowsOutsideMentions(channel))
-      for (const person of directory) choices.set(person.pubkey, person);
-    for (const pubkey of members)
-      choices.set(pubkey, {
-        pubkey,
-        name:
-          profiles.get(pubkey)?.name ||
-          choices.get(pubkey)?.name ||
-          pubkey.slice(0, 12),
-      });
-  }
+  for (const person of roster ??
+    (inviteAgents && channel?.channelType !== "dm"
+      ? agents
+      : availableMentionAgents(
+          channel,
+          agents,
+          session.outbox?.supports(9000),
+        )))
+    choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
+  if (!roster && !inviteAgents && allowsOutsideMentions(channel))
+    for (const person of directory) choices.set(person.pubkey, person);
+  for (const pubkey of members)
+    choices.set(pubkey, {
+      pubkey,
+      name:
+        profiles.get(pubkey)?.name ||
+        choices.get(pubkey)?.name ||
+        pubkey.slice(0, 12),
+    });
+  // Offer only what the composer will accept.
+  const admits = mentionAdmission(session, channelId, inviteAgents, roster);
   return [...choices.values()]
-    .filter(
-      (p) =>
-        /^[0-9a-f]{64}$/.test(p.pubkey) && !archivedMention(session, p.pubkey),
-    )
+    .filter((p) => admits(p.pubkey))
     .map((recipient) => ({
       recipient,
       member: memberKeys.has(recipient.pubkey),

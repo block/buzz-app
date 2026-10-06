@@ -21,31 +21,30 @@ export function allowsOutsideMentions(
 }
 
 /**
- * Whether a draft may address this key. The host owns this rule; what a
- * chooser offers, its order and its labels belong to the mentions plugin.
- * Delivery checks membership again and asks before addressing outside people.
+ * Which keys a draft may address in this destination, read once from current
+ * state. The host owns this rule; the mentions plugin offers a subset of it and
+ * owns its order and labels. Delivery checks membership again and asks before
+ * addressing outside people.
  */
-export function mentionAdmits(
+export function mentionAdmission(
   session: RelaySession,
   channelId: string,
-  pubkey: string,
   inviteAgents = false,
   roster?: readonly MentionRecipient[],
-) {
-  if (!/^[0-9a-f]{64}$/.test(pubkey) || archivedMention(session, pubkey))
-    return false;
+): (pubkey: string) => boolean {
   const channel = session.channels
     .list()
     .channels.find((c) => c.id === channelId);
-  if (channel?.archived || channel?.readOnly) return false;
-  if (roster) return roster.some((person) => person.pubkey === pubkey);
-  if (channel?.members?.includes(pubkey)) return true;
-  if (inviteAgents)
-    return (
-      channel?.channelType !== "dm" &&
-      session.agentChoices
-        .snapshot()
-        .identities.some((agent) => agent.pubkey === pubkey)
-    );
-  return allowsOutsideMentions(channel);
+  if (channel?.archived || channel?.readOnly) return () => false;
+  const allowed = roster
+    ? new Set(roster.map((person) => person.pubkey))
+    : new Set(channel?.members);
+  if (!roster && inviteAgents && channel?.channelType !== "dm")
+    for (const agent of session.agentChoices.snapshot().identities)
+      allowed.add(agent.pubkey);
+  const outside = !roster && !inviteAgents && allowsOutsideMentions(channel);
+  return (pubkey) =>
+    /^[0-9a-f]{64}$/.test(pubkey) &&
+    !archivedMention(session, pubkey) &&
+    (outside || allowed.has(pubkey));
 }

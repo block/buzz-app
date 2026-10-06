@@ -7,7 +7,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
-import { archivedMention } from "../../features/messages/mention-admission";
+import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
   CalendarIcon,
@@ -305,7 +305,7 @@ export function SearchResults({
           )
           .filter(
             ([pubkey]) =>
-              !archivedMention(session, pubkey) &&
+              !archiveHides(session.archives, pubkey, session.viewer) &&
               (!knownAgents.has(pubkey) || selectableAgents.has(pubkey)),
           )
           // Exact names survive the cap when the resolver reports ambiguity.

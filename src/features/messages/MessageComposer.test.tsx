@@ -4237,43 +4237,48 @@ for (const channelType of ["stream", "forum"] as const)
     },
   );
 
-it("carries only notified agents into the next draft", async () => {
-  const h = mount();
-  h.setProfiles(
-    new Map([
-      [first.pubkey, { name: "Honey", isAgent: true }],
-      [second.pubkey, { name: "Honey", isAgent: true }],
-    ]),
-  );
-  const list = {
-    status: "ready",
-    channels: [
-      {
-        id: "channel",
-        channelType: "stream",
-        members: ["d".repeat(64), second.pubkey],
-      },
-    ],
-  };
-  Object.assign(h.session, {
-    channels: { list: () => list, subscribeList: () => () => {} },
-    memberAdditions: { add: vi.fn() },
-    outbox: { ...h.session.outbox, supports: (kind: number) => kind === 9 },
-  });
-  act(() => {
-    h.commands().insertMention(first);
-    h.commands().insertMention(second);
-  });
-  fireEvent.submit(screen.getByRole("form"));
-  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
-  await act(async () => {});
-  expect(h.messages.send).toHaveBeenCalledOnce();
-  // The outside agent became a reference, so it is not addressed again.
-  await h.user.keyboard("again");
-  await h.user.click(screen.getByRole("button", { name: "Send message" }));
-  expect(h.messages.send).toHaveBeenCalledTimes(2);
-  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
-});
+it.each(["Do nothing", "Invite"])(
+  "after %s, the next draft carries an outside agent only if it was notified",
+  async (action) => {
+    const h = mount();
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async (_channel: string, pubkey: string) => {
+      list.channels[0]?.members.push(pubkey);
+    });
+    // A managed agent outside the channel, offered because the viewer can add it.
+    const real = h.session.agentChoices;
+    const offered = {
+      ...real.snapshot(),
+      identities: [{ ...first, managed: true }],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+      agentChoices: { ...real, snapshot: () => offered },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    await h.user.keyboard("again");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    // A reference is not addressed again, so the send needs no second prompt.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(h.messages.send).toHaveBeenCalledTimes(2);
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+      action === "Invite" ? [first.pubkey] : [],
+    );
+  },
+);
 
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",

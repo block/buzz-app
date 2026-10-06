@@ -161,8 +161,9 @@ its notification intent. Chips remain available without the Mentions chooser.
 The Mentions plugin owns what both the toolbar picker and inline completion
 offer, and their order (`src/bundled/mentions/mention-candidates.ts` and
 `mention-ranking.ts`). The composer admits a selected recipient by its own rule
-(`mention-admission.ts`), which does not depend on the plugin. Membership permits notification, not a promise that an agent
-will accept or answer the prompt. DMs, like channels, can name outside people;
+(`mention-admission.ts`), which does not depend on the plugin; the plugin offers
+only keys that rule admits. Membership permits notification, not a promise that
+an agent will accept or answer the prompt. DMs, like channels, can name outside people;
 they become references because nobody can be added to a DM. Ordinary
 nonmember consent and session invitation rules remain the access owners;
 selection itself neither grants access nor starts an agent. Invalid recipient

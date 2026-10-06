@@ -9,7 +9,7 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
   archivedMention,
-  mentionAdmits,
+  mentionAdmission,
 } from "./mention-admission";
 import { rememberMention } from "./mention-history";
 import {
@@ -746,13 +746,12 @@ function Composer({
     }
     if (
       recipient &&
-      !mentionAdmits(
+      !mentionAdmission(
         session,
         channelId,
-        recipient.pubkey,
         agentChoices,
         mentionRoster,
-      )
+      )(recipient.pubkey)
     ) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
@@ -823,18 +822,13 @@ function Composer({
         undefined,
         range,
       );
-    if (
-      unique.some(
-        (person) =>
-          !mentionAdmits(
-            session,
-            channelId,
-            person.pubkey,
-            agentChoices,
-            mentionRoster,
-          ),
-      )
-    ) {
+    const admits = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+    );
+    if (unique.some((person) => !admits(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -1063,7 +1057,9 @@ function Composer({
         rememberAgentsPreference()
           ? captured.recipients.filter(
               (item) =>
-                agents.has(item.pubkey) && recipients.includes(item.pubkey),
+                agents.has(item.pubkey) &&
+                recipients.includes(item.pubkey) &&
+                !archivedMention(session, item.pubkey),
             )
           : [],
       );

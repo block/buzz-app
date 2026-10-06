@@ -54,7 +54,8 @@ export function RichComposerInput({
       name: recipient.name,
     });
   const resolveName = useIdentityNames(session.names);
-  // Chips name selections among the people who read this destination.
+  // Chips name selections among the people who read this destination. Draft
+  // recipients stay in even when archived, so their chips keep a name.
   const candidates = [
     ...new Set([
       ...(roster?.map((p) => p.pubkey) ?? members ?? []).filter(

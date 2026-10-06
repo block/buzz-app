@@ -1083,43 +1083,63 @@ it("retires the fullscreen image viewer when its retained row is suspended", () 
   }
 });
 
-it("lists Mark unread above Copy message for a managed peer message", async () => {
-  const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
-  const session = {
-    viewer: "viewer",
-    channels: { list: () => snapshot, subscribeList: () => () => {} },
-    messages: { report: vi.fn(async () => {}) },
-    unread: {
-      subscribe: () => () => {},
-      snapshot: () => undefined,
-      attention: () => ({ unread: false, forced: false, viewing: true }),
-    },
-  } as unknown as RelaySession;
-  renderDom(
-    <MessageManagement session={session} channelId={row.channelId}>
-      <MessageRow
-        row={row}
-        session={session}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />
-    </MessageManagement>,
-  );
-  try {
-    fireEvent.click(
-      screen.getByRole("button", { name: "More message actions" }),
+it.each(["peer", "own"] as const)(
+  "lists Mark unread above Copy message for a managed %s message",
+  async (author) => {
+    const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
+    const operations: never[] = [];
+    const session = {
+      viewer: author === "own" ? row.authorId : "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: { report: vi.fn(async () => {}) },
+      outbox: {
+        supports: () => true,
+        subscribe: () => () => {},
+        snapshot: () => operations,
+      },
+      unread: {
+        subscribe: () => () => {},
+        snapshot: () => undefined,
+        attention: () => ({ unread: false, forced: false, viewing: true }),
+      },
+    } as unknown as RelaySession;
+    renderDom(
+      <MessageManagement session={session} channelId={row.channelId}>
+        <MessageRow
+          row={{ ...row, threadRootId: "a".repeat(64) }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </MessageManagement>,
     );
-    await screen.findByRole("menu");
-    expect(
-      screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual(["Mark unread", "Copy message", "Report"]);
-  } finally {
-    cleanup();
-  }
-});
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(
+        author === "own"
+          ? [
+              "Mark unread",
+              "Copy message",
+              "Send to channel",
+              "Edit message",
+              "Delete message",
+              "Report",
+            ]
+          : ["Mark unread", "Copy message", "Report"],
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
 
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",

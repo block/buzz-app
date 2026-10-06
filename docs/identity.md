@@ -94,11 +94,13 @@ Buzz relies on the validated expiry returned by the service. This extraction
 updates the native app owner only; the separate JavaScript path tracked by #581
 and broader loopback auth-server consolidation remain outside its scope.
 
-Profile settings can clear the saved enterprise session on this device for the
-current adapter, active identity, and build. This is local sign-out only: it
-does not remove the Nostr identity, community memberships, or remote access.
-The native session is shared by the applicable communities in that scope; it
-is not a per-community token store.
+Profile settings can clear the shared saved enterprise sign-in for the
+configured BuilderLab profile and service. This deletes the credential shared
+with `bl`, so other clients using that profile and service may need to sign in
+again. It is local sign-out only: it does not revoke remote access or remove the
+Nostr identity or community memberships. Disconnecting a community does not
+clear this shared sign-in. The native session is shared across communities
+using that profile and service; it is not a per-community token store.
 
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce

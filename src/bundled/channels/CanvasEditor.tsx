@@ -138,7 +138,6 @@ export function CanvasEditor({
         setHead(event);
         setBase(event.id);
         writeView(scope, key, null);
-        onClose();
       }
     } catch (reason) {
       if (generation === operation.current)

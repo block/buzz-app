@@ -66,7 +66,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows only Save normally and preserves the read revision on an edited save", async () => {
+it("keeps the editor open after saving and uses the saved revision for the next edit", async () => {
   const user = userEvent.setup();
   const { canvas, close } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
@@ -77,10 +77,30 @@ it("shows only Save normally and preserves the read revision on an edited save",
       name: /Load current|Reload saved Canvas|Retry loading/,
     }),
   ).not.toBeInTheDocument();
+  const saved = { ...head, content: "Edited", id: "b".repeat(64) };
+  canvas.save.mockResolvedValueOnce(saved);
   fireEvent.change(text, { target: { value: "Edited" } });
   await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
+  );
+  expect(close).not.toHaveBeenCalled();
+  expect(text).toBeEnabled();
+  expect(text).toHaveValue("Edited");
   expect(canvas.save).toHaveBeenCalledWith(channelId, "Edited", head.id);
+  fireEvent.change(text, { target: { value: "Second edit" } });
+  expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toEqual({
+    content: "Second edit",
+    base: saved.id,
+  });
+  await user.click(screen.getByRole("button", { name: "Save Canvas" }));
+  await waitFor(() =>
+    expect(canvas.save).toHaveBeenLastCalledWith(
+      channelId,
+      "Second edit",
+      saved.id,
+    ),
+  );
 });
 
 it("keeps a restored conflict draft until explicit confirmed reload", async () => {
@@ -222,14 +242,17 @@ it("ignores the stale StrictMode read after the current read enables typing and 
     });
     expect(text).toHaveValue("New work");
     await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
+    );
+    expect(close).not.toHaveBeenCalled();
     expect(canvas.save).toHaveBeenCalledWith(channelId, "New work", head.id);
   } finally {
     release(head);
   }
 });
 
-it("retains the draft after a failed save and closes only after a successful retry", async () => {
+it("retains the draft after a failed save and keeps editing after a successful retry", async () => {
   const user = userEvent.setup();
   const { canvas, close } = fixture();
   const text = screen.getByRole("textbox", { name: "Canvas Markdown" });
@@ -247,7 +270,10 @@ it("retains the draft after a failed save and closes only after a successful ret
   });
   expect(close).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save Canvas" }));
-  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(readView(scope, `canvas-draft-v1:${channelId}`, null)).toBeNull(),
+  );
+  expect(close).not.toHaveBeenCalled();
   expect(canvas.save).toHaveBeenLastCalledWith(
     channelId,
     "Local draft",

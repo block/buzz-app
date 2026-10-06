@@ -52,6 +52,7 @@ mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod managed_npm;
 mod pi_models;
+use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
@@ -454,6 +455,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_read_log,
         pi_install,
         claude_install,
+        claude_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,

@@ -16,6 +16,7 @@ import {
   ArrowSquareOutIcon,
   CopyIcon,
   GooseLogoIcon,
+  HermesLogoIcon,
   PiLogoIcon,
   PlusIcon,
   QuestionIcon,
@@ -50,6 +51,7 @@ const labels = {
 const harnessIcons: Record<string, ReactNode> = {
   "buzz-agent": <RobotIcon size={32} className="shrink-0" />,
   goose: <GooseLogoIcon size={32} className="shrink-0" />,
+  hermes: <HermesLogoIcon size={32} className="shrink-0" />,
   pi: <PiLogoIcon size={32} className="shrink-0" />,
 };
 const commands = [
@@ -69,6 +71,7 @@ export function AgentSettings({
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [authCheck, setAuthCheck] = useState(0);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>();
   const addHarnessRef = useRef<HTMLButtonElement>(null);
@@ -110,7 +113,10 @@ export function AgentSettings({
     state.claudeInstall?.installing;
   const checkAgain = () => {
     setChecking(true);
-    void control.refresh().finally(() => setChecking(false));
+    void control.refresh().finally(() => {
+      setChecking(false);
+      setAuthCheck((value) => value + 1);
+    });
   };
   const change = (enabled: boolean) =>
     setError(setRememberAgentsPreference(enabled));
@@ -229,26 +235,28 @@ export function AgentSettings({
                           )}
                       </span>
                     </div>
-                    {option && harnessPreset(option.command) && (
-                      <div
-                        className={`${styles.piSetup} space-y-3 text-body-sm`}
-                      >
-                        <p className="m-0 text-secondary">
-                          Uses the default model and credentials configured in{" "}
-                          {option.label}. Install and update the harness
-                          yourself, then use Check again.
-                        </p>
-                        <details>
-                          <summary>Manual {option.label} setup</summary>
-                          <div className="mt-3">
-                            <PresetSetup
-                              label={option.label}
-                              setup={harnessPreset(option.command)}
-                            />
-                          </div>
-                        </details>
-                      </div>
-                    )}
+                    {option &&
+                      option.status !== "ready" &&
+                      harnessPreset(option.command) && (
+                        <div
+                          className={`${styles.piSetup} space-y-3 text-body-sm`}
+                        >
+                          <p className="m-0 text-secondary">
+                            Uses the default model and credentials configured in{" "}
+                            {option.label}. Install and update the harness
+                            yourself, then use Check again.
+                          </p>
+                          <details>
+                            <summary>Manual {option.label} setup</summary>
+                            <div className="mt-3">
+                              <PresetSetup
+                                label={option.label}
+                                setup={harnessPreset(option.command)}
+                              />
+                            </div>
+                          </details>
+                        </div>
+                      )}
                     {option &&
                       harnessKind(option.command) === "pi" &&
                       (installingPi ||
@@ -367,7 +375,12 @@ export function AgentSettings({
                       )}
                   </li>
                 ))}
-                <ClaudeHarnessSetup control={control} state={state} />
+                <ClaudeHarnessSetup
+                  control={control}
+                  state={state}
+                  active={active}
+                  key={authCheck}
+                />
               </ul>
               <Button
                 ref={addHarnessRef}
@@ -436,7 +449,13 @@ export function AgentSettings({
                 }
                 selected={preset === setup}
                 onClick={() => setSelectedPresetId(preset.id)}
-                icon={<TerminalWindowIcon size={24} aria-hidden="true" />}
+                icon={
+                  preset.id === "hermes" ? (
+                    <HermesLogoIcon size={24} />
+                  ) : (
+                    <TerminalWindowIcon size={24} />
+                  )
+                }
               />
             ))}
           </nav>
@@ -445,7 +464,11 @@ export function AgentSettings({
             className={`${styles.catalogDetails} space-y-6`}
           >
             <div className="flex items-center gap-3">
-              <TerminalWindowIcon size={48} className="shrink-0" />
+              {setup?.id === "hermes" ? (
+                <HermesLogoIcon size={48} className="shrink-0" />
+              ) : (
+                <TerminalWindowIcon size={48} className="shrink-0" />
+              )}
               <div>
                 <h3 id="preset-catalog-title" className="text-heading">
                   {presetLabel}

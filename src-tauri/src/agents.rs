@@ -84,6 +84,10 @@ struct ClaudeSetup {
     status: &'static str,
     install_supported: bool,
     login_command: Option<String>,
+    #[serde(skip)]
+    cli: Option<PathBuf>,
+    #[serde(skip)]
+    node: Option<PathBuf>,
 }
 
 fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
@@ -109,26 +113,23 @@ fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
                 .replace('\'', if cfg!(windows) { "''" } else { "'\\''" })
         )
     };
-    let login_command = if managed {
-        managed_cli
-            .or(cli)
-            .zip(managed_node)
-            .and_then(|(cli, node)| {
-                Some(format!(
-                    "PATH={}:\"$PATH\" {} auth login",
-                    quote(node.parent()?),
-                    quote(&cli)
-                ))
-            })
-    } else {
-        cli.map(|cli| {
+    let cli = if managed { managed_cli.or(cli) } else { cli };
+    let node = managed.then_some(managed_node).flatten();
+    let login_command = cli.as_ref().map(|cli| {
+        if let Some(node_bin) = node.as_ref().and_then(|node| node.parent()) {
+            format!(
+                "PATH={}:\"$PATH\" {} auth login",
+                quote(node_bin),
+                quote(cli)
+            )
+        } else {
             format!(
                 "{}{} auth login",
                 if cfg!(windows) { "& " } else { "" },
-                quote(&cli)
+                quote(cli)
             )
-        })
-    };
+        }
+    });
     ClaudeSetup {
         status,
         install_supported: cfg!(all(
@@ -136,8 +137,48 @@ fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )),
         login_command,
+        cli,
+        node,
     }
 }
+/// Explicit Settings read, never part of periodic snapshots or controller writes.
+#[tauri::command]
+pub(crate) async fn claude_auth_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Option<bool> {
+    use tauri::Manager as _;
+    let app_data = app.path().app_data_dir().ok()?;
+    let setup = claude_setup(&app_data);
+    let cli = setup.cli?;
+    let mut path = crate::host_command::effective_path();
+    if let Some(node_bin) = setup.node.as_ref().and_then(|node| node.parent()) {
+        path = std::env::join_paths(
+            std::iter::once(node_bin.to_path_buf()).chain(std::env::split_paths(&path)),
+        )
+        .ok()?;
+    }
+    probe_claude_auth(&cli, &path).await
+}
+
+async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Option<bool> {
+    let (output, status) = crate::host_command::run_output(
+        cli,
+        &["auth".into(), "status".into()],
+        std::time::Duration::from_secs(5),
+        path,
+    )
+    .await?;
+    let logged_in = serde_json::from_str::<serde_json::Value>(&output)
+        .ok()?
+        .get("loggedIn")?
+        .as_bool()?;
+    match (status.code(), logged_in) {
+        (Some(0), true) => Some(true),
+        (Some(1), false) => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderOption {
     value: &'static str,

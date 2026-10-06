@@ -2616,3 +2616,32 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
         );
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_auth_check_exposes_only_confirmed_status() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let cli = directory.path().join("claude");
+    for (output, exit, expected) in [
+        (
+            r#"{"loggedIn":true,"email":"private@example.com"}"#,
+            0,
+            Some(true),
+        ),
+        (r#"{"loggedIn":false}"#, 1, Some(false)),
+        (r#"{"loggedIn":false}"#, 0, None),
+        (r#"{"loggedIn":true}"#, 1, None),
+        (r#"{"loggedIn":false}"#, 2, None),
+        (r#"{"loggedIn":"true"}"#, 0, None),
+        (r#"{"email":"private@example.com"}"#, 0, None),
+        ("not JSON", 0, None),
+    ] {
+        std::fs::write(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n")).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            probe_claude_auth(&cli, &crate::host_command::effective_path()).await,
+            expected
+        );
+    }
+}

@@ -90,6 +90,7 @@ fn main() {
             "agent_control_read_log",
             "pi_install",
             "claude_install",
+            "claude_auth_status",
             "agent_security",
             "agent_control_save",
             "agent_control_save_defaults",

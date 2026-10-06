@@ -199,6 +199,8 @@ export interface AgentControlHost {
   models?: ModelHost;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  /** Settings-only read; does not start an agent or change credentials. */
+  checkClaudeAuth?(): Promise<boolean | null>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -264,6 +266,8 @@ export interface AgentControl {
   models?: AgentModels;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  /** Settings-only read; does not start an agent or change credentials. */
+  checkClaudeAuth?(): Promise<boolean | null>;
   create?(
     requestId: string,
     destination: string,
@@ -525,8 +529,10 @@ export function createAgentControl(
   }
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
+  const checkClaudeAuth = host?.checkClaudeAuth;
   return {
     models,
+    ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
     ...(host?.readLog
       ? {
           readLog: async (target: AgentLogTarget) => {

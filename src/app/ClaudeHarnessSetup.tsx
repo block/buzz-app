@@ -1,8 +1,9 @@
+import { useEffect, useState } from "react";
 import type {
   AgentControl,
   AgentControlState,
 } from "../features/agents/control";
-import { TerminalWindowIcon } from "../shared/design-system/icons";
+import { ClaudeLogoIcon } from "../shared/design-system/icons";
 import { Button } from "../shared/design-system/ui/Button";
 import styles from "./AgentSettings.module.css";
 
@@ -13,34 +14,62 @@ const adapterCommand =
 export function ClaudeHarnessSetup({
   control,
   state,
+  active = true,
 }: {
   control: AgentControl;
   state: AgentControlState;
+  active?: boolean;
 }) {
   const setup = state.data?.claudeSetup;
-  if (!setup) return null;
+
   const { installing, report, error } = state.claudeInstall ?? {
     installing: false,
     report: null,
     error: null,
   };
-  const ready = setup.status === "ready";
+  const toolsReady = setup?.status === "ready";
+  const [auth, setAuth] = useState<boolean | null | "checking">("checking");
+  // A new install result also rechecks auth if React batches a fast install.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: install completion must trigger this read even when tool presence is unchanged.
+  useEffect(() => {
+    if (!active || !toolsReady || installing) return;
+    let current = true;
+    setAuth("checking");
+    void (control.checkClaudeAuth?.() ?? Promise.resolve(null))
+      .catch(() => null)
+      .then((result) => {
+        if (current) setAuth(result);
+      });
+    return () => {
+      current = false;
+    };
+  }, [active, toolsReady, installing, report, control]);
+  if (!setup) return null;
+  const ready = toolsReady && auth === true;
+  const needsGuidance = !toolsReady || auth === false || auth === null;
+  const showDetails = installing || report?.error || error || needsGuidance;
   return (
     <li aria-label="Claude Code harness" className="py-3 text-body-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="flex items-center gap-3">
-          <TerminalWindowIcon size={32} className="shrink-0" />
+          <ClaudeLogoIcon size={32} className="shrink-0" />
           <span>Claude Code</span>
         </span>
         <span className="flex items-center gap-2">
           <span className="text-secondary">
             {ready
               ? "Ready"
-              : setup.status === "cli-needed"
-                ? "CLI needed"
-                : "Adapter needed"}
+              : toolsReady
+                ? auth === "checking"
+                  ? "Checking sign-in…"
+                  : auth === false
+                    ? "Sign-in needed"
+                    : "Sign-in unconfirmed"
+                : setup.status === "cli-needed"
+                  ? "CLI needed"
+                  : "Adapter needed"}
           </span>
-          {!ready && setup.installSupported && control.installClaude && (
+          {!toolsReady && setup.installSupported && control.installClaude && (
             <Button
               size="sm"
               loading={installing}
@@ -57,74 +86,75 @@ export function ClaudeHarnessSetup({
           )}
         </span>
       </div>
-      <div className={`${styles.piSetup} space-y-3`}>
-        {installing && (
-          <p role="status">Installing Claude Code and its ACP adapter…</p>
-        )}
-        {!installing && report?.ready && ready && (
-          <p role="status">Claude Code and its ACP adapter are installed.</p>
-        )}
-        {!installing && (report?.error || error) && (
-          <div role="alert">
-            <p className="whitespace-pre-wrap break-words">
-              {report?.error || error}
-            </p>
-            {report && (
-              <details>
-                <summary>Claude Code install log</summary>
-                <p className="break-all">{report.logPath}</p>
-                <pre
-                  className={`${styles.command} whitespace-pre-wrap break-all`}
-                >
-                  {report.output || "No output was recorded."}
-                </pre>
-              </details>
-            )}
-          </div>
-        )}
-        {!ready && (
-          <>
-            <p className="m-0 text-secondary">
-              {setup.installSupported && control.installClaude
-                ? "Click Install. Buzz installs Node.js, Claude Code, and its ACP adapter for you."
-                : "Use Manual setup on this device, then click Check again."}
-            </p>
-            <details>
-              <summary>Manual Claude Code setup</summary>
-              <div className="space-y-3 mt-3">
-                <p>
-                  Install Node.js 22 or newer, then run these in your terminal:
-                </p>
-                {[cliCommand, adapterCommand].map((command) => (
-                  <code
-                    key={command}
-                    className={`${styles.command} block text-mono`}
+      {showDetails && (
+        <div className={`${styles.piSetup} space-y-3`}>
+          {installing && (
+            <p role="status">Installing Claude Code and its ACP adapter…</p>
+          )}
+          {!installing && (report?.error || error) && (
+            <div role="alert">
+              <p className="whitespace-pre-wrap break-words">
+                {report?.error || error}
+              </p>
+              {report && (
+                <details>
+                  <summary>Claude Code install log</summary>
+                  <p className="break-all">{report.logPath}</p>
+                  <pre
+                    className={`${styles.command} whitespace-pre-wrap break-all`}
                   >
-                    {command}
-                  </code>
-                ))}
-                <p>Use Check again to refresh the installation status.</p>
-              </div>
-            </details>
-          </>
-        )}
-        {setup.loginCommand && (
-          <details>
-            <summary>Sign in to Claude Code</summary>
-            <p className="mt-3">
-              Run this in your terminal and follow Claude’s sign-in steps:
+                    {report.output || "No output was recorded."}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+          {!toolsReady && (
+            <>
+              <p className="m-0 text-secondary">
+                {setup.installSupported && control.installClaude
+                  ? "Click Install. Buzz installs Node.js, Claude Code, and its ACP adapter for you."
+                  : "Use Manual setup on this device, then click Check again."}
+              </p>
+              <details>
+                <summary>Manual Claude Code setup</summary>
+                <div className="space-y-3 mt-3">
+                  <p>
+                    Install Node.js 22 or newer, then run these in your
+                    terminal:
+                  </p>
+                  {[cliCommand, adapterCommand].map((command) => (
+                    <code
+                      key={command}
+                      className={`${styles.command} block text-mono`}
+                    >
+                      {command}
+                    </code>
+                  ))}
+                  <p>Use Check again to refresh the installation status.</p>
+                </div>
+              </details>
+            </>
+          )}
+          {toolsReady && auth === null && (
+            <p className="m-0 text-secondary">
+              Couldn’t confirm Claude Code sign-in. Use Check again to retry, or
+              sign in below.
             </p>
-            <code className={`${styles.command} block text-mono`}>
-              {setup.loginCommand}
-            </code>
-          </details>
-        )}
-        <p className="m-0 text-secondary">
-          Ready means the tools are installed. Sign-in is managed by Claude
-          Code. Agent creation with Claude Code will be available in a later
-          update.
-        </p>
-      </div>
+          )}
+          {needsGuidance && setup.loginCommand && (
+            <details>
+              <summary>Sign in to Claude Code</summary>
+              <p className="mt-3">
+                Run this in your terminal and follow Claude’s sign-in steps:
+              </p>
+              <code className={`${styles.command} block text-mono`}>
+                {setup.loginCommand}
+              </code>
+            </details>
+          )}
+        </div>
+      )}
     </li>
   );
 }

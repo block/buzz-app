@@ -278,7 +278,9 @@ Hermes also appears in the main list once its executable is detected:
   Discovery searches for the exact `hermes-acp` launcher name. Windows `.exe`/`.cmd`/`.bat` launchers are a known discovery
   limitation in this slice; saved absolute paths remain recognizable/editable.
 
-- **Claude Code** shows **Ready**, **CLI needed**, or **Adapter needed**.
+- **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
+  **Sign-in needed** when its CLI reports signed out, and **Ready** once tools
+  and sign-in are confirmed. A failed auth check shows **Sign-in unconfirmed**.
   On macOS/Linux x64 and arm64, **Install** reuses the checksum-verified managed
   Node and installs `@anthropic-ai/claude-code@2.1.289` and
   `@agentclientprotocol/claude-agent-acp@0.85.1` into a new app-owned
@@ -297,10 +299,13 @@ Hermes also appears in the main list once its executable is detected:
   ```
 
   **Sign in to Claude Code** shows the resolved CLI's `auth login` command,
-  including managed Node on PATH when needed. Ready means installed tools,
-  not authentication or inference. The ACP adapter bundles its own Claude
+  including managed Node on PATH when needed. Settings checks the selected CLI
+  with a bounded, read-only `auth status` command on opening, Check again, and
+  after installation. Only its `loggedIn` boolean is exposed; account metadata
+  is discarded. Ready rows hide setup guidance; failed installs retain their
+  error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
   runtime; the separate CLI provides the sign-in command. This PR does not
-  probe authentication, launch Claude agents, discover models or restart agents.
+  launch Claude agents, discover models or restart agents.
   Native reports this setup separately through `claudeSetup`, outside
   `harnessOptions`, so it cannot become a creation or default-harness choice.
 

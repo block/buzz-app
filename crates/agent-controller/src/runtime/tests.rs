@@ -1006,7 +1006,10 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
-    fs::copy(tools.path().join("buzz-agent"), tools.path().join("goose")).unwrap();
+    crate::test_executable::copy_executable(
+        &tools.path().join("buzz-agent"),
+        &tools.path().join("goose"),
+    );
     for (worker, model_key, provider_key) in [
         ("buzz-agent", "BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"),
         ("goose", "GOOSE_MODEL", "GOOSE_PROVIDER"),
@@ -1075,7 +1078,7 @@ fn hermes_launch_requires_defaults_and_preserves_saved_values_for_recovery() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = bundle(dir.path());
     let launcher = dir.path().join("hermes-acp");
-    fs::copy(dir.path().join("buzz-agent"), &launcher).unwrap();
+    crate::test_executable::copy_executable(&dir.path().join("buzz-agent"), &launcher);
     let key = Secret::parse(KEY, PUB).unwrap();
     let mut saved = agent(dir.path());
     saved.harness.command = launcher.to_string_lossy().into_owned();
@@ -2099,14 +2102,11 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         "--extension".into(),
         extension.display().to_string(),
     ];
-    for tool in ["pi", "node"] {
-        fs::copy(&adapter, tools.path().join(tool)).unwrap();
-    }
-    fs::write(
-        tools.path().join("pi"),
+    crate::test_executable::write_executable(
+        &tools.path().join("pi"),
         "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; fi\n",
-    )
-    .unwrap();
+    );
+    crate::test_executable::write_executable(&tools.path().join("node"), "#!/bin/sh\nexit 0\n");
     a.environment.insert(
         "PI_CODING_AGENT_DIR".into(),
         dir.path().display().to_string(),
@@ -3124,7 +3124,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
         // A generic external harness owns its provider/model configuration.
         saved.harness.model.clear();
         saved.harness.provider.clear();
-        fs::copy(tools.path().join("buzz-agent"), &worker_path).unwrap();
+        crate::test_executable::copy_executable(&tools.path().join("buzz-agent"), &worker_path);
         worker_path.display().to_string()
     };
     saved.harness.args = worker.args.iter().map(|arg| (*arg).into()).collect();

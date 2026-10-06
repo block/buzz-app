@@ -171,7 +171,10 @@ fn real_listeners_protect_future_run_controls_and_recover_worker_crashes() {
     for entry in fs::read_dir(launcher.parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
-            fs::copy(entry.path(), provider.path().join(entry.file_name())).unwrap();
+            crate::test_executable::copy_executable(
+                &entry.path(),
+                &provider.path().join(entry.file_name()),
+            );
         }
     }
     let launcher = provider.path().join(launcher.file_name().unwrap());

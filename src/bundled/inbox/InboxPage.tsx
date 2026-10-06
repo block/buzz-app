@@ -337,16 +337,21 @@ export function InboxView({
       );
     }
   }, [archiveScope, archiveRevision, inbox.items]);
-  const activityItems = viewItems.filter((item) =>
-    matchesActivity(
-      item,
-      activity,
-      list.channels.some(
-        (channel) =>
-          channel.id === item.channelId && channel.channelType === "dm",
-      ),
-    ),
-  );
+  const activityItems = viewItems
+    .map((item) => (activity === "mentions" ? item.mention : item))
+    .filter(
+      (item): item is InboxItem =>
+        !!item &&
+        matchesActivity(
+          item,
+          activity,
+          list.channels.some(
+            (channel) =>
+              channel.id === item.channelId && channel.channelType === "dm",
+          ),
+        ),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
   // Keep the captured visit mounted if its archive membership changes while open.
@@ -436,7 +441,10 @@ export function InboxView({
       (senderFilter === "everyone" ||
         senderKind(item.authorId) ===
           (senderFilter === "agents" ? "agent" : "human")) &&
-      (!unreadOnly || hasUnread(item) || item.id === selectedId),
+      (!unreadOnly ||
+        hasUnread(item) ||
+        (item.id === selectedId &&
+          item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching.slice(0, limit);
   const archiveView = useRef({ show, visible, selected });

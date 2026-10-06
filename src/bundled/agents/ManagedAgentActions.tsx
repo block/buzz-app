@@ -16,6 +16,7 @@ export function ManagedAgentActions({
   state,
   control,
   imported,
+  action,
   destination = "",
   owner = "",
   showCommunity = true,
@@ -25,6 +26,7 @@ export function ManagedAgentActions({
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
+  action: ManagedAction;
   destination?: string;
   owner?: string;
   showCommunity?: boolean;
@@ -32,19 +34,7 @@ export function ManagedAgentActions({
 }) {
   const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
-  const [checking, setChecking] = useState(false);
-  // Describes one refreshed status; any later status change supersedes it.
-  const [notice, setNotice] = useState<{
-    text: string;
-    status: AgentView["status"];
-  } | null>(null);
-  // Retire on an observed transition away from the notice's status, from any
-  // surface (editor, mention start), so returning to it cannot revive the notice.
-  const [observed, setObserved] = useState(agent.status);
-  if (observed !== agent.status) {
-    setObserved(agent.status);
-    if (notice && notice.status !== agent.status) setNotice(null);
-  }
+  const { checking, notice, act } = action;
   useEffect(() => {
     if (imported) {
       details.current?.scrollIntoView?.({ block: "nearest" });
@@ -52,34 +42,6 @@ export function ManagedAgentActions({
     }
   }, [imported]);
   const startBlock = agentLaunchBlock(state, agent);
-  const act = (action: "start" | "stop") => {
-    setNotice(null);
-    void control.action(agent.id, action).catch(async (problem: unknown) => {
-      setChecking(true);
-      await control.refresh();
-      setChecking(false);
-      const refreshed = control.snapshot();
-      const current = refreshed.data?.agents.find(
-        (item) => item.id === agent.id,
-      );
-      // A recorded agent error already explains the outcome on this card.
-      if (!current || current.error) return;
-      if (
-        action === "start"
-          ? current.status === "running"
-          : current.status === "stopped" && !current.enabled
-      )
-        return;
-      const reason = agentFailureReason(problem);
-      setNotice({
-        status: current.status,
-        text:
-          refreshed.status === "ready"
-            ? `The agent didn't ${action}.${reason && ` ${reason}`} Try again.`
-            : `We couldn't confirm whether the agent ${action === "start" ? "started" : "stopped"}. Refresh status before trying again.`,
-      });
-    });
-  };
   return (
     <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
@@ -131,9 +93,7 @@ export function ManagedAgentActions({
         </p>
       )}
       {checking && <p role="status">Checking agent status…</p>}
-      {!checking && notice?.status === agent.status && !agent.error && (
-        <p role="alert">{notice.text}</p>
-      )}
+      {!checking && notice && !agent.error && <p role="alert">{notice}</p>}
       {agent.profilePending && (
         <div className="space-y-2">
           <p role="status" className="m-0 text-body-sm">
@@ -175,4 +135,95 @@ export function ManagedAgentActions({
       )}
     </div>
   );
+}
+
+export type ManagedAction = {
+  checking: boolean;
+  notice: string | null;
+  act(action: "start" | "stop"): void;
+};
+
+/** Owned by the card/list, not the disposable Manage dialog body. */
+export function useManagedAgentActions(
+  state: AgentControlState,
+  control: AgentControl,
+) {
+  const [outcomes, setOutcomes] = useState<
+    Record<
+      string,
+      {
+        status: AgentView["status"];
+        checking: boolean;
+        notice: string | null;
+      }
+    >
+  >({});
+  const attempts = useRef(new Map<string, object>());
+  const [observed, setObserved] = useState(state.data?.agents);
+  if (observed !== state.data?.agents) {
+    setObserved(state.data?.agents);
+    setOutcomes((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id, outcome]) =>
+          state.data?.agents.some(
+            (agent) => agent.id === id && agent.status === outcome.status,
+          ),
+        ),
+      ),
+    );
+  }
+  return (agent: AgentView): ManagedAction => ({
+    checking: outcomes[agent.id]?.checking ?? false,
+    notice: outcomes[agent.id]?.notice ?? null,
+    act(action) {
+      const attempt = {};
+      attempts.current.set(agent.id, attempt);
+      const currentAttempt = () => attempts.current.get(agent.id) === attempt;
+      setOutcomes((current) => ({
+        ...current,
+        [agent.id]: {
+          status: agent.status,
+          checking: false,
+          notice: null,
+        },
+      }));
+      void control.action(agent.id, action).catch(async (problem: unknown) => {
+        if (!currentAttempt()) return;
+        setOutcomes((current) => ({
+          ...current,
+          [agent.id]: {
+            status: agent.status,
+            checking: true,
+            notice: null,
+          },
+        }));
+        await control.refresh();
+        if (!currentAttempt()) return;
+        const refreshed = control.snapshot();
+        const current = refreshed.data?.agents.find(
+          (item) => item.id === agent.id,
+        );
+        const succeeded =
+          current &&
+          (action === "start"
+            ? current.status === "running"
+            : current.status === "stopped" && !current.enabled);
+        const reason = agentFailureReason(problem);
+        setOutcomes((outcomes) => {
+          const next = { ...outcomes };
+          delete next[agent.id];
+          if (current && !current.error && !succeeded)
+            next[agent.id] = {
+              status: current.status,
+              checking: false,
+              notice:
+                refreshed.status === "ready"
+                  ? `The agent didn't ${action}.${reason && ` ${reason}`} Try again.`
+                  : `We couldn't confirm whether the agent ${action === "start" ? "started" : "stopped"}. Refresh status before trying again.`,
+            };
+          return next;
+        });
+      });
+    },
+  });
 }

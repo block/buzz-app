@@ -793,6 +793,122 @@ it("checks Start failure and keeps lifecycle controls available", async () => {
   await act(async () => control.refresh());
   expect(within(management).queryByText(/The agent didn't start/)).toBeNull();
 });
+it.each([
+  ["legacy", "start", "before"],
+  ["legacy", "start", "after"],
+  ["legacy", "stop", "before"],
+  ["legacy", "stop", "after"],
+  ["unified", "start", "before"],
+  ["unified", "start", "after"],
+  ["unified", "stop", "before"],
+  ["unified", "stop", "after"],
+] as const)(
+  "retains %s %s failure when Manage closes %s rejection",
+  async (inventory, action, closing) => {
+    let reject!: (reason: string) => void;
+    const pending = {
+      promise: new Promise<never>((_resolve, no) => {
+        reject = no;
+      }),
+    };
+    const { f, control } = setup("connected", (f) => {
+      if (inventory === "unified") f.data.parked = [];
+      f.agent.status = action === "start" ? "stopped" : "running";
+      f.agent.enabled = action !== "start";
+      f.host.action = vi.fn(() => pending.promise);
+    });
+    const cards = await screen.findAllByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    const card = cards[0];
+    if (!card) throw Error("Missing managed card");
+    let dialog = await manageCard(card);
+    const button = action === "start" ? "Start" : "Stop";
+    const message = `The agent didn't ${action}. synthetic failure. Try again.`;
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: button })[0] as HTMLElement,
+    );
+    try {
+      await waitFor(() =>
+        expect(f.host.action).toHaveBeenCalledWith(f.agent.id, action),
+      );
+      if (closing === "before") await closeManagement(dialog);
+    } finally {
+      await act(async () => {
+        reject("synthetic failure");
+        await pending.promise.catch(() => {});
+      });
+    }
+    await waitFor(() => expect(control.snapshot().status).toBe("ready"));
+    if (closing === "after") {
+      expect(await within(dialog).findByText(message)).toBeVisible();
+      await closeManagement(dialog);
+    }
+    dialog = await manageCard(card);
+    expect(await within(dialog).findByText(message)).toBeVisible();
+    // The same-status refresh must not clear the result or leak it to another native ID.
+    await act(async () => control.refresh());
+    expect(within(dialog).getAllByText(message)).toHaveLength(1);
+    await closeManagement(dialog);
+    // Hidden transitions retire the notice even if the status returns to its old value.
+    const original = f.agent.status;
+    f.agent.status = original === "running" ? "stopped" : "running";
+    await act(async () => control.refresh());
+    f.agent.status = original;
+    await act(async () => control.refresh());
+    dialog = await manageCard(card);
+    expect(within(dialog).queryByText(message)).toBeNull();
+  },
+);
+
+it("does not revive a superseded Start failure after recovery Stop", async () => {
+  let reject!: (reason: string) => void;
+  const pending = new Promise<never>((_resolve, no) => {
+    reject = no;
+  });
+  const { f, control } = setup("connected", (f) => {
+    f.data.parked = [];
+    f.agent.status = "stopped";
+    f.agent.enabled = false;
+  });
+  const action = f.host.action;
+  f.host.action = vi.fn((id, command) =>
+    command === "start" ? pending : action(id, command),
+  );
+  const card = (
+    await screen.findAllByRole("article", { name: "Agent Fixture agent" })
+  )[0];
+  if (!card) throw Error("Missing managed card");
+  let dialog = await manageCard(card);
+  fireEvent.click(
+    within(dialog).getAllByRole("button", { name: "Start" })[0] as HTMLElement,
+  );
+  try {
+    await waitFor(() =>
+      expect(control.snapshot().pendingLaunch).toBe(f.agent.id),
+    );
+    await closeManagement(dialog);
+    dialog = await manageCard(card);
+    fireEvent.click(
+      within(dialog).getAllByRole("button", { name: "Stop" })[0] as HTMLElement,
+    );
+    await waitFor(() =>
+      expect(f.calls.some((call) => call.action === "stop")).toBe(true),
+    );
+    await waitFor(() => expect(control.snapshot().stopping).toBe(false));
+    await closeManagement(dialog);
+  } finally {
+    await act(async () => {
+      reject("late start failure");
+      await pending.catch(() => {});
+    });
+  }
+  await waitFor(() => expect(control.snapshot().busy).toBe(false));
+  dialog = await manageCard(card);
+  expect(within(dialog).queryByText(/The agent didn't start/)).toBeNull();
+  expect(within(dialog).queryByText(/couldn't confirm whether/)).toBeNull();
+});
+
 it("retires a card Start failure after the editor starts and stops the agent", async () => {
   const { f } = setup();
   const [card] = await screen.findAllByRole("article", {

@@ -21,7 +21,9 @@ associations. Compact individual-agent cards open **View profile** on click, wit
 expanding the grid. The three-dot menu keeps **Manage agent**, **Edit**, **Duplicate**,
 and **Delete** separate. **Manage agent** opens the configured destinations’
 **Start / Stop**, recovery, and identity/source controls in a dialog; it is also
-the card-click fallback when no profile panel is available.
+the card-click fallback when no profile panel is available. Closing Manage does not
+cancel Start/Stop or discard its failure reason. Reopening retains that result
+until another action or an observed process-status transition supersedes it.
 Duplicate seeds Create with editable settings and a fresh identity; write-only
 environment values require re-entry. Delete stops the local process and removes
 this app's settings and Keychain key after confirmation. The key remains while

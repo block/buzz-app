@@ -35,7 +35,10 @@ import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
-import { ManagedAgentActions } from "./ManagedAgentActions";
+import {
+  ManagedAgentActions,
+  useManagedAgentActions,
+} from "./ManagedAgentActions";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
@@ -423,6 +426,7 @@ function ManagedAgents({
   teams: React.ReactNode;
   onUseHere(pubkey: string, action: "use" | "clone"): void;
 }) {
+  const actions = useManagedAgentActions(state, control);
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
@@ -468,6 +472,7 @@ function ManagedAgents({
               }
             >
               <ManagedAgentActions
+                action={actions(agent)}
                 agent={agent}
                 onUseHere={onUseHere}
                 state={state}

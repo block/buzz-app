@@ -107,6 +107,7 @@ it("offers Use here for an imported identity that needs setup", async () => {
   const onUseHere = vi.fn();
   render(
     <ManagedAgentActions
+      action={{ checking: false, notice: null, act() {} }}
       agent={f.agent}
       state={control.snapshot()}
       control={control}

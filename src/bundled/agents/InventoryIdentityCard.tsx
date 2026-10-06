@@ -12,7 +12,10 @@ import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 import type { ProfileResolver } from "./AgentCard";
-import { ManagedAgentActions } from "./ManagedAgentActions";
+import {
+  ManagedAgentActions,
+  useManagedAgentActions,
+} from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
 import { useState } from "react";
 import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
@@ -104,6 +107,7 @@ export function InventoryIdentityCard({
         row.localSetups.has(destination)),
     archive?.attempt,
   );
+  const actions = useManagedAgentActions(state, control);
   const data = state.data;
   if (!data) return null;
   const running = row.localSetups.get(destination)?.status === "running";
@@ -228,6 +232,7 @@ export function InventoryIdentityCard({
       >
         {setups.map((agent) => (
           <ManagedAgentActions
+            action={actions(agent)}
             key={agent.id}
             agent={agent}
             // A section already names its own community; other setups still show theirs.

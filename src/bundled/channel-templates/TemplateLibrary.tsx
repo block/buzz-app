@@ -157,18 +157,18 @@ export function TemplateLibrary({
                 }
                 actions={
                   <>
-                    {type === "team" &&
-                      (state.status === "error" || catalog.error) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            if (active()) catalog.refresh();
-                          }}
-                        >
-                          Retry
-                        </Button>
-                      )}
+                    {type === "team" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={state.status === "loading"}
+                        onClick={() => {
+                          if (active()) catalog.refresh();
+                        }}
+                      >
+                        <ArrowsClockwiseIcon size={16} /> Refresh teams
+                      </Button>
+                    )}
                     <Button
                       ref={type === "template" ? newTemplate : newTeam}
                       variant="subtle"

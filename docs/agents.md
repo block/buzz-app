@@ -236,6 +236,11 @@ turning it back on does not restore old recipients. Session auto-recipient rules
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
+**Refresh teams** on Agents reloads the provider-owned catalog, including changes
+made in another window or device. After a save/delete revision conflict, close the
+dialog, refresh, and reopen the current team before retrying; stale drafts never
+silently overwrite a newer revision.
+
 Saved teams from the Agents page are available in both mention choosers. A team
 is a shortcut, not a group identity: explicit selection inserts its saved agent
 keys as individual mentions in one undoable edit. Names never resolve membership.

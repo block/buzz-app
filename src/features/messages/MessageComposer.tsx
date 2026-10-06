@@ -589,16 +589,19 @@ function Composer({
     // Reconcile changes while message-edit mode or mounting paused this listener.
     reconcileDraft(deferredRecovery.current?.draft);
     if (!editingDraft && deferredRecovery.current) {
+      takeMissedPreparation(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
       deferredRecovery.current = undefined;
     }
     return stop;
-  }, [scope, submission, editingDraft]);
+  }, [scope, submission, editingDraft, session, recoveryKey]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
-    takeMissedPreparation(session, recoveryKey);
     if (editing.target) deferredRecovery.current = recovered;
     reconcileDraft(recovered.draft);
-    if (!editing.target) setError(errorForRecovery(recovered.preparationError));
+    if (!editing.target) {
+      takeMissedPreparation(session, recoveryKey);
+      setError(errorForRecovery(recovered.preparationError));
+    }
   });
   useEffect(() => {
     const stop = subscribeRecovery(session, recoveryKey, (recovered) =>
@@ -607,12 +610,12 @@ function Composer({
     // Recovery may have completed between unmount and this subscription. Replay
     // only if its saved caption still owns the draft; never attach an old error
     // to a replacement written while the composer was away.
-    const missed = takeMissedPreparation(session, recoveryKey);
-    if (
-      missed &&
-      viewRevision(scope, draftKey) === JSON.stringify(missed.draft)
-    )
-      receiveRecovery(missed);
+    const missed = missedPreparation.get(session)?.get(recoveryKey);
+    if (missed) {
+      if (viewRevision(scope, draftKey) === JSON.stringify(missed.draft))
+        receiveRecovery(missed);
+      else takeMissedPreparation(session, recoveryKey);
+    }
     return stop;
   }, [session, recoveryKey, scope, draftKey]);
   function resolveDraft(keep: boolean) {

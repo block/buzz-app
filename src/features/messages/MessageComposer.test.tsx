@@ -1425,6 +1425,65 @@ it("defers a failed upload recovery until an empty active message edit ends", as
   expect(within(h.form()).getByText("original.txt")).toBeVisible();
 });
 
+it("retains preparation retry when recovery is deferred by an edit then unmounted", async () => {
+  const h = await mountUploadComposer({
+    editable: true,
+    emojiRead: async () => {
+      throw Error("catalog offline");
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("edit-remount.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+  );
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  await userEvent.clear(h.input());
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
+  );
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(
+    within(h.form()).queryByRole("button", {
+      name: "Retry message preparation",
+    }),
+  ).toBeNull();
+  h.unmount();
+  const returned = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const composer = within(returned.container);
+  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
+  expect(composer.getByText("edit-remount.txt")).toBeVisible();
+  expect(composer.getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  expect(
+    composer.getByRole("button", { name: "Retry message preparation" }),
+  ).toBeVisible();
+});
+
 it("offers message preparation retry after a failed attachment send remounts", async () => {
   let available = false;
   const h = await mountUploadComposer({

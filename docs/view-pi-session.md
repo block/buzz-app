@@ -39,16 +39,6 @@ pi --export "$session" session.html
 open session.html # macOS; otherwise open the file in a browser
 ```
 
-If `pi` is not on your `PATH` because **Settings → Agents → Install** set up Pi
-for Buzz, run Buzz's app-owned copy with its bundled Node:
-
-```sh
-app="$HOME/Library/Application Support/dev.local.buzz.foundation"
-# Linux: app="${XDG_DATA_HOME:-$HOME/.local/share}/dev.local.buzz.foundation"
-PATH="$(echo "$app"/runtimes/node/v24.18.0/*/bin):$PATH" \
-  "$app/node-tools/bin/pi" --export "$session" session.html
-```
-
 The HTML file contains the session conversation and tool activity. Keep it local
 unless you intend to share that content.
 

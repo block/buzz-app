@@ -43,7 +43,6 @@ export type BrowserBridge = {
   begin(options: {
     authorizationUrl: string;
     callbackPath: string;
-    callbackParameter?: string;
     useState?: boolean;
   }): Promise<{ id: string; callbackUrl: string }>;
   wait(id: string): Promise<OAuthCallback>;
@@ -64,7 +63,6 @@ export async function browserCredential(
   signal.throwIfAborted();
   const target = oauthTarget();
   let id: string | undefined;
-  // Custom returnTo protocol: random callback path, explicitly no native state.
   const path = `/callback/${crypto.randomUUID()}`;
   const login = new URL(`${target}/v1/auth/login`);
   login.search = new URLSearchParams({
@@ -78,8 +76,7 @@ export async function browserCredential(
     const attempt = await bridge.begin({
       authorizationUrl: login.href,
       callbackPath: path,
-      callbackParameter: "returnTo",
-      useState: false,
+      useState: true,
     });
     id = attempt.id;
     signal.addEventListener("abort", cancel, { once: true });

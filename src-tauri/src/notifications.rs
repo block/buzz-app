@@ -138,58 +138,48 @@ pub(crate) async fn notification_show<R: tauri::Runtime>(
     title: String,
     body: String,
     on_event: Channel<Response>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     if window.label() != "main" {
         return Err("Desktop notifications belong to the main window".into());
     }
     validate(&id, &title, &body)?;
     let responder = app.clone();
+    let request_id = id.clone();
+    #[cfg(target_os = "macos")]
+    let admission = macos::admission_lock()
+        .lock()
+        .map_err(|_| "Notification state unavailable")?;
+    #[cfg(target_os = "macos")]
+    if macos::contains(&request_id) {
+        return Err("Duplicate desktop notification".into());
+    }
+    #[cfg(target_os = "macos")]
+    let retired = macos::make_room(&state);
+    #[cfg(not(target_os = "macos"))]
+    let retired: Option<String> = None;
     let pending = state.reserve(Box::new(move |outcome| {
         respond(responder, on_event, id, outcome)
     }))?;
     // Admission returns promptly. Submission errors arrive on the pre-registered
     // channel; no platform's return value is claimed as proof of a visible banner.
-    show(app, title, body, pending);
-    Ok(())
+    show(app, request_id, title, body, pending);
+    #[cfg(target_os = "macos")]
+    drop(admission);
+    Ok(retired)
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) mod macos;
+
+#[cfg(target_os = "macos")]
 fn show<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+    _app: tauri::AppHandle<R>,
+    id: String,
     title: String,
     body: String,
     pending: Arc<Pending>,
 ) {
-    tauri::async_runtime::spawn_blocking(move || {
-        // Preserve Tauri's development/installed identity convention. Initialize
-        // once because this backend deliberately rejects subsequent set calls.
-        static IDENTITY: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-        let identity = IDENTITY.get_or_init(|| {
-            mac_notification_sys::set_application(if tauri::is_dev() {
-                "com.apple.Terminal"
-            } else {
-                &app.config().identifier
-            })
-            .map_err(|e| e.to_string())
-        });
-        if let Err(error) = identity {
-            pending.finish(Outcome::Failed(error.clone()));
-            return;
-        }
-        // notify-rust's buttonless wrapper omits wait_for_click. Use its existing
-        // backend directly so body clicks retain their response registration.
-        let result = mac_notification_sys::Notification::new()
-            .title(&title)
-            .message(&body)
-            .wait_for_click(true)
-            .asynchronous(false)
-            .send();
-        pending.finish(match result {
-            Ok(mac_notification_sys::NotificationResponse::Click) => Outcome::Activated,
-            Ok(_) => Outcome::Closed,
-            Err(error) => Outcome::Failed(error.to_string()),
-        });
-    });
+    macos::show(id, title, body, pending);
 }
 
 #[cfg(target_os = "linux")]
@@ -198,6 +188,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 fn show<R: tauri::Runtime>(
     _app: tauri::AppHandle<R>,
+    _id: String,
     title: String,
     body: String,
     pending: Arc<Pending>,
@@ -210,6 +201,7 @@ fn show<R: tauri::Runtime>(
 #[cfg(target_os = "windows")]
 fn show<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    _id: String,
     title: String,
     body: String,
     pending: Arc<Pending>,
@@ -265,6 +257,7 @@ fn show<R: tauri::Runtime>(
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn show<R: tauri::Runtime>(
     _app: tauri::AppHandle<R>,
+    _id: String,
     _title: String,
     _body: String,
     pending: Arc<Pending>,

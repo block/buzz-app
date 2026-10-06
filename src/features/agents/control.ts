@@ -107,6 +107,12 @@ export interface ControlSnapshot {
     /** Native integration policy; absent only on older hosts. */
     configurationPolicy?: HarnessConfigurationPolicy;
   }[];
+  /** Installation only; not offered to agent creation until Claude launch is supported. */
+  claudeSetup?: {
+    status: "ready" | "cli-needed" | "adapter-needed";
+    installSupported: boolean;
+    loginCommand: string | null;
+  };
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   createAvailable?: boolean;
@@ -204,6 +210,9 @@ export interface AgentControlHost {
   cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
   installPi?(): Promise<HarnessInstallReport>;
+  installClaude?(): Promise<HarnessInstallReport>;
+  /** Settings-only read; does not start an agent or change credentials. */
+  checkClaudeAuth?(): Promise<boolean | null>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -241,16 +250,18 @@ export interface AgentControlHost {
   ): Promise<AgentImportPreview>;
   commitImport(token: string, ids: string[]): Promise<ControlSnapshot>;
 }
+interface HarnessInstallState {
+  installing: boolean;
+  report: HarnessInstallReport | null;
+  error: string | null;
+}
 export interface AgentControlState {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   data: ControlSnapshot | null;
   busy: boolean;
   /** App-lifetime install progress and last result, independent of agent writes. */
-  piInstall?: {
-    installing: boolean;
-    report: HarnessInstallReport | null;
-    error: string | null;
-  };
+  piInstall?: HarnessInstallState;
+  claudeInstall?: HarnessInstallState;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingCredentialWrite?: boolean;
@@ -266,6 +277,9 @@ export interface AgentControl {
   cloneSettings?: AgentControlHost["cloneSettings"];
   models?: AgentModels;
   installPi?(): Promise<HarnessInstallReport>;
+  installClaude?(): Promise<HarnessInstallReport>;
+  /** Settings-only read; does not start an agent or change credentials. */
+  checkClaudeAuth?(): Promise<boolean | null>;
   create?(
     requestId: string,
     destination: string,
@@ -350,6 +364,7 @@ export function createAgentControl(
     data: null,
     busy: false,
     piInstall: { installing: false, report: null, error: null },
+    claudeInstall: { installing: false, report: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -495,9 +510,41 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  async function installHarness(
+    key: "piInstall" | "claudeInstall",
+    label: string,
+    execute: () => Promise<HarnessInstallReport>,
+  ): Promise<HarnessInstallReport> {
+    if (disposed) throw new Error(agentControlUnavailable);
+    if (state.piInstall?.installing || state.claudeInstall?.installing)
+      throw new Error("A Harness installation is already in progress.");
+    if (state.status !== "ready" || state.busy)
+      throw new Error(`Refresh local agents before installing ${label}.`);
+    update({ [key]: { installing: true, report: null, error: null } });
+    try {
+      const report = await execute();
+      update({ [key]: { installing: false, report, error: null } });
+      return report;
+    } catch {
+      update({
+        [key]: {
+          installing: false,
+          report: null,
+          error: `Couldn’t install ${label}. Try again or check the desktop app.`,
+        },
+      });
+      throw new Error(`Could not install ${label}.`);
+    } finally {
+      installNeedsRefresh = true;
+      await refreshAfterInstall();
+    }
+  }
   const installPi = host?.installPi;
+  const installClaude = host?.installClaude;
+  const checkClaudeAuth = host?.checkClaudeAuth;
   return {
     models,
+    ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
     ...(host?.readLog
       ? {
           readLog: async (target: AgentLogTarget) => {
@@ -511,35 +558,12 @@ export function createAgentControl(
         }
       : {}),
     ...(installPi
+      ? { installPi: () => installHarness("piInstall", "Pi", installPi) }
+      : {}),
+    ...(installClaude
       ? {
-          installPi: async () => {
-            if (disposed) throw new Error(agentControlUnavailable);
-            if (state.piInstall?.installing)
-              throw new Error("A Harness installation is already in progress.");
-            if (state.status !== "ready" || state.busy)
-              throw new Error("Refresh local agents before installing Pi.");
-            update({
-              piInstall: { installing: true, report: null, error: null },
-            });
-            try {
-              const report = await installPi();
-              update({ piInstall: { installing: false, report, error: null } });
-              return report;
-            } catch {
-              update({
-                piInstall: {
-                  installing: false,
-                  report: null,
-                  error:
-                    "Couldn’t install Pi. Try again or check the desktop app.",
-                },
-              });
-              throw new Error("Could not install Pi.");
-            } finally {
-              installNeedsRefresh = true;
-              await refreshAfterInstall();
-            }
-          },
+          installClaude: () =>
+            installHarness("claudeInstall", "Claude Code", installClaude),
         }
       : {}),
     ...(host?.prepareCreate && host.commitCreate

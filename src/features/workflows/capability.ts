@@ -169,6 +169,7 @@ export function createWorkflows({
                       : item.event.kind === 5
                         ? "delete"
                         : "trigger",
+                  createdAt: item.event.created_at,
                   delivery: item.delivery,
                   outcome,
                   ...(result?.runId ? { runId: result.runId } : {}),

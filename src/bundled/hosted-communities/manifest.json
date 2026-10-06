@@ -1,5 +1,8 @@
 {
   "id": "block.hosted-communities",
   "name": "Hosted communities",
-  "apiVersion": 1
+  "apiVersion": 1,
+  "host": {
+    "networkOrigins": ["https://app.builderlab.xyz"]
+  }
 }

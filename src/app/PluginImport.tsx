@@ -17,7 +17,7 @@ function hostGrants(manifest: PluginManifest): string[] {
   return [
     ...(manifest.host?.commands ?? []).map(
       (command) =>
-        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])}`,
+        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
     ),
     ...(manifest.host?.networkOrigins ?? []).map(
       (origin) => `HTTPS origin: ${origin}`,
@@ -29,10 +29,15 @@ export function PluginImport({
   plugins,
   catalog,
   busy,
+  authorizeGit,
 }: {
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
+  /** Signs in to the selected community's Buzz git; null for other repositories. */
+  authorizeGit?: (
+    repository: string,
+  ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
   const [gitForm, setGitForm] = useState(false);
@@ -132,7 +137,12 @@ export function PluginImport({
           onSubmit={(event) => {
             event.preventDefault();
             if (repository.trim())
-              void load(() => imports.git(repository, reference));
+              void load(async () => {
+                const signed = await authorizeGit?.(repository);
+                return signed
+                  ? imports.git(signed.repository, reference, signed.token)
+                  : imports.git(repository, reference);
+              });
           }}
         >
           <SettingsGroup layout="form">
@@ -156,7 +166,8 @@ export function PluginImport({
             <p className="m-0 text-caption text-muted">
               HTTPS or SSH; GitHub owner/repository also works. SSH uses your
               agent and known hosts. Password prompts and credential helpers are
-              not used.
+              not used. Buzz git repositories in this community sign in with
+              your account.
             </p>
             <div className="justify-self-start">
               <Button

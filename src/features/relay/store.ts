@@ -95,6 +95,8 @@ export function createChannelStore(
     | (RelayReader & {
         viewer: string;
         relayAuthor: string;
+        /** Explicit NIP-11 self; only it may attribute messages to others. */
+        archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
@@ -116,6 +118,7 @@ export function createChannelStore(
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
       includeReplies: discovery?.isSession(channelId) ?? false,
+      signingAuthority: transport?.archiveAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
@@ -363,6 +366,7 @@ export function createChannelStore(
         profiling,
         () => discovery?.isSession(channelId) ?? false,
         clock,
+        transport?.archiveAuthority,
       ),
       channelId,
       snapshot: idleWindow(channelId),
@@ -1399,7 +1403,7 @@ export function createChannelStore(
    * previews through `get`; they never enter `list()`. */
   async function searchPublic(
     query: string,
-    settings?: ReadOptions & { limit?: number },
+    settings?: ReadOptions & { limit?: number; exact?: boolean },
   ): Promise<PublicChannelSearch> {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
@@ -1437,7 +1441,10 @@ export function createChannelStore(
             ([key, value]) => key === "archived" && value === "true",
           ) &&
           !discovery.authorized(id) &&
-          name?.toLowerCase().includes(needle)
+          name &&
+          (settings?.exact
+            ? name.toLowerCase() === needle
+            : name.toLowerCase().includes(needle))
           ? [{ id, name }]
           : [];
       })

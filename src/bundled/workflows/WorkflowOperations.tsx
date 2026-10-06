@@ -20,7 +20,7 @@ const messages = {
   trigger: {
     pending: "Requesting a run…",
     succeeded: "Run requested. Inspect run history for its result.",
-    rejected: "Run request was rejected.",
+    rejected: "Failed to trigger workflow",
     unknown:
       "The run may have started, but its response was lost. Checking configuration or dismissing this notice cannot confirm a run.",
   },
@@ -81,8 +81,16 @@ export function WorkflowOperations({
                 ? deletionStatus(operation, snapshot)
                 : messages[operation.action][operation.outcome]}
             </p>
-            {operation.action !== "delete" && operation.error && (
-              <p className="text-danger">{operation.error}</p>
+            {operation.action === "trigger" &&
+            operation.outcome === "rejected" ? (
+              <p className="text-danger">
+                {operation.error || "The relay did not create a workflow run."}
+              </p>
+            ) : (
+              operation.action !== "delete" &&
+              operation.error && (
+                <p className="text-danger">{operation.error}</p>
+              )
             )}
             <div className="workflow-toolbar">
               {(operation.action === "save" || operation.action === "delete") &&

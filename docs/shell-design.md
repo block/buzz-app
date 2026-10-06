@@ -88,15 +88,26 @@ motion with Tailwind's `motion-reduce` variant.
 
 Tauri uses `titleBarStyle: Overlay` and `hiddenTitle` on macOS. Native traffic
 lights have a reserved 104px left area before the community switcher only in the
-macOS desktop runtime. Web gets no
-inset or imitation window controls. Other
-platforms retain their native decorations. Drag regions are limited to the
-header background; controls remain clickable. On macOS, double-clicking that
+macOS desktop runtime. Web gets no inset or imitation window controls. Linux
+and Windows desktop use undecorated windows with app-owned minimize,
+maximize/restore and close buttons in the header, including during identity
+setup. While the parser-loaded launch overlay keeps app content inert, a
+window-control header is portalled to the document body above the overlay; the
+launch owner removes it when the normal identity or shell header becomes usable.
+Drag regions are limited to the header background; controls remain clickable.
+On macOS, double-clicking that
 background follows the current system title-bar preference (Fill/Zoom, Minimize,
 or no action); changing the preference does not require restarting Buzz. Other
 platforms retain Tauri's native drag-region behavior. The main-window capability
-grants only titlebar dragging and the internal maximize action used by that
-handler, plus scoped HTTP(S) opening for
+grants titlebar dragging and the internal maximize action used by that
+handler. A Linux and Windows main-webview capability also grants minimize,
+maximize/restore and close for the integrated controls. These actions do not
+change the app’s existing close lifecycle. On Windows, the custom maximize
+button does not expose native maximize-hover Snap Layouts, and right-clicking
+the custom header does not open the native system menu. Keyboard and edge-snap
+behavior remain native and require per-platform acceptance testing.
+The main capability includes scoped
+HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 
@@ -151,8 +162,8 @@ Membership settings card scoped to that community. The rail reads
 that roster through the selected community's existing session and verifies it
 against the relay authority that session already holds, so the read adds no
 session request to the connection and opens no other session. That card applies
-the same role gate: in native builds it stays registered with its member list
-and Invite members button, but hides direct additions and per-member actions.
+the same role gate in native builds, with its member list, Invite members
+button, direct additions and per-member actions.
 A Settings section, history entry or `buzz://open` locator naming it still opens
 instead of reporting unavailable. Community settings is
 on every community and opens Settings scoped to that community's origin, which
@@ -236,6 +247,20 @@ and a trailing close button.
 Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; Delete on a tab and Escape in its content close that tab. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the visible selected
+tab, including a selected detail tab, even while typing in the main conversation.
+The macOS native Close menu uses the same action, including when an embedded
+browser owns focus (embedded browsing is currently macOS-only). A terminal tab
+closes its presentation, not its shell; Ctrl+W while typing in a terminal remains
+shell word deletion on Windows/Linux. With no visible tab pane, Close retains
+the normal window-close behavior: hide until reopened on macOS, close the
+application on Windows/Linux. Hidden tabs remain intact until that window close.
+Closing the last tab leaves the window open until the next press. While a modal
+is open, the shortcut does nothing rather than closing content behind it.
+Windows/Linux consume held-key repeats without closing further tabs or the window.
+Window buttons and Alt+F4 always retain their window-only behavior. The bottom
+terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
+shortcuts are unchanged.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
 The main-header split control toggles the tab pane without closing its tabs or

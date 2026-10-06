@@ -1,5 +1,7 @@
 use crate::{with_manager, PluginManager};
-use buzzodz_plugins::HostCommand;
+use buzzodz_plugins::{
+    HostCommand, DEFAULT_HOST_COMMAND_OUTPUT_BYTES, MAX_HOST_COMMAND_OUTPUT_BYTES,
+};
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
@@ -10,7 +12,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 #[cfg(windows)]
-mod windows_job {
+pub(crate) mod windows_job {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use tokio::process::{Child, Command};
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE};
@@ -18,18 +20,19 @@ mod windows_job {
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
+        OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
     };
 
-    pub(super) struct WindowsJob(OwnedHandle);
+    pub(crate) struct WindowsJob(OwnedHandle);
 
     impl WindowsJob {
-        pub(super) fn new() -> Option<Self> {
+        pub(crate) fn new() -> Option<Self> {
             let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             if handle.is_null() {
                 return None;
@@ -51,6 +54,29 @@ mod windows_job {
             Some(job)
         }
 
+        /// Termination is asynchronous; waits, bounded by `wait`, until no job process remains.
+        pub(crate) async fn terminate(&self, wait: std::time::Duration) {
+            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
+            let until = tokio::time::Instant::now() + wait;
+            while self.active_processes() != Some(0) && tokio::time::Instant::now() < until {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+
+        fn active_processes(&self) -> Option<u32> {
+            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            (queried != 0).then_some(info.ActiveProcesses)
+        }
+
         pub(super) fn assign(&self, child: &Child) -> bool {
             child.raw_handle().is_some_and(|handle| unsafe {
                 AssignProcessToJobObject(self.0.as_raw_handle(), handle) != 0
@@ -58,15 +84,22 @@ mod windows_job {
         }
 
         pub(super) fn spawn(&self, command: &mut Command) -> Option<Child> {
-            self.spawn_with_check(command, |_, _| {})
+            self.spawn_with_check(command, 0, |_, _| {})
+        }
+
+        pub(crate) fn spawn_hidden(&self, command: &mut Command) -> Option<Child> {
+            self.spawn_with_check(command, CREATE_NO_WINDOW, |_, _| {})
         }
 
         pub(super) fn spawn_with_check(
             &self,
             command: &mut Command,
+            flags: u32,
             check: impl FnOnce(&Child, &OwnedHandle),
         ) -> Option<Child> {
-            command.creation_flags(CREATE_SUSPENDED).kill_on_drop(true);
+            command
+                .creation_flags(CREATE_SUSPENDED | flags)
+                .kill_on_drop(true);
             let child = command.spawn().ok()?;
             let primary_thread = primary_thread(child.id()?)?;
             check(&child, &primary_thread);
@@ -116,19 +149,18 @@ mod windows_job {
     }
 }
 
-const MAX_OUTPUT_BYTES: u64 = 4096;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 // Tokio kills only the direct child on future cancellation; the group also owns descendants.
 #[cfg(unix)]
-struct ProcessGroupGuard {
-    process_id: i32,
-    armed: bool,
+pub(crate) struct ProcessGroupGuard {
+    pub(crate) process_id: i32,
+    pub(crate) armed: bool,
 }
 
 #[cfg(unix)]
 impl ProcessGroupGuard {
-    fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe { libc::kill(-self.process_id, libc::SIGKILL) };
     }
 }
@@ -212,11 +244,18 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
 
 async fn run_command(command: &HostCommand, deadline: Duration) -> Option<String> {
     let path = effective_path();
+    let max_output_bytes = command
+        .max_output_bytes
+        .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES);
+    if !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&max_output_bytes) {
+        return None;
+    }
     run(
         &resolve_program(&command.program, &path),
         &command.args,
         deadline,
         &path,
+        max_output_bytes,
     )
     .await
 }
@@ -226,7 +265,20 @@ async fn run(
     args: &[String],
     deadline: Duration,
     path: &OsStr,
+    max_output_bytes: u64,
 ) -> Option<String> {
+    let (output, status) = run_output(executable, args, deadline, path, max_output_bytes).await?;
+    status.success().then_some(output)
+}
+
+/// Bounded stdout and exit status; callers must project away private command output.
+pub(crate) async fn run_output(
+    executable: &Path,
+    args: &[String],
+    deadline: Duration,
+    path: &OsStr,
+    max_output_bytes: u64,
+) -> Option<(String, std::process::ExitStatus)> {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -255,11 +307,11 @@ async fn run(
     let output = tokio::time::timeout(deadline, async {
         let mut bytes = Vec::new();
         stdout
-            .take(MAX_OUTPUT_BYTES + 1)
+            .take(max_output_bytes + 1)
             .read_to_end(&mut bytes)
             .await
             .ok()?;
-        if bytes.len() as u64 > MAX_OUTPUT_BYTES {
+        if bytes.len() as u64 > max_output_bytes {
             return None;
         }
         let status = child.wait().await.ok()?;
@@ -267,16 +319,12 @@ async fn run(
         {
             process_group.armed = false;
         }
-        Some((bytes, status.success()))
+        Some((bytes, status))
     })
     .await;
 
-    if let Ok(Some((bytes, success))) = output {
-        return if success {
-            String::from_utf8(bytes).ok()
-        } else {
-            None
-        };
+    if let Ok(Some((bytes, status))) = output {
+        return Some((String::from_utf8(bytes).ok()?, status));
     }
 
     #[cfg(unix)]
@@ -299,7 +347,14 @@ mod tests {
     use std::time::{Duration, Instant};
 
     async fn run(executable: &Path, args: &[String], deadline: Duration) -> Option<String> {
-        run_with_path(executable, args, deadline, &effective_path()).await
+        run_with_path(
+            executable,
+            args,
+            deadline,
+            &effective_path(),
+            super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
+        )
+        .await
     }
 
     fn executable(script: &str) -> (tempfile::TempDir, PathBuf) {
@@ -308,6 +363,39 @@ mod tests {
         fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         (directory, path)
+    }
+
+    #[tokio::test]
+    async fn larger_output_requires_a_bounded_manifest_opt_in() {
+        let (_directory, path) =
+            executable("/usr/bin/head -c 5000 /dev/zero | /usr/bin/tr '\\000' x");
+        let mut command = super::HostCommand {
+            id: "inventory".into(),
+            program: "env".into(),
+            args: vec![path.to_string_lossy().into_owned()],
+            max_output_bytes: None,
+        };
+        assert_eq!(
+            super::run_command(&command, Duration::from_secs(2)).await,
+            None
+        );
+        command.max_output_bytes = Some(5000);
+        assert_eq!(
+            super::run_command(&command, Duration::from_secs(2)).await,
+            Some("x".repeat(5000))
+        );
+        command.max_output_bytes = Some(4999);
+        assert_eq!(
+            super::run_command(&command, Duration::from_secs(2)).await,
+            None
+        );
+        for limit in [0, super::MAX_HOST_COMMAND_OUTPUT_BYTES + 1] {
+            command.max_output_bytes = Some(limit);
+            assert_eq!(
+                super::run_command(&command, Duration::from_secs(2)).await,
+                None
+            );
+        }
     }
 
     #[tokio::test]
@@ -342,7 +430,14 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(super::resolve_program("tool", &path), tool);
         assert_eq!(
-            run_with_path(&tool, &[], Duration::from_secs(5), &path).await,
+            run_with_path(
+                &tool,
+                &[],
+                Duration::from_secs(5),
+                &path,
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES
+            )
+            .await,
             Some("ready\n".into())
         );
     }
@@ -543,7 +638,7 @@ mod windows_tests {
             .kill_on_drop(true);
         let job = WindowsJob::new().unwrap();
         let child = job
-            .spawn_with_check(&mut command, |_, thread| {
+            .spawn_with_check(&mut command, 0, |_, thread| {
                 let previous_count = unsafe { SuspendThread(thread.as_raw_handle()) };
                 let restored_count = unsafe { ResumeThread(thread.as_raw_handle()) };
                 assert_eq!(previous_count, 1, "command ran before job assignment");
@@ -574,6 +669,7 @@ mod windows_tests {
                 ],
                 Duration::from_secs(10),
                 &effective_path(),
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
             )
             .await
         });
@@ -600,6 +696,7 @@ mod windows_tests {
                 ],
                 Duration::from_secs(5),
                 &effective_path(),
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
             )
             .await
         });

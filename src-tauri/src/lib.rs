@@ -1,6 +1,8 @@
 mod archive;
 use archive::relay_archive;
 mod browser;
+#[cfg(target_os = "macos")]
+mod close_menu;
 mod oauth_callback;
 use oauth_callback::{
     oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
@@ -26,29 +28,31 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+
 mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, IdentityHost,
+    identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
-    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_http,
-    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_publish_read_state, relay_sign,
-    relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_cancel,
-    relay_workflow_runs,
+    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
+    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
+    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
+    relay_sign_sidebar, relay_upload, relay_upload_cancel, relay_workflow_runs,
 };
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod managed_pi;
+mod managed_npm;
 mod pi_models;
+use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
@@ -64,7 +68,7 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{pi_install, HarnessSetup};
+use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -264,9 +268,10 @@ async fn plugin_import_git(
     imports: tauri::State<'_, Imports>,
     repository: String,
     reference: String,
+    authorization: Option<String>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
-        prepare_git(&repository, &reference).map(Some)
+        prepare_git(&repository, &reference, authorization.as_deref()).map(Some)
     })
     .await
 }
@@ -398,6 +403,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_create,
         identity_export,
         identity_prepare_remote_agent_authorization,
+        identity_sign_builderlab_binding,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -405,6 +411,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_publish_read_state,
         relay_http,
         relay_workflow_runs,
+        relay_project_git,
+        relay_project_git_cancel,
+        relay_git_authorization,
         relay_channel_sign,
         relay_channel_publish,
         relay_kit_sign,
@@ -445,6 +454,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_log_challenge,
         agent_control_read_log,
         pi_install,
+        claude_install,
+        claude_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,
@@ -462,6 +473,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_run,
         title_bar_double_click,
         notification_show,
+        #[cfg(target_os = "macos")]
+        notifications::macos::notification_permission_state,
+        #[cfg(target_os = "macos")]
+        notifications::macos::request_notification_access,
         deep_link_take,
         deep_link_watch,
         dock_permission,
@@ -496,6 +511,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            notifications::macos::init();
             deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
@@ -531,7 +548,10 @@ pub fn run() {
             Ok(())
         });
     #[cfg(target_os = "macos")]
-    let builder = builder.manage(TitleBarFillFrames::default());
+    let builder = builder
+        .manage(TitleBarFillFrames::default())
+        .menu(close_menu::menu)
+        .on_menu_event(close_menu::handle);
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
     let builder = if tauri::is_dev() {

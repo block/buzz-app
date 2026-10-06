@@ -108,6 +108,8 @@ function AttachmentItem({
     ready: "Ready",
     error: "Upload failed",
   }[item.status];
+  // Queued files wait for Send; only preparation and transfer are busy.
+  const busy = item.status === "preparing" || item.status === "uploading";
   return (
     <li
       className={styles.item}
@@ -206,14 +208,10 @@ function AttachmentItem({
           onClick={(event) =>
             remove(item.id, event.currentTarget.getBoundingClientRect())
           }
-          data-uploading={
-            !["ready", "error"].includes(item.status) || undefined
-          }
+          data-uploading={busy || undefined}
           icon={
             <span className={styles.removeIcon}>
-              {!["ready", "error"].includes(item.status) && (
-                <CircleNotchIcon className={styles.spinner} size={16} />
-              )}
+              {busy && <CircleNotchIcon className={styles.spinner} size={16} />}
               <XIcon className={styles.removeX} size={16} />
             </span>
           }

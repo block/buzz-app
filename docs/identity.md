@@ -111,14 +111,17 @@ validation. JavaScript never signs kind 24242. Packaged HEIC and video
 preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
-Member changes, repository HTTP and other broker-only helpers are not claimed
-by this adapter. NIP-FI assertion
+Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
+in the exact add/remove/role shape; the relay decides authority. Repository HTTP
+and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 
-Development with `VITE_BUZZ_LIVE=1` continues to use its pinned legacy broker
-identity, and does not offer native private-key controls. Creating/importing the
+Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
+(Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
+native private-key controls. Without the pin, supported desktop development uses
+the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
 synchronize copies automatically; neither operation is in this scope.
 

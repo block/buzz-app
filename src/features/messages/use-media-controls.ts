@@ -4,6 +4,7 @@ import { useEffect, useState, type RefObject } from "react";
 export function useMediaControls(
   stage: RefObject<HTMLElement | null>,
   source?: string,
+  revealed = false,
 ) {
   const [idle, setIdle] = useState(false);
   useEffect(() => {
@@ -31,5 +32,5 @@ export function useMediaControls(
       element.removeEventListener("pointerleave", leave);
     };
   }, [stage, source]);
-  return idle;
+  return revealed ? false : idle;
 }

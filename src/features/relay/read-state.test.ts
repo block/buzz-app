@@ -363,6 +363,130 @@ describe("durable read-state owner", () => {
     await owner.read("room", 12, () => true, true);
     expect(owner.localUnread("room")).toBeUndefined();
   });
+  it("keeps an evicted message receipt locally across publication and restart", async () => {
+    const f = fixture();
+    const owner = f.make();
+    const old = `msg:${"a".repeat(64)}`;
+    await owner.ready;
+    await owner.read(old, 1, () => true);
+    await owner.readMessages(
+      Array.from({ length: 1600 }, (_, n) => ({
+        key: `msg:${n.toString(16).padStart(64, "0")}`,
+        timestamp: 10 + n,
+        channelId: "elsewhere",
+      })),
+      undefined,
+      () => true,
+    );
+    expect(f.journal()?.state.frontiers[old]).toBeUndefined();
+    expect(owner.state().frontiers[old]).toBe(1);
+    await owner.flush();
+    expect(owner.snapshot().status).toBe("reconciled");
+    const blob = decodeReadState(
+      [f.host.publish.mock.calls.at(-1)?.[0]],
+      f.key.secret,
+    )[0].blob;
+    expect(blob.contexts[old]).toBeUndefined();
+    expect(
+      new TextEncoder().encode(JSON.stringify(blob)).length,
+    ).toBeLessThanOrEqual(40 * 1024);
+    owner.dispose();
+    const restarted = f.make();
+    await restarted.ready;
+    expect(restarted.state().frontiers[old]).toBe(1);
+    expect(restarted.state().frontiers["msg:unseen"]).toBeUndefined();
+  });
+  it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
+    const f = fixture();
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
+    const options = { broadcastName: `read-reserve:${crypto.randomUUID()}` };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.ready, b.ready]);
+    await a.markLocalUnread("msg:old", () => true);
+    const peer = signReadState(
+      {
+        slot: "b".repeat(32),
+        createdAt: 90,
+        blob: { v: 1, client_id: "peer", contexts: { "msg:old": 5 } },
+      },
+      f.key.secret,
+      100,
+    );
+    f.reader.read.mockResolvedValueOnce([peer]);
+    await a.refresh();
+    expect(a.state().frontiers["msg:old"]).toBe(20);
+    expect(a.localUnread("msg:old")).toBeGreaterThan(0);
+    expect(f.journal()?.reserve?.["msg:old"]).toBeUndefined();
+    await Promise.all([
+      a.read("msg:a", 25, () => true),
+      b.read("msg:b", 30, () => true),
+    ]);
+    await expect
+      .poll(() => a.state().frontiers)
+      .toEqual({ "msg:old": 20, "msg:a": 25, "msg:b": 30 });
+    await expect.poll(() => b.state().frontiers).toEqual(a.state().frontiers);
+    await b.read("msg:old", 10, () => true, true);
+    expect(b.localUnread("msg:old")).toBeUndefined();
+    expect(b.state().frontiers["msg:old"]).toBe(20);
+  });
+  it("does not lose archived intent when a save fails and can clear it on a read-only host", async () => {
+    const f = fixture();
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
+    const owner = f.make();
+    await owner.ready;
+    const saved = f.journal();
+    vi.mocked(f.storage.update).mockRejectedValueOnce(new Error("disk full"));
+    await expect(owner.read("msg:old", 30, () => true)).rejects.toThrow(
+      "disk full",
+    );
+    expect(f.journal()).toBe(saved);
+    expect(owner.state().frontiers["msg:old"]).toBe(20);
+    owner.dispose();
+    const readOnly = f.make({ lock: undefined });
+    await readOnly.ready;
+    await readOnly.markLocalUnread("msg:old", () => true);
+    await readOnly.readMessages(
+      [{ key: "msg:old", timestamp: 20, channelId: "room" }],
+      undefined,
+      () => true,
+    );
+    expect(readOnly.localUnread("msg:old")).toBeUndefined();
+    expect(f.journal()?.reserve).toEqual({ "msg:old": 20 });
+    expect(f.host.sign).not.toHaveBeenCalled();
+  });
+  it("validates optional reserve data without replacing corrupt saved intent", () => {
+    const f = fixture();
+    expect(readJournal(newReadJournal(), f.key.pubkey).reserve).toEqual({});
+    for (const reserve of [
+      [],
+      { "msg:bad": -1 },
+      { "": 1 },
+      { ["x".repeat(257)]: 1 },
+      Object.fromEntries(
+        Array.from({ length: 5001 }, (_, n) => [`msg:${n}`, 1]),
+      ),
+      Object.fromEntries(
+        Array.from({ length: 3000 }, (_, n) => [
+          String(n).padStart(240, "x"),
+          1,
+        ]),
+      ),
+    ])
+      expect(() =>
+        readJournal({ ...newReadJournal(), reserve }, f.key.pubkey),
+      ).toThrow("reserve");
+    expect(() =>
+      readJournal(
+        {
+          ...newReadJournal(),
+          state: { frontiers: { room: 1 }, overrides: {} },
+          reserve: { room: 2 },
+        },
+        f.key.pubkey,
+      ),
+    ).toThrow("reserve");
+  });
   it("keeps ordinary reads publishing across growth, old-history reads and restart", async () => {
     const f = fixture(),
       first = f.make();

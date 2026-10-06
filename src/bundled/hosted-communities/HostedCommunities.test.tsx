@@ -13,7 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
-import { DELETION_PENDING_KEY } from "./api";
+import { brokerApi, DELETION_PENDING_KEY } from "./api";
 
 const local = "a".repeat(64);
 const other = "b".repeat(64);
@@ -65,7 +65,7 @@ afterEach(() => {
 const renderCard = () =>
   render(
     <StrictMode>
-      <HostedCommunities active={() => true} />
+      <HostedCommunities api={brokerApi} active={() => true} />
     </StrictMode>,
   );
 
@@ -76,7 +76,7 @@ function RerenderingParent() {
       <button type="button" onClick={() => rerender((count) => count + 1)}>
         Parent update
       </button>
-      <HostedCommunities active={() => true} />
+      <HostedCommunities api={brokerApi} active={() => true} />
     </>
   );
 }
@@ -450,7 +450,7 @@ it("does not bind after the card is deactivated during Switch", async () => {
   });
   routes["/api/builderlab/unbind"] = unbind.answer as Handler;
   routes["/api/builderlab/bind"] = () => ({ identity: { pubkey_hex: local } });
-  render(<HostedCommunities active={() => live} />);
+  render(<HostedCommunities api={brokerApi} active={() => live} />);
   fireEvent.click(
     await screen.findByRole("button", {
       name: "Switch to this device’s identity",
@@ -628,7 +628,7 @@ it("does not write to the clipboard when create finishes after the card retires"
   routes["/api/builderlab/create"] = create.answer as Handler;
   const writeText = vi.fn(async (_: string) => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
-  render(<HostedCommunities active={() => live} />);
+  render(<HostedCommunities api={brokerApi} active={() => live} />);
   await typeName("north");
   await screen.findByText("That address is available.", {}, { timeout: 2000 });
   fireEvent.click(screen.getByRole("button", { name: "Create community" }));
@@ -2006,7 +2006,7 @@ it("disables deletion for every row when a pending slot exists in another mounte
       { error: { code: "acceptance_unknown" }, correlation_id: "corr-slot" },
       { status: 503 },
     );
-  render(<HostedCommunities active={() => true} />);
+  render(<HostedCommunities api={brokerApi} active={() => true} />);
   fireEvent.click(
     (
       await screen.findAllByRole("button", { name: "Delete" })
@@ -2031,7 +2031,7 @@ it("disables deletion for every row when a pending slot exists in another mounte
   routes["/api/builderlab/list"] = () => ({
     communities: [archived, south],
   });
-  render(<HostedCommunities active={() => true} />);
+  render(<HostedCommunities api={brokerApi} active={() => true} />);
   await waitFor(() =>
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(3),
   );
@@ -2249,7 +2249,7 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   routes["/api/builderlab/delete"] = (body) =>
     Response.json(accepted(body), { status: 202 });
   let live = true;
-  render(<HostedCommunities active={() => live} />);
+  render(<HostedCommunities api={brokerApi} active={() => live} />);
   await confirmDeletion();
   await screen.findByText("Deletion started");
   await waitFor(() =>
@@ -2334,7 +2334,9 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
     routes["/api/builderlab/list"] = () => ({ communities: [archived] });
     const admission = hold();
     routes["/api/builderlab/delete"] = admission.answer as Handler;
-    const view = render(<HostedCommunities active={() => true} />);
+    const view = render(
+      <HostedCommunities api={brokerApi} active={() => true} />,
+    );
     await confirmDeletion();
     await waitFor(() =>
       expect(calls.map(([url]) => url)).toContain("/api/builderlab/delete"),
@@ -2353,7 +2355,9 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
     routes["/api/builderlab/identity"] = () => ({
       identity: { pubkey_hex: other },
     });
-    const middleView = render(<HostedCommunities active={() => true} />);
+    const middleView = render(
+      <HostedCommunities api={brokerApi} active={() => true} />,
+    );
     await screen.findByText(middle.request.request_id);
     middleView.unmount();
     const next = {
@@ -2367,7 +2371,7 @@ it.each(["accepted", "bound abort", "definitive rejection"])(
     routes["/api/builderlab/identity"] = () => ({
       identity: { pubkey_hex: local },
     });
-    render(<HostedCommunities active={() => true} />);
+    render(<HostedCommunities api={brokerApi} active={() => true} />);
     await screen.findByText(next.request.request_id);
     await act(async () =>
       admission.release(

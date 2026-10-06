@@ -1,11 +1,15 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
-import { BellIcon, BrowserIcon } from "../../shared/design-system/icons/index";
+import {
+  BellIcon,
+  BrowserIcon,
+  ChatsCircleIcon,
+} from "../../shared/design-system/icons/index";
 import { orderPages, pagePresentation } from "./presentation";
 
-function page(key: string, title: string): RegisteredPage {
+function page(key: string, title: string, icon?: string): RegisteredPage {
   const separator = key.indexOf("/");
   const pluginId = key.slice(0, separator);
   const id = key.slice(separator + 1);
@@ -16,6 +20,7 @@ function page(key: string, title: string): RegisteredPage {
     title,
     revision: "bundled",
     component: () => null,
+    ...(icon === undefined ? {} : { icon }),
   };
 }
 
@@ -83,4 +88,47 @@ test("bundled pages get their own icons and Bestie's row shows its artwork", () 
   expect(pagePresentation(page("example.mail/inbox", "Inbox")).icon).toBe(
     BrowserIcon,
   );
+});
+
+describe("page mark precedence", () => {
+  const owl = "data:image/svg+xml,%3Csvg%20id%3D%22owl%22%3E%3C%2Fsvg%3E";
+  const fox = "data:image/png;base64,iVBORfox";
+
+  test.each([
+    [
+      "an external page with an icon gets its image beside BrowserIcon",
+      page("example.plugin/main", "Example", owl),
+      { label: "Example", icon: BrowserIcon, image: owl },
+    ],
+    [
+      "an external page without an icon gets no image key",
+      page("example.plugin/main", "Example"),
+      { label: "Example", icon: BrowserIcon },
+    ],
+    [
+      "bundled Inbox keeps BellIcon and ignores a declared icon",
+      page("buzz.inbox/inbox", "Inbox", owl),
+      { label: "Inbox", icon: BellIcon },
+    ],
+    [
+      "bundled channels stays Messages and ignores a declared icon",
+      page("buzz.channels/channels", "Channels", owl),
+      { label: "Messages", icon: ChatsCircleIcon },
+    ],
+    [
+      "an external page with local id channels keeps its own title and image",
+      page("example.chat/channels", "Chat", owl),
+      { label: "Chat", icon: BrowserIcon, image: owl },
+    ],
+  ] as const)("%s", (_name, input, mark) => {
+    const { tone: _tone, ...actual } = pagePresentation(input);
+    expect(actual).toStrictEqual(mark);
+  });
+
+  test("two plugins with local id main each get their own image", () => {
+    const one = pagePresentation(page("example.one/main", "One", owl));
+    const two = pagePresentation(page("example.two/main", "Two", fox));
+    expect(one).toHaveProperty("image", owl);
+    expect(two).toHaveProperty("image", fox);
+  });
 });

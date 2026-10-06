@@ -5,6 +5,11 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import {
+  relayPartition,
+  transportOrigin,
+  transportPartition,
+} from "./partition";
 import { ReadError, readErrorKind } from "./errors";
 import type { ReadTransport } from "./transport";
 
@@ -103,7 +108,7 @@ export function provideRelay(
           cachedOnly: true,
           persistence,
           initialChannelId: readView<string | undefined>(
-            `${resume.scope}:${resume.viewer}`,
+            relayPartition(resume.scope, resume.viewer),
             "selected-channel",
             undefined,
           ),
@@ -126,7 +131,7 @@ export function provideRelay(
         cached: true,
         generation,
         viewer: resume.viewer,
-        scope: `${resume.scope}:${resume.viewer}`,
+        scope: relayPartition(resume.scope, resume.viewer),
         session: store.session,
       });
     } catch {
@@ -207,13 +212,13 @@ export function provideRelay(
             // Keep intent preparation, but do not fetch every unopened channel.
             warm: false,
             initialChannelId: readView<string | undefined>(
-              `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+              transportPartition(transport),
               "selected-channel",
               undefined,
             ),
             persistence: createHeadPersistence(
               transport.viewer,
-              transport.scope ?? transport.relayAuthor,
+              transportOrigin(transport),
             ),
           });
           await successor.restore();
@@ -236,7 +241,7 @@ export function provideRelay(
             status: "ready",
             generation,
             viewer: transport.viewer,
-            scope: `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+            scope: transportPartition(transport),
             session: store.session,
           });
           store.session.channels.ensureList();

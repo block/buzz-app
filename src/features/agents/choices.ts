@@ -7,6 +7,7 @@ import {
   type IdentityArchiveSnapshot,
   type IdentityArchives,
 } from "../relay/identity-archives";
+import { relayPartition } from "../relay/partition";
 
 /** Community evidence, not process readiness or permission to grant access. */
 export function sameCommunityAgents(
@@ -19,7 +20,7 @@ export function sameCommunityAgents(
     try {
       return (
         agent.configured !== false &&
-        `${relayOrigin(agent.relayUrl)}:${viewer}` === scope
+        relayPartition(relayOrigin(agent.relayUrl), viewer) === scope
       );
     } catch {
       return false;

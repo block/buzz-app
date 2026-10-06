@@ -5,7 +5,6 @@ fn options(path: &str) -> OAuthRequest {
         authorization_url: "https://provider.example/authorize?client_id=buzz&scope=a%20b&scope=c"
             .into(),
         callback_path: path.into(),
-        callback_parameter: None,
         use_state: None,
     }
 }
@@ -18,10 +17,6 @@ struct Started {
 }
 
 fn start(host: &OAuthCallbackHost, request: OAuthRequest) -> Result<Started, String> {
-    let parameter = request
-        .callback_parameter
-        .clone()
-        .unwrap_or("redirect_uri".into());
     let mut opened = None;
     let attempt = host.begin(request, |url| {
         opened = Some(url::Url::parse(url).unwrap());
@@ -36,7 +31,7 @@ fn start(host: &OAuthCallbackHost, request: OAuthRequest) -> Result<Started, Str
     assert_eq!(
         authorization
             .query_pairs()
-            .find(|(name, _)| name.as_ref() == parameter)
+            .find(|(name, _)| name == "redirect_uri")
             .unwrap()
             .1,
         callback_url,
@@ -179,15 +174,24 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(send(&url, &format!("{}?code=a&code=b", url.path()), "")
             .await
             .starts_with("HTTP/1.1 400"));
-        let response = send(
-            &url,
-            &format!(
-                "{}?code=one%2Btime&state=attempt%2Bstate&extra=a&extra=b",
-                url.path()
-            ),
-            "",
-        )
-        .await;
+        // Keep a second connection queued behind the callback. Its identity stays
+        // tied to this listener even if another test later reuses the port.
+        let address = ("127.0.0.1", url.port().unwrap());
+        let mut callback = TcpStream::connect(address).await.unwrap();
+        let queued = TcpStream::connect(address).await.unwrap();
+        callback
+            .write_all(&request(
+                &format!("127.0.0.1:{}", url.port().unwrap()),
+                &format!(
+                    "{}?code=one%2Btime&state=attempt%2Bstate&extra=a&extra=b",
+                    url.path()
+                ),
+                "",
+            ))
+            .await
+            .unwrap();
+        let mut response = String::new();
+        callback.read_to_string(&mut response).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 200"));
         assert!(response.contains("Cache-Control: no-store"));
         assert!(response.contains("Referrer-Policy: no-referrer"));
@@ -196,8 +200,9 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(!response.contains("one+time"));
         assert!(!response.contains("attempt"));
         assert!(!response.contains("one%2Btime"));
+        queued
     };
-    let (result, ()) = tokio::join!(wait, browser);
+    let (result, mut queued) = tokio::join!(wait, browser);
     let expected = response(&[
         ("code", "one+time"),
         ("state", "attempt+state"),
@@ -210,9 +215,15 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
     );
     assert_eq!(result, Ok(expected));
     assert!(state.0.lock().unwrap().is_none());
-    assert!(TcpStream::connect(("127.0.0.1", url.port().unwrap()))
+    let mut byte = [0];
+    let closed = tokio::time::timeout(Duration::from_secs(5), queued.read(&mut byte))
         .await
-        .is_err());
+        .expect("completed callback must close queued connections");
+    match closed {
+        Ok(0) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => (),
+        other => panic!("expected queued connection to close, got {other:?}"),
+    }
     assert!(state.wait(id).await.is_err());
 }
 
@@ -258,7 +269,7 @@ async fn main_document_reload_cancels_wait_and_allows_new_sign_in() {
     use tauri::webview::PageLoadEvent::{Finished, Started};
 
     // Async Tauri commands queue startup, allowing reload cleanup to overtake it.
-    let _: fn(_, _, _, _, _, _) -> Result<OAuthAttempt, String> =
+    let _: fn(_, _, _, _, _) -> Result<OAuthAttempt, String> =
         oauth_callback_begin::<tauri::test::MockRuntime>;
     let state = OAuthCallbackHost::default();
     let first = start(&state, options("/callback/old")).unwrap().id;
@@ -313,16 +324,7 @@ fn startup_rejects_unsafe_urls_and_conflicting_owned_parameters_before_launch() 
             ..options("/callback")
         },
         OAuthRequest {
-            authorization_url: "https://provider.example/authorize?returnTo=caller".into(),
-            callback_parameter: Some("returnTo".into()),
-            ..options("/callback")
-        },
-        OAuthRequest {
-            callback_parameter: Some("state".into()),
-            ..options("/callback")
-        },
-        OAuthRequest {
-            callback_parameter: Some(String::new()),
+            authorization_url: "https://provider.example/authorize?redirect%5Furi=caller".into(),
             ..options("/callback")
         },
     ];
@@ -422,12 +424,11 @@ async fn default_state_rejects_invalid_success_and_error_callbacks_then_complete
 }
 
 #[tokio::test]
-async fn custom_callback_parameter_and_disabled_state_are_explicit() {
+async fn redirect_uri_is_used_even_with_state_disabled() {
     let host = OAuthCallbackHost::default();
     let attempt = start(
         &host,
         OAuthRequest {
-            callback_parameter: Some("returnTo".into()),
             use_state: Some(false),
             ..options("/callback/random")
         },
@@ -436,7 +437,15 @@ async fn custom_callback_parameter_and_disabled_state_are_explicit() {
     assert!(!attempt
         .authorization
         .query_pairs()
-        .any(|(name, _)| name == "state" || name == "redirect_uri"));
+        .any(|(name, _)| name == "state"));
+    assert_eq!(
+        attempt
+            .authorization
+            .query_pairs()
+            .filter(|(name, _)| name == "redirect_uri")
+            .count(),
+        1
+    );
     let url = url::Url::parse(&attempt.callback_url).unwrap();
     // Disabled means no validation, even for duplicate unsolicited state.
     let target = format!("{}?code=one&state=a&state=b", url.path());

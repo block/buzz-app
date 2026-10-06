@@ -1,14 +1,15 @@
 import type { ControlSnapshot } from "../../features/agents/control";
+import { harnessPreset } from "../../features/agents/harness-presets";
 import { harnessKind } from "./agent-edit";
 
 type Options = ControlSnapshot["harnessOptions"];
 
-/** Preserve the existing alias behavior for saved/custom Goose and Pi commands. */
+/** Preserve the existing alias behavior for saved/custom harness commands. */
 export function harnessOption(options: Options, command: string) {
   const kind = harnessKind(command);
   return (
     options?.find((option) => option.command === command) ??
-    (kind === "goose" || kind === "pi"
+    (kind === "goose" || kind === "pi" || harnessPreset(command)
       ? options?.find((option) => harnessKind(option.command) === kind)
       : undefined)
   );

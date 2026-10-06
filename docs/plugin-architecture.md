@@ -77,12 +77,20 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, icon?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` gives a page a row in the
 shell's page navigation. Pages without it are still listed in search and reachable
 by deep link or from another page; Channels and Sessions are bundled examples.
+
+A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
+scheme and type match case-insensitively. Search Buzz and the page navigation
+render it as a decorative image, with the generic icon when it is absent or fails
+to load. Registration drops any other value with one console warning that names
+the page; the page still registers and opens. Bundled pages keep their host icons.
+External plugins ship no separate assets, so inline the art into `plugin.js`, for
+example with a bundler `?inline` import.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
@@ -115,8 +123,8 @@ Saved enabled/disabled flags win over defaults (except required Channels). There
 is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities still requires its development
-broker backend. Disabling Community admin removes its Invite to community shortcut.
+only on macOS/Linux desktop; Hosted communities needs either the desktop app or
+the live development broker. Disabling Community admin removes its Invite to community shortcut.
 
 Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
@@ -162,10 +170,14 @@ re-read and verified before dispatch; browser local storage has no atomic compar
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
-`/api/builderlab/*` routes live in the development broker (`dev/builderlab.mjs`),
-which keeps the session credential and signing key in Node. Packaged builds ship no
-broker, so this plugin cannot sign in or manage communities there until a native
-backend exists.
+account backend follows the same split as `HostService`: live development uses the
+broker's `/api/builderlab/*` routes (`dev/builderlab.mjs`), which keep the session
+credential and signing key in Node. Desktop builds use `native.ts`, the same routes
+over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
+`https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
+validates the challenge and signs only the fixed kind 24243 binding. The desktop
+credential lives in plugin memory for the plugin's lifetime and is never persisted,
+so restarting the app signs out. Other browser builds show the unavailable notice.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no
@@ -394,7 +406,27 @@ Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
 ID; the program and arguments come only from the plugin's manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
-UTF-8 stdout. The direct command invocation has a five-second deadline;
+UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
+1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
+bound returns `null` without truncation. Existing declarations retain the 4 KiB
+default. Hosts that do not support this field reject manifests that declare it.
+
+For example, a plugin querying tools available to an agent may need room for a
+JSON inventory containing tool names and descriptions:
+
+```json
+{
+  "id": "agent-tools",
+  "program": "agent-tools",
+  "args": ["list", "--json"],
+  "maxOutputBytes": 65536
+}
+```
+
+This is a command entry inside `host.commands`. The plugin parses the inventory;
+the host only enforces the declared byte limit.
+
+The direct command invocation has a five-second deadline;
 cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a

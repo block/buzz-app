@@ -324,3 +324,65 @@ it.each(["channel", "dm", "thread"])(
     expect(next.row()?.reactions).toEqual([]);
   },
 );
+
+it("real session publishes attributed-owner edits and deletion through its trusted authority", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const published: RelayEvent[] = [];
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      archiveAuthority: relay.pubkey,
+      writer: {
+        sign: async (template) => signed(viewer, template),
+        publish: async (event) => {
+          published.push(event);
+        },
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  owners.push(owner);
+  owner.session.channels.ensure("c");
+  const attributed = signed(relay, {
+    kind: 9,
+    content: "Original",
+    tags: [
+      ["h", "c"],
+      ["actor", viewer.pubkey],
+    ],
+  });
+  live.receive([roster(relay, "c", [viewer.pubkey], 1), attributed]);
+  expect(owner.session.channels.window("c").rows[0]?.authorId).toBe(
+    viewer.pubkey,
+  );
+  await owner.session.outbox?.ready();
+  const editId = owner.session.messages.edit(
+    attributed.id,
+    "Edited",
+    attributed.id,
+  );
+  await vi.waitFor(() =>
+    expect(published.some((event) => event.id === editId)).toBe(true),
+  );
+  const edit = published.find((event) => event.id === editId);
+  expect(edit).toMatchObject({ kind: 40003, pubkey: viewer.pubkey });
+  expect(edit?.tags).toContainEqual(["e", attributed.id]);
+  if (!edit) throw new Error("Missing published edit");
+  live.receive([edit]);
+  expect(owner.session.channels.window("c").rows[0]?.content).toBe("Edited");
+  const deletionId = owner.session.messages.remove([attributed.id]);
+  await vi.waitFor(() =>
+    expect(published.some((event) => event.id === deletionId)).toBe(true),
+  );
+  const deletion = published.find((event) => event.id === deletionId);
+  expect(deletion).toMatchObject({ kind: 5, pubkey: viewer.pubkey });
+  expect(deletion?.tags).toContainEqual(["e", attributed.id]);
+  if (!deletion) throw new Error("Missing published deletion");
+  live.receive([deletion]);
+  expect(owner.session.channels.window("c").rows).toEqual([]);
+});

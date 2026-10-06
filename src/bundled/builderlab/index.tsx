@@ -6,6 +6,8 @@ import {
   oauthTarget,
 } from "./oauth/browser";
 import { createOAuthSession } from "./oauth/session";
+import { createAgentClient } from "./agents/client";
+import { RemoteAgents } from "./agents/RemoteAgents";
 
 export const inject = ["host", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -22,21 +24,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
     browserCredential(ctx.host, signal),
   );
   ctx.effect(() => () => session.dispose());
+  const agents = createAgentClient(ctx.host, session);
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
     group: "Integrations",
     component: ({ active }) => (
-      <Login
-        session={session}
-        available={browserLoginAvailable() && !unavailable}
-        unavailableReason={
-          browserLoginAvailable()
-            ? unavailable
-            : "Open the Buzz desktop app to sign in with Builderlab."
-        }
-        active={active}
-      />
+      <>
+        <Login
+          session={session}
+          available={browserLoginAvailable() && !unavailable}
+          unavailableReason={
+            browserLoginAvailable()
+              ? unavailable
+              : "Open the Buzz desktop app to sign in with Builderlab."
+          }
+          active={active}
+        />
+        <RemoteAgents client={agents} session={session} active={active} />
+      </>
     ),
   });
 };

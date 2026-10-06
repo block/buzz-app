@@ -625,6 +625,8 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
       return put.call(this, value, ...args);
     };
   });
+  const base = Date.now();
+  await page.clock.install({ time: base });
   await open(page, app);
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
@@ -642,6 +644,8 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
   await page.evaluate(() => {
     window.inboxReadFailure.armed = true;
   });
+  // The fixed pause point is beyond this test's timeout, never runner now.
+  await page.clock.pauseAt(base + 180_000);
   try {
     await row.getByRole("button", { name: /^Open / }).click();
     const detail = inbox.getByRole("complementary", {
@@ -663,11 +667,16 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
       window.inboxReadFailure.armed = false;
       return window.inboxReadFailure.saves;
     });
-    // Establish the already-spent exact reveal before moving to Retry.
+    // Move to Retry after initial reveal focus, even if verification is pending.
     const target = detail
       .locator("[data-message-id]")
       .filter({ hasText: "Unread reply 1" });
-    await expect(target).toBeFocused();
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return target.evaluate((element) => document.activeElement === element);
+      })
+      .toBe(true);
     const retry = alert.getByRole("button", { name: "Retry inbox" });
     await retry.focus();
     await page.keyboard.press("Enter");
@@ -676,14 +685,22 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
       .poll(() => page.evaluate(() => window.inboxReadFailure.saves))
       .toBeGreaterThan(saves);
     await expect(detail).toBeVisible();
+    // Cancel the still-pending verification with a real scroller mutation. The
+    // rescheduled reveal must not steal Retry's successful handoff to Close.
+    await target.evaluate((element) => {
+      element.style.paddingBottom = "1px";
+    });
+    await page.clock.runFor(32);
     await expect(
       detail.getByRole("button", { name: "Close thread", exact: true }),
     ).toBeFocused();
+    await page.clock.resume();
     await page.keyboard.press("Escape");
     await expect(detail).toHaveCount(0);
     await expect(row.getByRole("button", { name: /^Open / })).toBeFocused();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   } finally {
+    await page.clock.resume();
     await page.evaluate(() => {
       window.inboxReadFailure.armed = false;
     });

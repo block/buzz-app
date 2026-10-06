@@ -65,6 +65,19 @@ restrictions; its worker override takes precedence over imported parallelism.
 Pi model browsing and connection tests use the
 Provider/Model fields; ACP overrides apply to the listener's sessions at launch.
 
+**Hermes Agent** is an externally installed ACP harness. Settings → Agents →
+Harnesses → **Add harness** shows executable availability and a manual setup
+guide; **Check again** refreshes discovery. Buzz uses `hermes-acp` with no default arguments and does not
+install Hermes or manage its provider credentials. Configure its default model
+and sign-in with `hermes model` in your terminal. The agent form uses those
+defaults and offers no Provider, Browse models or Test connection controls for
+Hermes yet. Existing model/provider values remain visible for recovery: select
+**Use Hermes Agent defaults**, then Save, before starting. Native launch rejects those
+selectors, and Hermes does not permit `BUZZ_ACP_MODEL` environment overrides.
+Saved executable paths survive detection refresh; choose the newly discovered
+Hermes option explicitly to replace an old path. Device defaults and old-agent
+import do not offer Hermes in this slice.
+
 **Clone to this community** opens the existing creation dialog with only the old
 agent’s name and resolved instructions. Review that text for embedded secrets.
 Runtime settings and workspace use this app’s defaults and remain editable.
@@ -273,7 +286,10 @@ launch rejection; a Tauri IPC test checks the actual serialized snapshot.
 
 ### Harnesses
 
-The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
+The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
+**Claude Code**. Claude Code supports installation only in this slice; it is
+not yet a choice when creating an agent. **Add harness** opens the Tier 2 Hermes chooser and setup details.
+Hermes also appears in the main list once its executable is detected:
 
 - **Buzz Agent** is bundled and shows **Ready**.
 - **Goose** is bundled and always shows **Ready**. Buzz launches `goose-acp`
@@ -297,6 +313,61 @@ The **Harnesses** card lists only **Buzz Agent**, **Goose**, and **Pi**:
   npm install -g '@earendil-works/pi-coding-agent@>=0.99.0'
   npm install -g --install-links=true 'git+https://github.com/salman1993/buzz-pi-acp.git#72015de'
   ```
+
+- **Hermes Agent** shows **Ready** or **CLI needed** in **Add harness**, with a
+  manual setup guide and no Install/Update action. **Check again** updates the
+  chooser and main list; removing its executable hides the main row again.
+  Discovery searches for the exact `hermes-acp` launcher name. Windows
+  `.exe`/`.cmd`/`.bat` launchers are a known discovery limitation in this slice;
+  saved absolute paths remain recognizable/editable.
+
+- **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
+  **Sign-in needed** when its CLI reports signed out, and **Ready** once tools
+  and sign-in are confirmed. A failed auth check shows **Sign-in unconfirmed**.
+  On macOS/Linux x64 and arm64, **Install** reuses the checksum-verified managed
+  Node and installs `@anthropic-ai/claude-code@2.1.289` and
+  `@agentclientprotocol/claude-agent-acp@0.85.1` into a new app-owned
+  `claude-tools/releases` directory. Both launchers must pass `--version` before
+  activation; a failed install preserves the previous release. Pi and Claude
+  use separate release storage and share the native install/quit owner, so only
+  one installation runs at a time. Stop remains available for running agents.
+  The result and private log survive leaving Settings, and completion refreshes
+  native detection. Complete external installations take precedence and remain
+  untouched. Windows and unsupported architectures retain manual setup with
+  Node.js 22 or newer. The fallback commands are:
+
+  ```sh
+  npm install -g @anthropic-ai/claude-code@2.1.289
+  npm install -g @agentclientprotocol/claude-agent-acp@0.85.1
+  ```
+
+  Windows discovery resolves `node.exe` and native/Windows npm launchers;
+  the PowerShell sign-in command uses the selected `.exe`/`.cmd`/`.bat` path.
+  While installation runs, Install keeps keyboard focus but blocks activation.
+  Failure leaves it focused for retry. Success moves focus to the status if
+  Install still owns focus, without taking it from another control.
+
+  **Sign in to Claude Code** shows the resolved CLI's `auth login` command,
+  including managed Node on PATH when needed. Settings checks the selected CLI
+  with a bounded, read-only `auth status` command on opening, Check again, and
+  after installation. Only its `loggedIn` boolean is exposed; account metadata
+  is discarded. Ready rows hide setup guidance; failed installs retain their
+  error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
+  runtime; the separate CLI provides the sign-in command. This PR does not
+  launch Claude agents, discover models or restart agents.
+  Native reports this setup separately through `claudeSetup`, outside
+  `harnessOptions`, so it cannot become a creation or default-harness choice.
+
+Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
+owned by the controller and read by both Rust and TypeScript. Native discovery
+reports executable presence and editing suggestions through `harnessOptions`.
+Settings and create/edit identify presets by executable name using the shared
+JSON; setup metadata is not duplicated in IPC. Frontend lookup preserves
+saved-path identity on older hosts and does not infer installation.
+All presets currently use the harness's own model/provider defaults. Runtime
+quirks remain in the pinned `buzz-acp`; Goose and Pi retain their specialized
+setup and model integrations. Adding a preset definition still requires a real
+ACP compatibility check; this registry does not implement model browsing.
 
 **Check again** re-detects installed Harnesses without reopening Buzz. Status
 is executable detection, not a guarantee of sign-in, ACP readiness or inference.
@@ -323,7 +394,7 @@ update so new sessions load it.
 Add/Edit links to Settings → Agents for setup instead of telling people to reopen
 the app. The ACP tooltip says:
 
-> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz and supports ACP natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.
+> Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz. Pi needs the buzz-pi-acp adapter. Hermes Agent uses its own ACP launcher and sign-in.
 
 ### Global agent defaults and saving
 

@@ -4,7 +4,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
-import { PI_API_KEYS, type AgentDraft } from "./agent-edit";
+import { harnessPreset } from "../../features/agents/harness-presets";
+import { harnessKind, PI_API_KEYS, type AgentDraft } from "./agent-edit";
 import { harnessOption, harnessPolicy } from "./harness-policy";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
@@ -29,19 +30,26 @@ export function AgentHarnessEditor({
   onChange(patch: Partial<AgentDraft>): void;
   onProviderSelected?(): void;
 }) {
+  const kind = harnessKind(draft.command);
+  const preset = harnessPreset(draft.command);
+  const isPreset = !!preset;
   const harness = harnessOption(options, draft.command);
   const policy = harnessPolicy(options, draft.command);
   // Missing policy preserves older hosts; native policy wins whenever supplied.
-  const external = policy
-    ? policy.authentication === "harnessWithOverrides"
-    : harness?.label === "Goose" || harness?.label === "Pi";
+  const external =
+    isPreset ||
+    (policy
+      ? policy.authentication === "harnessWithOverrides"
+      : kind === "goose" || kind === "pi");
   const discoveredProviders = policy
     ? policy.provider === "discovered"
-    : harness?.label === "Pi";
+    : kind === "pi";
   const piLoading = discoveredProviders && piProviders === null;
   const missingPi = options.some(
-    (option) => option.label === "Pi" && option.available === false,
+    (option) =>
+      harnessKind(option.command) === "pi" && option.available === false,
   );
+  const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -50,20 +58,34 @@ export function AgentHarnessEditor({
         customLabel="Custom executable / current value"
         inputLabel="Executable"
         value={draft.command}
-        options={options.map(({ command, label, available }) => ({
-          value: command,
-          label: available === false ? `${label} (install first)` : label,
-          disabled: available === false,
-        }))}
+        options={[
+          ...options.map(({ command, label, available }) => ({
+            value: command,
+            label: available === false ? `${label} (install first)` : label,
+            disabled: available === false,
+          })),
+          ...(isPreset &&
+          !options.some((option) => option.command === draft.command)
+            ? [
+                {
+                  value: draft.command,
+                  label: `${harness?.label ?? preset?.label} (current executable)`,
+                },
+              ]
+            : []),
+        ]}
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
-          const enteringExternal = option?.configurationPolicy
-            ? option.configurationPolicy.authentication ===
-              "harnessWithOverrides"
-            : option?.label === "Goose" || option?.label === "Pi";
+          const enteringExternal =
+            !!option &&
+            (!!harnessPreset(option.command) ||
+              (option.configurationPolicy
+                ? option.configurationPolicy.authentication ===
+                  "harnessWithOverrides"
+                : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
           onChange({
             command,
-            ...(pickedOption && (enteringExternal || external)
+            ...(pickedOption && option && (enteringExternal || external)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
                   provider: enteringExternal
@@ -80,7 +102,13 @@ export function AgentHarnessEditor({
           Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
-      {missingPi && onOpenHarnesses && (
+      {missingPreset && (
+        <p className="text-body-sm text-secondary">
+          {preset.label} needs its ACP launcher. Install it using the manual
+          setup guide in Settings.
+        </p>
+      )}
+      {(missingPi || missingPreset) && onOpenHarnesses && (
         <div className="space-y-1">
           <Button
             type="button"
@@ -97,32 +125,34 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      <ConfigChoice
-        disabled={disabled || piLoading}
-        key={harness?.label ?? draft.command}
-        label={external ? "LLM Provider" : "Provider"}
-        customLabel="Custom provider / current value"
-        inputLabel="Custom provider"
-        value={draft.provider}
-        options={[
-          {
-            value: "",
-            label: defaultProvider
-              ? `Use agent defaults (${defaultProvider})`
-              : "Not set",
-          },
-          ...(discoveredProviders
-            ? piOptions(piProviders, draft.provider)
-            : (harness?.providers ?? [])),
-        ]}
-        onChange={(provider, pickedOption) => {
-          onChange({
-            provider,
-            ...(external ? { model: "" } : {}),
-          });
-          if (pickedOption) onProviderSelected?.();
-        }}
-      />
+      {!isPreset && (
+        <ConfigChoice
+          disabled={disabled || piLoading}
+          key={harness?.label ?? draft.command}
+          label={external ? "LLM Provider" : "Provider"}
+          customLabel="Custom provider / current value"
+          inputLabel="Custom provider"
+          value={draft.provider}
+          options={[
+            {
+              value: "",
+              label: defaultProvider
+                ? `Use agent defaults (${defaultProvider})`
+                : "Not set",
+            },
+            ...(discoveredProviders
+              ? piOptions(piProviders, draft.provider)
+              : (harness?.providers ?? [])),
+          ]}
+          onChange={(provider, pickedOption) => {
+            onChange({
+              provider,
+              ...(external ? { model: "" } : {}),
+            });
+            if (pickedOption) onProviderSelected?.();
+          }}
+        />
+      )}
       {piLoading && (
         <p role="status" className="text-body-sm text-secondary">
           Loading signed-in providers…

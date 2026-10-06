@@ -1,3 +1,6 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isApplePlatform } from "../features/shortcuts/format";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
 
@@ -13,6 +16,7 @@ export const HOST_SHORTCUT_ORDER = {
   textSizeReset: 60,
   search: 70,
   settings: 80,
+  close: 85,
   reload: 90,
 } as const;
 
@@ -85,6 +89,29 @@ export function registerAppShortcuts(
       run: () => window.location.reload(),
     }),
   );
+  // macOS owns Close in its native menu; browser builds keep browser shortcuts.
+  if (isTauri() && !isApplePlatform(navigator.platform)) {
+    remove.push(
+      shortcuts.registerHost({
+        id: "close-tab",
+        title: "Close tab or window",
+        binding: { key: "w", mod: true },
+        order: HOST_SHORTCUT_ORDER.close,
+        allowInEditable: true,
+        // xterm hands keys to this dispatcher before writing PTY bytes. Keep
+        // Ctrl+W as shell word deletion in both the terminal tab and drawer.
+        when: () => !document.activeElement?.closest(".xterm"),
+        run: () => {
+          if (
+            window.dispatchEvent(
+              new Event("buzz:close-active-tab", { cancelable: true }),
+            )
+          )
+            return getCurrentWindow().close();
+        },
+      }),
+    );
+  }
   return () => {
     for (const dispose of remove) dispose();
   };

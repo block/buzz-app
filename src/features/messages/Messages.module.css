@@ -552,6 +552,55 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   gap: var(--space-2);
   padding-top: var(--space-1);
 }
+.backgroundUpload {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+.backgroundUploadBar {
+  position: relative;
+  overflow: hidden;
+  width: 64px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+}
+.backgroundUploadFill,
+.backgroundUploadSweep {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--primary);
+}
+.backgroundUploadFill {
+  transform-origin: left;
+  transition: transform var(--duration-fast) linear;
+}
+.backgroundUploadSweep {
+  width: 33%;
+  animation: background-upload-sweep 1.2s ease-in-out infinite;
+}
+@keyframes background-upload-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .backgroundUploadFill {
+    transition: none;
+  }
+  .backgroundUploadSweep {
+    width: 100%;
+    opacity: 0.4;
+    animation: none;
+  }
+}
 .delivery {
   display: flex;
   align-items: center;
@@ -1240,11 +1289,15 @@ button.mediaPreview {
 @media (hover: hover) and (pointer: fine) {
   /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
   html:not([data-keyboard-navigation])
-    .imageReviewStage:is(:not(:hover), [data-controls-idle])
+    .imageReviewStage:not([data-controls-revealed]):is(
+      :not(:hover),
+      [data-controls-idle]
+    )
     .imageReviewToolbar,
-  .imageReviewStage:is(:not(:hover), [data-controls-idle]):not(
-      :focus-visible
-    ):not(:has(:focus-visible))
+  .imageReviewStage:not([data-controls-revealed]):is(
+      :not(:hover),
+      [data-controls-idle]
+    ):not(:focus-visible):not(:has(:focus-visible))
     .imageReviewToolbar {
     --image-control-opacity: 0;
     pointer-events: none;

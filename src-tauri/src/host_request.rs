@@ -286,6 +286,29 @@ mod tests {
         assert!(!allows_origin(&grants, &url));
     }
 
+    #[test]
+    fn bundled_hosted_communities_reach_only_the_builderlab_origin() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager =
+            buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let grants = manager
+            .host_grants("block.hosted-communities", "bundled")
+            .unwrap();
+        assert_eq!(grants.network_origins, ["https://app.builderlab.xyz"]);
+        assert!(grants.commands.is_empty());
+        for (url, allowed) in [
+            ("https://app.builderlab.xyz/api/goose/v1/auth/me", true),
+            ("https://builderlab.xyz/api/goose/v1/auth/me", false),
+            (
+                "https://app.builderlab.xyz:8443/api/goose/v1/auth/me",
+                false,
+            ),
+        ] {
+            let (url, _, _) = validate_request(&request(url)).unwrap();
+            assert_eq!(allows_origin(&grants, &url), allowed, "{url}");
+        }
+    }
+
     #[tokio::test]
     async fn request_transport_does_not_follow_redirects_or_return_cookies() {
         // The handler rejects HTTP; loopback HTTP exercises the transport without external data.

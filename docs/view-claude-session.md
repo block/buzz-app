@@ -1,5 +1,8 @@
 # View a Claude Code session started by Buzz
 
+This guide is for agents investigating a Buzz conversation. All commands run
+non-interactively and read the saved transcript without invoking Claude or tools.
+
 Buzz runs Claude Code through `claude-agent-acp`. Claude Code saves transcripts
 as JSONL under `~/.claude/projects/<project>/<session-id>.jsonl`. The project
 directory derives from the agent's working directory, with non-alphanumeric
@@ -44,7 +47,7 @@ JSON escaping can prevent a literal match for text containing quotes or newlines
 ```sh
 jq 'select(.message != null) |
   {timestamp, type, model: .message.model, content: .message.content}' \
-  "$session" | less
+  "$session"
 ```
 
 This shows user messages, assistant text, tool inputs, and tool results. Match
@@ -53,6 +56,14 @@ It reads the saved file without sending a prompt or starting another Claude
 session. The transcript is not a complete capture of the system prompt or launch
 environment; use Buzz's agent configuration and process log for those details.
 
+For a long transcript, read a bounded range of messages (indexes start at zero):
+
+```sh
+jq -s 'map(select(.message != null)) | .[0:10] |
+  .[] | {timestamp, type, model: .message.model, content: .message.content}' \
+  "$session"
+```
+
 For an empty Buzz reply, inspect the send command and its tool result. A failed
 producer in `producer | buzz messages send --content -` can leave Buzz with empty
 stdin while the final command still succeeds. Shell aliases can also affect
@@ -60,23 +71,27 @@ commands when their target programs are absent from the agent's PATH. Successful
 CLI exit or `accepted: true` alone does not prove that the intended text arrived;
 check the Buzz thread as well.
 
-## Open in Claude Code and export text
+## Export a local HTML viewer
 
-For a readable export, stop the agent in Buzz first so it cannot write to the same
-session concurrently. Use the Claude CLI installed in Settings (its sign-in
-instructions show the executable path if `claude` is not on your terminal PATH).
-Use the same `CLAUDE_CONFIG_DIR` if the agent overrides it:
+From the `buzz-app` repository root, use the pinned Node tool to generate a standalone
+HTML file. Choose a new output path; the exporter refuses to overwrite files:
 
 ```sh
-session_id=$(jq -r 'select(.sessionId != null) | .sessionId' "$session" | head -n 1)
-CLAUDE_CONFIG_DIR="$claude_config_dir" claude --resume "$session_id"
+bin/node scripts/export-claude-session.mjs "$session" /tmp/claude-session.html
 ```
 
-Inside Claude Code, run `/export session.txt`. This produces a plain-text
-conversation export. Resuming opens an interactive session; sending a prompt
-there can invoke tools and change the conversation. The standalone CLI does not
-recreate Buzz's launch environment or tool configuration. Use the read-only
-commands above when diagnosing a running agent.
+Give the human the absolute output path, or open it with the app's file viewer.
+On macOS, `open /tmp/claude-session.html` opens it in a browser. Messages are
+visible in order; tool inputs, results, and recorded thinking expand on click.
+The viewer contains escaped text, requires no server or network resources, and
+does not execute transcript content. It includes every recorded message in the
+matched session, which can contain other Buzz threads; non-message metadata
+records are omitted. This is a snapshot, not a live view.
+
+An actively written transcript can end with incomplete JSON. The exporter reports
+the line and writes no HTML; rerun after the turn finishes. Do not use
+`claude -p --resume` to export: it sends a new prompt and can run tools. Claude's
+`/export` command is interactive and is not needed for this workflow.
 
 Keep transcripts and exports local unless you intend to share their contents.
 Claude's JSONL schema is internal and can change between releases. Missing files

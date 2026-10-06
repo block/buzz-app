@@ -74,6 +74,12 @@ export function createServices() {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
   });
+  ctx.provide("knownCommunities", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+    pending: communities.pendingSync,
+    apply: communities.applySync,
+  });
   const relay = communities.relay;
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);

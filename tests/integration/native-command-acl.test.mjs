@@ -52,7 +52,7 @@ test("literal frontend IPC commands are declared and allowed by the main capabil
     "mesh_compute_share",
     "mesh_compute_select",
     "mesh_compute_release",
-    "mesh_compute_start",
+    "mesh_compute_disarm",
     "mesh_compute_status",
   ]) {
     assert.ok(found.has(command), `scanner must find ${command}`);

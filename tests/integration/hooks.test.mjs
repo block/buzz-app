@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -768,4 +769,285 @@ test("staged icon checks reject CommonJS subpaths without changing the index", (
     /Use shared\/design-system\/icons/,
   );
   assert.equal(f.git("write-tree"), index);
+});
+
+function lhmFixture(t) {
+  const f = fixture(t);
+  const upstream = path.join(f.dir, "upstream ' $ hooks");
+  const manager = path.join(f.dir, "manager with spaces");
+  f.write(
+    "manager with spaces",
+    `#!/bin/sh
+ event="$2"
+ printf '%s\\n' "$event" >> events
+ if [ "$event" = pre-commit ]; then git show :probe.ts > upstream-source; fi
+ if [ "$event" = pre-push ] || [ "$event" = post-rewrite ]; then cat > "$event-input"; fi
+ printf '%s\\n' "$@" > "$event-args"
+ exit "\${UPSTREAM_STATUS:-0}"
+`,
+  );
+  chmodSync(manager, 0o755);
+  const names = [
+    "pre-commit",
+    "pre-push",
+    "commit-msg",
+    "prepare-commit-msg",
+    "post-rewrite",
+  ];
+  for (const name of names) {
+    const file = path.join(upstream, name);
+    f.write(
+      path.relative(f.dir, file),
+      `#!/bin/sh\nexec "${manager}" run-hook ${name} "$@"\n`,
+    );
+    chmodSync(file, 0o755);
+  }
+  const global = path.join(f.dir, "global-config");
+  f.write("global-config", `[core]\n hooksPath = "${upstream}"\n`);
+  const overrides = { GIT_CONFIG_GLOBAL: global };
+  const install = () =>
+    f.run(
+      path.join(root, "bin/node"),
+      ["scripts/install-hooks.mjs"],
+      overrides,
+    );
+  const result = install();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const hooks = () =>
+    f.git("config", "--worktree", "--get", "core.hooksPath").trim();
+  return { ...f, upstream, manager, overrides, install, hooks };
+}
+
+test("lhm installation preserves inherited configuration, wrappers and sibling behavior", (t) => {
+  const f = lhmFixture(t);
+  const global = f.read("global-config");
+  const wrapper = readFileSync(path.join(f.upstream, "pre-commit"), "utf8");
+  const first = f.hooks();
+  assert.equal(f.install().status, 0);
+  assert.notEqual(f.hooks(), first);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(f.hooks(), "owner.json"))).upstream,
+    f.upstream,
+  );
+  assert.equal(f.read("global-config"), global);
+  assert.equal(
+    readFileSync(path.join(f.upstream, "pre-commit"), "utf8"),
+    wrapper,
+  );
+  assert.equal(
+    f
+      .run(
+        "git",
+        ["-C", f.sibling, "config", "--get", "core.hooksPath"],
+        f.overrides,
+      )
+      .stdout.trim(),
+    f.upstream,
+  );
+  f.write(
+    path.relative(f.dir, path.join(f.upstream, "pre-push")),
+    "#!/bin/sh\nexit 0\n",
+  );
+  const active = f.hooks();
+  assert.notEqual(f.install().status, 0);
+  assert.equal(f.hooks(), active);
+});
+
+test("Buzz formats before lhm, and upstream failure keeps completed formatting visible", (t) => {
+  const f = lhmFixture(t);
+  f.write("probe.ts", "export const value={a:1}\n");
+  f.git("add", "probe.ts");
+  const result = f.run("git", ["commit", "-qm", "probe"], {
+    ...f.overrides,
+    UPSTREAM_STATUS: "7",
+  });
+  assert.notEqual(result.status, 0);
+  assert.equal(f.read("upstream-source"), "export const value = { a: 1 };\n");
+  assert.equal(f.git("show", ":probe.ts"), f.read("upstream-source"));
+  assert.equal(f.commit().status, 0);
+  assert.match(f.read("events"), /prepare-commit-msg\ncommit-msg/);
+});
+
+test("partial staging blocks lhm before writes or stashes", (t) => {
+  const f = lhmFixture(t);
+  f.write("probe.ts", "export const value={a:1}\n");
+  f.git("add", "probe.ts");
+  const index = f.git("write-tree");
+  f.write("probe.ts", "export const value={a:2}\n");
+  const result = f.commit();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /Partially staged/);
+  assert.equal(f.git("write-tree"), index);
+  assert.equal(f.read("probe.ts"), "export const value={a:2}\n");
+  assert.equal(existsSync(path.join(f.dir, "events")), false);
+  assert.equal(f.git("stash", "list"), "");
+});
+
+test("dispatch replays raw push bytes to lhm and every Buzz lane, preserving literal arguments", (t) => {
+  const f = lhmFixture(t);
+  f.write(
+    "scripts/check-push.mjs",
+    `import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync((process.argv[2] ?? "unit") + "-input", readFileSync(0));`,
+  );
+  for (const input of [
+    Buffer.alloc(0),
+    Buffer.from("refs \x00 \xff\n".repeat(20000)),
+  ]) {
+    const result = spawnSync(
+      path.join(f.hooks(), "pre-push"),
+      ["remote '$", "destination ;$"],
+      { cwd: f.dir, env, input },
+    );
+    assert.equal(result.status, 0, String(result.stderr));
+    for (const lane of ["pre-push", "unit", "--design", "--clippy"])
+      assert.deepEqual(readFileSync(path.join(f.dir, `${lane}-input`)), input);
+    assert.equal(
+      f.read("pre-push-args"),
+      "run-hook\npre-push\nremote '$\ndestination ;$\n",
+    );
+  }
+  const result = spawnSync(path.join(f.hooks(), "post-rewrite"), ["amend"], {
+    cwd: f.dir,
+    env,
+    input: "old new\n",
+  });
+  assert.equal(result.status, 0);
+  assert.equal(f.read("post-rewrite-input"), "old new\n");
+});
+
+test("upstream push rejection and missing hooks fail before Buzz runs", (t) => {
+  const f = lhmFixture(t);
+  f.write("scripts/check-push.mjs", 'throw new Error("Buzz should not run");');
+  const invoke = () =>
+    spawnSync(path.join(f.hooks(), "pre-push"), [], {
+      cwd: f.dir,
+      env: { ...env, UPSTREAM_STATUS: "9" },
+      input: "",
+      encoding: "utf8",
+    });
+  assert.equal(invoke().status, 9);
+  rmSync(path.join(f.upstream, "pre-push"));
+  const missing = invoke();
+  assert.notEqual(missing.status, 0);
+  assert.doesNotMatch(missing.stderr, /Buzz should not run/);
+});
+
+test("real lhm composes isolated system jobs with Buzz custom groups", {
+  skip: !process.env.BUZZ_REAL_LHM,
+}, (t) => {
+  const f = lhmFixture(t);
+  for (const name of [
+    "pre-commit",
+    "pre-push",
+    "commit-msg",
+    "prepare-commit-msg",
+    "post-rewrite",
+  ])
+    f.write(
+      path.relative(f.dir, path.join(f.upstream, name)),
+      `#!/bin/sh\nexec "${process.env.BUZZ_REAL_LHM}" run-hook ${name} "$@"\n`,
+    );
+  f.write(
+    "system/lefthook.yml",
+    `pre-commit:
+  commands:
+    sentinel:
+      run: git show :probe.ts > real-lhm-source
+pre-push:
+  commands:
+    sentinel:
+      run: cat > real-lhm-input
+      use_stdin: true
+`,
+  );
+  f.write("absent-user.yml", "{}\n");
+  const isolated = {
+    ...f.overrides,
+    LHM_SYSTEM_CONFIG: path.join(f.dir, "system"),
+    LHM_USER_CONFIG: path.join(f.dir, "absent-user.yml"),
+  };
+  f.write("probe.ts", "export const value={a:1}\n");
+  f.git("add", "probe.ts");
+  const commit = f.run("git", ["commit", "-qm", "real lhm"], isolated);
+  assert.equal(commit.status, 0, commit.stdout + commit.stderr);
+  assert.equal(f.read("real-lhm-source"), "export const value = { a: 1 };\n");
+  f.write(
+    "scripts/check-push.mjs",
+    `import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync((process.argv[2] ?? "unit") + "-input", readFileSync(0));`,
+  );
+  f.git("init", "--bare", "-q", "remote.git");
+  const push = f.run(
+    "git",
+    ["push", "./remote.git", "HEAD:refs/heads/probe"],
+    isolated,
+  );
+  assert.equal(push.status, 0, push.stdout + push.stderr);
+  for (const lane of ["unit", "--design", "--clippy"])
+    assert.equal(f.read(`${lane}-input`), f.read("real-lhm-input"));
+  assert.match(f.read("real-lhm-input"), /refs\/heads\/probe/);
+});
+
+test("clean inherited lhm, owned wrapper edits and recursive metadata are handled safely", (t) => {
+  const f = lhmFixture(t);
+  f.git("config", "--worktree", "--unset", "core.hooksPath");
+  assert.equal(f.install().status, 0);
+  const active = f.hooks();
+  const metadataPath = path.join(active, "owner.json");
+  const metadata = JSON.parse(readFileSync(metadataPath));
+  assert.equal(metadata.previous, "");
+  writeFileSync(path.join(active, "pre-commit"), "#!/bin/sh\nexit 0\n");
+  assert.notEqual(f.install().status, 0);
+  assert.equal(f.hooks(), active);
+  writeFileSync(path.join(active, "pre-commit"), metadata.files["pre-commit"]);
+  metadata.upstream = active;
+  writeFileSync(metadataPath, JSON.stringify(metadata));
+  assert.notEqual(f.install().status, 0);
+  assert.equal(f.hooks(), active);
+});
+
+test("missing pinned Lefthook blocks forwarded events", (t) => {
+  const f = lhmFixture(t);
+  rmSync(path.join(f.dir, "bin"));
+  const result = f.run(path.join(f.hooks(), "commit-msg"), ["message file"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Missing pinned Lefthook/);
+  assert.equal(existsSync(path.join(f.dir, "events")), false);
+});
+
+test("an interrupted child that exits successfully still stops dispatch", async (t) => {
+  const f = lhmFixture(t);
+  f.write(
+    ".githooks/pre-commit",
+    `#!/bin/sh
+exec "${process.execPath}" -e 'process.on("SIGTERM", () => process.exit(0)); console.log("ready"); setInterval(() => {}, 1000);'
+`,
+  );
+  const child = spawn(path.join(f.hooks(), "pre-commit"), [], {
+    cwd: f.dir,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => child.kill("SIGKILL"));
+  const closed = new Promise((resolve) =>
+    child.on("close", (code, signal) => resolve({ code, signal })),
+  );
+  await new Promise((resolve, reject) => {
+    child.stdout.once("data", resolve);
+    child.once("error", reject);
+    child.once("exit", () => reject(new Error("Exited before readiness")));
+  });
+  child.kill("SIGTERM");
+  const result = await closed;
+  assert.notEqual(result.code, 0);
+  assert.equal(existsSync(path.join(f.dir, "events")), false);
+});
+
+test("invalid project configuration leaves the active dispatcher unchanged", (t) => {
+  const f = lhmFixture(t);
+  const active = f.hooks();
+  f.write("lefthook.yml", "check-staged: [invalid\n");
+  assert.notEqual(f.install().status, 0);
+  assert.equal(f.hooks(), active);
 });

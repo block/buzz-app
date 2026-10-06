@@ -272,7 +272,8 @@ bin/pnpm hooks:install
 
 The installer enables pre-commit and pre-push using Git's worktree-local
 `core.hooksPath`, leaves sibling worktrees
-alone, and refuses existing custom hooks rather than overwriting them. Repeat
+alone, and supports standalone hooks or recognized lhm-generated wrappers.
+Unknown or modified custom hooks are refused rather than overwritten. Repeat
 installation is safe. Do not run `lefthook install`: the tracked Git hook calls a
 custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
@@ -295,6 +296,48 @@ existing stashes are left alone. Do not edit/stage concurrently with a commit.
 This is a developer guardrail, not a security boundary or a substitute for CI
 and risk-appropriate behavior checks. Tool/config dependency changes require
 relevant integration evidence, not an automatic local full scan.
+
+### Working with lhm
+
+When lhm is inherited (including underneath an existing Buzz `.githooks`
+override), installation creates executable dispatchers under this worktree's Git
+administration directory, in `buzz-hooks/dispatch-*`. Global configuration and
+upstream wrappers remain untouched. Buzz runs first on pre-commit so its partial
+staging guard sees the original working tree; lhm scans the resulting staged
+content afterward. If lhm fails, Buzz's completed formatting and restaging remain
+visible. On pre-push, lhm runs first and can reject the destination before Buzz's
+three serialized jobs. Both layers receive the complete push input. Other
+installed lhm events forward directly, with their arguments and stdin intact.
+Pinned `bin/lefthook` is on PATH for lhm; missing tools or hooks fail visibly.
+
+Verify installation with:
+
+```sh
+git config --show-origin --get core.hooksPath
+git rev-parse --git-path buzz-hooks
+bin/node --test tests/integration/hooks.test.mjs
+# Optional bounded probe, with isolated lhm system/user configuration:
+BUZZ_REAL_LHM="$(command -v lhm)" bin/node --test --test-name-pattern='real lhm' tests/integration/hooks.test.mjs
+```
+
+Repeat installation after moving a checkout, changing the upstream hook inventory,
+or changing dispatcher generation code. Existing upstream wrappers are invoked
+at runtime, so their updates take effect immediately. Reinstall rejects edited
+Buzz-generated wrappers. Prior generations are retained for recovery; do not edit
+them or remove a generation still in use by a Git operation.
+
+Each generation's `owner.json` records `upstream` and the original worktree-local
+`previous` setting. To undo installation, restore that value with
+`git config --worktree core.hooksPath '<previous>'`; when `previous` is empty, use
+`git config --worktree --unset core.hooksPath` to resume inherited hooks. Leave
+`extensions.worktreeConfig` enabled because sibling worktrees may rely on it.
+Standalone installation can likewise be removed with the unset command.
+
+For human acceptance, use a disposable checkout with the documented setup:
+commit fully staged source and confirm Buzz formats it before lhm runs; partially
+stage source and confirm rejection without writes or new stashes; then confirm a
+failing job in either layer blocks the operation. Automated probes do not replace
+this human confirmation before PR readiness.
 
 ### Fast pre-push feedback
 

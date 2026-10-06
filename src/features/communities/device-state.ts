@@ -1,8 +1,8 @@
 import { forgetChannelSetups } from "../channel-templates/setup";
 import { forgetQuickReactions } from "../messages/quick-reactions";
-import { purgeOutboxStorage } from "../relay/outbox-storage";
-import { createHeadPersistence } from "../relay/persistence";
-import { purgeReadStateStorage } from "../relay/read-state-storage";
+import { relayPartition } from "../relay/partition";
+import { purgeRelayPartition } from "../relay/partition-purge";
+import { forgetThreadFollows } from "../relay/thread-follows";
 import { clearViewScope } from "../../shared/view-state";
 
 /** One piece of a left community's device state that could not be cleared. */
@@ -32,7 +32,7 @@ export async function purgeCommunityDeviceState(
   origin: string,
   viewer: string,
 ): Promise<PurgeFailure[]> {
-  const scope = `${origin}:${viewer}`;
+  const scope = relayPartition(origin, viewer);
   const failures: PurgeFailure[] = [];
   const attempt = async (store: string, work: () => void | Promise<void>) => {
     try {
@@ -44,18 +44,7 @@ export async function purgeCommunityDeviceState(
   await attempt("view state", () => clearViewScope(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
-  await attempt("channel heads", async () => {
-    // Without IndexedDB the cache never existed; the persistence reports it as
-    // unavailable rather than empty.
-    if (typeof indexedDB === "undefined") return;
-    const heads = createHeadPersistence(viewer, origin);
-    try {
-      await heads.clear();
-    } finally {
-      heads.close();
-    }
-  });
-  await attempt("read state", () => purgeReadStateStorage(scope));
-  await attempt("outbox", () => purgeOutboxStorage(scope));
+  await attempt("thread follows", () => forgetThreadFollows(scope));
+  await purgeRelayPartition(origin, viewer, attempt);
   return failures;
 }

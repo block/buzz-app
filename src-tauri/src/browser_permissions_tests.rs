@@ -71,11 +71,14 @@ fn native_command_permissions_allow_only_main_webview() {
         "enterprise_login_gate",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",
+        "identity_sign_builderlab_binding",
         "relay_decode_read_state",
         "relay_sign_read_state",
         "relay_publish_read_state",
         "relay_http",
         "relay_workflow_runs",
+        "relay_project_git",
+        "relay_project_git_cancel",
         "relay_channel_sign",
         "relay_channel_publish",
         "relay_kit_sign",
@@ -85,6 +88,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_decode_sidebar",
         "relay_sign_sidebar",
         "relay_agent_resolve",
+        "relay_git_authorization",
         "relay_agent_log_proof",
         "relay_agent_observer",
         "relay_archive",
@@ -131,6 +135,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_models_run",
         "title_bar_double_click",
         "notification_show",
+        #[cfg(target_os = "macos")]
+        "notification_permission_state",
+        #[cfg(target_os = "macos")]
+        "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
         "deep_link_take",
@@ -155,6 +163,11 @@ fn native_command_permissions_allow_only_main_webview() {
     } else {
         "tauri://localhost"
     };
+    // Window fallback belongs to trusted app UI, never a sibling or remote page.
+    for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
+        assert!(invoke(&guest, "plugin:window|close", origin).is_err());
+    }
+    assert!(invoke(&main, "plugin:window|close", "https://example.org").is_err());
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
     assert!(invoke(&main, "relay_agent_history_decode", local_origin).is_err());
@@ -171,4 +184,5 @@ fn native_command_permissions_allow_only_main_webview() {
             "remote content must not use main grants: {command}"
         );
     }
+    assert!(invoke(&main, "plugin:window|close", local_origin).is_ok());
 }

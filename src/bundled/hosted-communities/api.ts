@@ -1,4 +1,4 @@
-// Block-hosted community accounts through the development broker's /api/builderlab routes.
+// Block-hosted community accounts through a Builderlab account backend.
 export const HOST_SUFFIX = "communities.buzz.xyz";
 export const VALID_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const ACKNOWLEDGEMENT_VERSION = 1;
@@ -108,68 +108,109 @@ export function quotaLimitMessage(limit?: number | null) {
     : "You've reached your community limit.";
 }
 
-async function send<T extends object>(
-  action: string,
-  body?: Body,
-  signal?: AbortSignal,
-): Promise<{ status: number; value: T }> {
-  const response = await fetch(`/api/builderlab/${action}`, {
-    method: action === "auth" ? "GET" : "POST",
-    ...(action === "auth"
-      ? {}
-      : {
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body ?? {}),
-        }),
-    ...(signal ? { signal } : {}),
-  });
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES)
-    throw new Error("Builderlab response was too large");
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Builderlab returned an invalid response");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Builderlab returned an invalid response");
-  const error = (value as { error?: unknown }).error;
-  if (!response.ok && (!error || typeof error !== "object"))
-    throw new Error(
-      typeof error === "string"
-        ? error
-        : `Builderlab request failed (${response.status})`,
-    );
-  return { status: response.status, value: value as T };
-}
+/** A Builderlab account backend: the development broker or the packaged-app adapter. */
+export type Backend = Readonly<{
+  /** Identifies this backend in persisted deletion requests. */
+  origin: string;
+  auth(): Promise<Account | null>;
+  send(
+    action: string,
+    body?: Body,
+    signal?: AbortSignal,
+  ): Promise<{ status: number; value: object }>;
+  /** This device's Buzz key, or null when it cannot be read. */
+  localKey(): Promise<string | null>;
+}>;
 
 /** The host has no development broker, so Builderlab sign-in cannot work here. */
 export class Unsupported extends Error {}
-export async function getAuth(): Promise<Account | null> {
-  const response = await fetch("/api/builderlab/auth");
-  const value = await response.json().catch(() => undefined);
-  const auth = value?.auth;
-  if (
-    response.ok &&
-    value &&
-    "auth" in value &&
-    (auth === null || typeof auth?.expiresAt === "string")
-  )
-    return auth;
-  if (response.ok || response.status === 404)
-    throw new Unsupported(
-      "Hosted communities need the Buzz development broker and are unavailable in this build.",
+
+/** The development broker's /api/builderlab routes keep the credential in Node. */
+export const broker: Backend = {
+  get origin() {
+    return window.location.origin;
+  },
+  async auth() {
+    const response = await fetch("/api/builderlab/auth");
+    const value = await response.json().catch(() => undefined);
+    const auth = value?.auth;
+    if (
+      response.ok &&
+      value &&
+      "auth" in value &&
+      (auth === null || typeof auth?.expiresAt === "string")
+    )
+      return auth;
+    if (response.ok || response.status === 404)
+      throw new Unsupported(
+        "Hosted communities need the Buzz development broker and are unavailable in this build.",
+      );
+    throw new Error(
+      value?.error ?? `Builderlab request failed (${response.status})`,
     );
-  throw new Error(
-    value?.error ?? `Builderlab request failed (${response.status})`,
-  );
+  },
+  async send(action, body, signal) {
+    const response = await fetch(`/api/builderlab/${action}`, {
+      method: action === "auth" ? "GET" : "POST",
+      ...(action === "auth"
+        ? {}
+        : {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body ?? {}),
+          }),
+      ...(signal ? { signal } : {}),
+    });
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES)
+      throw new Error("Builderlab response was too large");
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new Error("Builderlab returned an invalid response");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("Builderlab returned an invalid response");
+    const error = (value as { error?: unknown }).error;
+    if (!response.ok && (!error || typeof error !== "object"))
+      throw new Error(
+        typeof error === "string"
+          ? error
+          : `Builderlab request failed (${response.status})`,
+      );
+    return { status: response.status, value };
+  },
+  async localKey() {
+    try {
+      const response = await fetch("/api/relay/identity");
+      if (!response.ok) throw new Error(String(response.status));
+      const { viewer } = (await response.json()) as { viewer?: string };
+      return boundKey(viewer ? { pubkey_hex: viewer } : null);
+    } catch {
+      return null;
+    }
+  },
+};
+
+/** Account operations over one backend. */
+export function createApi(backend: Backend) {
+  return {
+    origin: () => backend.origin,
+    getAuth: () => backend.auth(),
+    localKey: () => backend.localKey(),
+    login: (signal: AbortSignal) =>
+      backend
+        .send("login", {}, signal)
+        .then(({ value }) => (value as { auth: Account }).auth),
+    signOut: () => backend.send("sign-out"),
+    call: (action: string, body?: Body) =>
+      backend.send(action, body).then(({ value }) => value as Reply),
+    admitDeletion: (request: DeletionRequest, attempt: DeletionAttempt) =>
+      admitDeletion(backend, request, attempt),
+  };
 }
-export const login = (signal: AbortSignal) =>
-  send<{ auth: Account }>("login", {}, signal).then(({ value }) => value.auth);
-export const signOut = () => send("sign-out");
-export const call = (action: string, body?: Body) =>
-  send<Reply>(action, body).then(({ value }) => value);
+export type Api = ReturnType<typeof createApi>;
+export const brokerApi = createApi(broker);
 
 /** Throws a friendly message for a structured Builderlab error. */
 export function check(reply: Reply, fallback: string, quotaLimit?: number) {
@@ -243,6 +284,7 @@ function validDeletionRequest(value: unknown): value is DeletionRequest {
 export function makePendingDeletion(
   ownerPubkey: string,
   community: Community,
+  backendOrigin: string,
 ): PendingDeletion {
   if (
     !/^[0-9a-f]{64}$/.test(ownerPubkey) ||
@@ -253,7 +295,7 @@ export function makePendingDeletion(
   return {
     version: 1,
     owner_pubkey: ownerPubkey,
-    backend_origin: window.location.origin,
+    backend_origin: backendOrigin,
     request: {
       community_id: community.id,
       host: community.normalized_host,
@@ -412,13 +454,14 @@ function deletionResult(
 }
 
 /** One same-UUID POST per explicit attempt; relay verdicts that prove no reservation also settle recovery. */
-export async function admitDeletion(
+async function admitDeletion(
+  backend: Backend,
   request: DeletionRequest,
   attempt: DeletionAttempt,
 ) {
   let response: { status: number; value: Reply };
   try {
-    response = await send<Reply>("delete", request);
+    response = (await backend.send("delete", request)) as typeof response;
   } catch {
     throw new ApiFailure(
       "acceptance_unknown",

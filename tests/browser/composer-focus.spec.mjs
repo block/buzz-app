@@ -37,6 +37,54 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
   ).toBeFocused();
 });
 
+// Real Base UI menus close when focus leaves them. A conversation that mounts
+// while a menu is open, as at startup, must leave focus with that menu.
+test("a conversation mounting behind an open menu keeps the menu open", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await page.evaluate(() => {
+    location.hash =
+      "#buzz=" +
+      encodeURIComponent(
+        JSON.stringify({ version: 1, kind: "settings", section: "appearance" }),
+      );
+  });
+  await expect(
+    page.getByRole("heading", { name: "Appearance", exact: true }),
+  ).toBeVisible();
+  await expect(input).toHaveCount(0);
+  const trigger = page.getByRole("button", {
+    name: "Your profile",
+    exact: true,
+  });
+  const settings = page.getByRole("menuitem", {
+    name: "Settings",
+    exact: true,
+  });
+  for (const owner of [trigger, settings]) {
+    await trigger.click();
+    await expect(settings).toBeVisible();
+    // Base UI places the menu's initial focus after it opens. Let that settle
+    // so the explicit focus below is the last focus move before the mount.
+    await expect(page.getByRole("menu").locator(":focus")).toHaveCount(1);
+    await owner.focus();
+    await page.evaluate(() => history.back());
+    await expect(input).toBeVisible();
+    await expect(owner).toBeFocused();
+    await expect(settings).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(settings).toHaveCount(0);
+    await page.evaluate(() => history.forward());
+    await expect(input).toHaveCount(0);
+  }
+});
+
 // Real DOM selection and keyboard insertion cannot be proved by jsdom. Use the
 // app's development StrictMode so editor teardown/recreation remains covered.
 test.describe("retained agent focus", () => {

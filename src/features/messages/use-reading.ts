@@ -156,6 +156,16 @@ export function useReading({
           const observed = handle;
           handle = undefined;
           observing.add(observed);
+          // Viewing belongs only to the current handle: the write lease keeps
+          // its read intent but stops reporting rows that may scroll away.
+          // A view-only lease keeps that evidence until the next cancellation.
+          observed.view([], () => false);
+          try {
+            handle = session.unread.reading(channelId);
+            handle.view([...visible], active);
+          } catch {
+            handle = undefined;
+          }
           void (async () => {
             if (caughtUp) await observed.catchUp(bottom, rootId);
             await observed.observe(remained);

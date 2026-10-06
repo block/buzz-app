@@ -197,3 +197,69 @@ export function retainReadState(
 ): ReadState {
   return retainRead(states, recent, clientId, maxBytes, covered).state;
 }
+
+/** Local-only receipts evicted from the sync journal. Never passed to publication. */
+export const READ_RESERVE_KEYS = 5000;
+export const READ_RESERVE_BYTES = 512 * 1024;
+export function retainLocalRead(
+  states: readonly ReadState[],
+  recent: Readonly<Record<string, number>>,
+  clientId: string,
+  reserve: Readonly<Record<string, number>> = {},
+  covered?: CoveredFrontier,
+) {
+  const frontiers = new Map(Object.entries(reserve));
+  const overrides = new Set(
+    states.flatMap((state) => Object.keys(state.overrides)),
+  );
+  const returning: Record<string, number> = {};
+  for (const state of states)
+    for (const [key, value] of Object.entries(state.frontiers)) {
+      const previous = frontiers.get(key);
+      if (previous !== undefined) returning[key] = previous;
+      frontiers.set(key, Math.max(previous ?? 0, value));
+    }
+  // Direct override floors belong in the journal. Possible inherited floors
+  // stay protected in the reserve instead of overflowing the smaller journal.
+  for (const key of overrides) {
+    const value = frontiers.get(key);
+    if (value !== undefined) returning[key] = value;
+  }
+  const kept = retainRead(
+    [...states, { frontiers: returning, overrides: {} }],
+    recent,
+    clientId,
+    undefined,
+    covered,
+  );
+  for (const key of Object.keys(kept.state.frontiers)) frontiers.delete(key);
+  const encoder = new TextEncoder();
+  let bytes = 2;
+  const entries: [string, number][] = [];
+  const protectedKey = (key: string) =>
+    overrides.size > 0 && !key.startsWith("msg:");
+  // Keep inherited floors first (a subset of the already bounded reserve), then
+  // broad receipts before messages. Event age breaks ties within each scope.
+  // Journal recency still controls newly read old history and sync.
+  for (const [key, value] of [...frontiers].sort(
+    ([a, av], [b, bv]) =>
+      Number(protectedKey(b)) - Number(protectedKey(a)) ||
+      scope(a) - scope(b) ||
+      bv - av ||
+      a.localeCompare(b),
+  )) {
+    const cost =
+      encoder.encode(JSON.stringify(key)).byteLength +
+      1 +
+      String(value).length +
+      (entries.length ? 1 : 0);
+    if (
+      entries.length >= READ_RESERVE_KEYS ||
+      bytes + cost > READ_RESERVE_BYTES
+    )
+      break;
+    entries.push([key, value]);
+    bytes += cost;
+  }
+  return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };
+}

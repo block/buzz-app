@@ -10,7 +10,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 #[cfg(windows)]
-mod windows_job {
+pub(crate) mod windows_job {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use tokio::process::{Child, Command};
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE};
@@ -18,18 +18,19 @@ mod windows_job {
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
+        OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
     };
 
-    pub(super) struct WindowsJob(OwnedHandle);
+    pub(crate) struct WindowsJob(OwnedHandle);
 
     impl WindowsJob {
-        pub(super) fn new() -> Option<Self> {
+        pub(crate) fn new() -> Option<Self> {
             let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             if handle.is_null() {
                 return None;
@@ -51,6 +52,29 @@ mod windows_job {
             Some(job)
         }
 
+        /// Termination is asynchronous; waits, bounded by `wait`, until no job process remains.
+        pub(crate) async fn terminate(&self, wait: std::time::Duration) {
+            unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
+            let until = tokio::time::Instant::now() + wait;
+            while self.active_processes() != Some(0) && tokio::time::Instant::now() < until {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+
+        fn active_processes(&self) -> Option<u32> {
+            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            (queried != 0).then_some(info.ActiveProcesses)
+        }
+
         pub(super) fn assign(&self, child: &Child) -> bool {
             child.raw_handle().is_some_and(|handle| unsafe {
                 AssignProcessToJobObject(self.0.as_raw_handle(), handle) != 0
@@ -58,15 +82,22 @@ mod windows_job {
         }
 
         pub(super) fn spawn(&self, command: &mut Command) -> Option<Child> {
-            self.spawn_with_check(command, |_, _| {})
+            self.spawn_with_check(command, 0, |_, _| {})
+        }
+
+        pub(crate) fn spawn_hidden(&self, command: &mut Command) -> Option<Child> {
+            self.spawn_with_check(command, CREATE_NO_WINDOW, |_, _| {})
         }
 
         pub(super) fn spawn_with_check(
             &self,
             command: &mut Command,
+            flags: u32,
             check: impl FnOnce(&Child, &OwnedHandle),
         ) -> Option<Child> {
-            command.creation_flags(CREATE_SUSPENDED).kill_on_drop(true);
+            command
+                .creation_flags(CREATE_SUSPENDED | flags)
+                .kill_on_drop(true);
             let child = command.spawn().ok()?;
             let primary_thread = primary_thread(child.id()?)?;
             check(&child, &primary_thread);
@@ -121,14 +152,14 @@ const DEADLINE: Duration = Duration::from_secs(5);
 
 // Tokio kills only the direct child on future cancellation; the group also owns descendants.
 #[cfg(unix)]
-struct ProcessGroupGuard {
-    process_id: i32,
-    armed: bool,
+pub(crate) struct ProcessGroupGuard {
+    pub(crate) process_id: i32,
+    pub(crate) armed: bool,
 }
 
 #[cfg(unix)]
 impl ProcessGroupGuard {
-    fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe { libc::kill(-self.process_id, libc::SIGKILL) };
     }
 }
@@ -543,7 +574,7 @@ mod windows_tests {
             .kill_on_drop(true);
         let job = WindowsJob::new().unwrap();
         let child = job
-            .spawn_with_check(&mut command, |_, thread| {
+            .spawn_with_check(&mut command, 0, |_, thread| {
                 let previous_count = unsafe { SuspendThread(thread.as_raw_handle()) };
                 let restored_count = unsafe { ResumeThread(thread.as_raw_handle()) };
                 assert_eq!(previous_count, 1, "command ran before job assignment");

@@ -232,6 +232,14 @@ export function Settings({
                     plugins={plugins}
                     catalog={catalog}
                     busy={busy}
+                    authorizeGit={async (repository) => {
+                      const connection = communities.relay.snapshot();
+                      return connection.status === "ready"
+                        ? ((await connection.session.authorizeGit?.(
+                            repository,
+                          )) ?? null)
+                        : null;
+                    }}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />

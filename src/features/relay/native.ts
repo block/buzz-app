@@ -23,12 +23,14 @@ import {
   type KitRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
+import { communityGitRepository } from "../projects/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
+import { projectGitHost } from "../projects/git";
 
 import { PublishRejected } from "./outbox";
 
@@ -376,6 +378,35 @@ export async function connectNativeTransport(
       signal.throwIfAborted();
       return response;
     }),
+    projectGit: projectGitHost(async (read, signal) => {
+      const response = await admitSignedRequest(
+        origin,
+        transport.viewer,
+        async () => {
+          // Admission stays held until native code has stopped and reaped Git.
+          const id = crypto.randomUUID();
+          const cancel = () => {
+            invoke("relay_project_git_cancel", { id }).catch(() => {});
+          };
+          signal.addEventListener("abort", cancel, { once: true });
+          if (signal.aborted) cancel();
+          try {
+            return nativeResponse(
+              await invoke<{
+                status: number;
+                headers: Record<string, string>;
+                body: string;
+              }>("relay_project_git", { community: origin, id, read }),
+            );
+          } finally {
+            signal.removeEventListener("abort", cancel);
+          }
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      return response;
+    }),
     archiveAuthority: author,
     channelLifecycle: commandWriter(
       "channel-lifecycle",
@@ -619,6 +650,15 @@ export async function connectNativeTransport(
       if (!/^[0-9a-f]{128}$/.test(signature))
         throw new Error("Log authorization unavailable");
       return signature;
+    },
+    async authorizeGit(input) {
+      const repository = communityGitRepository(origin, input);
+      if (!repository) return null;
+      const token = await invoke<string>("relay_git_authorization", {
+        community: origin,
+        repository,
+      });
+      return { repository, token };
     },
     ...nativeSidebar(transport),
     readState: {

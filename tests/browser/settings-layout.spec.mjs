@@ -201,6 +201,11 @@ test.describe("settings empty collections", () => {
     app,
   }, info) => {
     await page.goto(app.origin);
+    // This layout journey starts after the initial reader's focus handoff, not
+    // while channel startup can still dismiss the profile menu.
+    await expect(
+      page.getByRole("textbox", { name: /^Message #/ }),
+    ).toBeFocused();
     await page
       .getByRole("button", { name: "Your profile", exact: true })
       .click();

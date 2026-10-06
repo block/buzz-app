@@ -6,6 +6,9 @@ import {
 } from "./navigation.mjs";
 
 test.use({
+  // Keep the real startup barrier: this layout journey does not hold startup
+  // requests and must not open the account menu before initial composer focus.
+  launchAnimation: true,
   productionBroker: true,
   channelLifecycle: true,
   historyCounts: { alpha: 0, beta: 0 },

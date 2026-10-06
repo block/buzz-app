@@ -38,8 +38,7 @@ test("global search opens a child session without changing collapsed sidebar lev
     .getByRole("group", { name: "Channels" })
     .getByRole("option", { name: /Alpha/ });
   await expect(result).toBeVisible();
-  await search.press("ArrowDown");
-  await search.press("ArrowDown");
+  // Typed text selects the best match without arrow keys.
   await expect(search).toBeFocused();
   await expect(result).toHaveAttribute("aria-selected", "true");
   await expect(search).toHaveAttribute(

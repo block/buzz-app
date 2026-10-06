@@ -133,8 +133,9 @@ validation. JavaScript never signs kind 24242. Packaged HEIC and video
 preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
-Member changes, repository HTTP and other broker-only helpers are not claimed
-by this adapter. NIP-FI assertion
+Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
+in the exact add/remove/role shape; the relay decides authority. Repository HTTP
+and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.

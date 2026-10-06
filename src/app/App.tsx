@@ -18,6 +18,10 @@ import { useAppNavigation } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
+import {
+  LaunchWindowControls,
+  LoadingWindowHeader,
+} from "./shell/LaunchWindowControls";
 import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
@@ -38,12 +42,17 @@ export function App({ services }: { services: AppServices }) {
     update();
     return identity.subscribe(update);
   }, [identity]);
-  return services.identity ? (
-    <IdentitySetup identity={services.identity}>
-      <ConnectedApp services={services} />
-    </IdentitySetup>
-  ) : (
-    <ConnectedApp services={services} />
+  return (
+    <>
+      <LaunchWindowControls />
+      {services.identity ? (
+        <IdentitySetup identity={services.identity}>
+          <ConnectedApp services={services} />
+        </IdentitySetup>
+      ) : (
+        <ConnectedApp services={services} />
+      )}
+    </>
   );
 }
 
@@ -56,6 +65,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
     services.communities.subscribe,
     services.communities.snapshot,
   );
+  const invite = useSyncExternalStore(
+    services.invites.subscribe,
+    services.invites.snapshot,
+  );
+  // A queued link cannot be presented under a different identity.
+  useEffect(() => {
+    if (invite && client.viewer && invite.viewer !== client.viewer)
+      services.invites.clear();
+  }, [invite, client.viewer, services.invites]);
   const connection = useSyncExternalStore(
     services.relay.subscribe,
     services.relay.snapshot,
@@ -113,6 +131,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
       <div className="buzz-launch" role="status" aria-label="Opening Buzz">
+        <LoadingWindowHeader />
         <picture>
           <source
             media="(prefers-reduced-motion: reduce)"
@@ -183,6 +202,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          invite={invite?.viewer === client.viewer ? invite : undefined}
+          onInviteClose={services.invites.clear}
           settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           onProfile={

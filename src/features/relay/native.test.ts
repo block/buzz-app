@@ -129,6 +129,55 @@ it("requires the relay self key, never its operator contact pubkey", async () =>
   );
 });
 
+it("sends combined search operators through packaged native signed HTTP without a dev broker", async () => {
+  const transport = await connectNativeTransport(community);
+  const hit = message(viewer, "channel", "deploy matched", 1700000000);
+  respond = () => ({ body: [hit] });
+  const filters = [
+    {
+      kinds: [9, 40002, 40008],
+      search: "deploy",
+      search_mode: "prefix" as const,
+      authors: [viewer.pubkey],
+      "#h": ["channel"],
+      since: 1699920000,
+      until: 1700006399,
+      limit: 20,
+    },
+  ];
+  await expect(transport.query(filters)).resolves.toEqual([hit]);
+  expect(requests.at(-1)).toMatchObject({
+    community,
+    path: "/query",
+    method: "POST",
+    body: JSON.stringify(filters),
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("routes operator-only filtered message reads over packaged native HTTP", async () => {
+  const transport = await connectNativeTransport(community);
+  const hit = message(viewer, "channel", "recent", 1800000000);
+  respond = () => ({ body: [hit] });
+  const filters = [
+    {
+      kinds: [9, 40002, 40008],
+      authors: [viewer.pubkey],
+      "#h": ["channel"],
+      since: 1700000000,
+      limit: 20,
+    },
+  ];
+  await expect(transport.query(filters)).resolves.toEqual([hit]);
+  expect(requests.at(-1)).toMatchObject({
+    community,
+    path: "/query",
+    method: "POST",
+    body: JSON.stringify(filters),
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("reads back expired delivery with strong consistency without re-signing or publishing it", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.writer);
@@ -738,6 +787,76 @@ it("workflow history surfaces bounded host refusals and fences late native resul
   ).rejects.toMatchObject({ kind: "denied" });
 });
 
+it("reads project Git through the signed native command and fences late results", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.projectGit);
+  const owner = "a".repeat(64);
+  const empty = {
+    head: null,
+    commits: [],
+    files: [],
+    readme: null,
+    file: null,
+    diff: null,
+  };
+  vi.mocked(invoke).mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_project_git");
+    expect(args).toEqual({
+      community,
+      id: expect.any(String),
+      read: { owner, dtag: "repo" },
+    });
+    return { status: 200, headers: {}, body: JSON.stringify(empty) };
+  });
+  expect(
+    await transport.projectGit.read(
+      { owner: owner.toUpperCase(), dtag: "repo" },
+      new AbortController().signal,
+    ),
+  ).toEqual(empty);
+  const calls = vi.mocked(invoke).mock.calls.length;
+  await expect(
+    transport.projectGit.read(
+      { owner, dtag: "../repo" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Invalid Git read");
+  expect(vi.mocked(invoke).mock.calls.length).toBe(calls);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 403,
+    headers: {},
+    body: '{"error":"denied"}',
+  });
+  await expect(
+    transport.projectGit.read(
+      { owner, dtag: "repo" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ kind: "denied" });
+  const pending = deferred<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+  }>();
+  vi.mocked(invoke).mockImplementationOnce(() => pending.promise);
+  const controller = new AbortController();
+  const read = transport.projectGit.read(
+    { owner, dtag: "repo" },
+    controller.signal,
+  );
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke).mock.calls.at(-1)?.[0]).toBe("relay_project_git"),
+  );
+  const { id } = (vi.mocked(invoke).mock.lastCall ?? [])[1] as { id: string };
+  controller.abort();
+  expect(vi.mocked(invoke)).toHaveBeenLastCalledWith(
+    "relay_project_git_cancel",
+    { id },
+  );
+  pending.resolve({ status: 200, headers: {}, body: JSON.stringify(empty) });
+  await expect(read).rejects.toThrow();
+});
+
 it("shares workflow history admission and cooldown with signed queries", async () => {
   const transport = await connectNativeTransport("https://workflow-quota.test");
   assert.exists(transport.workflows);
@@ -1324,6 +1443,21 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
       "nonce",
     ),
   ).rejects.toThrow("Log authorization unavailable");
+  const repository = `${community}/git/${agent.pubkey}/plugins`;
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_git_authorization");
+    expect(args).toEqual({ community, repository });
+    return "dG9rZW4=";
+  });
+  expect(await transport.authorizeGit?.(repository)).toEqual({
+    repository,
+    token: "dG9rZW4=",
+  });
+  const calls = dispatch.mock.calls.length;
+  expect(
+    await transport.authorizeGit?.(`https://other.test/git/${agent.pubkey}/x`),
+  ).toBeNull();
+  expect(dispatch).toHaveBeenCalledTimes(calls);
 });
 
 const hash = "c".repeat(64);

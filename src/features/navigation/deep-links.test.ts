@@ -234,6 +234,88 @@ const channelOpen = `open:${JSON.stringify({
   channelId: "general",
 })}`;
 
+it("holds a cold invite through identity setup, then offers it without navigating or claiming", async () => {
+  const queue = ["buzz://join?relay=wss%3A%2F%2Frelay.example&code=v2.invite"];
+  let listener: () => void = () => {};
+  let client: Client = { status: "loading", selected: null };
+  const changed = new Set<() => void>();
+  const invite = vi.fn();
+  const host = createNavigationController(createMemoryHistory());
+  const fail = vi.fn();
+  const stop = bindDeepLinks(
+    { navigation: host.navigation, fail, invite },
+    {
+      snapshot: () => client,
+      subscribe(fn) {
+        changed.add(fn);
+        return () => changed.delete(fn);
+      },
+    },
+    {
+      take: async () => queue.splice(0),
+      watch(fn) {
+        listener = fn;
+        return () => {
+          listener = () => {};
+        };
+      },
+    },
+  );
+  try {
+    await vi.waitFor(() => expect(queue).toEqual([]));
+    client = { status: "unavailable", selected: null };
+    for (const fn of changed) fn();
+    expect(invite).not.toHaveBeenCalled();
+    client = { status: "ready", viewer, selected: null };
+    for (const fn of changed) fn();
+    expect(invite).toHaveBeenCalledWith(
+      { community: "https://relay.example", code: "v2.invite" },
+      viewer,
+    );
+    expect(fail).not.toHaveBeenCalled();
+    expect(host.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "home",
+    });
+    listener();
+    await settle();
+    expect(invite).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    host.dispose();
+  }
+});
+
+it("offers a warm invite for an unselected community and rejects malformed join links", async () => {
+  const queue = ["buzz://join?relay=wss%3A%2F%2Frelay.example&code=x"];
+  let ping: () => void = () => {};
+  const invite = vi.fn();
+  const host = createNavigationController(createMemoryHistory());
+  const fail = vi.fn();
+  const stop = bindDeepLinks(
+    { navigation: host.navigation, fail, invite },
+    { snapshot: () => ready, subscribe: () => () => {} },
+    {
+      take: async () => queue.splice(0),
+      watch(fn) {
+        ping = fn;
+        return () => {};
+      },
+    },
+  );
+  try {
+    await vi.waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
+    queue.push("buzz://join?relay=example&code=x");
+    ping();
+    await vi.waitFor(() =>
+      expect(fail).toHaveBeenCalledWith("invalid-target", undefined),
+    );
+  } finally {
+    stop();
+    host.dispose();
+  }
+});
+
 it("drains the shell at startup and opens a held link only once the client is ready", async () => {
   const t = harness(loading, ["buzz://channel/general"]);
   await settle();

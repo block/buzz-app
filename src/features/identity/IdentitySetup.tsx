@@ -1,5 +1,9 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import {
+  hasIntegratedWindowControls,
+  WindowControls,
+} from "../../app/shell/WindowControls";
 import { macTitleBarDragHandlers } from "../../app/shell/title-bar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -15,14 +19,19 @@ export function IdentitySetup({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
+  const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
+  const integratedWindowControls = hasIntegratedWindowControls();
   if (state.status === "ready") return children;
   return (
     <main className="p-8" aria-labelledby="identity-setup-title">
-      {isTauri() && /Mac/i.test(navigator.platform) && (
+      {(macDesktop || integratedWindowControls) && (
         <header
-          className="-mx-8 -mt-8 mb-8 h-14"
-          {...macTitleBarDragHandlers}
-        />
+          className="-mx-8 -mt-8 mb-8 flex h-14 items-center justify-end px-3"
+          data-tauri-drag-region={integratedWindowControls || undefined}
+          {...(macDesktop ? macTitleBarDragHandlers : {})}
+        >
+          <WindowControls />
+        </header>
       )}
       <h1 id="identity-setup-title" className="text-heading">
         Your Buzz identity

@@ -20,7 +20,7 @@ const requests: Array<{ path: string; body: unknown }> = [];
 let respond: (
   path: string,
   body: unknown,
-) => { status?: number; body: unknown };
+) => { status?: number; body: unknown; raw?: string };
 beforeEach(() => {
   requests.length = 0;
   vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -53,7 +53,7 @@ beforeEach(() => {
     return {
       status: result.status ?? 200,
       headers: {},
-      body: JSON.stringify(result.body),
+      body: "raw" in result ? result.raw : JSON.stringify(result.body),
     };
   });
 });
@@ -127,6 +127,38 @@ it("reads discovery and join policy together, reporting a discovery failure firs
     "Community discovery failed",
   );
 });
+
+it.each([
+  [{ status: 500, raw: "DB_SECRET_X" }, "Community request failed (500)"],
+  [
+    { status: 502, raw: "<html><body>Bad gateway</body></html>" },
+    "Community request failed (502)",
+  ],
+  [
+    { status: 400, raw: '{"error":"invalid: cannot' },
+    "Community request failed (400)",
+  ],
+  [{ status: 200, raw: "accepted" }, "Invalid community response"],
+  [
+    {
+      status: 400,
+      raw: JSON.stringify({ error: "invalid: cannot remove the relay owner" }),
+    },
+    "invalid: cannot remove the relay owner",
+  ],
+])(
+  "maps a member change answered with %j to fixed copy",
+  async (answer, shown) => {
+    respond = () => ({ body: undefined, ...answer });
+    const error = await communityRequest(community, "member", {
+      action: "remove",
+      pubkey: "2".repeat(64),
+    }).catch((reason: Error) => reason);
+    // Only allowlisted relay refusals reach the UI; no upstream body or parser text.
+    expect(error).toEqual(new Error(shown));
+    expect(requests).toMatchObject([{ path: "/events", body: { kind: 9031 } }]);
+  },
+);
 
 it("mints only bounded invites on the captured community", async () => {
   respond = () => ({

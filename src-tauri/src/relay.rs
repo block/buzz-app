@@ -24,6 +24,8 @@ pub(crate) use channel_writes::{
 };
 pub(crate) use kit::relay_kit_sign;
 mod media_preparation;
+mod project_git;
+pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
 type Result<T> = std::result::Result<T, String>;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;
@@ -148,6 +150,68 @@ pub(crate) async fn relay_workflow_runs(
     send(host.inner(), url, "GET", None, true, 1024 * 1024).await
 }
 
+/// A Buzz git repository on this community: `<origin>/git/<owner hex>/<name>`.
+fn git_repository(community: &str, repository: &str) -> Result<Url> {
+    let origin = origin(community)?;
+    let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
+    let segments: Vec<_> = url.path().split('/').skip(1).collect();
+    // The relay's rule: strip one optional `.git`, then 1–64 of [A-Za-z0-9._-],
+    // no leading dot and no "..".
+    let name = |value: &str| {
+        let value = value.strip_suffix(".git").unwrap_or(value);
+        !value.is_empty()
+            && value.len() <= 64
+            && !value.starts_with('.')
+            && !value.contains("..")
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    if url.as_str() != repository
+        || url.origin() != origin.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || segments.len() != 3
+        || segments[0] != "git"
+        || !hex_key(segments[1])
+        || !name(segments[2])
+    {
+        return Err("Not a repository in this community".into());
+    }
+    Ok(url)
+}
+
+/// NIP-98 for one repository URL. The relay accepts it for 60 seconds on every Git route
+/// of that repository, so one clone reuses it. Returns the token after `Authorization: Nostr `;
+/// never a general signing capability.
+#[tauri::command]
+pub(crate) async fn relay_git_authorization(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    repository: String,
+) -> Result<String> {
+    let url = git_repository(&community, &repository)?;
+    let auth = host
+        .sign(EventTemplate {
+            kind: 27235,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "System clock is unavailable")?
+                .as_secs(),
+            content: String::new(),
+            tags: vec![
+                vec!["u".into(), url.to_string()],
+                vec!["method".into(), "GET".into()],
+            ],
+        })
+        .await?;
+    Ok(STANDARD.encode(
+        serde_json::to_vec(&auth).map_err(|_| "Could not encode repository authorization")?,
+    ))
+}
+
 #[tauri::command]
 pub(crate) async fn relay_sign(
     host: tauri::State<'_, IdentityHost>,
@@ -225,6 +289,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
             return Err("A leave request carries no content or other tags".into());
         }
+    } else if matches!(event.kind, 9030..=9032) {
+        if !valid_member_command(event) {
+            return Err("Invalid member change".into());
+        }
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
@@ -232,6 +300,19 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         return Err("This event is not supported by the packaged relay connection".into());
     }
     Ok(())
+}
+
+/** Match the broker's NIP-43 member command shape (`memberCommand` in
+ * `src/features/communities/admin-protocol.ts`); the relay decides authority. */
+fn valid_member_command(event: &EventTemplate) -> bool {
+    let target = |tag: &[String]| matches!(tag, [name, key] if name == "p" && hex_key(key));
+    let role = |tag: &[String]| matches!(tag, [name, role] if name == "role" && (role == "admin" || role == "member"));
+    event.content.is_empty()
+        && match (event.kind, event.tags.as_slice()) {
+            (9031, [p]) => target(p),
+            (9030 | 9032, [p, r]) => target(p) && role(r),
+            _ => false,
+        }
 }
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.

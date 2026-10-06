@@ -1,6 +1,8 @@
 mod archive;
 use archive::relay_archive;
 mod browser;
+#[cfg(target_os = "macos")]
+mod close_menu;
 mod oauth_callback;
 use oauth_callback::{
     oauth_callback_begin, oauth_callback_cancel, oauth_callback_wait, OAuthCallbackHost,
@@ -21,21 +23,22 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+
 mod notifications;
 mod os_idle;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, IdentityHost,
+    identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
     media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
-    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_http,
-    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_publish_read_state, relay_sign,
-    relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_cancel,
-    relay_workflow_runs,
+    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
+    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
+    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
+    relay_sign_sidebar, relay_upload, relay_upload_cancel, relay_workflow_runs,
 };
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
@@ -264,9 +267,10 @@ async fn plugin_import_git(
     imports: tauri::State<'_, Imports>,
     repository: String,
     reference: String,
+    authorization: Option<String>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
-        prepare_git(&repository, &reference).map(Some)
+        prepare_git(&repository, &reference, authorization.as_deref()).map(Some)
     })
     .await
 }
@@ -402,6 +406,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         start_enterprise_auth_login,
         cancel_enterprise_auth_login,
         clear_enterprise_auth,
+        identity_sign_builderlab_binding,
         enterprise_login_gate,
         relay_sign,
         relay_decode_read_state,
@@ -409,6 +414,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_publish_read_state,
         relay_http,
         relay_workflow_runs,
+        relay_project_git,
+        relay_project_git_cancel,
+        relay_git_authorization,
         relay_channel_sign,
         relay_channel_publish,
         relay_kit_sign,
@@ -466,6 +474,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_run,
         title_bar_double_click,
         notification_show,
+        #[cfg(target_os = "macos")]
+        notifications::macos::notification_permission_state,
+        #[cfg(target_os = "macos")]
+        notifications::macos::request_notification_access,
         deep_link_take,
         deep_link_watch,
         dock_permission,
@@ -500,6 +512,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            notifications::macos::init();
             deep_links::setup(app.handle());
             let home = app.path().home_dir().map_err(|_| {
                 std::io::Error::other("Could not resolve the BuilderLab home directory")
@@ -543,7 +557,10 @@ pub fn run() {
             Ok(())
         });
     #[cfg(target_os = "macos")]
-    let builder = builder.manage(TitleBarFillFrames::default());
+    let builder = builder
+        .manage(TitleBarFillFrames::default())
+        .menu(close_menu::menu)
+        .on_menu_event(close_menu::handle);
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
     let builder = if tauri::is_dev() {

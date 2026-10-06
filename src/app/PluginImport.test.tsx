@@ -102,3 +102,49 @@ it("shows exact declared access and changes before an enabled update", async () 
   ).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();
 });
+
+it("signs in only to repositories the community authorizes", async () => {
+  const preview: ImportPreview = {
+    token: "preview",
+    source: "repo",
+    commit: null,
+    warnings: [],
+    candidates: [],
+  };
+  const git = vi.fn(async () => preview);
+  const manager = {
+    imports: {
+      folder: vi.fn(),
+      git,
+      install: vi.fn(),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  const buzz = `https://relay.test/git/${"a".repeat(64)}/plugins`;
+  const authorizeGit = vi.fn(async (repository: string) =>
+    repository.includes("/git/")
+      ? { repository: buzz, token: "dG9rZW4=" }
+      : null,
+  );
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+      authorizeGit={authorizeGit}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Load from Git" }));
+  const field = screen.getByLabelText("Git or GitHub repository");
+  const find = screen.getByRole("button", { name: "Find plugins" });
+  fireEvent.change(field, { target: { value: ` ${buzz} ` } });
+  fireEvent.click(find);
+  await waitFor(() => expect(git).toHaveBeenCalledTimes(1));
+  expect(git).toHaveBeenLastCalledWith(buzz, "", "dG9rZW4=");
+  fireEvent.change(field, { target: { value: "block/plugins" } });
+  await waitFor(() => expect(find).toBeEnabled());
+  fireEvent.click(find);
+  await waitFor(() => expect(git).toHaveBeenCalledTimes(2));
+  expect(git).toHaveBeenLastCalledWith("block/plugins", "");
+});

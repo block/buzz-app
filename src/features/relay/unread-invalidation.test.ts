@@ -103,6 +103,21 @@ async function setup(count = 3) {
   };
 }
 
+it("does not trust workflow-owner metadata without a configured relay identity", async () => {
+  const h = await setup(1);
+  const row = message(h.peer, "c0", "workflow-shaped output", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+  ]);
+  h.owner.accept([row]);
+  expect(h.unread.attention("c0", row.id)).toMatchObject({
+    category: "mention",
+    mentioned: true,
+    unread: true,
+  });
+});
+
 it("recomputes only the affected subscribed channel, not every cached sidebar selector", async () => {
   const h = await setup(128);
   h.owner.accept([message(h.peer, "c0", "new", 12)]);

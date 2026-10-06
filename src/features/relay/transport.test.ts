@@ -470,3 +470,41 @@ it.each(["relay", "https://relay.test"])(
     expect(fetcher).toHaveBeenCalledTimes(before);
   },
 );
+
+it.each(["relay", "https://relay.test"])(
+  "signs Git access only for the broker community's repositories (%s)",
+  async (community) => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        url.endsWith("/session")
+          ? {
+              viewer: key.pubkey,
+              relayAuthor: key.pubkey,
+              relayUrl: "wss://relay.test",
+              gitAuthorization: true,
+            }
+          : { token: "dG9rZW4=" },
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const transport = await connectBrokerTransport("", undefined, community);
+    assert.exists(transport.authorizeGit);
+    const repository = `https://relay.test/git/${"a".repeat(64)}/plugins`;
+    expect(await transport.authorizeGit(` ${repository} `)).toEqual({
+      repository,
+      token: "dG9rZW4=",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent(community)}/git-authorization`,
+      expect.objectContaining({ body: JSON.stringify({ repository }) }),
+    );
+    const before = fetcher.mock.calls.length;
+    for (const other of [
+      `https://other.test/git/${"a".repeat(64)}/plugins`,
+      "https://github.com/block/plugins",
+      "block/plugins",
+    ])
+      expect(await transport.authorizeGit(other)).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(before);
+  },
+);

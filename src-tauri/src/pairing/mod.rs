@@ -305,12 +305,14 @@ async fn run(
     let deadline = tokio::time::Instant::from_std(exchange.session.deadline());
     pairing.update(id, Status::Qr { svg });
     exchange_until_deadline(
-        pairing,
-        id,
+        ExchangeContext {
+            pairing,
+            id,
+            relay_url: &relay_url,
+            pending,
+        },
         &mut exchange,
         &mut socket,
-        &relay_url,
-        pending,
         &mut auth,
         &mut confirm,
         cancel,
@@ -319,13 +321,17 @@ async fn run(
     .await
 }
 
+struct ExchangeContext<'a> {
+    pairing: &'a Pairing,
+    id: &'a str,
+    relay_url: &'a url::Url,
+    pending: Vec<Event>,
+}
+
 async fn exchange_until_deadline(
-    pairing: &Pairing,
-    id: &str,
+    context: ExchangeContext<'_>,
     exchange: &mut Exchange,
     socket: &mut relay::Socket,
-    relay_url: &url::Url,
-    pending: Vec<Event>,
     auth: &mut relay::Authentication,
     confirm: &mut mpsc::Receiver<Decision>,
     cancel: &CancellationToken,
@@ -342,7 +348,7 @@ async fn exchange_until_deadline(
             Ok(())
         }
         _ = tokio::time::sleep_until(deadline) => Err(Failure::Expired),
-        result = exchange_loop(pairing, id, exchange, socket, relay_url, pending, auth, confirm) => result,
+        result = exchange_loop(context, exchange, socket, auth, confirm) => result,
     }
 }
 
@@ -354,15 +360,18 @@ async fn abort(exchange: &mut Exchange, socket: &mut relay::Socket) {
 }
 
 async fn exchange_loop(
-    pairing: &Pairing,
-    id: &str,
+    context: ExchangeContext<'_>,
     exchange: &mut Exchange,
     socket: &mut relay::Socket,
-    relay_url: &url::Url,
-    pending: Vec<Event>,
     auth: &mut relay::Authentication,
     confirm: &mut mpsc::Receiver<Decision>,
 ) -> Result<(), Failure> {
+    let ExchangeContext {
+        pairing,
+        id,
+        relay_url,
+        pending,
+    } = context;
     let mut pending = std::collections::VecDeque::from(pending);
     loop {
         let output = if let Some(event) = pending.pop_front() {

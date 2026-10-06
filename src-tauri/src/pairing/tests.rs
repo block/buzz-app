@@ -392,12 +392,14 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
         let mut exchange = exchange;
         let mut auth = relay::Authentication::default();
         let result = exchange_until_deadline(
-            &owner,
-            "live",
+            ExchangeContext {
+                pairing: &owner,
+                id: "live",
+                relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+                pending: vec![],
+            },
             &mut exchange,
             &mut socket,
-            &url::Url::parse("wss://relay.test").unwrap(),
-            vec![],
             &mut auth,
             &mut rx,
             &cancel,
@@ -443,12 +445,14 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
         let mut socket = socket;
         let mut auth = relay::Authentication::default();
         exchange_until_deadline(
-            &Pairing::default(),
-            "live",
+            ExchangeContext {
+                pairing: &Pairing::default(),
+                id: "live",
+                relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+                pending: vec![],
+            },
             &mut exchange,
             &mut socket,
-            &url::Url::parse("wss://relay.test").unwrap(),
-            vec![],
             &mut auth,
             &mut rx,
             &owner_cancel,
@@ -499,12 +503,14 @@ async fn native_deadline_expires_without_a_peer_or_an_abort() {
     let (_tx, mut rx) = mpsc::channel(1);
     let mut auth = relay::Authentication::default();
     let result = exchange_until_deadline(
-        &Pairing::default(),
-        "live",
+        ExchangeContext {
+            pairing: &Pairing::default(),
+            id: "live",
+            relay_url: &url::Url::parse("wss://relay.test").unwrap(),
+            pending: vec![],
+        },
         &mut exchange,
         &mut socket,
-        &url::Url::parse("wss://relay.test").unwrap(),
-        vec![],
         &mut auth,
         &mut rx,
         &CancellationToken::new(),

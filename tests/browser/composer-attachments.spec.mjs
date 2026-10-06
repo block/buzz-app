@@ -323,15 +323,26 @@ test.describe("background Cancel focus handoff", () => {
         await cancel.focus();
         await expect(cancel).toBeFocused();
         if (outcome === "typing elsewhere") {
-          await form.getByRole("textbox").fill("later typing");
-          await expect(form.getByRole("textbox")).toBeFocused();
+          await page.evaluate(() => {
+            const input = document.createElement("input");
+            input.setAttribute("aria-label", "Other work");
+            document.body.append(input);
+          });
+          const elsewhere = page.getByRole("textbox", { name: "Other work" });
+          await elsewhere.fill("later typing");
+          await expect(elsewhere).toBeFocused();
         }
         if (outcome === "cancel") await cancel.click();
         else release();
         await expect(cancel).toHaveCount(0);
-        await expect(form.getByRole("textbox")).toBeFocused();
-        if (outcome === "typing elsewhere")
-          await expect(form.getByRole("textbox")).toHaveText("later typing");
+        if (outcome === "typing elsewhere") {
+          await expect(
+            page.getByRole("textbox", { name: "Other work" }),
+          ).toBeFocused();
+          await expect(
+            page.getByRole("textbox", { name: "Other work" }),
+          ).toHaveValue("later typing");
+        } else await expect(form.getByRole("textbox")).toBeFocused();
       } finally {
         release();
         await server.close();

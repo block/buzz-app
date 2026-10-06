@@ -45,9 +45,13 @@ export function BackgroundUploadStatus({
               focusedCancel.current = true;
             }}
             onBlur={(event) => {
-              // React removes a focused control without dispatching blur. A real
-              // move to another target, however, must relinquish focus ownership.
-              if (event.relatedTarget) focusedCancel.current = false;
+              // A real move away relinquishes ownership; removal of the
+              // focused control does not dispatch blur.
+              if (
+                event.relatedTarget ||
+                document.activeElement === document.body
+              )
+                focusedCancel.current = false;
             }}
             size="sm"
             variant="ghost"
@@ -58,21 +62,19 @@ export function BackgroundUploadStatus({
         </div>
       )}
       {uploads.notices.map((notice) => (
-        <div key={notice.id}>
-          <ToastNotice
-            title={notice.message}
-            {...(!notice.retry && {
-              onDismiss: () =>
-                dismissBackgroundUploadNotice(session, notice.id),
-            })}
-          >
-            {notice.retry && (
-              <Button type="button" onClick={notice.retry}>
-                Retry failed send recovery
-              </Button>
-            )}
-          </ToastNotice>
-        </div>
+        <ToastNotice
+          key={notice.id}
+          title={notice.message}
+          {...(!notice.retry && {
+            onDismiss: () => dismissBackgroundUploadNotice(session, notice.id),
+          })}
+        >
+          {notice.retry && (
+            <Button type="button" onClick={notice.retry}>
+              Retry failed send recovery
+            </Button>
+          )}
+        </ToastNotice>
       ))}
     </>
   );

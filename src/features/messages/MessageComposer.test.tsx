@@ -1118,6 +1118,12 @@ it.each(["cleanup", "restore"] as const)(
     try {
       fireEvent.click(h.send());
       await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+      if (phase === "cleanup") {
+        expect(h.input()).toHaveAttribute("contenteditable", "false");
+        expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+          text: "recover this caption",
+        });
+      }
       if (phase === "restore") {
         expect(readView(h.scope, "draft:channel", null)).toMatchObject({
           text: "",
@@ -1205,8 +1211,20 @@ it("does not overwrite a later local edit when a background upload fails", async
     text: "later work",
   });
   expect(
-    screen.getByRole("button", { name: "Retry failed send recovery" }),
+    screen.getByText(/Failed send was kept because this draft changed/),
   ).toBeVisible();
+  const retry = screen.getByRole("button", {
+    name: "Retry failed send recovery",
+  });
+  await userEvent.click(retry);
+  expect(h.input()).toHaveValue("later work");
+  await userEvent.clear(h.input());
+  await userEvent.click(retry);
+  await waitFor(() => expect(h.input()).toHaveValue("original caption"));
+  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Retry failed send recovery" }),
+  ).toBeNull();
   expect(h.publish).not.toHaveBeenCalled();
 });
 

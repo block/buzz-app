@@ -8,6 +8,11 @@ import {
   type DraftAttachment,
 } from "./attachment-draft";
 
+const recoveryConflictNotice =
+  "Failed send was kept because this draft changed. Clear the draft, then retry recovery before leaving this session.";
+const recoveryStorageNotice =
+  "Could not restore the failed send. Retry recovery before leaving this session.";
+
 type Notice = Readonly<{ id: string; message: string; retry?: () => void }>;
 export type BackgroundUploads = Readonly<{
   uploading: boolean;
@@ -97,7 +102,7 @@ export function sendInBackground(
   recover: (
     files: readonly DraftAttachment[],
     preparationError?: unknown,
-  ) => boolean,
+  ) => boolean | "conflict",
 ) {
   const queue = queueFor(session);
   const key = `background:${crypto.randomUUID()}`;
@@ -127,13 +132,13 @@ export function sendInBackground(
       }
     } finally {
       if (notice !== undefined || signal.aborted) {
-        let recovered = false;
+        let recovery: boolean | "conflict" = false;
         try {
-          recovered = recover(store.snapshot(), preparationError);
+          recovery = recover(store.snapshot(), preparationError);
         } catch {
           /* Retain bytes for retry. */
         }
-        if (!recovered) {
+        if (recovery !== true) {
           // Keep the session-owned bytes when storage cannot confirm restoration.
           // An abandoned job cannot publish again; its files remain reachable here.
           queue.notices = [
@@ -141,11 +146,29 @@ export function sendInBackground(
             {
               id: key,
               message:
-                "Could not restore the failed send. Retry recovery before leaving this session.",
+                recovery === "conflict"
+                  ? recoveryConflictNotice
+                  : recoveryStorageNotice,
               retry: () => {
+                let result: boolean | "conflict" = false;
                 try {
-                  if (!recover(store.snapshot(), preparationError)) return;
+                  result = recover(store.snapshot(), preparationError);
                 } catch {
+                  /* Retain bytes for another retry. */
+                }
+                if (result !== true) {
+                  queue.notices = queue.notices.map((item) =>
+                    item.id === key
+                      ? {
+                          ...item,
+                          message:
+                            result === "conflict"
+                              ? recoveryConflictNotice
+                              : recoveryStorageNotice,
+                        }
+                      : item,
+                  );
+                  update(queue);
                   return;
                 }
                 clearAttachmentDraft(session, key);

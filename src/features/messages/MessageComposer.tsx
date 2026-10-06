@@ -410,7 +410,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
-    (!!accepted && !sendPending) ||
+    !!accepted ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
@@ -988,17 +988,30 @@ function Composer({
             // Only the original saved draft or the untouched follow-up can be
             // restored. A later edit belongs to its author, not this job.
             const current = viewRevision(scope, draftKey);
-            if (live.current && dirty.current && valueRef.current !== next)
-              return false;
             const capturedRevision = JSON.stringify(captured);
+            if (
+              live.current &&
+              (valueRef.current.text !== next.text ||
+                JSON.stringify(valueRef.current.recipients) !==
+                  JSON.stringify(next.recipients)) &&
+              JSON.stringify(valueRef.current) !== capturedRevision
+            )
+              return "conflict";
             if (
               current !== savedRevision &&
               current !== followup &&
-              current !== capturedRevision
+              current !== capturedRevision &&
+              !(
+                live.current &&
+                current === JSON.stringify(valueRef.current) &&
+                valueRef.current.text === next.text &&
+                JSON.stringify(valueRef.current.recipients) ===
+                  JSON.stringify(next.recipients)
+              )
             )
-              return false;
+              return "conflict";
             const target = attachmentDraft(session, recoveryKey, channelId);
-            if (target.snapshot().length) return false;
+            if (target.snapshot().length) return "conflict";
             if (
               current !== capturedRevision &&
               replaceView(scope, draftKey, current, captured) !== "saved"

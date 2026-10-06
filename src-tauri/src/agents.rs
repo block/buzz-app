@@ -166,6 +166,7 @@ async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Opt
         &["auth".into(), "status".into()],
         std::time::Duration::from_secs(5),
         path,
+        4096,
     )
     .await?;
     let logged_in = serde_json::from_str::<serde_json::Value>(&output)

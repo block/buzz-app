@@ -323,6 +323,26 @@ it("follows a revived thread where the viewer replied on another branch", async 
   });
 });
 
+it("decides each reply by its own root when replies to one parent disagree", async () => {
+  const mine = event(viewer, 1, []);
+  const root = event(peer, 2, []);
+  const parent = reply(peer, 3, root);
+  // Queued first, this reply claims the viewer's unrelated root.
+  const conflicting = reply(peer, 10, mine, parent);
+  const honest = reply(peer, 11, root, parent);
+  const { owner, unread, reader, settled } = await setup();
+  reader.read.mockImplementation(relayOf(mine, root, parent));
+  owner.accept([conflicting, honest]);
+  await settled(conflicting, honest);
+  expect(unread.following("c0", root.id)).toBe(false);
+  expect(unread.attention("c0", honest.id).category).toBeUndefined();
+  expect(unread.following("c0", mine.id)).toBe(true);
+  expect(unread.attention("c0", conflicting.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+});
+
 it("drains the lookups of many distinct revived threads once and stays idle", async () => {
   const history: RelayEvent[] = [];
   const nested = Array.from({ length: 2100 }, (_, i) => {

@@ -465,19 +465,20 @@ export function createUnread({
   /** The reply is in a conversation the viewer is part of in its own channel:
    * the viewer follows its thread, or (without an explicit choice) wrote or
    * replied anywhere in that thread, wrote the parent, or also replied to the
-   * same parent. Undecided parents are not members until their lookup finishes. */
+   * same parent. Undecided parents are not members until their lookup finishes.
+   * A finished lookup counts only through `ownThreads`, under the root its
+   * witness names, so the reply's own root decides it and the label and the
+   * effect read one set even if replies to one parent disagree on its root. */
   const conversation = (entry: Evidence) => {
     const { parentId, channelId, threadRootId } = entry;
     if (!parentId) return false;
     const explicit = chosen(entry);
     if (explicit !== undefined) return explicit;
-    const key = conversationKey(channelId, parentId);
     return (
       (threadRootId !== undefined &&
         ownThreads.has(conversationKey(channelId, threadRootId))) ||
       own.get(parentId) === channelId ||
-      joined.has(key) ||
-      lookups.get(key)?.evidence !== undefined
+      joined.has(conversationKey(channelId, parentId))
     );
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
@@ -1172,8 +1173,9 @@ export function createUnread({
     retry = undefined;
   }
   // At most one lookup per retained reply (keyed by its parent), and the
-  // window holds fewer than 4,096 events, so the lookups current evidence
-  // needs always fit together and a fixed working set drains.
+  // window holds at most 4,096 events, so the lookups the current window
+  // needs fit together and a fixed working set drains. Queued lookups from a
+  // window that was reset are not capped here; they drain as before.
   function remember(key: string, lookup: Lookup) {
     lookups.delete(key);
     lookups.set(key, lookup);

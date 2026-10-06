@@ -225,8 +225,13 @@ evidence. When a reply is otherwise unread but its conversation is undecided
 that evaluates the reply queues one relay lookup for that parent. The same
 lookup decides the whole thread: the viewer wrote the parent or the canonical
 root, or replied anywhere under the root. One lookup per parent keeps demand
-within one per retained reply, so the retained window (under 4,096 events)
-cannot need more than the 4,096 remembered lookups. The fetch
+within one per retained reply, so the retained window (at most 4,096 events)
+cannot need more than the 4,096 remembered lookups. That bounds what the
+current window needs, not every queued lookup: lookups queued before an
+overflow reset still drain. A positive result counts only through the root its
+witness names (the same `channel:root` set the Follow label reads), so a reply
+whose root tag disagrees with another reply to the same parent is decided by
+its own root. The fetch
 runs in a microtask, at background priority, in batches of up to 50 parents
 from one channel:
 

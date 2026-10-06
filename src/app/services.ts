@@ -79,6 +79,7 @@ export function createServices() {
     subscribe: communities.subscribe,
     pending: communities.pendingSync,
     apply: communities.applySync,
+    status: communities.setSyncStatus,
   });
   const relay = communities.relay;
   const agents2 = new Agents2Service(ctx, relay);

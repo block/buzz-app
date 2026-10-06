@@ -4,7 +4,13 @@ stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { communityRequest } from "../../features/communities/api";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
@@ -149,6 +155,14 @@ it("enables the inventory card's Use here", async () => {
   const card = await screen.findByRole("article", {
     name: "Agent Fixture agent",
   });
-  expect(within(card).getByRole("button", { name: "Use here" })).toBeEnabled();
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Manage Fixture agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Manage Fixture agent",
+  });
+  expect(
+    within(dialog).getByRole("button", { name: "Use here" }),
+  ).toBeEnabled();
   expect(onUseHere).not.toHaveBeenCalled();
 });

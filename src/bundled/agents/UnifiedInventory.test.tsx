@@ -220,15 +220,26 @@ it("preserves placement and independent setup and Clone after a read failure", a
       status: "stopped",
     });
   });
-  await screen.findByRole("button", { name: "Use here" });
+  const section = await screen.findByRole("region", {
+    name: "Local agents in this community",
+  });
+  const cards = within(section).getAllByRole("article");
+  expect(cards).toHaveLength(2);
   request.mockRejectedValue(Error("Access denied"));
   fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
   await screen.findByText(/Community inventory could not be checked/);
-  expect(
-    screen.getByRole("region", { name: "Local agents in this community" }),
-  ).toBeVisible();
-  expect(screen.getAllByRole("button", { name: "Clone" })).toHaveLength(2);
-  expect(screen.getByRole("button", { name: "Use here" })).toBeEnabled();
+  expect(section).toBeVisible();
+  for (const card of cards) {
+    fireEvent.click(within(card).getByRole("button", { name: /^Manage / }));
+    const dialog = await screen.findByRole("dialog", { name: /^Manage / });
+    expect(within(dialog).getByRole("button", { name: "Clone" })).toBeEnabled();
+    if (card.dataset.agentPubkey === "cd".repeat(32))
+      expect(
+        within(dialog).getByRole("button", { name: "Use here" }),
+      ).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  }
 });
 it("retains multiple verified associations and renders inventory keys absent from profiles", async () => {
   const key = "fe".repeat(32);
@@ -286,7 +297,7 @@ it("lists archived identities after all discovery joins in an Archived section w
     ];
   });
   await waitFor(() => expect(communityApi.communityRequest).toHaveBeenCalled());
-  await screen.findByRole("button", { name: "Stop" });
+  await screen.findByRole("article", { name: "Agent Fixture agent" });
   // Every agent is archived: the section opens instead of first-run text.
   expect(
     screen.getByText("All your agents are archived in this community."),
@@ -300,7 +311,14 @@ it("lists archived identities after all discovery joins in an Archived section w
   });
   expect(within(local).getByText("Archived")).toBeVisible();
   fireEvent.click(within(local).getByLabelText("Manage Fixture agent"));
-  expect(within(local).getByRole("button", { name: "Stop" })).toBeVisible();
+  const management = await screen.findByRole("dialog", {
+    name: "Manage Fixture agent",
+  });
+  expect(
+    within(management).getByRole("button", { name: "Stop" }),
+  ).toBeVisible();
+  fireEvent.click(within(management).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(management).not.toBeInTheDocument());
   expect(
     within(section).getByRole("article", { name: "Agent Hidden" }),
   ).toBeVisible();
@@ -320,14 +338,23 @@ it("omits redundant profile text and uses configured names for native WSS setups
     name: "Agent Raw local fallback",
   });
   fireEvent.click(within(card).getByLabelText("Manage Raw local fallback"));
-  expect(within(card).queryByText(/^Profile:/)).toBeNull();
-  expect(within(card).getByText(npubEncode("cd".repeat(32)))).not.toBeVisible();
+  const management = await screen.findByRole("dialog", {
+    name: "Manage Raw local fallback",
+  });
+  expect(within(management).queryByText(/^Profile:/)).toBeNull();
+  expect(
+    within(management).getByText(npubEncode("cd".repeat(32))),
+  ).not.toBeVisible();
   fireEvent.click(
-    within(card).queryByText("Identity & sources") ??
-      within(card).getByLabelText(/^Details for /),
+    within(management).queryByText("Identity & sources") ??
+      within(management).getByLabelText(/^Details for /),
   );
-  expect(within(card).getByText(npubEncode("cd".repeat(32)))).toBeVisible();
-  expect(within(card).getByRole("button", { name: "Stop" })).toBeEnabled();
+  expect(
+    within(management).getByText(npubEncode("cd".repeat(32))),
+  ).toBeVisible();
+  expect(
+    within(management).getByRole("button", { name: "Stop" }),
+  ).toBeEnabled();
   expect(
     screen.queryByRole("article", { name: "Agent Not imported" }),
   ).toBeNull();
@@ -1085,8 +1112,6 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
     ).toBeNull(),
   );
   const restored = screen.getByRole("article", { name: "Agent Fixture agent" });
-  fireEvent.click(within(restored).getByLabelText("Manage Fixture agent"));
-  expect(within(restored).getByRole("button", { name: "Stop" })).toBeVisible();
   await waitFor(() =>
     expect(
       within(restored).getByRole("button", {
@@ -1094,6 +1119,13 @@ it("archives a running local agent, moves it to Archived, and Undo restores it",
       }),
     ).toHaveFocus(),
   );
+  fireEvent.click(within(restored).getByLabelText("Manage Fixture agent"));
+  const management = await screen.findByRole("dialog", {
+    name: "Manage Fixture agent",
+  });
+  expect(
+    within(management).getByRole("button", { name: "Stop" }),
+  ).toBeVisible();
 });
 
 it("reopens Archived each time the last active agent is archived", async () => {

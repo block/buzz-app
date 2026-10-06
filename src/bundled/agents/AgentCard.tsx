@@ -1,6 +1,8 @@
 import styles from "./AgentCard.module.css";
 import { npubEncode } from "nostr-tools/nip19";
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuRoot,
   MenuTrigger,
@@ -89,6 +91,8 @@ export function AgentCard({
   const Heading = `h${headingLevel}` as "h3" | "h4" | "h5";
   const trigger = useRef<HTMLButtonElement>(null);
   const profileHandoff = useRef(false);
+  const [managing, setManaging] = useState(false);
+  const hasControls = tile && !!children;
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
@@ -137,9 +141,6 @@ export function AgentCard({
         ? "Custom model"
         : managed.harness.model || "Default model"))
     : undefined;
-  const controls = (
-    <div className="flex min-w-0 flex-col gap-3">{children}</div>
-  );
   const portrait = (
     <div className={tile ? styles.portrait : "shrink-0"}>
       <AgentAvatar
@@ -187,8 +188,8 @@ export function AgentCard({
       }
       className={`relative min-w-0 ${tile ? styles.card : "agent-inventory-row"}`}
     >
-      {(onEdit || onViewProfile || archive) && (
-        <div className="absolute right-2 top-2">
+      {(onEdit || onViewProfile || archive || hasControls) && (
+        <div className="absolute right-2 top-2 z-10">
           <MenuRoot
             onOpenChange={(open) => {
               if (open) profileHandoff.current = false;
@@ -220,6 +221,17 @@ export function AgentCard({
                   }}
                 >
                   View profile
+                </MenuItem>
+              )}
+              {hasControls && (
+                <MenuItem
+                  onClick={() => {
+                    trigger.current?.focus();
+                    profileHandoff.current = true;
+                    setManaging(true);
+                  }}
+                >
+                  Manage agent
                 </MenuItem>
               )}
               {archive && (
@@ -329,25 +341,46 @@ export function AgentCard({
           </MenuRoot>
         </div>
       )}
-      {tile && children ? (
-        <details className={styles.details} open={revealControls || undefined}>
-          <summary className={styles.open} aria-label={`Manage ${name}`}>
-            {portrait}
-            {label}
-          </summary>
-          <div className={styles.controls}>{controls}</div>
-        </details>
-      ) : (
-        <div
-          className={
-            tile
-              ? styles.content
-              : `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile || archive ? "pr-6" : ""}`
-          }
-        >
-          {portrait}
-          {label}
-        </div>
+      <div
+        className={
+          tile
+            ? styles.content
+            : `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile || archive ? "pr-6" : ""}`
+        }
+      >
+        {portrait}
+        {label}
+        {tile && (onViewProfile || hasControls) && (
+          <button
+            type="button"
+            className={styles.open}
+            aria-label={
+              onViewProfile ? `View profile for ${name}` : `Manage ${name}`
+            }
+            onClick={(event) => {
+              if (onViewProfile) onViewProfile(event.currentTarget);
+              else setManaging(true);
+            }}
+          />
+        )}
+      </div>
+      {hasControls && (
+        <>
+          {revealControls && (
+            <div className="px-4 pb-4">
+              <Button size="compact" onClick={() => setManaging(true)}>
+                Review agent status
+              </Button>
+            </div>
+          )}
+          <Dialog
+            open={managing}
+            onOpenChange={setManaging}
+            title={`Manage ${name}`}
+          >
+            <div className="flex min-w-0 flex-col gap-3">{children}</div>
+          </Dialog>
+        </>
       )}
       {!tile && children && (
         <div

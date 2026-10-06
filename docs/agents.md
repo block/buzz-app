@@ -236,7 +236,7 @@ turning it back on does not restore old recipients. Session auto-recipient rules
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Saved teams from Templates & teams are available in both mention choosers. A team
+Saved teams from the Agents page are available in both mention choosers. A team
 is a shortcut, not a group identity: explicit selection inserts its saved agent
 keys as individual mentions in one undoable edit. Names never resolve membership.
 Typing a team name or Space alone does not select it. Team names also prevent

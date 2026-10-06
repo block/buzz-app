@@ -4,6 +4,19 @@ import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+async function openManagement(page, card) {
+  await card.getByRole("button", { name: /^Actions for / }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage agent", exact: true })
+    .click();
+  const management = page.getByRole("dialog", { name: /^Manage / });
+  await expect(management).toBeVisible();
+  return management;
+}
+async function closeManagement(page, management) {
+  await management.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(management).toHaveCount(0);
+}
 async function closeEditor(page) {
   const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
   if (await dialog.count())
@@ -92,6 +105,52 @@ test("agent menu leaves focus in Profile after its close animation", async ({
       .toBe(true);
     await profile.getByRole("button", { name: "Close Profile panel" }).click();
     await expect(profile).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    const open = card.getByRole("button", {
+      name: "View profile for Fixture agent",
+      exact: true,
+    });
+    const before = await card.boundingBox();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await open.hover();
+      await expect
+        .poll(() =>
+          open.evaluate((button) => {
+            const style = getComputedStyle(button.parentElement);
+            return (
+              parseFloat(style.borderTopLeftRadius) > 0 &&
+              style.backgroundColor !== "rgba(0, 0, 0, 0)"
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    for (const action of ["click", "Enter", "Space"]) {
+      if (action === "click") await open.click();
+      else await open.press(action);
+      await expect(profile).toBeVisible();
+      await expect
+        .poll(() =>
+          profile.evaluate((el) => el.contains(document.activeElement)),
+        )
+        .toBe(true);
+      expect((await card.boundingBox()).height).toBe(before.height);
+      await expect(card.locator("details")).toHaveCount(0);
+      await profile
+        .getByRole("button", { name: "Close Profile panel" })
+        .click();
+      await expect(profile).toHaveCount(0);
+      await expect(open).toBeFocused();
+    }
+    const management = await openManagement(page, card);
+    await expect(
+      management.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await expect(management).toHaveCount(0);
     await expect(trigger).toBeFocused();
     expect(errors.unexplained()).toEqual([]);
   } finally {
@@ -261,9 +320,10 @@ test("local controls preserve drafts, confirm operations and distinguish disable
         has: page.getByRole("button", { name: /^Actions for / }),
       }),
     ).toHaveCount(2);
+    await page.getByText(/^Other agents \(/).click();
     await expect(
       panel
-        .getByRole("region", { name: "Library identities", exact: true })
+        .getByRole("region", { name: "Agent library", exact: true })
         .getByRole("article"),
     ).toHaveCount(0);
     await expect(
@@ -282,12 +342,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     });
     await page.getByRole("button", { name: "Toggle appearance" }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.getByRole("button", { name: "Add agent" }).blur();
+    await page.getByRole("button", { name: "Create agent" }).blur();
     await page.mouse.move(0, 0);
-    // Primary aliases prominent: dark resting fill is white, grey is hover.
-    await expect(panel.getByRole("button", { name: "Add agent" })).toHaveCSS(
+    // The compact header action uses the approved subtle dark surface.
+    await expect(page.getByRole("button", { name: "Create agent" })).toHaveCSS(
       "background-color",
-      "rgb(255, 255, 255)",
+      "rgb(35, 35, 35)",
     );
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
@@ -304,14 +364,17 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await closeEditor(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
     // Library-only entries no longer pretend to be managed cards with Edit.
-    await expect(panel.getByText("Add agent", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Create agent", { exact: true })).toHaveCount(
+      0,
+    );
+    await page.getByText(/^Other agents \(/).click();
     const libraryCard = page.getByRole("article", {
       name: "Agent Fixture agent",
       exact: true,
     });
     await expect(libraryCard).toBeVisible();
     await expect(
-      libraryCard.getByRole("button", { name: /Actions|Start|Edit/ }),
+      libraryCard.getByRole("button", { name: /Start|Edit|Manage/ }),
     ).toHaveCount(0);
     expect(errors.unexplained()).toEqual([]);
   } finally {
@@ -561,11 +624,17 @@ test("unavailable runtime blocks launch and credential import while retaining St
       includeHidden: true,
     });
     await closeEditor(page);
+    const management = await openManagement(
+      page,
+      page.getByRole("article", { name: "Agent Fixture agent", exact: true }),
+    );
     await expect(
-      panel
-        .getByRole("region", { name: "My agents" })
-        .getByText("Execution blocked by native host"),
+      management.getByText("Execution blocked by native host"),
     ).toBeVisible();
+    await expect(
+      management.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeEnabled();
+    await closeManagement(page, management);
     const editor = await openEditor(page);
     await expect(
       editor.getByRole("button", { name: "Start", exact: true }),
@@ -1371,10 +1440,12 @@ test("card Import opens a focused review and restores focus after dismissal", as
       name: "Agent Fixture agent",
       exact: true,
     });
+    const management = await openManagement(page, local);
     await expect(
-      local.getByRole("button", { name: "Stop", exact: true }),
+      management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
-    await local.getByRole("button", { name: "Stop", exact: true }).click();
+    await management.getByRole("button", { name: "Stop", exact: true }).click();
+    await closeManagement(page, management);
     await page.evaluate(() => window.agentControlFixture.releaseImport());
     // The host's rejection explains the conflicting Stop.
     await expect(dialog.getByRole("alert")).toContainText(
@@ -1385,14 +1456,19 @@ test("card Import opens a focused review and restores focus after dismissal", as
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.evaluate(() => window.agentControlFixture.control.refresh());
     await expect(dialog).toHaveCount(0);
+    const imported = page.locator(
+      `article[data-agent-pubkey="${"cd".repeat(32)}"]`,
+    );
+    const importedManagement = await openManagement(page, imported);
+    await importedManagement
+      .getByText("Identity & sources", { exact: true })
+      .click();
     await expect(
-      page
-        .getByRole("article", { name: "Agent Fixture agent", exact: true })
-        .filter({
-          hasText:
-            "npub1ehxumnwdehxumnwdehxumnwdehxumnwdehxumnwdehxumnwdehxskccvaq",
-        }),
-    ).toContainText("Process stopped");
+      importedManagement.getByText(npubEncode("cd".repeat(32)), {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(importedManagement).toContainText("Process stopped");
   } finally {
     await page
       .evaluate(() => window.agentControlFixture?.releaseImport?.())
@@ -1483,9 +1559,11 @@ test("inventory keeps current-community tiles and compact rows without repeated 
       name: "Agent Fixture agent",
       exact: true,
     });
+    const management = await openManagement(page, local);
     await expect(
-      local.getByRole("button", { name: "Stop", exact: true }),
+      management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
+    await closeManagement(page, management);
     expect(await local.evaluate((el) => getComputedStyle(el).display)).toBe(
       "flex",
     );

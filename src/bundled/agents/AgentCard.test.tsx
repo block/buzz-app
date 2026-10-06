@@ -215,7 +215,8 @@ it("keeps the exact identity label and row heading in the final card shell", () 
   expect(screen.getByRole("heading", { level: 4, name: "Solo" })).toBeVisible();
 });
 
-it("keeps archive feedback and the badge visible when tile controls are collapsed", () => {
+it("keeps archive feedback visible and management outside the tile", async () => {
+  const user = userEvent.setup();
   render(
     <AgentCard
       name="Agent"
@@ -229,7 +230,47 @@ it("keeps archive feedback and the badge visible when tile controls are collapse
   );
   expect(screen.getByText("Archived")).toBeVisible();
   expect(screen.getByRole("alert")).toBeVisible();
-  expect(screen.getByText("Stop")).not.toBeVisible();
-  fireEvent.click(screen.getByLabelText("Manage Agent"));
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  const card = screen.getByRole("article");
+  expect(card.querySelector("details")).toBeNull();
+  const trigger = screen.getByRole("button", { name: "Manage Agent" });
+  await user.click(trigger);
+  const dialog = await screen.findByRole("dialog", { name: "Manage Agent" });
+  expect(card).not.toContainElement(dialog);
   expect(screen.getByRole("button", { name: "Stop" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+});
+
+it("opens the profile from the tile without opening its separate management controls", async () => {
+  const user = userEvent.setup();
+  const profile = vi.fn();
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={profile}
+    >
+      <button type="button">Stop</button>
+    </AgentCard>,
+  );
+  const tile = screen.getByRole("button", { name: "View profile for Agent" });
+  await user.click(tile);
+  expect(profile).toHaveBeenLastCalledWith(tile);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{Enter}");
+  await user.keyboard(" ");
+  expect(profile).toHaveBeenCalledTimes(3);
+  await user.click(screen.getByRole("button", { name: "Actions for Agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Manage Agent" }),
+  ).toBeVisible();
+  expect(profile).toHaveBeenCalledTimes(3);
+  await user.keyboard("{Escape}");
+  expect(
+    screen.getByRole("button", { name: "Actions for Agent" }),
+  ).toHaveFocus();
 });

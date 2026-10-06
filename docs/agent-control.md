@@ -17,25 +17,27 @@ quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
 Open **Agents** for discovered and imported identities grouped by known community
-associations. Each identity card keeps the configured destinations’ **Start / Stop**
-controls. **Edit**, **Duplicate**, and **Delete** are in the card’s three-dot menu.
+associations. Compact individual-agent cards open **View profile** on click, without
+expanding the grid. The three-dot menu keeps **Manage agent**, **Edit**, **Duplicate**,
+and **Delete** separate. **Manage agent** opens the configured destinations’
+**Start / Stop**, recovery, and identity/source controls in a dialog; it is also
+the card-click fallback when no profile panel is available.
 Duplicate seeds Create with editable settings and a fresh identity; write-only
 environment values require re-entry. Delete stops the local process and removes
 this app's settings and Keychain key after confirmation. The key remains while
 another setup of the same identity still uses it. Delete does not archive the
 relay identity or erase messages. Deployed remote records are refused. Actions
 use native ID/revision, never the display name. Older hosts without parked
-inventory retain the **My agents** and read-only library sections. Managed
+inventory retain the **Individual agents** and collapsed read-only **Other agents** sections. Managed
 controls remain available when discovery is disconnected, unavailable or archived.
 
-**Add agent** shares the Edit fields and model browser. In the development desktop,
+**Create agent** shares the Edit fields and model browser. In the development desktop,
 Create generates a native key, obtains the captured viewer's owner authorization,
 saves the agent, starts it, then publishes its profile. A failed Start or profile
 publication retains the saved identity and offers a retry for that step; it never
 creates another identity. A native Start response can confirm a saved agent while
 reporting that its process could not run. During Create, Start, or profile setup,
-**Close** leaves the operation running and exposes the existing cards' recovery
-Stop. Late completion never closes a subsequently opened dialog. If an operation
+**Close** leaves the operation running and keeps recovery **Stop** available through **Manage agent**. Late completion never closes a subsequently opened dialog. If an operation
 cannot be confirmed, refresh status before repeating it.
 
 Create is blocked with an explanation if this app’s runtime is unavailable;

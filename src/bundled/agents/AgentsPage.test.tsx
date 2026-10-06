@@ -173,6 +173,26 @@ function setup(
     },
   };
 }
+async function manageCard(card: HTMLElement) {
+  fireEvent.click(within(card).getByRole("button", { name: /^Actions for / }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
+  return screen.findByRole("dialog", { name: /^Manage / });
+}
+async function closeManagement(dialog: HTMLElement) {
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+}
+async function cardInCommunity(cards: HTMLElement[], community: string) {
+  for (const card of cards) {
+    const dialog = await manageCard(card);
+    const matches = dialog.textContent?.includes(community);
+    await closeManagement(dialog);
+    if (matches) return card;
+  }
+  throw Error(`Missing managed card in ${community}`);
+}
 it("opens the selected managed agent in the existing profile panel", async () => {
   let profileTargetSeen = "";
   const panel = {
@@ -401,12 +421,8 @@ it("offers View profile only for an identity in the selected community", async (
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
-  const here = cards.find((card) =>
-    card.textContent?.includes("wss://relay.example.test"),
-  );
-  const elsewhere = cards.find((card) =>
-    card.textContent?.includes("wss://second.example"),
-  );
+  const here = await cardInCommunity(cards, "wss://relay.example.test");
+  const elsewhere = await cardInCommunity(cards, "wss://second.example");
   if (!here || !elsewhere) throw Error("Expected both community setups");
 
   fireEvent.click(
@@ -595,9 +611,7 @@ it("shows native controls per exact destination and separate read-only discovere
   });
   expect(cards).toHaveLength(2);
   expect(screen.queryByRole("button", { name: "Use in channel" })).toBeNull();
-  const card = cards.find((entry) =>
-    entry.textContent?.includes("wss://second.example"),
-  );
+  const card = await cardInCommunity(cards, "wss://second.example");
   if (!card) throw Error("Second destination missing");
   fireEvent.click(screen.getByText(/^Other agents \(/));
   expect(
@@ -684,9 +698,7 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
     const cards = await screen.findAllByRole("article", {
       name: "Agent Fixture agent",
     });
-    const card = cards.find((entry) =>
-      entry.textContent?.includes("wss://relay.example.test"),
-    );
+    const card = await cardInCommunity(cards, "wss://relay.example.test");
     if (!card) throw Error("Primary destination missing");
     fireEvent.click(
       within(card).getByRole("button", { name: "Actions for Fixture agent" }),
@@ -741,12 +753,14 @@ it("checks Start failure and keeps lifecycle controls available", async () => {
     name: "Agent Fixture agent",
   });
   if (!card) throw Error("Missing managed card");
-  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
+  const management = await manageCard(card);
   expect(
-    within(card).getByText("Process running · relay readiness unverified"),
+    within(management).getByText(
+      "Process running · relay readiness unverified",
+    ),
   ).toBeVisible();
-  fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
-  await within(card).findByRole("button", { name: "Start" });
+  fireEvent.click(within(management).getByRole("button", { name: "Stop" }));
+  await within(management).findByRole("button", { name: "Start" });
   expect(f.calls.at(-1)).toEqual({
     action: "stop",
     payload: { id: "fixture-agent" },
@@ -754,24 +768,30 @@ it("checks Start failure and keeps lifecycle controls available", async () => {
   f.host.action = async () => {
     throw "synthetic start failure";
   };
-  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
-  const notice = await within(card).findByText(
+  fireEvent.click(within(management).getByRole("button", { name: "Start" }));
+  const notice = await within(management).findByText(
     "The agent didn't start. synthetic start failure. Try again.",
   );
   expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
-  expect(within(card).getByRole("button", { name: "Stop" })).toBeDisabled();
-  expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
+  expect(
+    within(management).getByRole("button", { name: "Stop" }),
+  ).toBeDisabled();
+  expect(
+    within(management).getByRole("button", { name: "Start" }),
+  ).toBeEnabled();
   f.data.runtimeAvailable = false;
   await act(async () => control.refresh());
-  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
   expect(
-    within(card).getByText(/bundled agent runtime is unavailable/),
+    within(management).getByRole("button", { name: "Start" }),
+  ).toBeDisabled();
+  expect(
+    within(management).getByText(/bundled agent runtime is unavailable/),
   ).toBeVisible();
   expect(notice).toBeVisible();
   // A later status change, such as a mention start, supersedes the notice.
   f.agent.status = "running";
   await act(async () => control.refresh());
-  expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
+  expect(within(management).queryByText(/The agent didn't start/)).toBeNull();
 });
 it("retires a card Start failure after the editor starts and stops the agent", async () => {
   const { f } = setup();
@@ -779,16 +799,17 @@ it("retires a card Start failure after the editor starts and stops the agent", a
     name: "Agent Fixture agent",
   });
   if (!card) throw Error("Missing managed card");
-  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
-  fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
-  await within(card).findByRole("button", { name: "Start" });
+  let management = await manageCard(card);
+  fireEvent.click(within(management).getByRole("button", { name: "Stop" }));
+  await within(management).findByRole("button", { name: "Start" });
   const action = f.host.action;
   f.host.action = async () => {
     throw "synthetic start failure";
   };
-  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
-  await within(card).findByText(/The agent didn't start/);
+  fireEvent.click(within(management).getByRole("button", { name: "Start" }));
+  await within(management).findByText(/The agent didn't start/);
   f.host.action = action;
+  await closeManagement(management);
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
@@ -796,13 +817,16 @@ it("retires a card Start failure after the editor starts and stops the agent", a
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Runtime" }));
   fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
-  await within(card).findByText("Process running · relay readiness unverified");
+  await within(dialog).findByText(
+    "Process running · relay readiness unverified",
+  );
   fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
-  await within(card).findByText("Process stopped");
+  await within(dialog).findByText("Process stopped");
   fireEvent.click(within(dialog).getByRole("button", { name: "Close editor" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(within(card).getByText("Process stopped")).toBeVisible();
-  expect(within(card).queryByText(/The agent didn't start/)).toBeNull();
+  management = await manageCard(card);
+  expect(within(management).getByText("Process stopped")).toBeVisible();
+  expect(within(management).queryByText(/The agent didn't start/)).toBeNull();
 });
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
@@ -969,7 +993,11 @@ it("keeps Duplicate and Delete on local cards in the unified inventory", async (
     name: "Agent Fixture agent",
   });
   // Unified inventory cards carry identity sources; legacy cards do not.
-  expect(within(card).getByText("Identity & sources")).toBeInTheDocument();
+  const management = await manageCard(card);
+  expect(
+    within(management).getByText("Identity & sources"),
+  ).toBeInTheDocument();
+  await closeManagement(management);
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
@@ -1007,9 +1035,11 @@ it("focuses the imported managed identity without starting it", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
-  const notice = await screen.findByText(/Imported, not started\./);
-  const imported = notice.closest("article");
-  if (!imported) throw Error("Imported card missing");
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Review agent status" }),
+  );
+  const imported = await screen.findByRole("dialog", { name: /^Manage / });
+  const notice = await within(imported).findByText(/Imported, not started\./);
   expect(imported).toHaveTextContent("wss://third.example");
   expect(notice.parentElement).toHaveFocus();
   expect(
@@ -1305,9 +1335,10 @@ it("creates and starts a bundled Goose agent with the selected provider", async 
     BUZZ_ACP_AGENTS: "10",
   });
   expect(start).toHaveBeenCalledExactlyOnceWith("created-goose", "start");
-  expect(
-    await screen.findByRole("article", { name: "Agent Goose helper" }),
-  ).toHaveTextContent("Process running");
+  const created = await screen.findByRole("article", {
+    name: "Agent Goose helper",
+  });
+  expect(await manageCard(created)).toHaveTextContent("Process running");
 });
 
 it("keeps the saved agent when Start reports a process failure", async () => {
@@ -1646,7 +1677,11 @@ it("credential import keeps real Stop controls reachable without trapping the ed
       await screen.findByRole("button", { name: "Import Fixture agent" }),
     );
     expect(control.snapshot().busy).toBe(true);
-    expect(within(first).getByRole("button", { name: "Stop" })).toBeEnabled();
+    const management = await manageCard(first);
+    expect(
+      within(management).getByRole("button", { name: "Stop" }),
+    ).toBeEnabled();
+    await closeManagement(management);
     fireEvent.click(
       within(first).getByRole("button", { name: "Actions for Fixture agent" }),
     );
@@ -1687,7 +1722,10 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     // Recovery for a different exact identity stays accessible behind the dialog.
-    fireEvent.click(within(other).getByRole("button", { name: "Stop" }));
+    const otherManagement = await manageCard(other);
+    fireEvent.click(
+      within(otherManagement).getByRole("button", { name: "Stop" }),
+    );
     await waitFor(() =>
       expect(f.calls.filter((call) => call.action === "stop")).toEqual([
         { action: "stop", payload: { id: "fixture-agent" } },
@@ -1785,8 +1823,8 @@ for (const stage of ["create", "profile"] as const) {
           name: "Agent Fixture agent",
         })[0];
         if (!card) throw Error("Running fixture card missing");
-        await user.click(within(card).getByLabelText("Manage Fixture agent"));
-        const stop = within(card).getByRole("button", { name: "Stop" });
+        const management = await manageCard(card);
+        const stop = within(management).getByRole("button", { name: "Stop" });
         expect(stop).toBeVisible();
         expect(stop).toBeEnabled();
         if (recoverStop) {
@@ -1798,9 +1836,10 @@ for (const stage of ["create", "profile"] as const) {
             }),
           );
           expect(
-            within(card).getByRole("button", { name: "Start" }),
+            within(management).getByRole("button", { name: "Start" }),
           ).toBeDisabled();
         }
+        await closeManagement(management);
         // A later dialog must not be closed by the dismissed operation's callback.
         await user.click(screen.getByRole("button", { name: "Create agent" }));
         const newer = screen.getByRole("dialog", { name: "Create agent" });
@@ -2017,7 +2056,7 @@ it.each(["running", "failed"] as const)(
       name: "Agent Fixture agent",
     });
     if (!card) throw Error("Missing managed card");
-    fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
+    const management = await manageCard(card);
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => {
       releaseRead = resolve;
@@ -2032,13 +2071,15 @@ it.each(["running", "failed"] as const)(
       .spyOn(f.host, "action")
       .mockRejectedValueOnce("Synthetic start failure.");
     try {
-      fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+      fireEvent.click(
+        within(management).getByRole("button", { name: "Start" }),
+      );
       expect(
-        await within(card).findByText("Checking agent status…"),
+        await within(management).findByText("Checking agent status…"),
       ).toBeVisible();
       expect(snapshot).toHaveBeenCalledOnce();
       expect(
-        within(card).getByRole("button", { name: "Start" }),
+        within(management).getByRole("button", { name: "Start" }),
       ).toBeDisabled();
       f.agent.enabled = true;
       f.agent.status = status;
@@ -2047,13 +2088,13 @@ it.each(["running", "failed"] as const)(
       await waitFor(() => expect(control.snapshot().status).toBe("ready"));
       expect(control.snapshot().error).toBeNull();
       if (status === "failed") {
-        expect(within(card).getByRole("alert")).toHaveTextContent(
+        expect(within(management).getByRole("alert")).toHaveTextContent(
           "Synthetic start failure.",
         );
         expect(screen.getAllByRole("alert")).toHaveLength(1);
       } else {
         expect(
-          within(card).getByText(
+          within(management).getByText(
             "Process running · relay readiness unverified",
           ),
         ).toBeVisible();
@@ -2061,6 +2102,7 @@ it.each(["running", "failed"] as const)(
       }
       expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
       expect(action).toHaveBeenCalledExactlyOnceWith(f.agent.id, "start");
+      await closeManagement(management);
       const other = screen.getAllByRole("article", {
         name: "Agent Fixture agent",
       })[1];
@@ -2679,9 +2721,7 @@ it("clears an obsolete route before editing another card", async () => {
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
-  const other = cards.find((card) =>
-    card.textContent?.includes("wss://second.example"),
-  );
+  const other = await cardInCommunity(cards, "wss://second.example");
   if (!other) throw Error("Second destination missing");
   fireEvent.click(
     within(other).getByRole("button", { name: "Actions for Fixture agent" }),
@@ -2905,28 +2945,32 @@ it("shows native waiting, recovery Stop and one explicit Retry without polling a
   const cards = await screen.findAllByRole("article", {
     name: `Agent ${f.agent.name}`,
   });
-  const card = cards.find((entry) =>
-    entry.textContent?.includes(f.agent.relayUrl),
-  );
+  const card = await cardInCommunity(cards, f.agent.relayUrl);
   if (!card) throw Error("Exact destination card missing");
-  fireEvent.click(within(card).getByLabelText("Manage Fixture agent"));
+  const management = await manageCard(card);
   expect(
-    within(card).getByText("Waiting to start · unlock Keychain if prompted"),
+    within(management).getByText(
+      "Waiting to start · unlock Keychain if prompted",
+    ),
   ).toBeVisible();
-  expect(within(card).queryByRole("button", { name: "Start" })).toBeNull();
-  expect(within(card).getByRole("button", { name: "Stop" })).toBeEnabled();
-  expect(within(card).getByText("Starts with this app.")).toBeVisible();
+  expect(
+    within(management).queryByRole("button", { name: "Start" }),
+  ).toBeNull();
+  expect(
+    within(management).getByRole("button", { name: "Stop" }),
+  ).toBeEnabled();
+  expect(within(management).getByText("Starts with this app.")).toBeVisible();
   f.agent.status = "failed";
   f.agent.error =
     "Secure storage access was denied; allow access explicitly and retry";
   await act(() => control.refresh());
   await act(() => control.refresh());
-  expect(within(card).getByRole("alert")).toHaveTextContent(
+  expect(within(management).getByRole("alert")).toHaveTextContent(
     "Secure storage access was denied",
   );
   expect(f.calls.filter((call) => call.action === "start")).toHaveLength(0);
   await userEvent.click(
-    within(card).getByRole("button", { name: "Retry start" }),
+    within(management).getByRole("button", { name: "Retry start" }),
   );
   await waitFor(() =>
     expect(f.calls.filter((call) => call.action === "start")).toHaveLength(1),
@@ -2954,19 +2998,22 @@ it("Use here retries owner confirmation and keeps setup stopped until a separate
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
-  const card = cards.find((entry) =>
-    entry.textContent?.includes("wss://relay.example.test"),
-  );
+  const card = await cardInCommunity(cards, "wss://relay.example.test");
   if (!card) throw Error("Imported card missing");
-  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
-  fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
+  const management = await manageCard(card);
+  expect(
+    within(management).getByRole("button", { name: "Start" }),
+  ).toBeDisabled();
+  fireEvent.click(within(management).getByRole("button", { name: "Use here" }));
   const dialog = screen.getByRole("dialog", { name: "Set up agent here" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Use here" }));
   await within(dialog).findByText("Confirmation unavailable");
   expect(f.calls.some((call) => call.action === "configure")).toBe(false);
   fireEvent.click(within(dialog).getByRole("button", { name: "Use here" }));
   await waitFor(() =>
-    expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled(),
+    expect(
+      within(management).getByRole("button", { name: "Start" }),
+    ).toBeEnabled(),
   );
   expect(request).toHaveBeenLastCalledWith(
     "https://relay.example.test",
@@ -2977,7 +3024,7 @@ it("Use here retries owner confirmation and keeps setup stopped until a separate
   expect(
     f.calls.some((call) => call.action === "start" || call.action === "import"),
   ).toBe(false);
-  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  fireEvent.click(within(management).getByRole("button", { name: "Start" }));
   await waitFor(() =>
     expect(f.calls.some((call) => call.action === "start")).toBe(true),
   );
@@ -3144,9 +3191,13 @@ it("uses snapshot capabilities rather than JS wrappers and retains older-host im
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
-  const notice = await screen.findByText(/Imported, not started\./);
-  const card = notice.closest("article");
-  if (!card) throw Error("Imported card missing");
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Review agent status" }),
+  );
+  const card = await screen.findByRole("dialog", { name: /^Manage / });
+  expect(
+    await within(card).findByText(/Imported, not started\./),
+  ).toBeVisible();
   expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
   expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
   expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1);
@@ -3222,7 +3273,9 @@ it("unified card Import selects exact identity and development source, then move
     name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
   });
   expect(
-    within(configuredCard).getByRole("button", { name: "Start" }),
+    within(await manageCard(configuredCard)).getByRole("button", {
+      name: "Start",
+    }),
   ).toBeEnabled();
   expect(f.calls.some((call) => call.action === "start")).toBe(false);
 });

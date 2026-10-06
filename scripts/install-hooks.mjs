@@ -15,10 +15,17 @@ const config = (key, ...scope) => {
 process.chdir(git("rev-parse", "--show-toplevel"));
 // Refuse different hooks paths in this clone or its worktree config. Global and
 // system settings are intentionally ignored because this install replaces them.
-const shared = config("core.hooksPath", "--local");
+const shared = config("core.hooksPath", "--local", "--includes");
 const worktreeConfig =
-  config("extensions.worktreeConfig", "--local", "--type=bool") === "true";
-const worktree = worktreeConfig ? config("core.hooksPath", "--worktree") : "";
+  config(
+    "extensions.worktreeConfig",
+    "--local",
+    "--includes",
+    "--type=bool",
+  ) === "true";
+const worktree = worktreeConfig
+  ? config("core.hooksPath", "--worktree", "--includes")
+  : "";
 for (const value of [shared, worktree])
   if (value && value !== ".githooks")
     throw new Error(

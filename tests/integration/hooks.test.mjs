@@ -89,6 +89,18 @@ function fixture(t) {
   return { dir, sibling, run, git, write, read, install, commit };
 }
 
+function assertIncludedHooksPathRefused(f, files, expectedPath) {
+  const before = files.map((file) => [file, f.read(file)]);
+  const refused = f.install();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Existing core.hooksPath/);
+  for (const [file, content] of before)
+    assert.equal(f.read(file), content, `${file} changed after refusal`);
+  const effective = f.run("git", ["config", "--get", "core.hooksPath"]);
+  assert.equal(effective.status, 0, effective.stdout + effective.stderr);
+  assert.equal(effective.stdout.trim(), expectedPath);
+}
+
 test("both pre-push jobs receive the complete Git input without sharing a read cursor", (t) => {
   const f = fixture(t);
   // Keep the installed hook and production job configuration. Probe only the
@@ -321,6 +333,53 @@ test("a conflicting clone hooks path is refused", (t) => {
   assert.equal(
     f.git("config", "--local", "--get", "core.hooksPath").trim(),
     "custom-hooks",
+  );
+});
+
+test("a clone include before core is refused", (t) => {
+  const f = fixture(t);
+  f.git("config", "--local", "--unset", "core.hooksPath");
+  f.write(".git/included-before.conf", "[core]\n\thooksPath = custom-before\n");
+  const config = f.read(".git/config");
+  f.write(".git/config", `[include]\n\tpath = included-before.conf\n${config}`);
+  assertIncludedHooksPathRefused(
+    f,
+    [".git/config", ".git/included-before.conf"],
+    "custom-before",
+  );
+});
+
+test("a clone include after core is refused", (t) => {
+  const f = fixture(t);
+  f.git("config", "--local", "--unset", "core.hooksPath");
+  f.write(".git/included-after.conf", "[core]\n\thooksPath = custom-after\n");
+  const config = f.read(".git/config");
+  f.write(
+    ".git/config",
+    `${config}\n[include]\n\tpath = included-after.conf\n`,
+  );
+  assertIncludedHooksPathRefused(
+    f,
+    [".git/config", ".git/included-after.conf"],
+    "custom-after",
+  );
+});
+
+test("an included worktree hooks path is refused", (t) => {
+  const f = fixture(t);
+  f.git("config", "--local", "extensions.worktreeConfig", "true");
+  f.write(
+    ".git/included-worktree.conf",
+    "[core]\n\thooksPath = custom-worktree\n",
+  );
+  f.write(
+    ".git/config.worktree",
+    "[include]\n\tpath = included-worktree.conf\n",
+  );
+  assertIncludedHooksPathRefused(
+    f,
+    [".git/config.worktree", ".git/included-worktree.conf"],
+    "custom-worktree",
   );
 });
 

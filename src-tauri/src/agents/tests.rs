@@ -128,12 +128,12 @@ fn production_acl_allows_delete_to_reach_native_credentials() {
 }
 #[test]
 fn harnesses_classify_cli_and_adapter_separately() {
-    assert_eq!(pi_status(false, false, false), "cli-needed");
-    assert_eq!(pi_status(false, true, true), "cli-needed");
-    assert_eq!(pi_status(true, false, false), "cli-needed");
-    assert_eq!(pi_status(true, true, false), "cli-needed");
-    assert_eq!(pi_status(true, false, true), "adapter-needed");
-    assert_eq!(pi_status(true, true, true), "ready");
+    assert_eq!(npm_status(false, false, false), "cli-needed");
+    assert_eq!(npm_status(false, true, true), "cli-needed");
+    assert_eq!(npm_status(true, false, false), "cli-needed");
+    assert_eq!(npm_status(true, true, false), "cli-needed");
+    assert_eq!(npm_status(true, false, true), "adapter-needed");
+    assert_eq!(npm_status(true, true, true), "ready");
 }
 
 #[test]
@@ -159,22 +159,22 @@ fn hermes_is_a_manual_preset_with_presence_based_availability() {
 #[test]
 fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_node() {
     let path = |name| Some(PathBuf::from(format!("/fixture/{name}")));
-    let empty = || PiTools {
+    let empty = || NpmTools {
         cli: None,
         adapter: None,
         node: None,
     };
-    let managed = || PiTools {
+    let managed = || NpmTools {
         cli: path("managed-pi"),
         adapter: path("managed-adapter"),
         node: path("managed-node"),
     };
-    let (command, status, managed_selected) = pi_choice(empty(), managed());
+    let (command, status, managed_selected) = npm_choice(empty(), managed());
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             adapter: path("user-adapter"),
             node: path("user-node"),
@@ -184,12 +184,12 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("user-adapter"));
     assert_eq!(status, "ready");
     assert!(!managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             ..empty()
         },
-        PiTools {
+        NpmTools {
             cli: None,
             ..managed()
         },
@@ -197,9 +197,9 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
+    let (command, status, managed_selected) = npm_choice(
         empty(),
-        PiTools {
+        NpmTools {
             node: None,
             ..managed()
         },
@@ -471,7 +471,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],
-        pi_status(
+        npm_status(
             buzz_agent_controller::installed("pi").is_some(),
             buzz_agent_controller::installed("buzz-pi-acp").is_some(),
             buzz_agent_controller::installed("node").is_some(),
@@ -2613,6 +2613,128 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
             } else {
                 "Synthetic initialization failure"
             }
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_claude_manual_setup_uses_runnable_launchers() {
+    if let Some(root) = std::env::var_os("BUZZ_DISCOVERY_FIXTURE") {
+        let root = PathBuf::from(root);
+        let app_data = root.join("app-data");
+        let setup = claude_setup(&app_data);
+        assert_eq!(setup.status, "ready");
+        assert!(!setup.install_supported);
+        assert_eq!(setup.cli, Some(root.join("claude.cmd")));
+        assert!(setup
+            .login_command
+            .unwrap()
+            .ends_with("claude.cmd' auth login"));
+        assert!(claude_setup(&app_data)
+            .login_command
+            .unwrap()
+            .starts_with("& '"));
+        // Do not activate Windows Pi paths that its preflight does not support.
+        assert_eq!(buzz_agent_controller::installed("node"), None);
+        assert!(
+            !harness_options(&app_data)
+                .iter()
+                .find(|h| h.label == "Pi")
+                .unwrap()
+                .available
+        );
+        // Native CLI wins within a directory; a later PATH entry did not outrank .cmd.
+        std::fs::write(root.join("claude.exe"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).cli, Some(root.join("claude.exe")));
+        std::fs::remove_file(root.join("claude-agent-acp.cmd")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "adapter-needed");
+        std::fs::write(root.join("claude-agent-acp.bat"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).status, "ready");
+        std::fs::remove_file(root.join("node.exe")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "cli-needed");
+        return;
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("Buzz tools ")
+        .tempdir()
+        .unwrap();
+    let root = directory.path();
+    let later = root.join("later");
+    std::fs::create_dir(&later).unwrap();
+    for name in [
+        "claude",
+        "claude.cmd",
+        "node.exe",
+        "claude-agent-acp",
+        "claude-agent-acp.cmd",
+        "pi.cmd",
+        "buzz-pi-acp.cmd",
+    ] {
+        std::fs::write(root.join(name), "fixture bytes").unwrap();
+    }
+    std::fs::write(later.join("claude.exe"), "fixture bytes").unwrap();
+    // A subprocess isolates discovery from the developer and parallel native tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::windows_claude_manual_setup_uses_runnable_launchers",
+            "--nocapture",
+        ])
+        .env("BUZZ_DISCOVERY_FIXTURE", root)
+        .env("HOME", root.join("empty-home"))
+        .env(
+            "PATH",
+            std::env::join_paths([root, later.as_path()]).unwrap(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn claude_auth_check_exposes_only_confirmed_status() {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::Builder::new()
+        .prefix("Claude tools ")
+        .tempdir()
+        .unwrap();
+    let cli = directory.path().join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
+    for (output, exit, expected) in [
+        (
+            r#"{"loggedIn":true,"email":"private@example.com"}"#,
+            0,
+            Some(true),
+        ),
+        (r#"{"loggedIn":false}"#, 1, Some(false)),
+        (r#"{"loggedIn":false}"#, 0, None),
+        (r#"{"loggedIn":true}"#, 1, None),
+        (r#"{"loggedIn":false}"#, 2, None),
+        (r#"{"loggedIn":"true"}"#, 0, None),
+        (r#"{"email":"private@example.com"}"#, 0, None),
+        ("not JSON", 0, None),
+    ] {
+        #[cfg(unix)]
+        {
+            std::fs::write(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n")).unwrap();
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        std::fs::write(&cli, format!("@echo off\r\nif not \"%~1\"==\"auth\" exit /b 3\r\nif not \"%~2\"==\"status\" exit /b 3\r\necho {output}\r\nexit /b {exit}\r\n")).unwrap();
+        assert_eq!(
+            probe_claude_auth(&cli, &crate::host_command::effective_path()).await,
+            expected
         );
     }
 }

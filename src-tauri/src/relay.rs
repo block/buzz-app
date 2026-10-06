@@ -911,13 +911,23 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
 /// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
 /// descriptor validation, as it does for the dev broker.
 #[tauri::command]
-pub(crate) async fn relay_upload(
+pub(crate) async fn relay_upload<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<RelayResponse> {
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
     let id = upload_id(header("x-buzz-upload-id"))?;
+    // A raw body cannot carry a Channel argument, so its ID travels as a header.
+    let progress = header("x-buzz-upload-progress")
+        .map(|value| {
+            value
+                .parse::<tauri::ipc::JavaScriptChannelId>()
+                .map(|channel| channel.channel_on(webview))
+                .map_err(|_| "Invalid upload progress channel".to_string())
+        })
+        .transpose()?;
     let url = origin(header("x-buzz-community").unwrap_or_default())?
         .join("/upload")
         .map_err(|_| "Invalid relay path")?;
@@ -945,10 +955,18 @@ pub(crate) async fn relay_upload(
             Err(error)
         }
     } else if let Some(mode) = preparation.as_deref() {
-        upload_prepared(host.inner(), url, body.clone(), mode, &mut cancelled).await
+        upload_prepared(
+            host.inner(),
+            url,
+            body.clone(),
+            mode,
+            progress,
+            &mut cancelled,
+        )
+        .await
     } else {
         tokio::select! {
-            result = upload(host.inner(), url, kind, body.clone()) => result,
+            result = upload(host.inner(), url, kind, body.clone(), progress) => result,
             _ = &mut cancelled => Err("Upload cancelled".into()),
         }
     };
@@ -967,6 +985,7 @@ async fn upload_prepared(
     url: Url,
     body: Vec<u8>,
     mode: &str,
+    progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
     let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
@@ -983,7 +1002,7 @@ async fn upload_prepared(
         }
     };
     tokio::select! {
-        result = upload(host, url, Some(kind), body) => result,
+        result = upload(host, url, Some(kind), body, progress) => result,
         _ = cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -1007,11 +1026,44 @@ async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
     .map_err(|_| "Upload hashing could not complete".into())
 }
 
+/// Byte counts for the calling webview's upload progress bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct UploadSent {
+    sent: u64,
+    total: u64,
+}
+type UploadProgress = tauri::ipc::Channel<UploadSent>;
+const UPLOAD_CHUNK: usize = 64 * 1024;
+
+/// Streams the body in chunks. Each report counts the bytes handed to the
+/// connection once its chunk is yielded, so the last chunk reports `total`
+/// without relying on another poll. Reports are limited to whole-percent changes.
+fn progress_chunks(
+    body: Vec<u8>,
+    report: impl Fn(UploadSent) + Send + 'static,
+) -> impl Iterator<Item = std::io::Result<bytes::Bytes>> + Send + 'static {
+    let body = bytes::Bytes::from(body);
+    let total = body.len() as u64;
+    let mut reported = None;
+    (0..body.len().div_ceil(UPLOAD_CHUNK)).map(move |index| {
+        let start = index * UPLOAD_CHUNK;
+        let end = usize::min(start + UPLOAD_CHUNK, body.len());
+        let sent = end as u64;
+        let percent = sent * 100 / total;
+        if reported != Some(percent) {
+            reported = Some(percent);
+            report(UploadSent { sent, total });
+        }
+        Ok(body.slice(start..end))
+    })
+}
+
 async fn upload(
     host: &IdentityHost,
     url: Url,
     kind: Option<&str>,
     body: Vec<u8>,
+    progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
     let kind = kind
         .filter(|kind| valid_type(kind))
@@ -1032,7 +1084,15 @@ async fn upload(
         .header("Authorization", auth)
         .header("Content-Type", kind)
         .header("X-SHA-256", hash)
-        .body(body)
+        .header(reqwest::header::CONTENT_LENGTH, body.len())
+        .body(match progress {
+            Some(channel) => reqwest::Body::wrap_stream(futures_util::stream::iter(
+                progress_chunks(body, move |sent| {
+                    let _ = channel.send(sent);
+                }),
+            )),
+            None => body.into(),
+        })
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;

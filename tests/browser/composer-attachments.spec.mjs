@@ -121,6 +121,9 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     });
     await expect(form.getByText(/Queued$/)).toHaveCount(3);
     expect(uploadRequests).toHaveLength(0);
+    // Files waiting for Send show their remove control, not a busy spinner.
+    await expect(form.locator("[data-uploading]")).toHaveCount(0);
+    await expect(remove.locator("svg")).toHaveCount(1);
     // Real layout proves attachment cards stay in one horizontal lane.
     const cards = form
       .getByRole("region", { name: "Attachments", exact: true })
@@ -218,8 +221,12 @@ test("a sent attachment keeps uploading after navigation and publishes to its or
     await general.getByRole("textbox").press("Enter");
     await expect.poll(() => uploadRequests.length).toBe(1);
     await expect(
-      page.getByRole("status").filter({ hasText: "Uploading 0%" }),
+      page.getByRole("status").filter({ hasText: /^Uploading$/ }),
     ).toBeVisible();
+    // The broker reports no bytes: an indeterminate bar, never a number.
+    await expect(
+      page.getByRole("progressbar", { name: "Uploading", exact: true }),
+    ).not.toHaveAttribute("aria-valuenow");
     await expect(general.getByRole("textbox")).toHaveText("");
     await expect(general.getByText("held.txt")).toHaveCount(0);
 
@@ -230,7 +237,7 @@ test("a sent attachment keeps uploading after navigation and publishes to its or
     });
     await expect(general).toHaveCount(0);
     await expect(
-      page.getByRole("status").filter({ hasText: "Uploading 0%" }),
+      page.getByRole("status").filter({ hasText: /^Uploading$/ }),
     ).toBeVisible();
     await random.getByRole("textbox").fill("still composing");
     expect(

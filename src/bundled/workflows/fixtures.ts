@@ -125,6 +125,7 @@ export function createWorkflowFixture() {
         eventId,
         workflow,
         action,
+        createdAt: fixtureDefinition.createdAt + counter,
         delivery: "sending",
         outcome: "pending",
       },

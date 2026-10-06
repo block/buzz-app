@@ -315,7 +315,7 @@ it("announces queued files, then background preparation and upload, while editor
   await act(async () => {
     header.resolve(new ArrayBuffer(0));
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Uploading 0%");
+  expect(screen.getByRole("status")).toHaveTextContent(/^Uploading$/);
   expect(editor).toHaveFocus();
   await act(async () => {
     upload.resolve(h.uploaded);

@@ -57,9 +57,7 @@ async function awaitCode(bridge: Native, signal: AbortSignal) {
   const { id } = await command<{ id: string }>(bridge, "oauth_callback_begin", {
     authorizationUrl: login.href,
     callbackPath: `/callback/${crypto.randomUUID().replaceAll("-", "")}`,
-    callbackParameter: "returnTo",
-    // Builderlab's custom protocol carries no state; the random path binds the attempt.
-    useState: false,
+    useState: true,
   });
   const cancel = () =>
     void bridge.invoke("oauth_callback_cancel", { id }).catch(() => {});

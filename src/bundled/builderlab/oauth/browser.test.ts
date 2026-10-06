@@ -53,10 +53,7 @@ it("acquires a verified credential through the code-only callback", async () => 
     type: "cli",
     product: "builderlab",
   });
-  expect(options).toMatchObject({
-    callbackParameter: "returnTo",
-    useState: false,
-  });
+  expect(options).toMatchObject({ useState: true });
   expect(options?.callbackPath).toMatch(/^\/callback\/[0-9a-f-]{36}$/);
   expect(host.request).toHaveBeenNthCalledWith(
     1,

@@ -323,6 +323,7 @@ fn tools_path() -> Result<std::ffi::OsString> {
 pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -339,6 +340,28 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn installed(name: &str) -> Option<PathBuf> {
+    installed_names(&[name.to_owned()])
+}
+
+/// Claude's setup supports Windows npm launchers; other harnesses retain their
+/// existing discovery until their launch contracts support those paths too.
+pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
+    // npm also writes an extensionless POSIX shim on Windows. Prefer launchers
+    // that Rust and the displayed PowerShell sign-in command can actually run.
+    #[cfg(windows)]
+    let names = if Path::new(name).extension().is_some() {
+        vec![name.to_owned()]
+    } else {
+        ["exe", "cmd", "bat"]
+            .map(|extension| format!("{name}.{extension}"))
+            .to_vec()
+    };
+    #[cfg(not(windows))]
+    let names = [name.to_owned()];
+    installed_names(&names)
+}
+
+fn installed_names(names: &[String]) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/bin"));
@@ -352,7 +375,7 @@ pub fn installed(name: &str) -> Option<PathBuf> {
     ]);
     dirs.into_iter()
         .filter(|p| p.is_absolute())
-        .map(|p| p.join(name))
+        .flat_map(|p| names.iter().map(move |name| p.join(name)))
         .find(|p| executable(p).is_ok())
 }
 

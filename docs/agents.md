@@ -164,15 +164,31 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 ### Chooser rules
 
-Both the toolbar picker and inline completion use `mention-candidates.ts` and
-`mention-ranking.ts`. Membership permits notification, not a promise that an agent
-will accept or answer the prompt. DMs, like channels, can name outside people;
-they become references because nobody can be added to a DM. Ordinary
-nonmember consent and session invitation rules remain the access owners;
-selection itself neither grants access nor starts an agent. Invalid recipient
-keys, known-archived identities, and archived/read-only destinations are excluded.
-The viewer is never hidden from themself. Unknown archive state does not block
-selection. Optional archive reads are lazy.
+Two parts of the app decide who you can mention:
+
+- **The Mentions plugin decides what the chooser shows.** This covers both the
+  toolbar picker and the inline `@` list: who is listed, in what order, and when
+  Space picks a name (`src/bundled/mentions/`).
+- **The composer decides who a message can address.** It checks every mention
+  before it goes into the draft, whatever added it (`mention-admission.ts`). The
+  plugin lists only people that this check accepts.
+
+The composer accepts these people:
+
+| Where you write | Who you can mention |
+| --- | --- |
+| Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
+| DM | Anyone. People outside the DM are named but not notified. |
+| Session | Session members, plus your agents when the session invites agents. |
+| New DM, before it is created | Only the people you chose for the DM. |
+| Archived or read-only channel | Nobody. |
+
+Everywhere, the composer refuses invalid keys and people known to be archived.
+You can always mention yourself. If archive state is unknown, the mention is
+allowed.
+
+A mention notifies a member. It does not promise that an agent will answer, and
+choosing someone does not give them access or start an agent.
 
 Search trims and lowercases the query. Members precede nonmembers, with humans and agents in each group. Within each
 group, matches against the visible resolved label come first: whole-name exact,
@@ -209,8 +225,9 @@ page of the same chooser stay visible (one picker, or one inline `@` token; inli
 completion remounts per keystroke, so the page is kept per session outside it) and the chooser shows "Searching community…". Uncached queries
 reach the network only after a 200 ms typing pause. Settled first pages are cached
 per session and query (100 queries); errors are not cached, and Retry reads the
-current query again. Identity naming uses eligible candidates plus the
-current draft recipients, not every cached profile.
+current query again. Chooser identity naming uses eligible candidates plus the
+current draft recipients, not every cached profile. Composer chips name their
+recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
@@ -219,8 +236,8 @@ names, ambiguous names, modified Space, IME composition, code and protected lite
 ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
 
-The composer rejects already-known archived recipients (never the viewer) at send entry and omits
-ineligible agents from the next draft. This is not an archive transaction: archive
+The composer rejects already-known archived recipients (never the viewer) at
+send entry. The next draft keeps only agents that the sent message notified. This is not an archive transaction: archive
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 

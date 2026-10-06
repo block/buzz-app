@@ -9,9 +9,9 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
   archivedMention,
-  mentionCandidates,
-  rememberMention,
-} from "./mention-candidates";
+  mentionAdmission,
+} from "./mention-admission";
+import { rememberMention } from "./mention-history";
 import {
   readComposerSnapshot,
   composerMarkdownContext,
@@ -746,9 +746,12 @@ function Composer({
     }
     if (
       recipient &&
-      !mentionCandidates(session, channelId, agentChoices, mentionRoster, [
-        recipient,
-      ]).some((c) => c.recipient.pubkey === recipient.pubkey)
+      !mentionAdmission(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+      )(recipient.pubkey)
     ) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
@@ -819,16 +822,13 @@ function Composer({
         undefined,
         range,
       );
-    const eligible = new Set(
-      mentionCandidates(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-        unique,
-      ).map((choice) => choice.recipient.pubkey),
+    const admits = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
     );
-    if (unique.some((person) => !eligible.has(person.pubkey))) {
+    if (unique.some((person) => !admits(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -1058,12 +1058,8 @@ function Composer({
           ? captured.recipients.filter(
               (item) =>
                 agents.has(item.pubkey) &&
-                mentionCandidates(
-                  session,
-                  channelId,
-                  agentChoices,
-                  mentionRoster,
-                ).some((c) => c.recipient.pubkey === item.pubkey),
+                recipients.includes(item.pubkey) &&
+                !archivedMention(session, item.pubkey),
             )
           : [],
       );
@@ -1380,7 +1376,6 @@ function Composer({
           )}
           <div className={styles.composerInput}>
             <RichComposerInput
-              inviteAgents={agentChoices}
               ref={input}
               id={inputId}
               disabled={editingDisabled}

@@ -164,8 +164,11 @@ export function createAgentClient(host: Host, session: OAuthSession) {
     async attest(
       agent: RemoteAgent,
       signal: AbortSignal,
+      active: () => boolean,
     ): Promise<RemoteAgent> {
       signal.throwIfAborted();
+      if (!active())
+        throw new DOMException("Builderlab card is inactive.", "AbortError");
       const credential = session.credential();
       if (!host.prepareRemoteAgentAuthorization)
         throw new Error(
@@ -176,6 +179,8 @@ export function createAgentClient(host: Host, session: OAuthSession) {
         signal,
       );
       check(credential, signal);
+      if (!active())
+        throw new DOMException("Builderlab card is inactive.", "AbortError");
       const result = await request(
         "attest-agent",
         {

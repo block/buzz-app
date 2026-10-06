@@ -66,6 +66,7 @@ function AgentList({
   const change = async (agent?: RemoteAgent) => {
     const signal = operation.current?.signal;
     if (!signal || signal.aborted || busy || loading || !active()) return;
+    const current = () => !signal.aborted && active();
     setBusy(true);
     setError(undefined);
     const show = (row: RemoteAgent) =>
@@ -75,20 +76,20 @@ function AgentList({
       ]);
     try {
       const registered = agent ?? (await client.register(name, signal));
-      if (signal.aborted) return;
+      if (!current()) return;
       show(registered);
       if (!agent) setName("");
-      const ready = await client.attest(registered, signal);
-      if (!signal.aborted) show(ready);
+      const ready = await client.attest(registered, signal, active);
+      if (current()) show(ready);
     } catch (reason) {
-      if (!signal.aborted)
+      if (current())
         setError(
           reason instanceof Error
             ? reason.message
             : "Could not create the agent. Retry the same name.",
         );
     } finally {
-      if (!signal.aborted) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   return (

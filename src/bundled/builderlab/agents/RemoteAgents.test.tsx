@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../../features/host/service";
@@ -199,3 +199,59 @@ it("does not attest or show a held registration after sign-out", async () => {
     screen.queryByRole("region", { name: "Remote agents" }),
   ).not.toBeInTheDocument();
 });
+
+it.each(["registration", "signing"])(
+  "does not continue creation when card ownership is lost during %s before effect cleanup",
+  async (stage) => {
+    const h = await fixture();
+    let active = true;
+    render(<RemoteAgents {...h} active={() => active} />);
+    await screen.findByText("Helper · Active");
+    const registered = {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        status: 1,
+        agent_id: "two",
+        agent_pubkey: row.agent_pubkey,
+      }),
+    };
+    const registration = deferred<HostResponse>();
+    const signing = deferred<Awaited<ReturnType<typeof h.authorize>>>();
+    const proof = ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const;
+    if (stage === "registration")
+      h.request.mockReturnValueOnce(registration.promise);
+    else {
+      h.request.mockResolvedValueOnce(registered);
+      h.authorize.mockReturnValueOnce(signing.promise);
+    }
+    try {
+      const user = userEvent.setup();
+      await user.type(
+        screen.getByRole("textbox", { name: "Agent name" }),
+        "Another",
+      );
+      await user.click(screen.getByRole("button", { name: "Create agent" }));
+      await waitFor(() => {
+        expect(h.request).toHaveBeenCalledTimes(2);
+        expect(h.authorize).toHaveBeenCalledTimes(stage === "signing" ? 1 : 0);
+      });
+      // Revoke ownership without unmounting or signing out: the signal is still live.
+      active = false;
+      await act(async () => {
+        registration.resolve(registered);
+        signing.resolve(proof);
+      });
+      expect(h.request).toHaveBeenCalledTimes(2);
+      expect(h.authorize).toHaveBeenCalledTimes(stage === "signing" ? 1 : 0);
+      expect(screen.queryAllByText("Another · Unattested")).toHaveLength(
+        stage === "signing" ? 1 : 0,
+      );
+      expect(screen.queryByText("Another · Active")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      registration.resolve(registered);
+      signing.resolve(proof);
+    }
+  },
+);

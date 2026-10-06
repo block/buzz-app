@@ -27,20 +27,28 @@ new plugin security sandbox. The frontend CSP is unchanged.
    generates a separate random six-digit code that is never sent in the QR or
    challenge. The phone submits the entered code; desktop verifies it with a
    five-attempt budget before sending the encrypted account payload.
+   The code protects against a captured QR, not a live observer: someone who can
+   watch both the QR and the code can race the phone and enter the code. Do not
+   pair while sharing, recording, or otherwise exposing the screen to an untrusted
+   observer. `desktop-code-v1` extends NIP-AB; the NIP-AB/Tamarin
+   source-confirmation model in `crates/pairing/src/NIP-AB.md` does not establish
+   this extension's observation resistance.
 4. Older phones retain explicit **Codes match** confirmation and a **Cancel**
    action; Cancel sends `user_denied` before disposing the session. Code-entry
    phones also have Cancel, but no desktop
    confirmation action.
-5. **Phone paired** requires the phone's successful import acknowledgement.
-   Older phone versions acknowledge before import; update the phone to rely on
-   this guarantee.
+5. **Phone paired** means the phone acknowledged the transfer. Current phone
+   versions can acknowledge before saving the account, so desktop asks the user to
+   check that the account is signed in on the phone. The mobile fix is separate
+   `block/buzz` work.
    If a sent transfer times out or loses its connection awaiting acknowledgement, **Check your phone**
    preserves the uncertain outcome and requires a deliberate new attempt.
    Closing or reloading the window, leaving the Settings section, switching accounts/communities, disabling the
    plugin disposes the attempt, with a bounded best-effort `user_denied` notice
    only before transfer publication. After publication, closing the socket cannot
-   retract the account or interrupt the phone's import; the outcome remains
-   uncertain. Native cancellation remains terminal until an explicit retry
+   retract the account or interrupt the phone's import, so cancellation shows
+   **Check your phone** (or a result the phone already reported), not
+   **Pairing was canceled**. Native cancellation remains terminal until an explicit retry
    or reopening the pairing section. Retries use a fresh native session.
 
 Pairing uses the current native app identity through a purpose-bound

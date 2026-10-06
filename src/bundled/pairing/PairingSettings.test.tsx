@@ -40,7 +40,9 @@ it.each([
       account: vi.fn(async () => "a".repeat(64)),
       start: vi.fn(async () => {}),
       status: vi.fn(async (): Promise<PairingStatus> => ({ phase: "idle" })),
-      cancel: vi.fn(async () => {}),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
       confirm: vi.fn(async () => {}),
       deny: vi.fn(async () => {}),
     } satisfies PairingNative;
@@ -101,7 +103,9 @@ it.each([true, false])(
         status = { phase: "qr", svg: "<svg/>" };
       }),
       status: vi.fn(async () => status),
-      cancel: vi.fn(async () => {}),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
       confirm: vi.fn(async () => {}),
       deny: vi.fn(async () => {}),
     } satisfies PairingNative;
@@ -179,7 +183,9 @@ it.each(["uncertain", "cancelled"] as const)(
         status = { phase: "qr", svg: "<svg/>" };
       }),
       status: vi.fn(async () => status),
-      cancel: vi.fn(async () => {}),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
       confirm: vi.fn(async () => {}),
       deny: vi.fn(async () => {}),
     } satisfies PairingNative;
@@ -276,7 +282,7 @@ it("rejects a legacy mismatch and requires explicit retry", async () => {
     deny: vi.fn(async () => {
       status = { phase: "error", message: "Codes did not match." };
     }),
-    cancel: vi.fn(async () => {}),
+    cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
   } satisfies PairingNative;
   render(
     <PairingSettings
@@ -333,7 +339,7 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
     status: vi.fn(async () => status),
     confirm: vi.fn(async () => {}),
     deny: vi.fn(async () => {}),
-    cancel: vi.fn(async () => {}),
+    cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
   } satisfies PairingNative;
   render(
     <PairingSettings
@@ -373,50 +379,54 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
   }
 });
 
-it("explains code-entry cancellation before retry", async () => {
-  vi.stubGlobal("matchMedia", () => ({
-    matches: false,
-    addEventListener() {},
-    removeEventListener() {},
-  }));
-  const viewer = "a".repeat(64);
-  const snapshot: ClientSnapshot = {
-    status: "ready",
-    relayAvailable: true,
-    viewer,
-    selected: "https://community.example",
-    profile: { name: "", picture: "" },
-    memberships: [],
-  };
-  const native = {
-    account: vi.fn(async () => viewer),
-    start: vi.fn(async () => {}),
-    status: vi.fn(
-      async (): Promise<PairingStatus> => ({
-        phase: "code",
-        code: "123456",
-        codeEntry: true,
-      }),
-    ),
-    confirm: vi.fn(async () => {}),
-    deny: vi.fn(async () => {}),
-    cancel: vi.fn(async () => {}),
-  } satisfies PairingNative;
-  render(
-    <PairingSettings
-      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
-      active={() => true}
-      available
-      native={native}
-    />,
-  );
-  await act(async () => {});
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  });
-  expect(native.cancel).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("status").textContent).toContain(
-    "Pairing was canceled.",
-  );
-  expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
-});
+it.each([
+  ["cancelled", "Pairing was canceled.", "Try again"],
+  ["uncertain", "Check your phone", "Start a new pairing"],
+] as const)(
+  "explains code-entry %s cancellation before retry",
+  async (outcome, text, retry) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const viewer = "a".repeat(64);
+    const snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      viewer,
+      selected: "https://community.example",
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    const native = {
+      account: vi.fn(async () => viewer),
+      start: vi.fn(async () => {}),
+      status: vi.fn(
+        async (): Promise<PairingStatus> => ({
+          phase: "code",
+          code: "123456",
+          codeEntry: true,
+        }),
+      ),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+      cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: outcome })),
+    } satisfies PairingNative;
+    render(
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        available
+        native={native}
+      />,
+    );
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(native.cancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status").textContent).toContain(text);
+    expect(screen.getByRole("button", { name: retry })).toBeTruthy();
+  },
+);

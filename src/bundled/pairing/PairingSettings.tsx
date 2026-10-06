@@ -163,7 +163,7 @@ export function PairingSettings({
       id: "finish",
       title: done ? "Paired" : "Pair your mobile app",
       detail: done
-        ? "Your account is ready on your phone."
+        ? "Your account was sent. Check that it’s signed in on your phone."
         : "Your mobile app will connect after you verify the code.",
       complete: done,
     },

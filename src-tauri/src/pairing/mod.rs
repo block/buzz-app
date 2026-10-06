@@ -50,12 +50,26 @@ struct Active {
 }
 #[derive(Clone, Default)]
 pub struct Pairing(Arc<Mutex<Option<Active>>>);
+// Cancels the attempt and returns its teardown signal and visible outcome. After
+// possible publication, the attempt stays registered as its terminal outcome so
+// later status reads cannot report an unsent cancellation.
+fn stop(active: &mut Option<Active>) -> Option<(CancellationToken, Status)> {
+    let old = active.as_mut()?;
+    old.cancel.cancel();
+    if !old.payload_sent {
+        return active.take().map(|old| (old.finished, Status::Cancelled));
+    }
+    if !matches!(
+        old.status,
+        Status::Complete | Status::Uncertain | Status::Error { .. }
+    ) {
+        old.status = Status::Uncertain;
+    }
+    Some((old.finished.clone(), old.status.clone()))
+}
 impl Pairing {
     pub fn cancel_all(&self) {
-        let mut active = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(old) = active.take() {
-            old.cancel.cancel();
-        }
+        stop(&mut self.0.lock().unwrap_or_else(|error| error.into_inner()));
     }
 
     fn update(&self, id: &str, status: Status) {
@@ -68,11 +82,21 @@ impl Pairing {
             }
         }
     }
-    fn mark_payload_sent(&self, id: &str) {
-        if let Ok(mut active) = self.0.lock() {
-            if let Some(active) = active.as_mut().filter(|a| a.id == id) {
+    // Serialized with cancellation: false means cancellation won and the payload
+    // must not be published.
+    fn mark_payload_sent(&self, id: &str) -> bool {
+        let Ok(mut active) = self.0.lock() else {
+            return false;
+        };
+        match active
+            .as_mut()
+            .filter(|a| a.id == id && !a.cancel.is_cancelled())
+        {
+            Some(active) => {
                 active.payload_sent = true;
+                true
             }
+            None => false,
         }
     }
     fn expire(&self, id: &str) {
@@ -93,27 +117,25 @@ impl Pairing {
         }
     }
 
-    async fn cancel(&self, id: &str) -> Result<(), String> {
-        let finished = {
+    async fn cancel(&self, id: &str) -> Result<Status, String> {
+        let stopped = {
             let mut active = self
                 .0
                 .lock()
                 .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
             if active.as_ref().is_some_and(|a| a.id == id) {
-                active.take().map(|old| {
-                    old.cancel.cancel();
-                    old.finished
-                })
+                stop(&mut active)
             } else {
                 None
             }
         };
-        if let Some(finished) = finished {
-            tokio::time::timeout(Duration::from_secs(3), finished.cancelled())
-                .await
-                .map_err(|_| "Couldn’t cancel pairing. Close this window before trying again.")?;
-        }
-        Ok(())
+        let Some((finished, status)) = stopped else {
+            return Ok(Status::Cancelled);
+        };
+        tokio::time::timeout(Duration::from_secs(3), finished.cancelled())
+            .await
+            .map_err(|_| "Couldn’t cancel pairing. Close this window before trying again.")?;
+        Ok(status)
     }
 }
 
@@ -136,7 +158,10 @@ pub fn pairing_status(pairing: tauri::State<'_, Pairing>, id: String) -> Result<
         .unwrap_or(Status::Cancelled))
 }
 #[tauri::command]
-pub async fn pairing_cancel(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
+pub async fn pairing_cancel(
+    pairing: tauri::State<'_, Pairing>,
+    id: String,
+) -> Result<Status, String> {
     pairing.cancel(&id).await
 }
 fn decide(pairing: &Pairing, id: &str, decision: Decision) -> Result<(), String> {
@@ -405,7 +430,10 @@ async fn exchange_loop(
             if output.status == Some(Status::Transferring) && Some(index) == payload_index {
                 // Once publication begins, cancellation of the await cannot prove
                 // that the phone did not receive and import this payload.
-                pairing.mark_payload_sent(id);
+                if !pairing.mark_payload_sent(id) {
+                    abort(exchange, socket).await;
+                    return Ok(());
+                }
             }
             relay::send(socket, &event).await?;
             auth.unacknowledged.push(event);

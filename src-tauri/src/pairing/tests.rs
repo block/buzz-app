@@ -276,6 +276,55 @@ async fn window_reload_or_destruction_cancels_the_live_attempt() {
     assert!(manager.0.lock().unwrap().is_none());
 }
 
+#[test]
+fn cancellation_preserves_post_publication_outcomes() {
+    for (before, after) in [
+        (Status::Transferring, Status::Uncertain),
+        (Status::Complete, Status::Complete),
+        (
+            Status::Error {
+                message: "Your phone couldn’t save the account. Try pairing again.".into(),
+            },
+            Status::Error {
+                message: "Your phone couldn’t save the account. Try pairing again.".into(),
+            },
+        ),
+    ] {
+        let manager = Pairing::default();
+        let (tx, _) = mpsc::channel(1);
+        *manager.0.lock().unwrap() = Some(Active {
+            id: "live".into(),
+            cancel: CancellationToken::new(),
+            finished: CancellationToken::new(),
+            confirm: tx,
+            status: before,
+            payload_sent: true,
+        });
+        // Window close, reload, and macOS hide all use this path.
+        manager.cancel_all();
+        let active = manager.0.lock().unwrap();
+        let active = active.as_ref().unwrap();
+        assert!(active.cancel.is_cancelled());
+        assert_eq!(active.status, after);
+    }
+}
+
+#[test]
+fn cancellation_before_publication_blocks_the_payload() {
+    let manager = Pairing::default();
+    let (tx, _) = mpsc::channel(1);
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: CancellationToken::new(),
+        finished: CancellationToken::new(),
+        confirm: tx,
+        status: Status::Transferring,
+        payload_sent: false,
+    });
+    manager.cancel_all();
+    assert!(!manager.mark_payload_sent("live"));
+}
+
 #[tokio::test]
 async fn unexpected_connection_failure_becomes_a_visible_error() {
     let result = guard(async { panic!("simulated connection setup failure") }).await;
@@ -437,16 +486,30 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
     let (exchange, target, _, code) = entry();
     let request = submission(&exchange, &target, &code, 1);
     let (socket, mut server) = local_sockets().await;
-    let (_tx, mut rx) = mpsc::channel(1);
+    let (tx, mut rx) = mpsc::channel(1);
+    let manager = Pairing::default();
     let cancel = CancellationToken::new();
+    let finished = CancellationToken::new();
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: cancel.clone(),
+        finished: finished.clone(),
+        confirm: tx,
+        status: Status::Code {
+            code: code.clone(),
+            code_entry: true,
+        },
+        payload_sent: false,
+    });
+    let owner = manager.clone();
     let owner_cancel = cancel.clone();
     let task = tokio::spawn(async move {
         let mut exchange = exchange;
         let mut socket = socket;
         let mut auth = relay::Authentication::default();
-        exchange_until_deadline(
+        let result = exchange_until_deadline(
             ExchangeContext {
-                pairing: &Pairing::default(),
+                pairing: &owner,
                 id: "live",
                 relay_url: &url::Url::parse("wss://relay.test").unwrap(),
                 pending: vec![],
@@ -458,7 +521,9 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
             &owner_cancel,
             tokio::time::Instant::now() + Duration::from_secs(120),
         )
-        .await
+        .await;
+        finished.cancel();
+        result
     });
     server
         .send(tokio_tungstenite::tungstenite::Message::Text(
@@ -484,8 +549,14 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
         messages.push(serde_json::from_str::<PairingMessage>(&plaintext).unwrap());
     }
     assert!(matches!(messages[1], PairingMessage::Payload { .. }));
-    cancel.cancel();
+    // Cancel before any status poll observes the transfer.
+    assert_eq!(manager.cancel("live").await.unwrap(), Status::Uncertain);
     assert!(task.await.unwrap().is_ok());
+    assert_eq!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Uncertain,
+        "a later status read must not report an unsent cancellation"
+    );
     assert!(
         !matches!(
             server.next().await,

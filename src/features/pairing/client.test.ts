@@ -13,7 +13,7 @@ function native() {
     ),
     confirm: vi.fn(async () => {}),
     deny: vi.fn(async () => {}),
-    cancel: vi.fn(async () => {}),
+    cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
   } satisfies PairingNative;
 }
 function deferred<T>() {
@@ -53,6 +53,26 @@ it("drops late status after cancel and stops polling", async () => {
   expect(client.snapshot().phase).toBe("cancelled");
   expect(api.status).toHaveBeenCalledTimes(1);
 });
+it("displays the native outcome when cancel wins the poll gap after transfer", async () => {
+  vi.useFakeTimers();
+  const api = native();
+  api.status.mockResolvedValue({
+    phase: "code",
+    code: "123456",
+    codeEntry: true,
+  });
+  const client = createPairingClient(api);
+  await client.start("viewer", "https://relay.test");
+  const stopped = deferred<PairingStatus>();
+  api.cancel.mockReturnValue(stopped.promise);
+  const cancel = client.cancel();
+  expect(client.snapshot().phase).toBe("cancelling");
+  stopped.resolve({ phase: "uncertain" });
+  await cancel;
+  expect(client.snapshot().phase).toBe("uncertain");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(api.status).toHaveBeenCalledTimes(1);
+});
 it("allows desktop confirmation only for a legacy phone", async () => {
   const api = native();
   const client = createPairingClient(api);
@@ -78,12 +98,12 @@ it("waits for cancellation before creating a replacement", async () => {
   const api = native();
   const client = createPairingClient(api);
   await client.start("viewer", "https://relay.test");
-  const stopped = deferred<void>();
+  const stopped = deferred<PairingStatus>();
   api.cancel.mockReturnValue(stopped.promise);
   const replacement = client.start("viewer", "https://other.test");
   await Promise.resolve();
   expect(api.start).toHaveBeenCalledTimes(1);
-  stopped.resolve();
+  stopped.resolve({ phase: "cancelled" });
   await replacement;
   expect(api.start).toHaveBeenCalledTimes(2);
   await client.cancel();

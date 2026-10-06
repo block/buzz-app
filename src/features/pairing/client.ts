@@ -21,7 +21,7 @@ export type PairingNative = {
   status(id: string): Promise<PairingStatus>;
   confirm(id: string): Promise<void>;
   deny(id: string): Promise<void>;
-  cancel(id: string): Promise<void>;
+  cancel(id: string): Promise<PairingStatus>;
 };
 export const nativePairing: PairingNative = {
   account: () => invoke("pairing_account"),
@@ -46,7 +46,7 @@ export function createPairingClient(native: PairingNative = nativePairing) {
         timer?: ReturnType<typeof setTimeout>;
       }
     | undefined;
-  let cleanup = Promise.resolve();
+  let cleanup: Promise<PairingStatus | undefined> = Promise.resolve(undefined);
   function update(next: PairingStatus) {
     state = next;
     for (const listener of listeners) listener();
@@ -108,7 +108,10 @@ export function createPairingClient(native: PairingNative = nativePairing) {
             if (active !== session) return;
             const cancelledGeneration = generation + 1;
             await this.cancel();
-            if (generation !== cancelledGeneration || state.phase === "error")
+            if (
+              generation !== cancelledGeneration ||
+              state.phase !== "cancelled"
+            )
               return;
             update({
               phase: "error",
@@ -151,10 +154,16 @@ export function createPairingClient(native: PairingNative = nativePairing) {
     },
     async cancel(reset = false) {
       const attempt = ++generation;
-      update({ phase: "cancelled" });
+      // Native reports whether the account may already have been sent.
+      update({ phase: "cancelling" });
+      const stopping = active;
       try {
-        await stop();
-        if (reset && attempt === generation) update({ phase: "idle" });
+        const outcome = await stop();
+        if (attempt !== generation) return;
+        // Without a live session, an earlier cleanup result is not this outcome.
+        if (reset || !stopping || !outcome)
+          update({ phase: reset ? "idle" : "cancelled" });
+        else update(outcome);
       } catch {
         if (attempt === generation)
           update({

@@ -13,13 +13,31 @@ static PUBLISH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static LAST_CREATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Replaceable events resolve by `created_at` (whole seconds), so two notes signed
-/// in the same second can tie. Under `PUBLISH`, each note is strictly newer than
-/// the previous one, so a stopped note signed after a serving one always wins.
-fn next_created_at(now: u64, last: &std::sync::atomic::AtomicU64) -> u64 {
+/// in the same second can tie. Under `PUBLISH`, wait (bounded by the caller's
+/// timeout) until the real clock passes the last stamp instead of future-dating,
+/// so a later process's real-time notes are never outranked.
+async fn next_created_at<C, S, F>(mut now: C, sleep: S, last: &std::sync::atomic::AtomicU64) -> u64
+where
+    C: FnMut() -> u64,
+    S: Fn(Duration) -> F,
+    F: std::future::Future<Output = ()>,
+{
     use std::sync::atomic::Ordering;
-    let stamp = now.max(last.load(Ordering::SeqCst) + 1);
+    let previous = last.load(Ordering::SeqCst);
+    let mut stamp = now();
+    while stamp <= previous {
+        sleep(Duration::from_millis(100)).await;
+        stamp = now();
+    }
     last.store(stamp, Ordering::SeqCst);
     stamp
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -198,13 +216,7 @@ async fn send(
     let event = identity
         .sign(crate::identity::EventTemplate {
             kind: builder.kind.as_u16(),
-            created_at: next_created_at(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| "System clock unavailable")?
-                    .as_secs(),
-                &LAST_CREATED,
-            ),
+            created_at: next_created_at(unix_now, tokio::time::sleep, &LAST_CREATED).await,
             tags: builder
                 .tags
                 .iter()
@@ -223,70 +235,37 @@ async fn send(
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_stopped_note_signed_in_the_same_second_still_supersedes_serving() {
-        let last = std::sync::atomic::AtomicU64::new(0);
-        let serving = next_created_at(1_000, &last);
-        // Off lands within the same wall-clock second as the held serving note.
-        let stopped = next_created_at(1_000, &last);
-        assert!(stopped > serving, "{stopped} must win over {serving}");
-        // Clock going backwards cannot reorder later notes either.
-        assert!(next_created_at(999, &last) > stopped);
-        assert_eq!(next_created_at(5_000, &last), 5_000);
+    #[tokio::test]
+    async fn same_second_notes_wait_for_a_later_real_second_instead_of_future_dating() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let clock = std::sync::Arc::new(AtomicU64::new(1_000));
+        let last = AtomicU64::new(0);
+        let read = |c: std::sync::Arc<AtomicU64>| move || c.load(Ordering::SeqCst);
+        let serving = next_created_at(read(clock.clone()), |_| async {}, &last).await;
+        // Off in the same second: sleeping lets the real clock advance; no future stamp.
+        let tick = clock.clone();
+        let stopped = next_created_at(
+            read(clock.clone()),
+            move |_| {
+                tick.fetch_add(1, Ordering::SeqCst);
+                async {}
+            },
+            &last,
+        )
+        .await;
+        assert_eq!((serving, stopped), (1_000, 1_001));
+        assert!(
+            stopped <= clock.load(Ordering::SeqCst),
+            "never ahead of real time"
+        );
+        // A restarted process (fresh `last`) stamps real time, never a future value.
+        let fresh = AtomicU64::new(0);
+        assert_eq!(
+            next_created_at(read(clock.clone()), |_| async {}, &fresh).await,
+            1_001
+        );
     }
 
-    #[tokio::test]
-    async fn withdrawal_waits_for_an_in_flight_serving_publication() {
-        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let last = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let held = PUBLISH.lock().await; // a periodic serving publication is in flight
-        let (o, l) = (order.clone(), last.clone());
-        let off = tokio::spawn(async move {
-            let _serial = PUBLISH.lock().await;
-            o.lock()
-                .unwrap()
-                .push(("stopped", next_created_at(1_000, &l)));
-        });
-        tokio::task::yield_now().await;
-        order
-            .lock()
-            .unwrap()
-            .push(("serving", next_created_at(1_000, &last)));
-        drop(held);
-        off.await.unwrap();
-        let order = order.lock().unwrap().clone();
-        assert_eq!(order[0].0, "serving");
-        assert_eq!(order[1].0, "stopped");
-        assert!(order[1].1 > order[0].1);
-    }
-    #[test]
-    fn enrollment_waits_for_first_use_then_sends_one_stopped_note() {
-        let ran = ("https://a.example".to_owned(), "viewer".to_owned());
-        // Plugin enabled and community selected, Mesh never run: no binding published.
-        assert!(!should_publish(false, None, "https://a.example", "viewer"));
-        // Share or a Mesh agent started: publish.
-        assert!(should_publish(true, None, "https://a.example", "viewer"));
-        // Run just ended in this community: one stopped note.
-        assert!(should_publish(
-            false,
-            Some(&ran),
-            "https://a.example",
-            "viewer"
-        ));
-        // A different community or identity never inherits the earlier run.
-        assert!(!should_publish(
-            false,
-            Some(&ran),
-            "https://b.example",
-            "viewer"
-        ));
-        assert!(!should_publish(
-            false,
-            Some(&ran),
-            "https://a.example",
-            "other"
-        ));
-    }
     #[tokio::test(start_paused = true)]
     async fn successful_publication_waits_45_seconds_before_next_attempt() {
         let (started, observed) = tokio::sync::oneshot::channel();

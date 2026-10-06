@@ -67,7 +67,7 @@ pub(crate) async fn prepare_agent(
         let community = community_origin(&request.relay)?;
         let lease = host.lease.for_community(&community)?;
         if host.lifecycle.phase() == Phase::Stopped {
-            buzz_mesh_compute::startup_log::begin("agent");
+            buzz_mesh_compute::startup_log::stage("entry", "from=agent");
             super::start(app, &host, &identity, &lease).await?;
         }
         let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;

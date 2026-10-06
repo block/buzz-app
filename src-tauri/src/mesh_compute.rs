@@ -177,10 +177,21 @@ async fn start(
     lease: &str,
 ) -> Result<(), String> {
     use buzz_mesh_compute::startup_log;
+    let began = std::time::Instant::now();
     let _guard = host.preparing.lock().await;
-    startup_log::stage("prepared", "");
+    startup_log::stage(
+        "prepared",
+        &format!("wait_ms={}", began.elapsed().as_millis()),
+    );
     let result = start_prepared(app, host, identity, lease).await;
-    startup_log::stage("start_requested", &format!("ok={}", result.is_ok()));
+    startup_log::stage(
+        "start_requested",
+        &format!(
+            "ok={} start_ms={}",
+            result.is_ok(),
+            began.elapsed().as_millis()
+        ),
+    );
     result
 }
 
@@ -398,7 +409,7 @@ pub async fn mesh_compute_select(
         None
     };
     if restore.is_some() {
-        buzz_mesh_compute::startup_log::begin("restore");
+        buzz_mesh_compute::startup_log::stage("entry", "from=restore");
         // Selection may follow release while the old worker is still stopping.
         // Confirm shutdown before restoring; never hold a synchronous lock across await.
         if let Err(error) = host.lifecycle.stop_and_wait().await {

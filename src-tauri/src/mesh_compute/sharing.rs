@@ -182,40 +182,33 @@ pub async fn mesh_compute_share(
                     })
             })?;
         }
-        // Do not replace the worker until its shutdown is confirmed.
-        host.lifecycle
-            .stop_and_wait()
-            .await
-            .map_err(|e| e.to_string())?;
-        host.lease.with_current(&lease, |_| {
-            *host
-                .sharing
-                .lock()
-                .map_err(|_| "Mesh sharing unavailable")? = share;
-            Ok(())
-        })?;
+        if !stopping {
+            // Do not replace the worker until its shutdown is confirmed.
+            host.lifecycle
+                .stop_and_wait()
+                .await
+                .map_err(|e| e.to_string())?;
+            host.lease.with_current(&lease, |_| {
+                *host
+                    .sharing
+                    .lock()
+                    .map_err(|_| "Mesh sharing unavailable")? = share;
+                Ok(())
+            })?;
+        }
     }
     // Reuses discovery and the same private SDK slot. Solo serving needs no target.
     if stopping {
-        // Reached only after stop_and_wait confirmed shutdown (errors return above).
-        let community = host.lease.community(&lease).ok();
-        let consumers = app
-            .state::<crate::agents::AgentHost>()
-            .has_mesh_consumers()
-            .await;
-        let plan = after_confirmed_off(community.is_some(), consumers);
-        if let (true, Some(community)) = (plan.withdraw, community) {
-            super::publisher::publish_stopped(&identity, &community, &member).await;
-        }
-        if plan.start_client {
-            // Failure leaves the lifecycle Failed/Stopped, which the status line reports.
-            if let Err(error) = super::start(&app, &host, &identity, &lease).await {
-                eprintln!("Mesh consumer re-arm after Share Off failed: {error}");
-            }
-        }
-        Ok(())
+        finish_off(&ProdOff {
+            app: &app,
+            host: &host,
+            identity: &identity,
+            lease: &lease,
+            member: &member,
+        })
+        .await
     } else {
-        buzz_mesh_compute::startup_log::begin("share");
+        buzz_mesh_compute::startup_log::stage("entry", "from=share");
         let result = super::start(&app, &host, &identity, &lease).await;
         if result.is_err() {
             let _ = host.lease.with_current(&lease, |_| {
@@ -247,49 +240,180 @@ mod tests {
     }
 }
 
-/// What a confirmed Share Off does next. Legacy withdraws the serving advert and,
-/// when running Mesh agents still need it, re-arms one consumer client (classic
-/// coordinator → ensure_relay_mesh_for_record). A retired lease does neither.
-/// A failed stop never reaches this point.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct OffPlan {
-    pub withdraw: bool,
-    pub start_client: bool,
+/// Effects of a Share Off after consent is cleared. Production drives the real
+/// lifecycle, publisher and host; tests substitute a recording fake.
+pub(super) trait OffEffects {
+    async fn stop(&self) -> Result<(), String>;
+    fn community(&self) -> Option<String>;
+    async fn has_consumers(&self) -> bool;
+    async fn withdraw(&self, community: &str);
+    async fn start_client(&self) -> Result<(), String>;
+    fn report(&self, error: String);
 }
 
-pub(super) fn after_confirmed_off(lease_current: bool, running_consumers: bool) -> OffPlan {
-    OffPlan {
-        withdraw: lease_current,
-        start_client: lease_current && running_consumers,
+/// Confirmed stop, then withdraw the serving advert (legacy `mesh_stop_node`),
+/// then re-arm one consumer client only when running Mesh agents need it (legacy
+/// coordinator → `ensure_relay_mesh_for_record`). A failed stop does neither; a
+/// retired lease withdraws nothing it no longer owns. Re-arm failure keeps the
+/// cleared consent but is reported on the existing settings-error surface.
+pub(super) async fn finish_off(fx: &impl OffEffects) -> Result<(), String> {
+    fx.stop().await?;
+    let Some(community) = fx.community() else {
+        return Ok(());
+    };
+    fx.withdraw(&community).await;
+    if fx.has_consumers().await {
+        if let Err(error) = fx.start_client().await {
+            fx.report(format!(
+                "Sharing is off, but shared compute for running agents could not restart: {error}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+struct ProdOff<'a> {
+    app: &'a tauri::AppHandle,
+    host: &'a super::MeshHost,
+    identity: &'a crate::identity::IdentityHost,
+    lease: &'a str,
+    member: &'a str,
+}
+
+impl OffEffects for ProdOff<'_> {
+    async fn stop(&self) -> Result<(), String> {
+        let _guard = self.host.preparing.lock().await;
+        self.host
+            .lifecycle
+            .stop_and_wait()
+            .await
+            .map_err(|e| e.to_string())
+    }
+    fn community(&self) -> Option<String> {
+        self.host.lease.community(self.lease).ok()
+    }
+    async fn has_consumers(&self) -> bool {
+        self.app
+            .state::<crate::agents::AgentHost>()
+            .has_mesh_consumers()
+            .await
+    }
+    async fn withdraw(&self, community: &str) {
+        super::publisher::publish_stopped(self.identity, community, self.member).await;
+    }
+    async fn start_client(&self) -> Result<(), String> {
+        super::start(self.app, self.host, self.identity, self.lease).await
+    }
+    fn report(&self, error: String) {
+        eprintln!("{error}");
+        if let Ok(mut prefs) = self.host.preferences.lock() {
+            prefs.set_error(error);
+        }
     }
 }
 
 #[cfg(test)]
 mod off_tests {
     use super::*;
-    #[test]
-    fn confirmed_off_withdraws_then_rearms_only_for_running_consumers() {
-        assert_eq!(
-            after_confirmed_off(true, true),
-            OffPlan {
-                withdraw: true,
-                start_client: true
+    use std::sync::Mutex;
+
+    struct Fake {
+        stop: Result<(), String>,
+        lease: bool,
+        consumers: bool,
+        start: Result<(), String>,
+        calls: Mutex<Vec<String>>,
+    }
+    impl Fake {
+        fn new(
+            stop: Result<(), String>,
+            lease: bool,
+            consumers: bool,
+            start: Result<(), String>,
+        ) -> Self {
+            Self {
+                stop,
+                lease,
+                consumers,
+                start,
+                calls: Mutex::new(Vec::new()),
             }
-        );
+        }
+        fn log(&self, call: &str) {
+            self.calls.lock().unwrap().push(call.into());
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+    impl OffEffects for Fake {
+        async fn stop(&self) -> Result<(), String> {
+            self.log("stop");
+            self.stop.clone()
+        }
+        fn community(&self) -> Option<String> {
+            self.lease.then(|| "https://a.example".into())
+        }
+        async fn has_consumers(&self) -> bool {
+            self.consumers
+        }
+        async fn withdraw(&self, community: &str) {
+            self.log(&format!("withdraw:{community}"));
+        }
+        async fn start_client(&self) -> Result<(), String> {
+            self.log("start_client");
+            self.start.clone()
+        }
+        fn report(&self, error: String) {
+            self.log(&format!("report:{error}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn confirmed_off_with_running_consumers_stops_withdraws_then_starts_one_client() {
+        let fx = Fake::new(Ok(()), true, true, Ok(()));
+        finish_off(&fx).await.unwrap();
         assert_eq!(
-            after_confirmed_off(true, false),
-            OffPlan {
-                withdraw: true,
-                start_client: false
-            }
+            fx.calls(),
+            ["stop", "withdraw:https://a.example", "start_client"]
         );
-        // Retired lease: no withdrawal for a community we no longer own, no replacement.
+    }
+
+    #[tokio::test]
+    async fn no_consumers_withdraw_only_and_failed_stop_does_neither() {
+        let fx = Fake::new(Ok(()), true, false, Ok(()));
+        finish_off(&fx).await.unwrap();
+        assert_eq!(fx.calls(), ["stop", "withdraw:https://a.example"]);
+        let fx = Fake::new(Err("Mesh shutdown timed out".into()), true, true, Ok(()));
         assert_eq!(
-            after_confirmed_off(false, true),
-            OffPlan {
-                withdraw: false,
-                start_client: false
-            }
+            finish_off(&fx).await.unwrap_err(),
+            "Mesh shutdown timed out"
         );
+        assert_eq!(fx.calls(), ["stop"]);
+    }
+
+    #[tokio::test]
+    async fn retired_lease_withdraws_nothing_and_starts_no_replacement() {
+        let fx = Fake::new(Ok(()), false, true, Ok(()));
+        finish_off(&fx).await.unwrap();
+        assert_eq!(fx.calls(), ["stop"]);
+    }
+
+    #[tokio::test]
+    async fn rearm_failure_keeps_off_successful_but_reports_the_cause() {
+        // e.g. discovery found no sharer: start returns before any lifecycle change.
+        let fx = Fake::new(
+            Ok(()),
+            true,
+            true,
+            Err("No live community member is sharing compute".into()),
+        );
+        finish_off(&fx).await.unwrap();
+        let calls = fx.calls();
+        assert_eq!(
+            &calls[..3],
+            ["stop", "withdraw:https://a.example", "start_client"]
+        );
+        assert!(calls[3].starts_with("report:Sharing is off, but shared compute for running agents could not restart: No live community member"));
     }
 }

@@ -547,6 +547,46 @@ mod persistence_tests {
     use tauri::Manager;
 
     #[test]
+    fn hash_only_adverts_use_known_names_or_an_honest_fallback() {
+        let entry = |id: &str, name: Option<&str>| buzz_mesh_compute::inventory::Entry {
+            device_id: None,
+            member_pubkey: "m".into(),
+            model_id: id.into(),
+            model_name: name.map(str::to_owned),
+            device_name: None,
+            vram_gb: None,
+        };
+        let known =
+            "local-gguf/sha256-acd36c32a5ecd1b01db5806d19bc2fdbac3f23920120c3f0b1acdf571f57a399";
+        let unknown =
+            "local-gguf/sha256-7756e8943d5ec98b1cd76895d33d20b8c8bf7609a71540fc9b6fa512bdedd0de";
+        let mut entries = vec![
+            entry(known, Some(known)),
+            entry(unknown, None),
+            entry("unsloth/Real-GGUF:Q4", Some("unsloth/Real-GGUF:Q4")),
+            entry("named", Some("Friendly")),
+        ];
+        let mut names = serde_json::Map::new();
+        names.insert(known.into(), "unsloth/Qwen3.5-9B-GGUF:Q4_K_M".into());
+        apply_names(&mut entries, &names);
+        assert_eq!(
+            entries[0].model_name.as_deref(),
+            Some("unsloth/Qwen3.5-9B-GGUF:Q4_K_M")
+        );
+        // The routing id stays exact; the label is honest, not the hash.
+        assert_eq!(entries[1].model_id, unknown);
+        assert_eq!(
+            entries[1].model_name.as_deref(),
+            Some("Model name unavailable (7756e8943d5e)")
+        );
+        assert_eq!(
+            entries[2].model_name.as_deref(),
+            Some("unsloth/Real-GGUF:Q4")
+        );
+        assert_eq!(entries[3].model_name.as_deref(), Some("Friendly"));
+    }
+
+    #[test]
     fn disarm_without_a_lease_persists_only_for_that_viewer_and_community() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mesh-sharing.json");
@@ -680,30 +720,61 @@ mod persistence_tests {
 /// ref from this node's own Mesh catalog, when Mesh is running here.
 #[cfg(feature = "mesh")]
 async fn name_entries(host: &MeshHost, entries: &mut [buzz_mesh_compute::inventory::Entry]) {
-    if !entries
-        .iter()
-        .any(|e| e.model_name.as_deref().map_or(true, |n| n == e.model_id))
-    {
+    let unnamed = |e: &buzz_mesh_compute::inventory::Entry| {
+        e.model_name.as_deref().map_or(true, |n| n == e.model_id)
+    };
+    if !entries.iter().any(unnamed) {
         return;
     }
-    if host.lifecycle.phase() != buzz_mesh_compute::lifecycle::Phase::Ready {
-        return;
-    }
-    let Ok(status) = host.lifecycle.status().await else {
-        return;
-    };
-    let Some(names) = publisher::display_names(&status.console_url).await else {
-        return;
-    };
-    for entry in entries {
-        if entry
-            .model_name
-            .as_deref()
-            .map_or(true, |n| n == entry.model_id)
-        {
-            if let Some(name) = names.get(&entry.model_id).and_then(|v| v.as_str()) {
-                entry.model_name = Some(name.to_owned());
+    // 1. A running local node knows peers' readable refs from Mesh's own catalog.
+    let mut names = serde_json::Map::new();
+    if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
+        if let Ok(status) = host.lifecycle.status().await {
+            if let Some(serde_json::Value::Object(map)) =
+                publisher::display_names(&status.console_url).await
+            {
+                names = map;
             }
+        }
+    }
+    // 2. Cold consumer: Mesh's local model inventory names GGUFs on this machine.
+    // Bounded; never starts Mesh.
+    if entries
+        .iter()
+        .any(|e| unnamed(e) && !names.contains_key(&e.model_id))
+    {
+        if let Ok(Ok(local)) = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            tokio::task::spawn_blocking(buzz_mesh_compute::catalog::local_display_names),
+        )
+        .await
+        {
+            for (key, name) in local {
+                names.entry(key).or_insert(serde_json::Value::String(name));
+            }
+        }
+    }
+    apply_names(entries, &names);
+}
+
+/// Label hash-only entries from known names; never present a hash as a name.
+#[cfg(feature = "mesh")]
+fn apply_names(
+    entries: &mut [buzz_mesh_compute::inventory::Entry],
+    names: &serde_json::Map<String, serde_json::Value>,
+) {
+    for entry in entries
+        .iter_mut()
+        .filter(|e| e.model_name.as_deref().map_or(true, |n| n == e.model_id))
+    {
+        if let Some(name) = names.get(&entry.model_id).and_then(|v| v.as_str()) {
+            entry.model_name = Some(name.to_owned());
+        } else if let Some(hash) = entry.model_id.strip_prefix("local-gguf/") {
+            let short = hash.trim_start_matches("sha256-");
+            entry.model_name = Some(format!(
+                "Model name unavailable ({})",
+                &short[..short.len().min(12)]
+            ));
         }
     }
 }

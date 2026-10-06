@@ -2908,7 +2908,7 @@ fn mesh_launch_is_bound_and_runtime_only() {
         saved.revision,
         saved.relay_url.clone(),
         "shared-model".into(),
-        (19337, 65536),
+        19337,
     )
     .unwrap();
     let runtime = grant.apply(&saved).unwrap();
@@ -2930,7 +2930,7 @@ fn mesh_launch_is_bound_and_runtime_only() {
 }
 
 #[test]
-fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
+fn mesh_output_default_matches_legacy_and_user_generation_controls_win() {
     let dir = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
     saved.harness.provider = "relay-mesh".into();
@@ -2939,32 +2939,31 @@ fn mesh_output_budget_is_runtime_only_and_explicit_invalid_values_fail() {
         saved.revision,
         saved.relay_url.clone(),
         "mesh".into(),
-        (19337, 16384),
+        19337,
     )
     .unwrap();
     let runtime = grant.apply(&saved).unwrap();
+    // Legacy relay_mesh: 4096 output default, no catalog-derived context window.
     assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "4096");
-    assert_eq!(
-        runtime.environment["BUZZ_AGENT_MAX_CONTEXT_TOKENS"],
-        "16384"
-    );
+    assert!(!runtime
+        .environment
+        .contains_key("BUZZ_AGENT_MAX_CONTEXT_TOKENS"));
     assert_eq!(runtime.environment["BUZZ_AGENT_LLM_TIMEOUT_SECS"], "660");
     assert!(!saved
         .environment
         .contains_key("BUZZ_AGENT_MAX_OUTPUT_TOKENS"));
-    saved
-        .environment
-        .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), "2048".into());
-    assert_eq!(
-        grant.apply(&saved).unwrap().environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"],
-        "2048"
-    );
-    for value in ["16384", "20000", "0", "not-a-number"] {
-        saved
-            .environment
-            .insert("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into(), value.into());
-        assert!(grant.apply(&saved).is_err());
+    for (name, value) in [
+        ("BUZZ_AGENT_MAX_OUTPUT_TOKENS", "20000"),
+        ("BUZZ_AGENT_MAX_CONTEXT_TOKENS", "65536"),
+    ] {
+        saved.environment.insert(name.into(), value.into());
     }
+    let runtime = grant.apply(&saved).unwrap();
+    assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "20000");
+    assert_eq!(
+        runtime.environment["BUZZ_AGENT_MAX_CONTEXT_TOKENS"],
+        "65536"
+    );
 }
 
 #[test]
@@ -2995,7 +2994,7 @@ fn mesh_preflight_and_launch_resolve_the_same_environment_without_persistence() 
         request.revision,
         request.relay,
         "mesh".into(),
-        (19337, 65536),
+        19337,
     )
     .unwrap();
     let runtime = config.apply(&saved).unwrap();
@@ -3414,13 +3413,13 @@ fn mesh_defaults_preserve_explicit_agent_choices_and_do_not_mutate_saved_config(
     let dir = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
     saved.harness.provider = "relay-mesh".into();
-    for (context, expected) in [(131072, "4096"), (8192, "2048")] {
+    for expected in ["4096"] {
         let grant = crate::MeshLaunch::new(
             saved.id.clone(),
             saved.revision,
             saved.relay_url.clone(),
             "shared-model".into(),
-            (19337, context),
+            19337,
         )
         .unwrap();
         let runtime = grant.apply(&saved).unwrap();
@@ -3443,7 +3442,7 @@ fn mesh_defaults_preserve_explicit_agent_choices_and_do_not_mutate_saved_config(
         saved.revision,
         saved.relay_url.clone(),
         "shared-model".into(),
-        (19337, 131072),
+        19337,
     )
     .unwrap();
     for (reply, effort) in [("0", "none"), ("1", "high")] {
@@ -3484,7 +3483,7 @@ fn mesh_replacement_stops_captured_consumer_without_changing_saved_restore() {
         saved.revision,
         saved.relay_url.clone(),
         "mesh".into(),
-        (19337, 32768),
+        19337,
     )
     .unwrap();
     controller

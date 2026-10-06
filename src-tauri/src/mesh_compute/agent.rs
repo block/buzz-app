@@ -87,14 +87,14 @@ pub(crate) async fn prepare_agent(
                     }
                     Phase::Starting => {}
                     Phase::Ready => match probe(&client, port, &request.model).await {
-                        Ok((model, context)) => return Ok((model, context)),
+                        Ok(model) => return Ok(model),
                         Err(error) => last = error,
                     },
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         };
-        let (model, context) = tokio::time::timeout_at(deadline, ready)
+        let model = tokio::time::timeout_at(deadline, ready)
             .await
             .map_err(|_| format!("Shared compute inference did not become ready: {last}"))??;
         host.lease.community(&lease)?;
@@ -103,7 +103,7 @@ pub(crate) async fn prepare_agent(
             request.revision,
             request.relay,
             model,
-            (port, context),
+            port,
         )?;
         Ok(Prepared {
             app: app.clone(),
@@ -113,25 +113,53 @@ pub(crate) async fn prepare_agent(
     }
 }
 
+/// Baseline readiness (legacy `mesh_readiness::wait_for_mesh_inference`): a real
+/// chat request decides. The catalog only explains a failure; it never gates.
 #[cfg(feature = "mesh")]
-async fn probe(client: &reqwest::Client, port: u16, model: &str) -> Result<(String, u64), String> {
+async fn probe(client: &reqwest::Client, port: u16, model: &str) -> Result<String, String> {
     let base = format!("http://127.0.0.1:{port}/v1");
-    let catalog = client
-        .get(format!("{base}/models"))
+    let wire = match model.trim() {
+        "" | "auto" | "mesh" => "mesh",
+        named => named,
+    };
+    let response = client
+        .post(format!("{base}/chat/completions"))
         .bearer_auth("mesh-local")
+        .json(&serde_json::json!({"model": wire, "messages": [{"role":"user","content":"Reply OK"}], "max_tokens":1, "stream":false}))
         .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| e.to_string())?;
-    let resolved = buzz_mesh_compute::model_context::resolve(&catalog, model)?;
-    client.post(format!("{base}/chat/completions")).bearer_auth("mesh-local")
-        .json(&serde_json::json!({"model": resolved.0, "messages": [{"role":"user","content":"Reply OK"}], "max_tokens":1, "stream":false}))
-        .send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
-    Ok(resolved)
+        .await;
+    let failure = match response {
+        Ok(response) if response.status().is_success() => return Ok(wire.to_owned()),
+        Ok(response) => format!("HTTP {}", response.status()),
+        Err(error) => error.to_string(),
+    };
+    let visible = async {
+        let catalog = client
+            .get(format!("{base}/models"))
+            .bearer_auth("mesh-local")
+            .send()
+            .await
+            .ok()?
+            .json::<serde_json::Value>()
+            .await
+            .ok()?;
+        let ids: Vec<String> = catalog["data"]
+            .as_array()?
+            .iter()
+            .filter_map(|m| m["id"].as_str().map(str::to_owned))
+            .collect();
+        // The virtual route counts as synced once any concrete model is listed.
+        Some(if wire == "mesh" {
+            ids.iter().any(|id| id != "mesh")
+        } else {
+            ids.iter().any(|id| id == wire)
+        })
+    }
+    .await;
+    Err(match visible {
+        Some(false) => format!("{failure} (model not yet visible in the Mesh catalog)"),
+        _ => failure,
+    })
 }
 
 #[cfg(all(test, feature = "mesh"))]
@@ -139,66 +167,108 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    #[tokio::test]
-    async fn readiness_requires_chat_success_and_maps_auto_without_virtual_catalog_entry() {
-        for status in [200, 503] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            let server = tokio::spawn(async move {
-                for chat in [false, true] {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = Vec::new();
-                    loop {
-                        let mut buf = [0; 1024];
-                        let n = socket.read(&mut buf).await.unwrap();
-                        assert_ne!(n, 0);
-                        request.extend_from_slice(&buf[..n]);
-                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                            let header = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                            let length: usize = header
-                                .lines()
-                                .find_map(|line| {
-                                    line.strip_prefix("content-length:")
-                                        .map(|v| v.trim().parse().unwrap())
-                                })
-                                .unwrap_or(0);
-                            if request.len() >= end + 4 + length {
-                                break;
-                            }
+    /// Loopback fixture answering `/v1/models` and `/v1/chat/completions` by path.
+    async fn fixture(
+        catalog: (u16, &'static str),
+        chat: u16,
+    ) -> (u16, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Ok(Ok((mut socket, _))) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), listener.accept()).await
+            {
+                let mut request = Vec::new();
+                loop {
+                    let mut buf = [0; 1024];
+                    let n = socket.read(&mut buf).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                        let length: usize = header
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
                         }
                     }
-                    let text = String::from_utf8(request).unwrap();
-                    if chat {
-                        assert!(text.starts_with("POST /v1/chat/completions"));
-                        let body: serde_json::Value =
-                            serde_json::from_str(text.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-                        assert_eq!(body["model"], "mesh");
-                        assert_eq!(body["max_tokens"], 1);
-                    } else {
-                        assert!(text.starts_with("GET /v1/models"));
-                    }
-                    let body = if chat {
-                        "{}"
-                    } else {
-                        r#"{"data":[{"id":"single-model","metadata":{"context_length":32768}}]}"#
-                    };
-                    let code = if chat { status } else { 200 };
-                    socket.write_all(format!("HTTP/1.1 {code} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
                 }
-            });
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .unwrap();
-            let result = probe(&client, port, "auto").await;
-            if status == 200 {
-                assert_eq!(result.unwrap(), ("mesh".into(), 32768));
-            } else {
-                assert!(result.unwrap_err().contains("503"));
+                let text = String::from_utf8(request).unwrap();
+                let (code, body) = if text.starts_with("POST /v1/chat/completions") {
+                    let body: serde_json::Value =
+                        serde_json::from_str(text.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+                    assert_eq!(body["max_tokens"], 1);
+                    seen.push(format!("chat:{}", body["model"].as_str().unwrap()));
+                    (chat, "{}")
+                } else {
+                    assert!(text.starts_with("GET /v1/models"));
+                    seen.push("models".into());
+                    catalog
+                };
+                socket.write_all(format!("HTTP/1.1 {code} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             }
-            server.await.unwrap();
-        }
+            seen
+        });
+        (port, server)
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap()
+    }
+
+    // Live 0.78.1 shape: a remote peer's model with no context_length.
+    const BUDGETLESS: &str = r#"{"data":[{"id":"mesh"},{"id":"unsloth/Qwen3.5-9B-GGUF:Q4_K_M","metadata":{"workload_class":"causal_generation"}}]}"#;
+
+    #[tokio::test]
+    async fn successful_inference_is_ready_even_without_a_context_budget() {
+        let (port, server) = fixture((200, BUDGETLESS), 200).await;
+        assert_eq!(probe(&client(), port, "auto").await.unwrap(), "mesh");
+        assert_eq!(server.await.unwrap(), vec!["chat:mesh"]);
+    }
+
+    #[tokio::test]
+    async fn catalog_failure_or_missing_entry_does_not_gate_working_inference() {
+        let (port, server) = fixture((500, "oops"), 200).await;
+        assert_eq!(probe(&client(), port, "auto").await.unwrap(), "mesh");
+        server.await.unwrap();
+        let (port, server) = fixture((200, BUDGETLESS), 200).await;
+        assert_eq!(
+            probe(&client(), port, "lagging/model:Q4").await.unwrap(),
+            "lagging/model:Q4"
+        );
+        assert_eq!(server.await.unwrap(), vec!["chat:lagging/model:Q4"]);
+    }
+
+    #[tokio::test]
+    async fn failed_inference_uses_the_catalog_only_to_explain() {
+        let (port, server) = fixture((200, BUDGETLESS), 503).await;
+        let error = probe(&client(), port, "lagging/model:Q4")
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("503") && error.contains("not yet visible"),
+            "{error}"
+        );
+        server.await.unwrap();
+        let (port, server) = fixture((200, BUDGETLESS), 503).await;
+        let error = probe(&client(), port, "auto").await.unwrap_err();
+        assert!(
+            error.contains("503") && !error.contains("not yet visible"),
+            "{error}"
+        );
+        server.await.unwrap();
     }
 }
 

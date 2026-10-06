@@ -37,7 +37,6 @@ pub struct MeshLaunch {
     relay: String,
     model: String,
     port: u16,
-    context: u64,
 }
 
 impl MeshLaunch {
@@ -48,17 +47,16 @@ impl MeshLaunch {
         revision: u64,
         relay: String,
         model: String,
-        endpoint: (u16, u64),
+        port: u16,
     ) -> Result<Self> {
         let grant = Self {
             agent_id: agent_id.clone(),
             revision,
             relay,
             model,
-            port: endpoint.0,
-            context: endpoint.1,
+            port,
         };
-        if grant.port == 0 || grant.model.trim().is_empty() || grant.context == 0 {
+        if grant.port == 0 || grant.model.trim().is_empty() {
             return Err("Shared compute requires a ready endpoint and model".into());
         }
         Ok(grant)
@@ -76,26 +74,17 @@ impl MeshLaunch {
         {
             return Err("Shared compute grant no longer matches the saved agent".into());
         }
-        let output = agent
-            .environment
-            .get("BUZZ_AGENT_MAX_OUTPUT_TOKENS")
-            .map(|value| {
-                value
-                    .parse::<u64>()
-                    .map_err(|_| "Invalid agent output token budget")
-            })
-            .transpose()?
-            .unwrap_or(4096.min(self.context / 4));
-        if output == 0 || self.context <= output {
-            return Err("Shared model context must exceed the agent output token budget".into());
-        }
         let mut runtime = agent.clone();
         runtime.harness.provider = "openai".into();
         runtime.harness.model.clone_from(&self.model);
+        // Legacy relay_mesh default, not policy: an explicit agent value wins and
+        // no context window is derived from the catalog (buzz-agent's default applies).
+        runtime
+            .environment
+            .entry("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into())
+            .or_insert_with(|| "4096".into());
         // Explicit last-writer runtime settings; user environment cannot reroute this grant.
         for (name, value) in [
-            ("BUZZ_AGENT_MAX_CONTEXT_TOKENS", self.context.to_string()),
-            ("BUZZ_AGENT_MAX_OUTPUT_TOKENS", output.to_string()),
             ("BUZZ_AGENT_LLM_TIMEOUT_SECS", "660".to_owned()),
             ("BUZZ_AGENT_PROVIDER", "openai".to_owned()),
             ("BUZZ_AGENT_MODEL", self.model.clone()),

@@ -47,8 +47,6 @@ pub mod discovery_types;
 pub mod inventory;
 
 #[cfg(feature = "mesh")]
-pub mod model_context;
-
 pub mod roster;
 
 #[cfg(feature = "mesh")]

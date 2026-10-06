@@ -5,11 +5,12 @@ test("renders the bounded Buzz emoji avatar as an agent picture", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/tests/fixtures/agent-avatar.html");
-  await page.getByRole("button", { name: "Load emoji picture" }).click();
-
   const group = page.getByRole("region", { name: "40px avatars" });
-  const avatar = group.getByRole("img", { name: /^Agent/ });
-  const image = avatar.locator("img");
+  const avatar = group.getByRole("img", { name: /^Rocket agent/ });
+  const avatarArtwork = avatar.locator("[data-avatar-shape]");
+  await expect(avatarArtwork).toHaveAttribute("data-avatar-shape", "squircle");
+
+  const image = avatarArtwork.locator("img");
   await expect(image).toHaveAttribute("src", /^data:image\/svg\+xml,/);
   await expect
     .poll(() => image.evaluate((node) => node.naturalWidth))

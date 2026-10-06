@@ -3990,6 +3990,98 @@ it("inserts mention links without new notification recipients during edits", () 
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+const pasteText = (input: ComposerInputElement, text: string) =>
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  });
+
+it("notifies a pasted identity link for a member under their current name, not an unknown key", () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+  const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+  pasteText(
+    h.input(),
+    `Ask [@Honey](${profileTarget(first.pubkey)}) and ${eve} `,
+  );
+  expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    `Ask @Honey Bee and ${eve} `,
+    [first.pubkey],
+    [],
+  );
+});
+
+for (const channelType of ["stream", "forum"] as const)
+  it(`offers a pasted nonmember with a known profile like the picker in ${channelType}`, async () => {
+    const h = mount();
+    const list = {
+      status: "ready",
+      channels: [{ id: "channel", channelType, members: ["d".repeat(64)] }],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add: vi.fn() },
+    });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+    // The pasted label never names the recipient; an uncached key stays display-only.
+    const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+    pasteText(
+      h.input(),
+      `Ask [@Jane](${profileTarget(first.pubkey)}) and ${eve} `,
+    );
+    expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(1);
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey Bee is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+      "channel",
+      `Ask @Honey Bee and ${eve} `,
+      [],
+    ]);
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  });
+
+it("keeps pasted identity links display-only during edits", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const link = `[@Honey](${profileTarget(second.pubkey)})`;
+  pasteText(h.input(), ` ${link} `);
+  expect(h.input()).toHaveValue(`Original message ${link} `);
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    `Original message ${link} `,
+    "c".repeat(64),
+  );
+});
+
 it.each([
   { authorId: second.pubkey },
   { agentEnvelope: true as const },

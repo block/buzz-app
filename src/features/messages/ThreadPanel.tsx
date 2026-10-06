@@ -2,6 +2,7 @@
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
+import { useMessageSelectionCopy } from "./selection-copy";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -71,6 +72,7 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
+  useMessageSelectionCopy();
   const tabbed = !!usePanelTabHost();
   const { close } = props;
   const viewKey = messageViewKey(

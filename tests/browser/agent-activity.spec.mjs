@@ -566,7 +566,11 @@ it("profile activity opens the exact agent and originating channel before its fi
       app.report.readPublications.some(
         ({ community, blob }) =>
           community === "primary" &&
-          blob.contexts[`msg:${message.id}`] === message.created_at,
+          // Catch-up replaces the message's own mark once it covers it.
+          Math.max(
+            blob.contexts[`msg:${message.id}`] ?? -1,
+            blob.contexts[`activity:${profileChannelId}`] ?? -1,
+          ) >= message.created_at,
       ),
     )
     .toBe(true);

@@ -486,10 +486,19 @@ pub async fn mesh_compute_disarm(
     host: tauri::State<'_, MeshHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     community: String,
+    expected_viewer: String,
 ) -> Result<(), String> {
     let community = agent::community_origin(&community)?;
+    // No lease fences this write, so a request issued for one identity must never
+    // be reinterpreted for whichever identity is current when it arrives.
     let viewer = identity.viewer().await?;
+    if viewer != expected_viewer {
+        return Err("Identity changed before turning off Mesh sharing".into());
+    }
     let _guard = host.preparing.lock().await;
+    if identity.viewer().await? != viewer {
+        return Err("Identity changed before turning off Mesh sharing".into());
+    }
     disarm_saved(&host, viewer, community)
 }
 
@@ -573,6 +582,49 @@ mod persistence_tests {
         assert_eq!(reopened.hint().unwrap().model, "fixture");
         assert_eq!(host.lifecycle.phase(), phase);
         assert!(host.lease.current().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn disarm_command_rejects_a_request_issued_for_another_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mesh-sharing.json");
+        let identity = crate::identity::IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let community = "https://fixture.example";
+        let host = MeshHost::default();
+        host.initialize_preferences(Ok(path.clone()));
+        {
+            let mut prefs = host.preferences.lock().unwrap();
+            prefs.select(viewer.clone(), community.into());
+            let share = sharing::Share {
+                model: "fixture".into(),
+                max_vram_gb: None,
+            };
+            let mut config = preferences::Config::pending(viewer.clone(), community.into(), &share);
+            config.enabled = true;
+            prefs.checkpoint(config).unwrap();
+        }
+        let app = tauri::test::mock_builder()
+            .manage(host)
+            .manage(identity)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let error =
+            mesh_compute_disarm(app.state(), app.state(), community.into(), "retired".into())
+                .await
+                .unwrap_err();
+        assert!(error.contains("Identity changed"));
+        let mut reopened = preferences::Preferences::default();
+        reopened.initialize(Ok(path.clone()));
+        reopened.select(viewer.clone(), community.into());
+        assert!(reopened.hint().unwrap().enabled);
+        mesh_compute_disarm(app.state(), app.state(), community.into(), viewer.clone())
+            .await
+            .unwrap();
+        let mut reopened = preferences::Preferences::default();
+        reopened.initialize(Ok(path));
+        reopened.select(viewer, community.into());
+        assert!(!reopened.hint().unwrap().enabled);
     }
 
     #[tokio::test]

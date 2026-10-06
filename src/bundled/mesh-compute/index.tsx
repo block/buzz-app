@@ -265,6 +265,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
       setError(null);
       try {
         const turningOff = clearSaved || Boolean(status?.sharing);
+        // Capture the operation's owner before awaiting; identity or community
+        // changes while waiting retire this action.
+        const community = scope;
+        const owner = viewer;
+        const current = () =>
+          !disposed &&
+          snapshot === ctx.relay.snapshot() &&
+          scope === community &&
+          viewer === owner;
         let selected: Promise<string | undefined> | undefined;
         let id: string | undefined;
         try {
@@ -272,8 +281,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         } catch (reason) {
           // Without a lease (e.g. an unrecovered failed runtime blocks selection),
           // Off still clears saved consent; it never starts or stops Mesh.
-          if (!turningOff || !scope) throw reason;
-          await invoke("mesh_compute_disarm", { community: scope });
+          if (!turningOff || !community || !owner || !current()) throw reason;
+          await invoke("mesh_compute_disarm", {
+            community,
+            expectedViewer: owner,
+          });
           const result = await invoke<MeshStatus>("mesh_compute_status");
           if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
           return;

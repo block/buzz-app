@@ -931,7 +931,10 @@ it("unsafe failed runtime with no lease: Off disarms consent without selection o
     if (command === "mesh_compute_select")
       return Promise.reject("Mesh shutdown timed out; restart Buzz");
     if (command === "mesh_compute_disarm") {
-      expect(args).toEqual({ community: "https://fixture.example" });
+      expect(args).toEqual({
+        community: "https://fixture.example",
+        expectedViewer: "viewer",
+      });
       enabled = false;
       return Promise.resolve();
     }
@@ -953,9 +956,88 @@ it("unsafe failed runtime with no lease: Off disarms consent without selection o
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
   expect(native.invoke).toHaveBeenCalledWith("mesh_compute_disarm", {
     community: "https://fixture.example",
+    expectedViewer: "viewer",
   });
   expect(
     screen.getByText(/Shutdown could not be confirmed\. Restart Buzz/),
   ).toBeInTheDocument();
   expect(toggle).toHaveAttribute("aria-disabled", "true");
 });
+
+for (const retire of ["identity", "dispose"] as const) {
+  it(`a retired Off (${retire}) never disarms after its selection rejects`, async () => {
+    let snapshot = {
+      status: "ready",
+      viewer: "viewer",
+      scope: "https://fixture.example:viewer",
+    };
+    const listeners = new Set<() => void>();
+    let rejectRetry!: (reason: string) => void;
+    let selects = 0;
+    native.invoke.mockImplementation((command) => {
+      if (command === "mesh_compute_select") {
+        selects++;
+        if (selects === 1) return Promise.reject("first selection failed");
+        if (selects === 2)
+          return new Promise((_, reject) => {
+            rejectRetry = reject;
+          });
+        return Promise.resolve("other-lease");
+      }
+      return Promise.resolve({
+        available: true,
+        lifecycle: { state: "failed", reason: "stuck" },
+        sharing: null,
+        savedSharing: { model: "m/Q4", enabled: true, auto: true },
+      });
+    });
+    let Component!: React.ComponentType;
+    let dispose!: () => void;
+    apply({
+      relay: {
+        snapshot: () => snapshot,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      effect: (setup: () => () => void) => {
+        dispose = setup();
+      },
+      settingsCards: {
+        register: (card: { component: React.ComponentType }) => {
+          Component = card.component;
+        },
+      },
+    } as unknown as Parameters<PluginModule["apply"]>[0]);
+    render(<Component />);
+    const toggle = await screen.findByRole("switch", {
+      name: "Share this machine",
+    });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    fireEvent.click(toggle);
+    // The Off action is now waiting on its retried selection.
+    await waitFor(() => expect(selects).toBe(2));
+    await act(async () => {
+      if (retire === "identity") {
+        snapshot = {
+          status: "ready",
+          viewer: "other",
+          scope: "https://other.example:other",
+        };
+        for (const listener of listeners) listener();
+      } else {
+        dispose();
+      }
+    });
+    await act(async () => {
+      rejectRetry("Mesh shutdown timed out; restart Buzz");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(
+      native.invoke.mock.calls.some(([c]) => c === "mesh_compute_disarm"),
+    ).toBe(false);
+  });
+}

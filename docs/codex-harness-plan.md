@@ -32,8 +32,9 @@ before implementing each layer.
   creating the agent identity or persisting its record. Advanced validation
   must verify that the requested model and effort were accepted; a response
   using fallback settings does not pass. The test must not publish a channel
-  message or invoke agent tools. This action can consume the user's inference
-  quota and should be explained in the creation flow.
+  message or receive Buzz identity/relay credentials. It uses ordinary Codex
+  capabilities, so configured tools may be available. Explain that this real
+  request can consume inference quota and use configured tools.
 - **Failure keeps the modal open.** Preserve every draft value and show a safe,
   actionable error. A failed or cancelled test creates no agent. Retry must
   create at most one identity. If a later startup/profile step fails after
@@ -242,12 +243,14 @@ admission permits prepare, owner authorization, and commit. Cancellation,
 replacement, context changes, and consumption invalidate the proof. Edit uses
 the same validator, additionally bound to the expected saved revision.
 
-The validator passes no Buzz identity, relay, or authorization credentials,
-configures no MCP servers, and enforces rejection of tool execution, including
-built-in tools. It applies and confirms Advanced settings, runs one bounded
-inference prompt, and reaps the process tree on every exit. A prompt asking the
-model not to use tools is not enforcement. If the selected adapter cannot
-provide this behavior, resolve that compatibility prerequisite before enablement.
+The validator passes no Buzz identity, relay, or authorization credentials and
+supplies no Buzz MCP servers. It uses the selected CLI/adapter's ordinary
+capabilities; built-in tools and user-configured MCP servers may remain
+available. Tool-free execution is not required and does not gate enablement.
+It applies and confirms Advanced settings, runs one bounded minimal inference
+prompt, and reaps the process tree on every exit. A prompt may ask for a short
+response without tools, but the UI must not describe that as enforced tool-free
+or side-effect-free execution. No upstream deny-all tool capability is required.
 
 Define recoverable creation phases keyed by request ID across the credential
 write and agent-record write. Reuse existing transaction/recovery ownership

@@ -1135,10 +1135,11 @@ export function createUnread({
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
-    const structuralRecovery =
-      threadRootId !== undefined && chosen(entry) === true && !entry.rootId;
+    const structuralRootId =
+      chosen(entry) === true && !entry.rootId ? threadRootId : undefined;
+    const structuralRecovery = structuralRootId !== undefined;
     const key = structuralRecovery
-      ? `${conversationKey(channelId, threadRootId)}:structure`
+      ? `${conversationKey(channelId, structuralRootId)}:structure`
       : conversationKey(channelId, parentId);
     if (
       lookups.has(key) ||
@@ -1157,13 +1158,11 @@ export function createUnread({
     // written it) and its replies are asked for (the viewer may have replied
     // on another branch).
     const rootId = threadRootId === parentId ? undefined : threadRootId;
-    const ids = new Set(
-      structuralRecovery ? [threadRootId ?? parentId] : [parentId],
-    );
+    const ids = new Set(structuralRecovery ? [structuralRootId] : [parentId]);
     if (rootId && !structural(rootId)) ids.add(rootId);
     queued.set(key, {
       channelId,
-      parentId: structuralRecovery ? (threadRootId ?? parentId) : parentId,
+      parentId: structuralRootId ?? parentId,
       rootId,
       ids,
       structuralOnly: structuralRecovery,

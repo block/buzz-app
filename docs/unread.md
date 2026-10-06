@@ -219,13 +219,13 @@ events and forgotten with the rest of a left community's device state.
 
 Membership is checked in the reply's own channel, and lookups are keyed by
 channel and parent, so a reply in another channel that tags the same parent
-gets its own answer. It starts from retained evidence. A saved Follow with reply-only retained evidence also queues bounded
-structural recovery of its missing parent and root by ID. It does not ask for
-viewer participation: the saved choice already decides membership. Until a
-same-channel root is verified, thread receipts and Activity grouping cannot
-apply to that reply. When a reply is otherwise unread but its conversation is
-undecided
-(the parent is not loaded, or the viewer's own reply to it is not), a projection
+gets its own answer. It starts from retained evidence. A saved Follow with
+reply-only retained evidence also queues bounded structural recovery of its
+missing root by ID. It does not ask for viewer participation: the saved choice
+already decides membership. Until a same-channel root is verified, thread
+receipts and Activity grouping cannot apply to that reply. When a reply is
+otherwise unread but its conversation is undecided (the parent is not loaded,
+or the viewer's own reply to it is not), a projection
 that evaluates the reply queues one relay lookup for that parent. The same
 lookup decides the whole thread: the viewer wrote the parent or the canonical
 root, or replied anywhere under the root. One lookup per parent keeps demand

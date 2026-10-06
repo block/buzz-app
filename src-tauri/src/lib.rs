@@ -31,6 +31,7 @@ mod identity;
 
 mod notifications;
 mod os_idle;
+mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
@@ -507,10 +508,16 @@ pub fn run() {
         builder
     };
     let builder = builder
+        .plugin(window_state::builder().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_window("main") {
+                if let Err(error) = window_state::restore(&window) {
+                    eprintln!("Could not restore Buzz window: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());

@@ -186,7 +186,10 @@ function parseSummary(
 /** Base Buzz's displayed author: output signed by the relay's explicit NIP-11
  * `self` names its author in `actor`, else a leading `p` on channel events.
  * Any other signer, including a contact-key fallback, is the author. */
-function messageAuthor(event: EventData, signingAuthority: string | undefined) {
+export function messageAuthor(
+  event: EventData,
+  signingAuthority: string | undefined,
+) {
   if (!signingAuthority || event.pubkey !== signingAuthority)
     return event.pubkey;
   const actor = event.tags.find(

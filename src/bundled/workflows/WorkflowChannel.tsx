@@ -288,7 +288,9 @@ export function WorkflowChannel({
     );
     if (
       active?.action !== "trigger" ||
-      (active.outcome !== "succeeded" && active.outcome !== "rejected")
+      (active.outcome !== "succeeded" &&
+        active.outcome !== "rejected" &&
+        active.outcome !== "unknown")
     )
       return;
     submission.current = null;

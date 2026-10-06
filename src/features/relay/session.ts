@@ -1670,6 +1670,7 @@ export function createRelaySession(
             await Promise.race([writer.publish(signed, signal), aborted]);
           }
         : undefined,
+      transport?.archiveAuthority,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(

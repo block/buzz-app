@@ -95,6 +95,55 @@ it("keeps loaded configurations visible without a refresh banner", async () => {
   ).toBeEnabled();
 });
 
+it("releases a mounted run latch after unknown delivery without replaying it", async () => {
+  const fixture = createWorkflowFixture();
+  const remove = vi.fn();
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onDelete={remove}
+    />,
+  );
+  const user = userEvent.setup();
+  const action = async (name: string) => {
+    await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+    await user.click(await screen.findByRole("menuitem", { name }));
+  };
+  await action("Run now");
+  const confirm = screen.queryByRole("alertdialog");
+  if (confirm)
+    await user.click(within(confirm).getByRole("button", { name: "Run now" }));
+  expect(fixture.calls.trigger).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Run now" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
+  expect(fixture.calls.trigger).toBe(1);
+  act(() => fixture.finish("unknown"));
+  expect(fixture.calls.trigger).toBe(1);
+  expect(screen.getByText(/The run may have started/)).toBeVisible();
+  await action("Run now");
+  const retryConfirm = screen.queryByRole("alertdialog");
+  if (retryConfirm)
+    await user.click(
+      within(retryConfirm).getByRole("button", { name: "Run now" }),
+    );
+  expect(fixture.calls.trigger).toBe(2);
+  act(() => fixture.finish("unknown"));
+  await action("Delete workflow");
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Delete workflow",
+    }),
+  );
+  expect(remove).toHaveBeenCalledExactlyOnceWith(fixtureDefinition);
+});
+
 it("runs despite a lost earlier run receipt, opens history on success and reports rejection", async () => {
   const fixture = createWorkflowFixture();
   // A journaled run whose receipt was lost (e.g. across a restart).

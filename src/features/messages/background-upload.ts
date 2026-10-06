@@ -17,8 +17,8 @@ type Notice = Readonly<{ id: string; message: string; retry?: () => void }>;
 export type BackgroundUploads = Readonly<{
   uploading: boolean;
   phase: "Preparing" | "Uploading" | "Finishing";
-  /** Completed-file bytes; uploads report no byte-level progress. */
-  percentage: number;
+  /** Fraction of bytes sent, or null while the host reports no byte counts. */
+  progress: number | null;
   notices: readonly Notice[];
   host: object | undefined;
 }>;
@@ -51,7 +51,7 @@ function queueFor(session: RelaySession) {
       snapshot: {
         uploading: false,
         phase: "Preparing",
-        percentage: 0,
+        progress: null,
         notices: [],
         host: undefined,
       },
@@ -68,9 +68,15 @@ function queueFor(session: RelaySession) {
 function update(queue: Queue) {
   const files = queue.jobs.flatMap((job) => job.store.snapshot());
   const total = files.reduce((sum, item) => sum + item.file.size, 0);
-  const done = files
-    .filter((item) => item.status === "ready")
-    .reduce((sum, item) => sum + item.file.size, 0);
+  // Completed files alone would step through fake percentages; show measured
+  // bytes only once a transfer reports them.
+  const measured = files.some((item) => item.progress !== undefined);
+  const sent = files.reduce(
+    (sum, item) =>
+      sum +
+      item.file.size * (item.status === "ready" ? 1 : (item.progress ?? 0)),
+    0,
+  );
   queue.snapshot = Object.freeze({
     uploading: queue.jobs.length > 0,
     phase: files.some((item) => item.status === "uploading")
@@ -78,7 +84,7 @@ function update(queue: Queue) {
       : files.every((item) => item.status === "ready")
         ? "Finishing"
         : "Preparing",
-    percentage: total ? Math.round((done / total) * 100) : 0,
+    progress: measured && total ? sent / total : null,
     notices: queue.notices,
     host: queue.hosts[0],
   });

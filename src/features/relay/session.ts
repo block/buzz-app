@@ -68,7 +68,11 @@ import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
-import { UploadError, type UploadedAttachment } from "./attachments";
+import {
+  UploadError,
+  type UploadedAttachment,
+  type UploadProgress,
+} from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
@@ -1598,7 +1602,12 @@ export function createRelaySession(
     attachments:
       uploadAttachment && writes?.outbox.supports(9)
         ? Object.freeze({
-            async upload(file: File, channelId: string, signal: AbortSignal) {
+            async upload(
+              file: File,
+              channelId: string,
+              signal: AbortSignal,
+              progress?: UploadProgress,
+            ) {
               const combined = AbortSignal.any([
                 signal,
                 lifetime.signal,
@@ -1607,7 +1616,7 @@ export function createRelaySession(
               combined.throwIfAborted();
               if (!channelId || closed || !channels.canParticipate(channelId))
                 throw new UploadError("denied");
-              const result = await uploadAttachment(file, combined);
+              const result = await uploadAttachment(file, combined, progress);
               combined.throwIfAborted();
               if (!channels.canParticipate(channelId))
                 throw new UploadError("denied");

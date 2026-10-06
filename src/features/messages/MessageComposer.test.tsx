@@ -942,6 +942,7 @@ async function mountUploadComposer(
   const uploadCalls: {
     file: File;
     signal: AbortSignal;
+    progress: ((sent: number, total: number) => void) | undefined;
     result: ReturnType<typeof deferred<ReturnType<typeof uploadDescriptor>>>;
   }[] = [];
   const sign = vi.fn(async (template: EventTemplate) =>
@@ -957,9 +958,9 @@ async function mountUploadComposer(
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
       media: (url) => url,
-      uploadAttachment(file, signal) {
+      uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
-        uploadCalls.push({ file, signal, result });
+        uploadCalls.push({ file, signal, progress, result });
         return result.promise;
       },
       async query(filters) {
@@ -1062,13 +1063,22 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
   // Send hands the files to the background upload and frees the composer.
   expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0);
-  expect(screen.getByText("Uploading 0%")).toHaveAttribute("role", "status");
+  expect(screen.getByText("Uploading", { exact: true })).toHaveAttribute(
+    "role",
+    "status",
+  );
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
   expect(h.input()).toBeEnabled();
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("picker.txt"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
-  expect(screen.getByText("Uploading 33%")).toBeVisible();
+  // Without byte reports, a finished file does not step the bar to 33%.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  act(() => h.uploadCalls[1]?.progress?.(4, 5));
+  // Measured bytes: one whole file plus 4 of the second's 5, of 15.
+  expect(bar).toHaveAttribute("aria-valuenow", "60");
+  expect(screen.queryByText(/%|\d/)).toBeNull();
   await act(async () => {
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
   });
@@ -1848,13 +1858,32 @@ it.each([
   expect(h.publish).not.toHaveBeenCalled();
 });
 
+it("fills the bar for a single-chunk upload while its response is held", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  // The host's only report for a body within one chunk is the whole body.
+  act(() => h.uploadCalls[0]?.progress?.(5, 5));
+  expect(bar).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByText("Uploading", { exact: true })).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
 it("never publishes a background send after its session closes", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile());
   await userEvent.type(h.input(), "caption");
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  expect(screen.getByText("Uploading 0%")).toBeVisible();
+  expect(screen.getByText("Uploading", { exact: true })).toBeVisible();
 
   act(() => h.owner.dispose());
   expect(h.uploadCalls[0]?.signal.aborted).toBe(true);

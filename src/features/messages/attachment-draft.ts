@@ -13,6 +13,8 @@ export type DraftAttachment = Readonly<{
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
+  /** Fraction of the current transfer sent, once the host reports bytes. */
+  progress?: number | undefined;
 }>;
 export type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
@@ -110,13 +112,20 @@ export function attachmentDraft(
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     active.set(item.id, controller);
-    replace(item.id, { status: "preparing", error: undefined });
+    replace(item.id, {
+      status: "preparing",
+      error: undefined,
+      progress: undefined,
+    });
     try {
       const prepared = await prepareAttachment(item.file, combined);
       combined.throwIfAborted();
       replace(item.id, { status: "uploading" });
       const uploaded = await abortable(
-        attachments.upload(prepared, channelId, combined),
+        attachments.upload(prepared, channelId, combined, (sent, total) => {
+          if (!combined.aborted && total > 0)
+            replace(item.id, { progress: Math.min(1, sent / total) });
+        }),
         combined,
       );
       combined.throwIfAborted();

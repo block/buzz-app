@@ -37,7 +37,7 @@ impl Default for AgentDefaults {
             provider: String::new(),
             model: String::new(),
             effort: String::new(),
-            session_policy: SessionPolicy::Channel,
+            session_policy: SessionPolicy::Thread,
             environment: BTreeMap::new(),
         }
     }

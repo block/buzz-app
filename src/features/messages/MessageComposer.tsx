@@ -108,22 +108,30 @@ type AcceptedDraft = {
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
 const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
+type RecoveredSend = { draft: MentionDraft; preparationError?: unknown };
 const recoveryListeners = new WeakMap<
   RelaySession,
-  Map<string, Set<(draft: MentionDraft) => void>>
+  Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
 function notifyRecovered(
   session: RelaySession,
   key: string,
-  draft: MentionDraft,
+  recovered: RecoveredSend,
 ) {
   for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
-    listener(draft);
+    listener(recovered);
+}
+function errorForRecovery(reason: unknown) {
+  return reason instanceof Error
+    ? reason.message
+    : reason !== undefined
+      ? String(reason)
+      : undefined;
 }
 function subscribeRecovery(
   session: RelaySession,
   key: string,
-  listener: (draft: MentionDraft) => void,
+  listener: (recovered: RecoveredSend) => void,
 ) {
   let byKey = recoveryListeners.get(session);
   if (!byKey) {
@@ -554,18 +562,27 @@ function Composer({
     else loadSaved(current);
   });
   const editingDraft = !!editing.target;
+  const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(scope, () => reconcileDraft());
     // Reconcile changes while message-edit mode or mounting paused this listener.
-    void editingDraft;
-    reconcileDraft();
+    reconcileDraft(deferredRecovery.current?.draft);
+    if (!editingDraft && deferredRecovery.current) {
+      setError(errorForRecovery(deferredRecovery.current.preparationError));
+      deferredRecovery.current = undefined;
+    }
     return stop;
   }, [scope, submission, editingDraft]);
+  const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
+    if (editing.target) deferredRecovery.current = recovered;
+    reconcileDraft(recovered.draft);
+    if (!editing.target) setError(errorForRecovery(recovered.preparationError));
+  });
   useEffect(
     () =>
-      subscribeRecovery(session, recoveryKey, (restored) =>
-        reconcileDraft(restored),
+      subscribeRecovery(session, recoveryKey, (recovered) =>
+        receiveRecovery(recovered),
       ),
     [session, recoveryKey],
   );
@@ -1104,18 +1121,10 @@ function Composer({
               return false;
             if (!target.adopt(files)) return false;
             recoveryFor(session).delete(recoveryKey);
-            notifyRecovered(session, recoveryKey, captured);
-            if (live.current) {
-              setAccepted(undefined);
-              loadSaved(JSON.stringify(captured));
-              setError(
-                preparationError instanceof Error
-                  ? preparationError.message
-                  : preparationError !== undefined
-                    ? String(preparationError)
-                    : undefined,
-              );
-            }
+            notifyRecovered(session, recoveryKey, {
+              draft: captured,
+              preparationError,
+            });
             return true;
           },
         );

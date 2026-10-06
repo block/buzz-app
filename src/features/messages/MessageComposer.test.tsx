@@ -1384,6 +1384,95 @@ it("does not replace an active message edit when a remounted upload recovers", a
   expect(h.publish).not.toHaveBeenCalled();
 });
 
+it("defers a failed upload recovery until an empty active message edit ends", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+  );
+  const editor = h.input();
+  fireEvent.keyDown(editor, { key: "ArrowUp" });
+  expect(editor).toHaveAccessibleName("Edit message");
+  await userEvent.clear(editor);
+  expect(editor).toHaveValue("");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(editor).toHaveAccessibleName("Edit message");
+  expect(editor).toHaveValue("");
+  expect(within(h.form()).queryByText("original.txt")).toBeNull();
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "original caption",
+  });
+  fireEvent.click(
+    within(h.form()).getByRole("button", { name: "Save changes" }),
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(h.form()).getByRole("button", { name: "Cancel edit" }),
+  );
+  await waitFor(() => expect(editor).toHaveValue("original caption"));
+  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+});
+
+it("offers message preparation retry after a failed attachment send remounts", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("emoji-remount.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
+  );
+  const composer = within(again.container);
+  await waitFor(() =>
+    expect(composer.getByRole("textbox")).toHaveValue("caption :party:"),
+  );
+  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  expect(composer.getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  available = true;
+  fireEvent.click(
+    composer.getByRole("button", { name: "Retry message preparation" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
+  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
 it("keeps a remaining upload failure banner when removing one of two failed files", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("one.txt"));

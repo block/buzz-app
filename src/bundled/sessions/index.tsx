@@ -10,6 +10,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "sessions",
     title: "Sessions",
     layout: "workspace",
+    primary: true,
     component: () => (
       <SessionsPage
         relay={relay}

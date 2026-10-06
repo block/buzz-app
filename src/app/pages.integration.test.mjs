@@ -351,6 +351,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((page) => page.pluginId === "buzz.sessions");
     assert.equal(sessionsPage.title, "Sessions");
+    assert.equal(sessionsPage.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(sessionsPage.component)),
       /Connect to a community/,

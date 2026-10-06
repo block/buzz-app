@@ -82,7 +82,7 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` gives a page a row in the
 shell's page navigation. Pages without it are still listed in search and reachable
-by deep link or from another page; Channels and Sessions are bundled examples.
+by deep link or from another page; Channels is a bundled example.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation

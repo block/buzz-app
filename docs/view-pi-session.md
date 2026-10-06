@@ -9,14 +9,16 @@ title, and sometimes the exact system prompt. The JSONL itself lives under
 
 Start from the Buzz link to the thread. In its `buzz://message` link, take the
 64-character `thread=` value, or `id=` when the link has no `thread=`. That is
-the thread root. Each Buzz turn records `Thread root: <id>` in the Pi
-transcript, so search the indexed sessions for it:
+the thread root. Turns inside the thread record `Thread root: <id>` in the Pi
+transcript. A top-level mention that started the thread records only
+`Event ID: <id>`. Search the indexed sessions for either:
 
 ```sh
 root='<thread-root-id>'
 for index in ~/.pi/buzz-pi-acp/sessions/*.json; do
   session=$(jq -r '.session.sessionFile' "$index")
-  if [ -f "$session" ] && rg -q -F "Thread root: $root" "$session"; then
+  if [ -f "$session" ] &&
+    rg -q -F -e "Thread root: $root" -e "Event ID: $root" "$session"; then
     jq -r --arg index "$index" \
       '[.session.updatedAt, .session.sessionTitle // "-", .session.sessionFile, $index] | @tsv' \
       "$index"
@@ -35,6 +37,16 @@ index='/path/to/matching-index.json'
 session=$(jq -r '.session.sessionFile' "$index")
 pi --export "$session" session.html
 open session.html # macOS; otherwise open the file in a browser
+```
+
+If `pi` is not on your `PATH` because **Settings → Agents → Install** set up Pi
+for Buzz, run Buzz's app-owned copy with its bundled Node:
+
+```sh
+app="$HOME/Library/Application Support/dev.local.buzz.foundation"
+# Linux: app="${XDG_DATA_HOME:-$HOME/.local/share}/dev.local.buzz.foundation"
+PATH="$(echo "$app"/runtimes/node/v24.18.0/*/bin):$PATH" \
+  "$app/node-tools/bin/pi" --export "$session" session.html
 ```
 
 The HTML file contains the session conversation and tool activity. Keep it local

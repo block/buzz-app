@@ -349,8 +349,9 @@ its cover, so the smaller wire budget protects the cover as it would have protec
 dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
 channel mark, a catch-up mark under its channel or thread mark, and the mark of an
 ordinary top-level message under its channel's `activity:` mark. That last rule needs
-the channel's known type, because catch-up never reads DM messages; a roster can list a
-channel before its metadata gives the type. Mentions, broadcasts and
+the channel's known type, because an `activity:` mark never reads DM messages (reading
+a DM writes its channel mark instead); a roster can list a channel before its metadata
+gives the type. Mentions, broadcasts and
 DM messages keep their marks. A thread or thread catch-up mark never replaces a message
 mark: a reply finds its channel from its own event, but finds its thread only while its
 root is loaded. Older desktop and mobile clients ignore `activity:`, so they show the

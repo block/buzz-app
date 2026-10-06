@@ -2762,7 +2762,7 @@ it("catch-up replaces the ordinary message marks it reads; attention marks stay"
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
 });
 
-it("catch-up keeps message marks in a DM, which it never reads", async () => {
+it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
   const h = setup();
   h.grant("room");
   h.emit([channelMetadata(h, "dm")]);
@@ -2776,11 +2776,11 @@ it("catch-up keeps message marks in a DM, which it never reads", async () => {
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id]);
   await lease.catchUp(bottom.id);
-  expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${first.id}`]: 11,
-    "activity:room": 13,
-  });
+  // A DM never gets an `activity:` mark; its own channel mark covers it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
   lease.dispose();
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", bottom.id).unread).toBe(false);
 });
 
 it("catch-up keeps message marks while the channel type is unknown", async () => {

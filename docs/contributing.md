@@ -274,8 +274,10 @@ just hooks
 `core.hooksPath` to the relative `.githooks`. Git resolves that from each
 worktree's root, so every worktree runs its own branch's tracked hooks. A
 worktree with its own explicit `core.hooksPath` keeps it and is not changed. The
-installer refuses an existing different `core.hooksPath` or custom hooks rather
-than overwriting them. Repeat installation is safe, including in clones that
+installer refuses an existing different clone-local or worktree `core.hooksPath`
+or custom hooks rather than overwriting them; a global `core.hooksPath` is
+overridden for this clone, so global hooks do not run here. Repeat installation
+is safe, including in clones that
 used the earlier per-worktree setting. Do not run `lefthook install`: the tracked Git hook calls a
 custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 

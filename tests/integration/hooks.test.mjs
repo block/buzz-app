@@ -81,8 +81,8 @@ function fixture(t) {
   git("commit", "-qm", "hook configuration");
   const sibling = path.join(dir, "sibling");
   git("worktree", "add", "--detach", sibling);
-  const install = () =>
-    run(path.join(root, "bin/node"), ["scripts/install-hooks.mjs"]);
+  const install = (overrides = {}) =>
+    run(path.join(root, "bin/node"), ["scripts/install-hooks.mjs"], overrides);
   const installed = install();
   assert.equal(installed.status, 0, installed.stdout + installed.stderr);
   const commit = () => run("git", ["commit", "-qm", "probe"]);
@@ -296,6 +296,32 @@ test("an old worktree override does not mask shared hooks the install would repl
     1,
   );
   assert.equal(f.read(".git/hooks/pre-commit"), "#!/bin/sh\nexit 1\n");
+});
+
+test("a global hooks path is overridden for this clone", (t) => {
+  const f = fixture(t);
+  const globalConfig = path.join(f.dir, "global.gitconfig");
+  f.git("config", "--local", "--unset", "core.hooksPath");
+  f.git("config", "--file", globalConfig, "core.hooksPath", "global-hooks");
+  const installed = f.install({ GIT_CONFIG_GLOBAL: globalConfig });
+  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  const effective = f.run("git", ["config", "--get", "core.hooksPath"], {
+    GIT_CONFIG_GLOBAL: globalConfig,
+  });
+  assert.equal(effective.status, 0, effective.stdout + effective.stderr);
+  assert.equal(effective.stdout.trim(), ".githooks");
+});
+
+test("a conflicting clone hooks path is refused", (t) => {
+  const f = fixture(t);
+  f.git("config", "--local", "core.hooksPath", "custom-hooks");
+  const refused = f.install();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Existing core.hooksPath \(custom-hooks\)/);
+  assert.equal(
+    f.git("config", "--local", "--get", "core.hooksPath").trim(),
+    "custom-hooks",
+  );
 });
 
 test("unstaged lint configuration cannot hide a staged warning", (t) => {

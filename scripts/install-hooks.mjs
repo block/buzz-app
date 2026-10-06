@@ -13,11 +13,13 @@ const config = (key, ...scope) => {
   return result.stdout.trim();
 };
 process.chdir(git("rev-parse", "--show-toplevel"));
-// Refuse a different hooks path in this worktree or in the clone-wide setting
-// this install replaces; a worktree override must not mask the shared one.
-const existing = config("core.hooksPath");
+// Refuse different hooks paths in this clone or its worktree config. Global and
+// system settings are intentionally ignored because this install replaces them.
 const shared = config("core.hooksPath", "--local");
-for (const value of [existing, shared])
+const worktreeConfig =
+  config("extensions.worktreeConfig", "--local", "--type=bool") === "true";
+const worktree = worktreeConfig ? config("core.hooksPath", "--worktree") : "";
+for (const value of [shared, worktree])
   if (value && value !== ".githooks")
     throw new Error(
       `Existing core.hooksPath (${value}); reconcile it before installing.`,

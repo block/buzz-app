@@ -5,7 +5,7 @@ import {
   getPublicKey,
   nip44,
 } from "nostr-tools";
-import { decodeAgentObserver } from "./agent-observer.mjs";
+import { decodeAgentObserver, decodeAgentArchive } from "./agent-observer.mjs";
 
 const now = 1700000000;
 // Keep frame construction and validation in the same second at the ±300s boundary.
@@ -79,4 +79,24 @@ test("rejects signature, recipient, sender, direction, cardinality, freshness, c
   const cached = frame();
   cached.content = frame({}, "{}").content;
   expect(() => decodeAgentObserver(cached, owner, viewer)).toThrow();
+});
+
+test("history decode accepts retained age without weakening live freshness or owner checks", () => {
+  const old = frame({ created_at: now - 3600 });
+  expect(() => decodeAgentObserver(old, owner, viewer)).toThrow();
+  expect(decodeAgentArchive(old, owner, viewer, true).plaintext).toBe(raw);
+  for (const event of [
+    frame({ created_at: now - 90 * 86400 - 1 }),
+    frame({ created_at: now + 301 }),
+    frame({ kind: 9 }),
+    frame({
+      tags: [
+        ["p", getPublicKey(stranger)],
+        ["agent", sender],
+        ["frame", "telemetry"],
+      ],
+    }),
+    { ...old, content: frame({}, "{}").content },
+  ])
+    expect(() => decodeAgentArchive(event, owner, viewer, true)).toThrow();
 });

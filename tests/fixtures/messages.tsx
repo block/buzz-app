@@ -2,6 +2,7 @@ import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // A second source consumer: ordinary prop changes, no caller remount keys.
 // Real React/session/outbox; local ephemeral signed events, never a live broker.
 import { StrictMode, useRef, useState } from "react";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -173,6 +174,15 @@ const agentReply = signed(agent, {
   ],
 });
 const events = [...roots, ...replies, exactReaction, agentReply];
+
+function createClipboardGate() {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { writes: 0, released, release };
+}
+
 const report = {
   pages: [] as string[],
   filters: [] as ReadFilter[],
@@ -401,6 +411,30 @@ Object.assign(window, {
     extensionsActive() {
       return extensions.inline.snapshot().map((entry) => entry.id);
     },
+    imageClipboard(outcome: "success" | "failure", mode?: "deferred") {
+      const clipboardGate = createClipboardGate();
+      window.messagesFixture.clipboardGate = clipboardGate;
+      class FixtureClipboardItem {
+        constructor(readonly items: Record<string, Promise<Blob>>) {}
+      }
+      Object.defineProperty(window, "ClipboardItem", {
+        configurable: true,
+        value: FixtureClipboardItem,
+      });
+      HTMLCanvasElement.prototype.toBlob = function toBlob(callback) {
+        callback(new Blob(["png"], { type: "image/png" }));
+      };
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          write: async () => {
+            clipboardGate.writes++;
+            if (mode === "deferred") await clipboardGate.released;
+            if (outcome === "failure") throw new Error("fixture denied");
+          },
+        },
+      });
+    },
     deep(kind: 9 | 40002) {
       const content = `${"> ".repeat(20_000)}literal deep message`;
       const event =
@@ -461,6 +495,7 @@ function PortraitVideoFixture() {
 }
 
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
     [scope, setScope] = useState("fixture"),
     [review, setReview] = useState<Attachment>();

@@ -256,12 +256,15 @@ pub fn repository_url(input: &str) -> Result<String> {
 struct Git {
     scratch: tempfile::TempDir,
     deadline: Instant,
+    /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
+    authorization: Option<(String, String)>,
 }
 impl Git {
     fn new() -> Result<Self> {
         Ok(Self {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
+            authorization: None,
         })
     }
     fn command(&self) -> Command {
@@ -296,6 +299,25 @@ impl Git {
                 &format!("core.hooksPath={null}"),
             ])
             .current_dir(self.scratch.path());
+        if let Some((url, token)) = &self.authorization {
+            // Environment, not argv: other processes cannot read the token from `ps`.
+            // No redirects, so the header never follows the request to another URL.
+            for (index, (key, value)) in [
+                (
+                    format!("http.{url}.extraHeader"),
+                    format!("Authorization: Nostr {token}"),
+                ),
+                ("http.followRedirects".into(), "false".into()),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                command
+                    .env(format!("GIT_CONFIG_KEY_{index}"), key)
+                    .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+            }
+            command.env("GIT_CONFIG_COUNT", "2");
+        }
         command
     }
     fn run(&self, args: &[&str], limit: u64) -> Result<Vec<u8>> {
@@ -440,7 +462,12 @@ impl Git {
     }
 }
 
-pub fn prepare_git(repository: &str, reference: &str) -> Result<PreparedImport> {
+/// `authorization` is a NIP-98 token that the caller signed for exactly this repository URL.
+pub fn prepare_git(
+    repository: &str,
+    reference: &str,
+    authorization: Option<&str>,
+) -> Result<PreparedImport> {
     let url = repository_url(repository)?;
     let reference = reference.trim();
     if !reference.is_empty()
@@ -452,7 +479,18 @@ pub fn prepare_git(repository: &str, reference: &str) -> Result<PreparedImport> 
     {
         return Err("Enter a branch or tag name using letters, digits, dots, underscores, slashes or hyphens".into());
     }
-    let git = Git::new()?;
+    let mut git = Git::new()?;
+    if let Some(token) = authorization {
+        if token.is_empty()
+            || token.len() > 8192
+            || !token
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+        {
+            return Err("Invalid repository authorization".into());
+        }
+        git.authorization = Some((url.clone(), token.into()));
+    }
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -716,7 +754,7 @@ mod tests {
         ] {
             assert!(repository_url(input).is_err(), "{input}");
         }
-        assert!(prepare_git("block/plugins", "--upload-pack=bad").is_err());
+        assert!(prepare_git("block/plugins", "--upload-pack=bad", None).is_err());
     }
     #[test]
     fn git_reads_committed_blobs_without_checkout_filters_symlinks_or_scripts() {
@@ -763,6 +801,71 @@ mod tests {
         let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].clone()).unwrap();
         assert!(text.contains("first"));
         assert!(!text.contains("uncommitted"));
+    }
+    #[test]
+    fn authorization_reaches_only_its_repository_and_never_follows_a_redirect() {
+        use std::io::{BufRead, BufReader, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", server.local_addr().unwrap());
+        let requests = thread::spawn(move || {
+            let mut seen = vec![];
+            for _ in 0..2 {
+                let (stream, _) = server.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = vec![];
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    head.push(line.trim().to_string());
+                }
+                // Each repository redirects; Git must report it, not follow it with the header.
+                let mut stream = stream;
+                write!(stream, "HTTP/1.1 302 Found\r\nLocation: /elsewhere/info/refs?service=git-upload-pack\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                seen.push(head);
+            }
+            seen
+        });
+        let mut git = Git::new().unwrap();
+        let repository = format!("{base}/git/{}/plugin", "a".repeat(64));
+        git.authorization = Some((repository.clone(), "dG9rZW4=".into()));
+        for url in [
+            repository,
+            format!("{base}/git/{}/plugin-other", "a".repeat(64)),
+        ] {
+            let error = git
+                .run(
+                    &["-c", "protocol.http.allow=always", "ls-remote", "--", &url],
+                    LIMIT,
+                )
+                .unwrap_err();
+            assert!(error.contains("error: 302"), "{error}");
+        }
+        let seen = requests.join().unwrap();
+        let authorization = |head: &Vec<String>| {
+            head.iter()
+                .any(|line| line == "Authorization: Nostr dG9rZW4=")
+        };
+        assert!(seen[0][0].contains("/plugin/info/refs"), "{:?}", seen[0]);
+        assert!(authorization(&seen[0]));
+        // A sibling whose name shares the prefix is a different repository.
+        assert!(
+            seen[1][0].contains("/plugin-other/info/refs"),
+            "{:?}",
+            seen[1]
+        );
+        assert!(!authorization(&seen[1]));
+    }
+    #[test]
+    fn rejects_malformed_authorization_before_running_git() {
+        for token in ["", "a\r\nX-Injected: 1", &"a".repeat(8193)] {
+            let error = prepare_git("https://example.invalid/git/owner/repo", "", Some(token))
+                .err()
+                .unwrap();
+            assert_eq!(error, "Invalid repository authorization");
+        }
     }
     #[test]
     fn git_deadline_and_output_limits_fail() {

@@ -79,17 +79,52 @@ fn leave_requests_sign_only_the_protected_empty_shape() {
     ] {
         assert!(validate_event("https://relay.test", &rejected).is_err());
     }
-    // Member commands stay owner/admin-only on the broker; native signs none.
-    assert!(validate_event(
-        "https://relay.test",
-        &EventTemplate {
-            kind: 9031,
-            created_at: 1,
-            content: "".into(),
-            tags: vec![vec!["p".into(), "a".repeat(64)]],
-        }
-    )
-    .is_err());
+}
+
+#[test]
+fn member_commands_sign_only_the_broker_shape() {
+    let command = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
+        kind,
+        created_at: 1,
+        content: content.into(),
+        tags: tags
+            .iter()
+            .map(|tag| tag.iter().map(|value| value.to_string()).collect())
+            .collect(),
+    };
+    let key = "a".repeat(64);
+    let p: &[&str] = &["p", &key];
+    for accepted in [
+        command(9030, "", &[p, &["role", "member"]]),
+        command(9030, "", &[p, &["role", "admin"]]),
+        command(9031, "", &[p]),
+        command(9032, "", &[p, &["role", "admin"]]),
+        command(9032, "", &[p, &["role", "member"]]),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    let upper = "A".repeat(64);
+    for rejected in [
+        // Owner is never granted, and add/role must name a role.
+        command(9030, "", &[p, &["role", "owner"]]),
+        command(9032, "", &[p, &["role", "owner"]]),
+        command(9030, "", &[p]),
+        command(9032, "", &[p]),
+        // Remove carries the target only.
+        command(9031, "", &[p, &["role", "member"]]),
+        command(9030, "note", &[p, &["role", "member"]]),
+        command(9031, "", &[&["p", &upper]]),
+        command(9031, "", &[&["p", &key[1..]]]),
+        command(9031, "", &[&["p", &key, "wss://relay.test"]]),
+        command(9031, "", &[p, p]),
+        command(9031, "", &[&["role", "member"], p]),
+        command(9030, "", &[p, &["role", "member"], &["h", "channel"]]),
+        command(9031, "", &[]),
+        // Workspace profile edits stay outside this surface.
+        command(9033, "", &[]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
 }
 
 fn fixture_server(response: String) -> (Url, std::thread::JoinHandle<(String, String)>) {
@@ -160,6 +195,18 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
         event["tags"][2],
         serde_json::json!(["payload", format!("{:x}", Sha256::digest(body.as_bytes()))])
     );
+    // A fresh credential per dispatched request: a nonce and the current time.
+    assert_eq!(event["tags"][3][0], "nonce");
+    assert!(event["tags"][3][1]
+        .as_str()
+        .is_some_and(|nonce| !nonce.is_empty()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(event["created_at"]
+        .as_u64()
+        .is_some_and(|at| now.abs_diff(at) <= 5));
     verify(&event);
 }
 
@@ -315,6 +362,13 @@ fn real_ipc_restores_identity_signs_and_rejects_invalid_requests() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let output = child.env("BUZZ_ARCHIVE_RESTART", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     #[cfg(target_os = "windows")]
     {
@@ -339,6 +393,7 @@ fn isolated_agent_ipc_probe() {
     let app = mock_builder()
         .manage(IdentityHost::fixture())
         .manage(Uploads::default())
+        .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -393,6 +448,79 @@ fn isolated_agent_ipc_probe() {
         }
     }
     let public = invoke("identity_restore", serde_json::json!({})).unwrap();
+    #[cfg(unix)]
+    {
+        let archive = |request| {
+            invoke(
+                "relay_archive",
+                serde_json::json!({
+                    "community":"https://relay.test", "viewer":public, "request":request
+                }),
+            )
+        };
+        let settings = archive(serde_json::json!({"action":"settings"})).unwrap();
+        let path = std::path::PathBuf::from(settings["path"].as_str().unwrap());
+        assert!(path.starts_with(std::env::var("HOME").unwrap()));
+        if std::env::var("BUZZ_ARCHIVE_RESTART").as_deref() != Ok("1") {
+            for kind in [24200, 44200] {
+                let event = crate::archive::tests::envelope(public.as_str().unwrap(), kind, 0);
+                for _ in 0..2 {
+                    let saved = archive(serde_json::json!({"action":"ingest","event":event,"revision":settings["revision"]})).unwrap();
+                    assert_eq!(saved, serde_json::json!({"saved":true}));
+                }
+            }
+        }
+        for kind in [24200, 44200] {
+            let fresh = crate::archive::tests::envelope(public.as_str().unwrap(), kind, 2);
+            let stale = crate::archive::tests::envelope_at(
+                public.as_str().unwrap(),
+                kind,
+                3,
+                fresh.created_at - 301,
+            );
+            let wrong_viewer = crate::archive::tests::envelope(&fresh.pubkey, kind, 4);
+            for invalid in [stale, wrong_viewer] {
+                assert!(archive(serde_json::json!({"action":"ingest","event":invalid,"revision":settings["revision"]})).is_err());
+            }
+            let page = archive(serde_json::json!({"action":"read","kind":kind})).unwrap();
+            assert_eq!(page["records"].as_array().unwrap().len(), 1);
+            assert!(page["records"][0]["plaintext"]
+                .as_str()
+                .unwrap()
+                .contains("archive-secret-marker"));
+            assert_eq!(page["skipped"], 0);
+        }
+        let stored = archive(serde_json::json!({"action":"read","kind":24200})).unwrap();
+        let event_id = stored["records"][0]["id"].as_str().unwrap().as_bytes();
+        let mut found_event = false;
+        for file in std::fs::read_dir(path.parent().unwrap()).unwrap() {
+            let raw = std::fs::read(file.unwrap().path()).unwrap();
+            found_event |= raw.windows(event_id.len()).any(|bytes| bytes == event_id);
+            assert!(!raw
+                .windows(b"archive-secret-marker".len())
+                .any(|s| s == b"archive-secret-marker"));
+            assert!(!raw.windows(b"channelId".len()).any(|s| s == b"channelId"));
+        }
+        assert!(found_event, "ciphertext scan must include a saved envelope");
+        let isolated = invoke("relay_archive",serde_json::json!({"community":"https://other.test","viewer":public,"request":{"action":"read","kind":24200}})).unwrap();
+        assert!(isolated["records"].as_array().unwrap().is_empty());
+        if std::env::var("BUZZ_ARCHIVE_RESTART").as_deref() == Ok("1") {
+            archive(serde_json::json!({"action":"clear","kind":24200})).unwrap();
+            assert!(
+                archive(serde_json::json!({"action":"read","kind":24200})).unwrap()["records"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                archive(serde_json::json!({"action":"read","kind":44200})).unwrap()["records"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
     let event = invoke(
         "relay_sign",
         serde_json::json!({
@@ -404,6 +532,27 @@ fn isolated_agent_ipc_probe() {
     .unwrap();
     assert_eq!(event["pubkey"], public);
     verify(&event);
+
+    let repository = format!("https://relay.test/git/{}/plugins", "a".repeat(64));
+    let token = invoke(
+        "relay_git_authorization",
+        serde_json::json!({"community": "https://relay.test", "repository": repository}),
+    )
+    .unwrap();
+    let auth: serde_json::Value =
+        serde_json::from_slice(&STANDARD.decode(token.as_str().unwrap()).unwrap()).unwrap();
+    verify(&auth);
+    assert_eq!(auth["pubkey"], public);
+    assert_eq!(auth["kind"], 27235);
+    assert_eq!(
+        auth["tags"],
+        serde_json::json!([["u", repository], ["method", "GET"]])
+    );
+    assert!(invoke(
+        "relay_git_authorization",
+        serde_json::json!({"community": "https://relay.test", "repository": "https://other.test/git/x/y"}),
+    )
+    .is_err());
 
     // The old direct attestation IPC must be absent, not merely unused by the UI.
     assert!(invoke(
@@ -436,6 +585,10 @@ fn isolated_agent_ipc_probe() {
     // reader until a test-only fixture can control that path.
     // Each must reach the command: a handler refusal is fine; an ACL refusal is not.
     for (command, input) in [
+        (
+            "relay_archive",
+            serde_json::json!({"community":"https://relay.test", "viewer":"bad", "request":{"action":"settings"}}),
+        ),
         (
             "relay_agent_memories_read",
             serde_json::json!({"community": "https://relay.test", "agent": public}),
@@ -518,6 +671,17 @@ fn isolated_agent_ipc_probe() {
     .unwrap_err()
     .to_string()
     .contains("Invalid workflow read"));
+    assert!(invoke(
+        "relay_project_git",
+        serde_json::json!({
+            "community": "https://relay.test",
+            "id": "11111111-1111-4111-8111-111111111111",
+            "read": { "owner": "a".repeat(64), "dtag": "../query" }
+        })
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("Invalid Git read"));
 }
 
 #[test]
@@ -1967,4 +2131,106 @@ fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries(
     let mut too_large = event(vec![channel]);
     too_large.content = "é".repeat(13 * 1024);
     assert!(validate_event("https://relay.test", &too_large).is_err());
+}
+
+#[test]
+fn member_commands_sign_through_production_ipc() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |event: &serde_json::Value| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let target = "a".repeat(64);
+    let command = |kind: u16, tags: serde_json::Value| serde_json::json!({ "kind": kind, "created_at": 1, "content": "", "tags": tags });
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "member"]])),
+        command(9030, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9031, serde_json::json!([["p", target]])),
+        command(9032, serde_json::json!([["p", target], ["role", "admin"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "member"]])),
+    ] {
+        let signed = sign(&event).unwrap();
+        assert_eq!(
+            signed["pubkey"],
+            "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+        );
+        for field in ["kind", "created_at", "content", "tags"] {
+            assert_eq!(signed[field], event[field]);
+        }
+        verify(&signed);
+    }
+    // An owner grant is refused by the host before any key use.
+    for event in [
+        command(9030, serde_json::json!([["p", target], ["role", "owner"]])),
+        command(9032, serde_json::json!([["p", target], ["role", "owner"]])),
+    ] {
+        assert!(sign(&event).is_err(), "signed {event}");
+    }
+}
+
+#[test]
+fn git_authorization_covers_only_this_communitys_repositories() {
+    let owner = "a".repeat(64);
+    for repository in [
+        format!("https://relay.test/git/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins.git"),
+        format!("https://relay.test/git/{owner}/plugins."),
+        format!("https://relay.test/git/{owner}/plugins..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(64)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(64)),
+    ] {
+        assert_eq!(
+            git_repository("https://relay.test/", &repository)
+                .unwrap()
+                .as_str(),
+            repository
+        );
+    }
+    for repository in [
+        format!("https://other.test/git/{owner}/plugins"),
+        format!("http://relay.test/git/{owner}/plugins"),
+        format!("https://relay.test:444/git/{owner}/plugins"),
+        format!("https://me@relay.test/git/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins/"),
+        format!("https://relay.test/git/{owner}/plugins?service=git-receive-pack"),
+        format!("https://relay.test/git/{owner}/plugins#x"),
+        format!("https://relay.test/git/{owner}/.hidden"),
+        format!("https://relay.test/git/{owner}/a..b"),
+        format!("https://relay.test/git/{owner}/a..b.git"),
+        format!("https://relay.test/git/{owner}/.git"),
+        format!("https://relay.test/git/{owner}/..git"),
+        format!("https://relay.test/git/{owner}/{}", "n".repeat(65)),
+        format!("https://relay.test/git/{owner}/{}.git", "n".repeat(65)),
+        format!("https://relay.test/git/{}/plugins", "A".repeat(64)),
+        format!("https://relay.test/api/{owner}/plugins"),
+        format!("https://relay.test/git/{owner}/plugins/info/refs"),
+        format!("https://RELAY.test/git/{owner}/plugins"),
+        "https://relay.test/query".into(),
+    ] {
+        assert!(
+            git_repository("https://relay.test/", &repository).is_err(),
+            "{repository}"
+        );
+    }
 }

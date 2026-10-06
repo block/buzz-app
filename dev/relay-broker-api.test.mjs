@@ -58,6 +58,7 @@ async function harness(
     handler?.(req, res);
   });
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl,
     builderlab,
     communityAliases: fixtureAliases,
@@ -363,6 +364,48 @@ test("harness log proof signs only exact scoped community and agent inputs", asy
         Buffer.from(viewer, "hex"),
       ),
     ).toBe(false);
+  } finally {
+    await h.close();
+  }
+});
+
+test("Git authorization signs only this community's exact repository URL", async () => {
+  const h = await harness(success);
+  const key = new Uint8Array(32);
+  key[31] = 7;
+  const viewer = getPublicKey(key);
+  const repository = `https://primary.example/git/${"ab".repeat(32)}/plugins`;
+  try {
+    expect((await h.post("register", { url: fixtureRelayUrl })).status).toBe(
+      200,
+    );
+    expect((await h.post("git-authorization", { repository })).status).toBe(
+      400,
+    );
+    for (const invalid of [
+      { repository: `https://secondary.example/git/${"ab".repeat(32)}/x` },
+      { repository: ` ${repository}` },
+      { repository: `${repository}/info/refs` },
+      { repository, extra: true },
+      { url: repository },
+    ])
+      expect((await h.post("primary/git-authorization", invalid)).status).toBe(
+        400,
+      );
+    const result = await h.post("primary/git-authorization", { repository });
+    expect(result.status).toBe(200);
+    const { token } = await result.json();
+    const auth = JSON.parse(Buffer.from(token, "base64").toString("utf8"));
+    expect(verifyEvent(auth)).toBe(true);
+    expect(auth).toMatchObject({
+      kind: 27235,
+      pubkey: viewer,
+      content: "",
+      tags: [
+        ["u", repository],
+        ["method", "GET"],
+      ],
+    });
   } finally {
     await h.close();
   }

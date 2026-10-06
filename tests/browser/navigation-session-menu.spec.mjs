@@ -46,7 +46,7 @@ test("channel context menu opens and resumes a session draft without a row menu 
       exact: true,
     }),
   ).toBeDisabled();
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(0);
   await expect(alpha).toHaveAttribute("aria-current", "page");
   // CSS geometry needs a real layout engine. The session item retains the shared
   // nested corners in both themes, independent of viewport width or sibling actions.

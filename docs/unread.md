@@ -169,6 +169,26 @@ and row projection (case-insensitive hex, last valid marker wins). Resolution st
 requires bounded, retained same-channel message evidence; references alone do not
 grant access or trigger a read.
 
+## Workflow mentions
+
+For relay-signed kind-9 workflow output (`buzz:workflow=true`), the `p` tag
+matching `buzz:workflow-owner` is attribution, not a mention. It counts as a
+mention only when the owner also has a `buzz:workflow-mention` tag. Other `p`
+recipients keep ordinary mention semantics, even without template-provenance
+tags. Untrusted senders cannot suppress mentions by copying workflow metadata;
+without a trusted relay identity, ordinary `p`-tag semantics remain in effect.
+
+This shared classification feeds attention badges, Inbox, notifications and the
+channel-mute mention exception. Ordinary unread, DM and participating-thread
+rules still apply. No message or read marker is rewritten.
+
+The relay currently emits `buzz:workflow-mention` only for recipients named in
+the stored template as well as the rendered output. If substituted input alone
+names the owner, its single `p` tag cannot distinguish that mention from owner
+attribution and does not create mention attention. Put the owner's explicit
+`@Name` in the template when they should be alerted. Distinguishing substituted
+owner mentions requires additional relay metadata, not client-side name parsing.
+
 ## Relevant replies
 
 Every top-level message counts. A reply counts only when it is in one of the
@@ -275,7 +295,7 @@ are uint32 seconds; replaceable publication clocks advance monotonically with a
 bounded lead rather than running indefinitely into the future.
 
 Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
-The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
+The sync journal has a 96 KiB serialized-blob budget and wire publication a 40 KiB
 plaintext budget. Under pressure, up to three quarters of each budget keeps channel
 marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
 (`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
@@ -300,6 +320,23 @@ introduced to fit.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.
+A local-only `reserve` field in the same journal record keeps receipts evicted
+from the sync journal, up to 5,000 keys / 512 KiB of serialized JSON. It preserves
+actual frontiers, never manufactures channel cutoffs, and commits atomically with
+the journal. Local unread decisions use both sets. Returning keys take the maximum
+frontier before leaving the reserve. Its finite eviction order favors channel,
+thread, then catch-up receipts before individual messages; newest event timestamps
+win within each group. While overrides exist, inherited reserve floors stay protected
+and direct override floors return to the journal.
+
+This extends retention only on the same browser profile/install. It cannot recover
+already discarded receipts, prevent loss after exhausting the reserve, or improve a
+fresh profile's smaller synced copy. An automatic observation already covered by
+the reserve does not republish that receipt. Manual unread still wins. Old builds
+can load the unchanged sync journal but discard the optional reserve on their next
+save; community leave on any build deletes both together. No database migration,
+new relay request, or wire-format change is involved.
+
 Override groups, permanent clear floors, directly associated frontiers and possible
 inherited channel/thread frontiers are protected; capacity failure is visible,
 never floor truncation. Publication of any override-bearing state is deliberately

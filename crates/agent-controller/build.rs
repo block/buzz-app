@@ -9,6 +9,7 @@ fn main() {
     let local = root.join("../../.env.local");
     println!("cargo:rerun-if-changed={}", local.display());
     println!("cargo:rerun-if-changed=build_config.rs");
+    println!("cargo:rerun-if-changed=../build_env.rs");
     for key in build_config::KEYS {
         println!("cargo:rerun-if-env-changed={key}");
     }

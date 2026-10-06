@@ -7,9 +7,11 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { type Filter, matchFilter } from "nostr-tools";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -22,7 +24,16 @@ import {
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { SearchResults } from "./SearchResults";
+import { readSearchUsage, recordChoice, recordVisit } from "./search-usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+
+// jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -75,6 +86,233 @@ it("opens with a conversation action and recent channels in activity order", asy
     expect(second).toHaveTextContent("older");
     fireEvent.click(action);
     expect(changeScope).toHaveBeenCalledExactlyOnceWith("older");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("ranks typed channel names and selects the best one for Enter", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  // Weak matches come first in list order and exceed the eight-row limit.
+  const names = [
+    ...Array.from({ length: 8 }, (_, index) => `xlar-${index}`),
+    "the-lar",
+    "lar-crew",
+    "lar",
+  ];
+  const discovery = names.flatMap((name, index) => [
+    metadata(relay, name, name, 1700000000 + index),
+    roster(relay, name, [viewer.pubkey]),
+  ]);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="lar"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        currentChannelId="xlar-0"
+        onScopeChange={() => {}}
+        openConversation={open}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    await waitFor(() =>
+      expect(within(channels).getAllByRole("option")).toHaveLength(8),
+    );
+    expect(
+      within(channels)
+        .getAllByRole("option")
+        .slice(0, 4)
+        .map((option) => option.textContent),
+    ).toEqual([
+      expect.stringMatching(/^lar/),
+      expect.stringMatching(/^lar-crew/),
+      expect.stringMatching(/^the-lar/),
+      expect.stringMatching(/^xlar-/),
+    ]);
+    // The scope action follows named results, so it is not selected first.
+    const groups = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(groups.indexOf("This conversation")).toBeGreaterThan(
+      groups.indexOf("Channels"),
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      within(channels).getAllByRole("option")[0]?.id,
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledExactlyOnceWith("lar");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("fuzzy-matches channel names after substring matches, word starts first", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const names = [
+    "big-grape",
+    "buzz-github-prs",
+    "debug-pr",
+    "general",
+    "ops-bgp",
+  ];
+  const discovery = names.flatMap((name, index) => [
+    metadata(relay, name, name, 1700000000 + index),
+    roster(relay, name, [viewer.pubkey]),
+  ]);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="bgp"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={open}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    // The substring match leads. Initials ("b"uzz-"g"ithub-"p"rs) come next,
+    // then names that merely hold the letters in order. "general" has no "b".
+    await waitFor(() =>
+      expect(
+        within(channels)
+          .getAllByRole("option")
+          .map((option) => option.textContent?.split(/[A-Z]/)[0]),
+      ).toEqual([
+        "ops-bgp",
+        "buzz-github-prs",
+        expect.stringMatching(/^(big-grape|debug-pr)$/),
+        expect.stringMatching(/^(big-grape|debug-pr)$/),
+      ]),
+    );
+    // The matched letters are underlined, and only those letters.
+    const marks = (name: string) =>
+      [
+        ...within(channels)
+          .getByRole("option", { name: new RegExp(`^${name}`) })
+          .querySelectorAll("mark"),
+      ].map((mark) => mark.textContent);
+    expect(marks("ops-bgp")).toEqual(["bgp"]);
+    expect(marks("buzz-github-prs")).toEqual(["b", "g", "p"]);
+    expect(marks("debug-pr")).toEqual(["b", "g", "p"]);
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledExactlyOnceWith("ops-bgp");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("leads with the group holding the best match and ranks archived channels after live ties", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "space", "team-workspace", 1700000000),
+    roster(relay, "space", [viewer.pubkey]),
+    signed(relay, {
+      kind: 39000,
+      created_at: 1700000001,
+      content: "",
+      tags: [
+        ["d", "old"],
+        ["t", "stream"],
+        ["name", "work-old"],
+        ["archived", "true"],
+      ],
+    }),
+    roster(relay, "old", [viewer.pubkey]),
+    metadata(relay, "log", "work-log", 1700000002),
+    roster(relay, "log", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+  });
+  const work = vi.fn();
+  const page = (label: string, run = () => {}) => ({
+    key: label,
+    label,
+    icon: ChatCircleIcon,
+    run,
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="work"
+        onQueryChange={() => {}}
+        input={createRef()}
+        // PageSearch ranks pages before they arrive here.
+        pages={[page("Work", work), page("Workflows")]}
+        openConversation={() => {}}
+      />,
+    );
+    const channels = await screen.findByRole("group", { name: "Channels" });
+    await waitFor(() =>
+      expect(within(channels).getAllByRole("option")).toHaveLength(3),
+    );
+    expect(
+      within(channels)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual([
+      expect.stringMatching(/^work-log/),
+      expect.stringMatching(/^work-old/),
+      expect.stringMatching(/^team-workspace/),
+    ]);
+    const groups = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(groups.slice(0, 2)).toEqual(["Pages", "Channels"]);
+    const pages = screen.getByRole("group", { name: "Pages" });
+    expect(
+      within(pages)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Work", "Workflows"]);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(work).toHaveBeenCalledOnce();
   } finally {
     cleanup();
     owner.dispose();
@@ -145,7 +383,11 @@ it("shows the real read failure, retains conversation choices, and retries to an
     const hit = message(viewer, "crew", "wes-crew exact message", 1700000001);
     await act(async () => wire.next().respond([hit]));
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
-    fireEvent.keyDown(input, { key: "ArrowUp" });
+    // Typed text selects the first result; the late message sits below it.
+    expect(
+      screen.getByRole("option", { name: /^wes-crew(?! exact)/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(
       screen.getByRole("option", { name: /wes-crew exact message/ }),
     ).toHaveAttribute("aria-selected", "true");
@@ -544,3 +786,369 @@ it.each([
     }
   },
 );
+
+it("finds active public channels the viewer has not joined without adding them to the joined list", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const open = [
+    ["public", ""],
+    ["t", "stream"],
+  ];
+  const discovery = [
+    metadata(relay, "joined", "crew-chat", 1700000000, open),
+    roster(relay, "joined", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, open),
+    roster(relay, "lobby", [other.pubkey]),
+    metadata(relay, "secret", "crew-secret", 1700000000, [
+      ["private", ""],
+      ["t", "stream"],
+    ]),
+    metadata(relay, "old", "crew-old", 1700000000, [
+      ...open,
+      ["archived", "true"],
+    ]),
+    metadata(relay, "dm", "crew-dm", 1700000000, [
+      ["public", ""],
+      ["hidden", ""],
+      ["t", "dm"],
+    ]),
+    // Only relay-signed metadata is channel authority.
+    metadata(other, "forged", "crew-forged", 1700000000, open),
+  ];
+  const reads: unknown[] = [];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      reads.push(filters);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const lobby = await screen.findByRole("option", { name: /crew-lobby/ });
+    expect(lobby).toHaveTextContent("Public channel · not joined");
+    const group = within(screen.getByRole("group", { name: "Channels" }));
+    expect(
+      group.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      expect.stringContaining("crew-chat"),
+      expect.stringContaining("crew-lobby"),
+    ]);
+    for (const hidden of ["crew-secret", "crew-old", "crew-dm", "crew-forged"])
+      expect(
+        screen.queryByRole("option", { name: new RegExp(hidden) }),
+      ).toBeNull();
+    // The match resolved through exact signed metadata and the viewer roster.
+    expect(reads).toContainEqual([
+      expect.objectContaining({ kinds: [39000], "#d": ["lobby"] }),
+      expect.objectContaining({
+        kinds: [39002],
+        "#d": ["lobby"],
+        "#p": [viewer.pubkey],
+      }),
+    ]);
+    expect(owner.session.channels.get?.("lobby")).toMatchObject({
+      readOnly: true,
+      name: "crew-lobby",
+    });
+    expect(
+      owner.session.channels.list().channels.map((channel) => channel.id),
+    ).toEqual(["joined"]);
+    fireEvent.click(lobby);
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("returns keyboard focus to search when channel lookup retries, through repeated failure and recovery", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const relay = keypair();
+  const viewer = keypair();
+  const other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const open = [
+    ["public", ""],
+    ["t", "stream"],
+  ];
+  const discovery = [
+    metadata(relay, "joined", "other-chat", 1700000000, open),
+    roster(relay, "joined", [viewer.pubkey]),
+    metadata(relay, "lobby", "crew-lobby", 1700000000, open),
+    roster(relay, "lobby", [other.pubkey]),
+  ];
+  let failures = 2;
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      // Only the public-channel page read fails; exact lookups still succeed.
+      if (
+        failures > 0 &&
+        filters.some(
+          (filter) => filter.kinds?.includes(39000) && !filter["#d"],
+        ) &&
+        !filters.some((filter) => filter.kinds?.includes(39002))
+      ) {
+        failures--;
+        return Promise.reject(new Error("Relay read timed out"));
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="crew"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const retry = await screen.findByRole("button", {
+        name: "Retry channels",
+      });
+      retry.focus();
+      fireEvent.click(retry);
+      expect(
+        screen.queryByRole("button", { name: "Retry channels" }),
+      ).toBeNull();
+      expect(input).toHaveFocus();
+    }
+    const lobby = await screen.findByRole("option", { name: /crew-lobby/ });
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(lobby).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+function usageSession(
+  names: readonly string[],
+  publicNames: readonly string[] = [],
+) {
+  const relay = keypair();
+  const viewer = keypair();
+  const other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const open = [
+    ["public", ""],
+    ["t", "stream"],
+  ];
+  const discovery = [
+    ...names.flatMap((name, index) => [
+      metadata(relay, name, name, 1700000000 + index),
+      roster(relay, name, [viewer.pubkey]),
+    ]),
+    ...publicNames.flatMap((name) => [
+      metadata(relay, name, name, 1700000000, open),
+      roster(relay, name, [other.pubkey]),
+    ]),
+  ];
+  return createRelaySession({
+    ...wire.transport,
+    query(filters) {
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+}
+
+const usage = `wss://relay.example:${"a".repeat(64)}`;
+const optionNames = (group: string) =>
+  within(screen.getByRole("group", { name: group }))
+    .getAllByRole("option")
+    .map((option) => option.textContent?.split(/Conversation|Public/)[0]);
+
+it("puts the earlier choice for typed text first, unless another name is exact", async () => {
+  localStorage.clear();
+  recordChoice(usage, "wo", "channel:team-work");
+  const owner = usageSession(["work", "team-work", "workshop"]);
+  const open = vi.fn();
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLElement>(),
+    pages: [],
+    openConversation: open,
+    usageScope: usage,
+  };
+  try {
+    const { rerender } = render(<SearchResults {...props} query="wor" />);
+    await waitFor(() =>
+      expect(optionNames("Channels")).toEqual([
+        "team-work",
+        "work",
+        "workshop",
+      ]),
+    );
+    const combobox = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(combobox, { key: "Enter" });
+    expect(open).toHaveBeenLastCalledWith("team-work");
+    // Typing a channel's whole name opens that channel.
+    rerender(<SearchResults {...props} query="work" />);
+    expect(optionNames("Channels")).toEqual(["work", "team-work", "workshop"]);
+    fireEvent.keyDown(combobox, { key: "Enter" });
+    expect(open).toHaveBeenLastCalledWith("work");
+    // Each choice is remembered for the text that led to it.
+    const remembered = readSearchUsage(usage);
+    const all = new Set(["channel:work", "channel:team-work"]);
+    expect(remembered.pick("work", all)).toBe("channel:work");
+    expect(remembered.pick("wor", all)).toBe("channel:team-work");
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});
+
+it("puts a remembered public channel first, even past eight joined matches", async () => {
+  localStorage.clear();
+  recordChoice(usage, "wo", "channel:team-work");
+  const joined = Array.from({ length: 8 }, (_, n) => `work-${n + 1}`);
+  const owner = usageSession(joined, ["team-work"]);
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="wo"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[
+          {
+            key: "Workflows",
+            label: "Workflows",
+            icon: ChatCircleIcon,
+            run() {},
+          },
+        ]}
+        openConversation={() => {}}
+        usageScope={usage}
+      />,
+    );
+    // The group leads because of the remembered row, so that row leads it.
+    await waitFor(() => expect(optionNames("Channels")[0]).toBe("team-work"));
+    expect(optionNames("Channels")).toHaveLength(8);
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Channels", "Pages"]);
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});
+
+it("lets frequent visits lift a match past a slightly better one, not a much better one", async () => {
+  localStorage.clear();
+  for (let visit = 0; visit < 20; visit++) {
+    recordVisit(usage, "channel:the-lar");
+    recordVisit(usage, "channel:xlarx");
+  }
+  const owner = usageSession(["xlarx", "the-lar", "lar-crew"]);
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="lar"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+        usageScope={usage}
+      />,
+    );
+    // Word start beats prefix with usage; a busy substring match does not.
+    await waitFor(() =>
+      expect(optionNames("Channels")).toEqual(["the-lar", "lar-crew", "xlarx"]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});
+
+it("keeps the remembered choice selected when a better match arrives late", async () => {
+  localStorage.clear();
+  recordChoice(usage, "wor", "Workflows");
+  const owner = usageSession([], ["wor"]);
+  const workflows = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="wor"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[
+          {
+            key: "Workflows",
+            label: "Workflows",
+            icon: ChatCircleIcon,
+            run: workflows,
+          },
+        ]}
+        openConversation={() => {}}
+        usageScope={usage}
+      />,
+    );
+    const page = screen.getByRole("option", { name: "Workflows" });
+    expect(page).toHaveAttribute("aria-selected", "true");
+    // The relay's exact public match leads its group above Pages, later.
+    await screen.findByRole("option", { name: /^wor/ });
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Channels", "Pages"]);
+    expect(page).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(workflows).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});

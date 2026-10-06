@@ -20,6 +20,10 @@ export type ComposerToolProps = Readonly<{
    * Prose never resolves to identities. Membership is checked by session delivery.
    * Like insertText, this command is revoked with the tool/destination lifetime. */
   insertMention(recipient: Readonly<{ pubkey: string; name: string }>): boolean;
+  /** All-or-nothing insertion of a saved selection as individual mentions. */
+  insertMentions(
+    recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+  ): boolean;
   /** Atomically insert a host-owned inline resource at the caret. The host validates
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
@@ -120,10 +124,16 @@ export type CompletionQuery = Readonly<{
   query: string;
 }>;
 export type CompletionEdit =
-  | Readonly<{ text: string; mention?: never }>
+  | Readonly<{ text: string; mention?: never; mentions?: never }>
   | Readonly<{
       mention: Readonly<{ pubkey: string; name: string }>;
       text?: never;
+      mentions?: never;
+    }>
+  | Readonly<{
+      mentions: readonly Readonly<{ pubkey: string; name: string }>[];
+      text?: never;
+      mention?: never;
     }>;
 export type CompletionSuggestion = Readonly<{
   id: string;

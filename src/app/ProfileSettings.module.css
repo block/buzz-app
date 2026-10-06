@@ -1,22 +1,15 @@
 .preview {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   min-width: 0;
-  margin-bottom: var(--space-6);
-  padding: var(--space-6);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: var(--surface-inset);
-  text-align: center;
 }
 
-.avatar {
-  width: min(8rem, 40vw);
-  aspect-ratio: 1;
-  overflow: hidden;
-  border-radius: 50%;
+.previewCopy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
 .preview h3,
@@ -30,19 +23,8 @@
   white-space: pre-wrap;
 }
 
-.identityRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-@container (max-width: 28rem) {
-  .identityRow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .identityRow button {
-    justify-self: start;
-  }
+.identityValue {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: all;
 }

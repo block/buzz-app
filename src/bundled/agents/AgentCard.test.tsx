@@ -9,6 +9,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -141,6 +142,48 @@ it("re-reads presence after native start or stop until the badge agrees, within 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("reserves card-header space for a profile-only menu", () => {
+  render(
+    <AgentCard
+      name="A very long relay-only identity name"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={() => {}}
+    >
+      <p>Relay-only identity</p>
+    </AgentCard>,
+  );
+
+  expect(screen.getByRole("heading", { level: 3 }).parentElement).toHaveClass(
+    "pr-6",
+  );
+});
+
+it("hands focus from the menu to the opened profile", async () => {
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={() => {
+        const panelButton = document.createElement("button");
+        panelButton.textContent = "Profile action";
+        document.body.append(panelButton);
+        panelButton.focus();
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Agent" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Profile action" }),
+    ).toHaveFocus(),
+  );
 });
 
 it("opens identities in a popover and returns focus on Escape", async () => {

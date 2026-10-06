@@ -31,12 +31,14 @@ import type { AgentLibrarySnapshot } from "../agents/library";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
+import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
+import type { RelayEvent } from "../relay/events";
 import type {
   ChannelMessage,
   ChannelSummary,
@@ -53,6 +55,8 @@ import { entityHref } from "../projects/routes";
 import type { Entity } from "../projects/destinations";
 
 composerDOMFixture();
+
+const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
@@ -78,6 +82,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
@@ -537,6 +542,23 @@ it("does not take focus from a modal when the conversation mounts behind it", ()
   }
 });
 
+it.each([
+  ["an open popup trigger", { "data-popup-open": "" }],
+  ["a menu", { role: "menu" }],
+])("does not take focus from %s when the conversation mounts", (_, attrs) => {
+  const owner = document.createElement("button");
+  for (const [name, value] of Object.entries(attrs))
+    owner.setAttribute(name, value);
+  document.body.append(owner);
+  try {
+    owner.focus();
+    mount({ autoFocus: true });
+    expect(owner).toHaveFocus();
+  } finally {
+    owner.remove();
+  }
+});
+
 it("restores the draft end through StrictMode replay without resetting a deliberate selection on updates", () => {
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount({ autoFocus: true });
@@ -650,6 +672,138 @@ it("shows provider-owned pending and retry states and hides an empty publication
   expect(input).not.toHaveAttribute("aria-controls");
 });
 
+it.each(["click", "Enter", "Tab", " "])(
+  "accepts the displayed completion by stable ID during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const other = { id: "other", label: "Other", edit: { text: "other" } };
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    act(() => {
+      publish({ items: [other, chosen], spaceId: chosen.id });
+    });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const option = screen.getByRole("option", { name: "Chosen" });
+    expect(option).toHaveAttribute("aria-selected", "true");
+
+    act(() => {
+      publish({
+        items: [
+          { ...chosen, label: "Refreshed", edit: { text: "fresh" } },
+          other,
+        ],
+        spaceId: chosen.id,
+      });
+      // Hold React's commit until after the event, as when a provider's
+      // passive effect publishes just before an input event is dispatched.
+      expect(option).toHaveTextContent("Chosen");
+      if (key === "click") fireEvent.click(option);
+      else fireEvent.keyDown(input, { key });
+    });
+    expect(input).toHaveValue("fresh ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "rejects withdrawn or ineligible refreshed completions via %s without sending",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const chosen = { id: "chosen", label: "Chosen", edit: { text: "old" } };
+    const canSelect = vi.fn(() => false);
+    const replacements: (CompletionResult | undefined)[] = [
+      undefined,
+      { items: [{ id: "other", label: "Other", edit: { text: "other" } }] },
+      { items: [{ ...chosen, disabled: "No longer eligible" }] },
+      { items: [{ ...chosen, canSelect }] },
+    ];
+    for (const replacement of replacements) {
+      let withdraw: ReturnType<typeof publish> = false;
+      act(() => {
+        withdraw = publish({ items: [chosen] });
+      });
+      const option = screen.getByRole("option", { name: "Chosen" });
+      act(() => {
+        if (replacement) publish(replacement);
+        else if (withdraw) withdraw();
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(canSelect).toHaveBeenCalledExactlyOnceWith(key);
+  },
+);
+
+it.each([undefined, "other"])(
+  "leaves space alone if the latest publication's exact match is %s",
+  (spaceId) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const items = [
+      { id: "chosen", label: "Chosen", edit: { text: "chosen" } },
+      { id: "other", label: "Other", edit: { text: "other" } },
+    ];
+    act(() => {
+      publish({ items, spaceId: "chosen" });
+    });
+    act(() => {
+      publish({ items, spaceId });
+      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+    });
+    expect(input).toHaveValue("!search");
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["click", "Enter", "Tab"])(
+  "uses only the current retry action during a publication refresh via %s",
+  (key) => {
+    const h = mount();
+    const input = h.input();
+    input.focus();
+    h.fill("!search");
+    const publish = h.completionRequests.at(-1);
+    if (!publish) throw new Error("No observed completion request");
+    const oldRetry = vi.fn();
+    const retry = vi.fn();
+    for (const currentRetry of [retry, undefined]) {
+      act(() => {
+        publish({ items: [], retry: oldRetry });
+      });
+      const option = screen.getByRole("option", { name: "Retry suggestions" });
+      act(() => {
+        // A new item at the displayed retry's index is not the user's choice.
+        publish({
+          items: [{ id: "other", label: "Other", edit: { text: "other" } }],
+          ...(currentRetry ? { retry: currentRetry } : {}),
+        });
+        if (key === "click") fireEvent.click(option);
+        else expect(fireEvent.keyDown(input, { key })).toBe(false);
+      });
+      expect(input).toHaveValue("!search");
+      expect(oldRetry).not.toHaveBeenCalled();
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+    expect(retry).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("revokes stale completion publications across editor and ownership lifecycles and recovers freshly", () => {
   const h = mount();
   const input = h.input();
@@ -725,6 +879,456 @@ it.each(["disabled", "readOnly"] as const)(
     expect(h.messages.send).not.toHaveBeenCalled();
   },
 );
+
+function uploadDescriptor(name = "notes.txt") {
+  return {
+    name,
+    url: `https://relay.example.test/media/${"a".repeat(64)}.txt`,
+    type: "text/plain",
+    size: 5,
+    sha256: "a".repeat(64),
+  };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+function attachmentFile(name = "notes.txt", bytes = "notes") {
+  return new File([bytes], name, { type: "text/plain" });
+}
+function attachByPaste(target: HTMLElement, file = attachmentFile()) {
+  fireEvent.paste(target, {
+    clipboardData: { items: [{ kind: "file", getAsFile: () => file }] },
+  });
+}
+function attachByDrop(target: HTMLElement, file = attachmentFile()) {
+  const transfer = {
+    types: ["Files"],
+    files: [file],
+    dropEffect: "uninitialized",
+  };
+  const over = new Event("dragover", { bubbles: true, cancelable: true });
+  Object.defineProperty(over, "dataTransfer", { value: transfer });
+  fireEvent(target, over);
+  const drop = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(drop, "dataTransfer", { value: transfer });
+  fireEvent(target, drop);
+}
+
+async function mountUploadComposer(
+  options: {
+    threadRootId?: string;
+    replyParentId?: string;
+    publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
+  } = {},
+) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair(),
+    relay = keypair();
+  const uploadCalls: {
+    file: File;
+    signal: AbortSignal;
+    result: ReturnType<typeof deferred<ReturnType<typeof uploadDescriptor>>>;
+  }[] = [];
+  const sign = vi.fn(async (template: EventTemplate) =>
+    signed(viewer, template),
+  );
+  const publish = vi.fn(
+    options.publish ??
+      (async (_event: RelayEvent, _signal?: AbortSignal) => {}),
+  );
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://relay.example.test",
+      media: (url) => url,
+      uploadAttachment(file, signal) {
+        const result = deferred<ReturnType<typeof uploadDescriptor>>();
+        uploadCalls.push({ file, signal, result });
+        return result.promise;
+      },
+      async query(filters) {
+        return filters.flatMap((filter) =>
+          filter.kinds?.includes(39002)
+            ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
+            : filter.kinds?.includes(39000)
+              ? [metadata(relay, "channel", "General", 1700000000)]
+              : [],
+        );
+      },
+      writer: { kinds: [9], sign, publish },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  await act(() =>
+    owner.session.read([
+      { kinds: [39002], "#d": ["channel"], limit: 1 },
+      { kinds: [39000], "#d": ["channel"], limit: 1 },
+    ]),
+  );
+  const scope = `https://relay.example.test:${viewer.pubkey}`;
+  const view = render(
+    <MessageComposer
+      session={owner.session}
+      scope={scope}
+      channelId="channel"
+      channelName="General"
+      {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
+      {...(options.replyParentId
+        ? { replyParentId: options.replyParentId }
+        : {})}
+    />,
+    { reactStrictMode: true },
+  );
+  const input = () => within(view.container).getByRole("textbox");
+  const form = () => within(view.container).getByRole("form");
+  const send = () =>
+    within(view.container).getByRole("button", { name: "Send message" });
+  owners.push(owner);
+  return { ...view, owner, input, form, send, uploadCalls, sign, publish };
+}
+
+it("keeps picker, paste and drop attachments local until Send starts upload and publish", async () => {
+  const h = await mountUploadComposer();
+  const picker =
+    h.container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing attachment picker");
+  const picked = attachmentFile("picker.txt");
+  Object.defineProperty(picker, "files", {
+    value: [picked],
+    configurable: true,
+  });
+  fireEvent.change(picker);
+  attachByPaste(h.input(), attachmentFile("pasted.txt"));
+  attachByDrop(h.form(), attachmentFile("dropped.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(3),
+  );
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+
+  fireEvent.click(h.send());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("picker.txt");
+  expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
+  expect(screen.getByText("Uploading attachments…")).toHaveAttribute(
+    "role",
+    "status",
+  );
+  expect(h.send()).toBeDisabled();
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("picker.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("dropped.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0].content).toContain(
+    "[picker.txt](<https://relay.example.test/media/",
+  );
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[pasted.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
+});
+
+it("clears the send upload error banner after removing failed attachments", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("metadata.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
+  );
+  await userEvent.type(h.input(), "caption");
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new UploadError("metadata"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual([UPLOAD_FAILURES.metadata, UPLOAD_FAILURES.metadata]),
+  );
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove metadata.txt" }),
+  );
+
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
+});
+
+it("keeps a remaining upload failure banner when removing one of two failed files", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  attachByPaste(h.input(), attachmentFile("two.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.reject(new Error("first failed"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["first failed", "first failed"]),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new Error("first failed again"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["first failed again", "first failed again"]),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("one.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(4));
+  await act(async () => {
+    h.uploadCalls[3]?.result.reject(new Error("second failed"));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("alert").map((node) => node.textContent),
+    ).toEqual(["second failed", "second failed"]),
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
+
+  expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
+    "second failed",
+    "second failed",
+  ]);
+  expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument();
+  expect(within(h.form()).getByText("two.txt")).toBeVisible();
+});
+
+it("retains successful attachment uploads after a later file fails and retries only failed bytes", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("ready.txt"));
+  attachByPaste(h.input(), attachmentFile("retry.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.reject(new Error("relay down"));
+  });
+  await screen.findAllByRole("alert");
+  expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
+    "relay down",
+    "relay down",
+  ]);
+  expect(h.input()).toHaveValue("caption");
+  expect(h.publish).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(within(h.form()).getByText(/Queued/)).toBeVisible();
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(h.uploadCalls[2]?.file.name).toBe("retry.txt");
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("retry.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[retry.txt](<");
+});
+
+it("recovers disabled mid-upload attachments and retries without re-uploading ready files", async () => {
+  const h = await mountUploadComposer();
+  const scope = `https://relay.example.test:${h.owner.session.viewer}`;
+  attachByPaste(h.input(), attachmentFile("ready.txt"));
+  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.uploadCalls[1]?.file.name).toBe("paused.txt");
+
+  try {
+    h.rerender(
+      <MessageComposer
+        session={h.owner.session}
+        scope={scope}
+        channelId="channel"
+        channelName="General"
+        disabled
+      />,
+    );
+    expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Upload paused. Retry to continue."),
+      ).toBeVisible(),
+    );
+    expect(screen.getByText(/Upload failed/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeDisabled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.sign).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt"));
+    });
+  }
+
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={scope}
+      channelId="channel"
+      channelName="General"
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: /Retry/ });
+  expect(retry).toBeEnabled();
+  await userEvent.click(retry);
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(h.uploadCalls[2]?.file.name).toBe("paused.txt");
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("paused.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[paused.txt](<");
+});
+
+it("cancels an in-flight attachment send when the composer destination changes", async () => {
+  const h = await mountUploadComposer({ threadRootId: "b".repeat(64) });
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={"c".repeat(64)}
+    />,
+  );
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("recovers a reply-target abort during attachment upload and sends the retained draft to the new target", async () => {
+  const root = "a".repeat(64);
+  const child = "b".repeat(64);
+  const h = await mountUploadComposer({
+    threadRootId: root,
+    replyParentId: child,
+  });
+  attachByPaste(h.input(), attachmentFile("reply.txt"));
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+
+  try {
+    h.rerender(
+      <MessageComposer
+        session={h.owner.session}
+        scope={`https://relay.example.test:${h.owner.session.viewer}`}
+        channelId="channel"
+        channelName="General"
+        threadRootId={root}
+      />,
+    );
+    expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+    expect(h.publish).not.toHaveBeenCalled();
+    await waitFor(() => expect(h.send()).toBeEnabled());
+  } finally {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
+    });
+  }
+
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(async () => {
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("reply.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
+  expect(tags).not.toContainEqual(["e", child, "", "reply"]);
+  expect(tags).toContainEqual(["e", root, "", "reply"]);
+});
+
+it("retries publish-unknown attachment sends with the same signed event and no re-upload", async () => {
+  let attempts = 0;
+  const h = await mountUploadComposer({
+    publish: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("lost acknowledgement");
+    },
+  });
+  attachByPaste(h.input(), attachmentFile());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() =>
+    expect(h.owner.session.outbox?.snapshot()[0]?.delivery).toBe("unknown"),
+  );
+  const firstEvent = h.publish.mock.calls[0]?.[0];
+  if (!firstEvent) throw new Error("Missing first publish");
+  h.owner.session.messages.retry(firstEvent.id);
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  expect(h.publish.mock.calls[1]?.[0]).toEqual(firstEvent);
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.uploadCalls).toHaveLength(1);
+});
 
 it("sends channel messages and thread replies through real form and keyboard events", async () => {
   const h = mount();
@@ -2210,7 +2814,7 @@ it("keeps inline recipient identity and source stable through directory collisio
 });
 
 it.each([false, true])(
-  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  "asks before mentioning a removed person in an untyped channel without enrolling anyone (mixed native=%s)",
   async (mixed) => {
     const viewer = keypair(),
       relay = keypair();
@@ -2266,12 +2870,17 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      // An ordinary removed recipient must reject synchronously. Awaiting an
-      // async act here would hide a transient enrollment lock on the composer.
+      // An untyped channel is an ordinary channel: a removed recipient is now
+      // outside it, so the sender chooses. Nothing enrolls or sends meanwhile.
       h.submit();
-      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "no longer a channel member",
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        mixed
+          ? "Honey, Honey are not in this channel."
+          : "Honey is not in this channel.",
+      );
+      await userEvent.setup().keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(h.input()).toHaveValue(draft);
       expect(sign).not.toHaveBeenCalled();
@@ -2955,6 +3564,72 @@ it("uses the full channel choice set for one selected chip and follows membershi
   names.dispose();
 });
 
+it("sends someone outside a DM as a reference without asking", async () => {
+  const h = mount();
+  const add = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    // A writer that could add members still cannot add anyone to a DM.
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  expect(add).not.toHaveBeenCalled();
+});
+
+it("does not ask about outside recipients in a session media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without session
+  // mode, so the session rule must come from the channel type.
+  const h = mount({ threadRootId: "f".repeat(64) });
+  const add = vi.fn();
+  const channel = {
+    id: "channel",
+    channelType: "session",
+    members: [first.pubkey, second.pubkey],
+  };
+  const list = { status: "ready", channels: [channel] };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  // The first person leaves the session after being named.
+  channel.members = [second.pubkey];
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(h.messages.reply.mock.calls[0]?.[3]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+  expect(add).not.toHaveBeenCalled();
+});
+
 for (const channelType of ["stream", "forum"] as const)
   it.each([undefined, "f".repeat(64)])(
     `keeps mixed nonmember mentions as references after Send anyway in ${channelType}, root=%s`,
@@ -3538,7 +4213,7 @@ it("restores the retained editor when the Link dialog closes normally", async ()
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it("keeps a held upload and its editor alive while presentation is suspended", async () => {
+it("keeps a local attachment and its editor alive while presentation is suspended", async () => {
   const h = mount();
   let finish!: (value: {
     name: string;
@@ -3569,12 +4244,19 @@ it("keeps a held upload and its editor alive while presentation is suspended", a
   fireEvent.change(screen.getByLabelText("Choose attachments"), {
     target: { files: [new NodeFile(["notes"], "notes.txt")] },
   });
+  h.present(false);
+  expect(upload).not.toHaveBeenCalled();
+  expect(editor.isConnected).toBe(true);
+  expect(editor).toHaveValue("kept with upload");
+
+  h.present(true);
+  expect(h.input()).toBe(editor);
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Send a message to General" }),
+  );
   await waitFor(() => expect(upload).toHaveBeenCalledOnce());
   try {
-    h.present(false);
     expect(signal.aborted).toBe(false);
-    expect(editor.isConnected).toBe(true);
-    expect(editor).toHaveValue("kept with upload");
   } finally {
     await act(async () =>
       finish({
@@ -3586,9 +4268,20 @@ it("keeps a held upload and its editor alive while presentation is suspended", a
       }),
     );
   }
-  h.present(true);
-  expect(h.input()).toBe(editor);
-  expect(screen.getByRole("status")).toHaveTextContent("Ready");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "kept with upload",
+    [],
+    [
+      {
+        name: "notes.txt",
+        url: "https://relay.test/media/notes.txt",
+        type: "text/plain",
+        size: 5,
+        sha256: "a".repeat(64),
+      },
+    ],
+  );
   expect(signal.aborted).toBe(false);
   expect(upload).toHaveBeenCalledOnce();
 });
@@ -3988,3 +4681,49 @@ it("locks a nonempty remembered-agent follow-up until accepted draft cleanup suc
   expect(retired).toHaveBeenCalledOnce();
   expect(h.messages.send).toHaveBeenCalledOnce();
 });
+
+it("batch insertion deduplicates exact keys and sends individual recipients", async () => {
+  const h = mount();
+  act(() =>
+    expect(h.commands().insertMentions([first, second, first])).toBe(true),
+  );
+  expect(h.input()).toHaveValue("@Honey @Honey ");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("batch insertion rejects an unavailable member atomically and does not send on rejected completion", async () => {
+  const h = mount({ inviteAgents: true });
+  const unavailable = { pubkey: "c".repeat(64), name: "Missing" };
+  h.fill("!Court");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [
+        {
+          id: "team",
+          label: "Court",
+          edit: { mentions: [first, unavailable] },
+        },
+      ],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("!Court");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
+});
+it.each(["disabled", "retarget", "unmount"])(
+  "revokes batch commands after %s",
+  (transition) => {
+    const h = mount();
+    const insert = h.commands().insertMentions;
+    if (transition === "disabled") h.retarget({ disabled: true });
+    else if (transition === "retarget") h.retarget({ channelId: "other" });
+    else h.unmount();
+    act(() => expect(insert([first, second])).toBe(false));
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);

@@ -365,9 +365,9 @@ change shared-menu styling.
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
 Archive/Unarchive/Delete/Leave or DM Hide. Archive and Unarchive require a direct
-owner/admin role;
-Delete is offered to a direct owner or a member with verified ownership evidence
-for an owner-role agent; the last direct owner cannot Leave. The menu omits Leave
+owner/admin role or verified ownership evidence for an owner-role agent, matching
+the relay and desktop. Delete is offered to a direct owner or a member with that
+same evidence; the last direct owner cannot Leave. The menu omits Leave
 when it is forbidden, without an ownership-transfer explanation. Action labels
 have no trailing ellipsis. DMs offer Hide only.
 
@@ -376,10 +376,11 @@ owners' latest signed kind-0 profiles in bounded exact-author batches, then veri
 the unique NIP-OA tag, target binding, owner signature and conditions against the
 profile event. Display-only owner fields and agent hints never qualify. The
 existing shared verifier owns these checks; no new relay query or deployment is
-needed. Direct owners, DMs, archived channels and Archive/Unarchive/Leave
-execution do not require these optional profile reads. A failed five-second owner-profile lookup
-preserves independently established Archive/Leave, omits Delete and exposes
-"Delete check unavailable" with explicit retry in both surfaces. Settings keeps
+needed. Direct owners, DMs, Leave, and actions a direct role already grants do
+not require these optional profile reads. A failed five-second owner-profile lookup
+preserves independently established actions, omits the owner-agent actions and,
+on an active channel, exposes "Delete check unavailable" with explicit retry in
+both surfaces. Settings keeps
 its retry button focusable and busy during a fresh read, without retaining stale
 actions. Pending progress stays inside the button spinner, not a duplicate visible
 status sentence. If focus is still on recovery when the read finishes, it moves to the
@@ -427,7 +428,14 @@ returns to its persistent Settings-tab close control instead of an unrelated sid
 joined archived channels remain available by name in search, labeled **Archived
 channel**, but stay out of the sidebar and Recent activity. Open the search result
 and Settings to restore it. This uses the existing membership discovery and exact
-navigation, not a new archived-channel directory or nonmember discovery.
+navigation, not a new archived-channel directory.
+
+Search also finds active public channels the viewer has not joined, by name,
+labeled **Public channel · not joined** after joined matches. Opening one shows the
+read-only preview. The preview offers **Join channel**; after the relay confirms
+membership, the channel joins the sidebar and the composer becomes available and
+focused. Joining a channel is not available for DMs, private, archived or session
+conversations. See [relay queries](relay-queries.md#public-channel-name-search-and-join).
 Unarchive publishes the existing narrow `9002` command with `archived=false` and
 requires fresh relay metadata with a missing/false archive tag before updating
 shared discovery; a missing record is not success. Restoration returns the sidebar
@@ -1265,6 +1273,11 @@ Inline video previews and their posters also fill their bounded frames with `cov
 Image and video thumbnails share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas; thumbnail cropping does not change the original.
+Any click on a thumbnail, modified or not, opens the original in-app from the
+same authenticated media source as the thumbnail: the media review where a
+surface hosts one, and otherwise a plain fullscreen viewer (Inbox, Sessions,
+drafts and previews). The thumbnail link's own destination is that media source,
+so a middle click, drag or copied link yields the same authenticated URL.
 
 For non-thumbnail attachment surfaces, the following reserved-layout contract applies.
 Image attachments reserve their preview geometry before loading and across virtualized

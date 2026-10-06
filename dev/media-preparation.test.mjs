@@ -150,6 +150,7 @@ test("the production broker deadline destroys an undrained response, cleans its 
   let handler;
   const server = createServer((req, res) => handler(req, res, () => res.end()));
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     relayUrl: "https://relay.test",
     identity: () => key.slice(),
     authority: async () => ({ relayAuthor: getPublicKey(key) }),

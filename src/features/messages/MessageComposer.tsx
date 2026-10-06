@@ -7,6 +7,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
+  allowsOutsideMentions,
   archivedMention,
   mentionCandidates,
   rememberMention,
@@ -165,6 +166,17 @@ export function MessageComposer(props: MessageComposerProps) {
     />
   );
 }
+
+function sameAttachmentSelection(
+  left: readonly { id: string }[],
+  right: readonly { id: string }[],
+) {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item.id === right[index]?.id)
+  );
+}
+
 function Composer({
   session,
   extensions,
@@ -215,6 +227,7 @@ function Composer({
     ?.cached;
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
@@ -292,12 +305,13 @@ function Composer({
         return;
       const editor = input.current;
       if (!editor || editor.closest("[inert]")) return;
-      // A conversation can finish loading behind an already-focused dialog.
-      // Its default focus must not interrupt that modal's explicit owner.
-      const modal = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"]',
+      // A conversation can finish loading behind an already-focused dialog,
+      // menu, or open popup trigger. Its default focus must not interrupt that
+      // explicit owner: moving focus away also dismisses non-modal menus.
+      const owner = document.activeElement?.closest(
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
       );
-      if (modal && !modal.contains(editor)) return;
+      if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
       editor.focus();
       if (document.activeElement !== editor) return;
@@ -392,6 +406,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
+    uploadingAttachments ||
     !!accepted ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
@@ -644,6 +659,74 @@ function Composer({
       return false;
     return insert(`@${recipient.name} `, recipient);
   }
+  function insertMentions(
+    recipients: readonly MentionRecipient[],
+    range?: CompletionQuery,
+  ) {
+    if (
+      !Array.isArray(recipients) ||
+      !recipients.length ||
+      recipients.some(
+        (person) =>
+          !person ||
+          typeof person.pubkey !== "string" ||
+          !/^[0-9a-f]{64}$/.test(person.pubkey) ||
+          typeof person.name !== "string" ||
+          !person.name.trim(),
+      )
+    )
+      return false;
+    const unique = [
+      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+    ];
+    if (unique.length > 32) {
+      setError("Choose at most 32 recipients");
+      return false;
+    }
+    if (
+      !permitted.current ||
+      editingDisabled ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected ||
+      input.current.disabled ||
+      input.current.readOnly
+    )
+      return false;
+    // Message edits only add references, never new notification intent.
+    if (editing.target)
+      return insert(
+        unique.map((person) => `nostr:${npubEncode(person.pubkey)} `).join(""),
+        undefined,
+        range,
+      );
+    const eligible = new Set(
+      mentionCandidates(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+        unique,
+      ).map((choice) => choice.recipient.pubkey),
+    );
+    if (unique.some((person) => !eligible.has(person.pubkey))) {
+      setError(
+        "A team member is no longer available. Refresh choices before trying again.",
+      );
+      return false;
+    }
+    const text = unique.map((person) => `@${person.name} `).join("");
+    if (!input.current.insertText(text, unique, range)) {
+      setError(
+        "The team would exceed the message length or 32-recipient limit. Nothing was added.",
+      );
+      return false;
+    }
+    completion.invalidate();
+    for (const person of unique)
+      rememberMention(session, channelId, person.pubkey);
+    setError(undefined);
+    return true;
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -676,6 +759,8 @@ function Composer({
       )
         return false;
     }
+    if ("mentions" in edit && edit.mentions)
+      return insertMentions(edit.mentions, query);
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     return (
@@ -800,15 +885,16 @@ function Composer({
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
-        if (
-          (channel?.channelType === "stream" ||
-            channel?.channelType === "forum") &&
-          channel.members
-        ) {
+        if (channel?.members && allowsOutsideMentions(channel)) {
           const missing = captured.recipients.filter(
             (person) => !channel.members?.includes(person.pubkey),
           );
-          if (missing.length) {
+          if (missing.length && channel?.channelType === "dm") {
+            // Nobody can be added to a DM, so there is no choice to offer:
+            // outside people become references without a prompt.
+            references = missing.map((person) => person.pubkey);
+            recipients = recipients.filter((key) => !references.includes(key));
+          } else if (missing.length) {
             setSending(true);
             setError(undefined);
             const decision = await nonmembers.prepare(
@@ -828,7 +914,26 @@ function Composer({
       attempt.signal.throwIfAborted();
       if (
         valueRef.current !== captured ||
-        attachments.store.snapshot() !== capturedAttachments
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
+      )
+        return;
+      const uploaded = capturedAttachments.length
+        ? await (async () => {
+            setUploadingAttachments(true);
+            setError(undefined);
+            return attachments.store.prepareForSend(attempt.signal);
+          })()
+        : [];
+      attempt.signal.throwIfAborted();
+      if (
+        valueRef.current !== captured ||
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
       )
         return;
       if (viewRevision(scope, draftKey) !== savedRevision) {
@@ -839,9 +944,6 @@ function Composer({
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      const uploaded = capturedAttachments.flatMap((item) =>
-        item.uploaded ? [item.uploaded] : [],
-      );
       const agents = knownAgentPubkeys(
         session.profiles.snapshot(),
         session.agentChoices.snapshot(),
@@ -908,6 +1010,7 @@ function Composer({
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
+          setUploadingAttachments(false);
           setAdmitting(false);
         }
       }
@@ -1063,6 +1166,7 @@ function Composer({
             resolved={value}
           />
         )}
+        {uploadingAttachments && <p role="status">Uploading attachments…</p>}
         {dragging && <p role="status">Drop files to attach</p>}
         {attachmentError && (
           <ToastNotice
@@ -1077,8 +1181,22 @@ function Composer({
               media={session.media}
               items={attachments.items}
               disabled={editingDisabled}
-              remove={attachments.store.remove}
-              retry={attachments.store.retry}
+              remove={(id) => {
+                const item = attachments.items.find(
+                  (candidate) => candidate.id === id,
+                );
+                attachments.store.remove(id);
+                if (item?.status === "error" && item.error === error)
+                  setError(undefined);
+              }}
+              retry={(id) => {
+                const item = attachments.items.find(
+                  (candidate) => candidate.id === id,
+                );
+                attachments.store.retry(id);
+                if (item?.status === "error" && item.error === error)
+                  setError(undefined);
+              }}
             />
           )}
           <div className={styles.composerInput}>
@@ -1210,6 +1328,7 @@ function Composer({
                   inviteAgents={agentChoices && !editing.target}
                   insertText={(text) => insert(text)}
                   insertMention={insertMention}
+                  insertMentions={insertMentions}
                   insertResource={insertResource}
                   focus={() => input.current?.focus()}
                 />
@@ -1244,6 +1363,7 @@ function Composer({
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||
+              uploadingAttachments ||
               submission?.disabled ||
               (!editing.target && attachments.blocked) ||
               (!draft.trim() &&

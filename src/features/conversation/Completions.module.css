@@ -103,6 +103,9 @@
   width: var(--size-control-sm);
   height: var(--size-control-sm);
 }
+.popup[data-mention] .preview:has([data-team-avatars]) {
+  width: auto;
+}
 .popup[data-mention] .label:has([data-recipient-key]) {
   display: flex;
   align-items: center;

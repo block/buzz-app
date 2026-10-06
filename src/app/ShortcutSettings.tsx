@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PencilSimpleIcon, XIcon } from "../shared/design-system/icons";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
@@ -32,6 +33,8 @@ type Row = Readonly<{
   owner: string;
   /** Owner-defined presentation order within the Settings category. */
   order: number;
+  /** Native close/quit defaults are reserved, not user-rebindable. */
+  readOnly: boolean;
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
@@ -67,7 +70,7 @@ const CLIPBOARD_CHORDS: readonly KeyBinding[] = [
   { key: "x", mod: true },
   { key: "a", mod: true },
 ];
-/** Close window and quit: the desktop shell owns these, so they are refused there. */
+/** Close tab/window and quit: the desktop shell owns these, so they stay fixed. */
 const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "q", mod: true },
   { key: "w", mod: true },
@@ -129,6 +132,7 @@ export function ShortcutSettings({
     key: string,
     shortcut: NormalizedShortcut,
     owner: string,
+    readOnly = false,
   ): Row => {
     const override = overrides[key];
     return {
@@ -136,6 +140,7 @@ export function ShortcutSettings({
       title: shortcut.title,
       owner,
       order: shortcut.order,
+      readOnly,
       defaults: shortcut.binding,
       override,
       effective: override ? [override] : shortcut.binding,
@@ -148,7 +153,17 @@ export function ShortcutSettings({
       id: "host",
       label: "Buzz",
       sortKey: "",
-      rows: host.map((shortcut) => row(shortcut.id, shortcut, "Buzz")),
+      rows: host.map((shortcut) =>
+        row(
+          shortcut.id,
+          shortcut,
+          "Buzz",
+          desktop &&
+            shortcut.binding.some((binding) =>
+              includes(DESKTOP_CHORDS, binding),
+            ),
+        ),
+      ),
     },
     ...[...new Set(contributed.map((shortcut) => shortcut.pluginId))]
       .map((pluginId) => {
@@ -220,7 +235,7 @@ export function ShortcutSettings({
       );
     if (desktop && includes(DESKTOP_CHORDS, binding))
       return refuse(
-        `${chord} is reserved for closing the window and quitting Buzz. Try another.`,
+        `${chord} is reserved for closing tabs or the window and quitting Buzz. Try another.`,
       );
     const conflict = rows.find(
       (row) =>
@@ -253,11 +268,11 @@ export function ShortcutSettings({
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
         {groups.length ? (
-          <div>
+          <div className="grid gap-section-gap">
             {groups.map((group) => (
               <section key={group.id}>
-                <InlineHeader level={2} title={group.label} />
-                <div className="divide-y divide-standard">
+                <InlineHeader title={group.label} />
+                <SettingsGroup>
                   {group.rows.map((row) => (
                     <ShortcutRow
                       key={row.key}
@@ -276,7 +291,7 @@ export function ShortcutSettings({
                       }}
                     />
                   ))}
-                </div>
+                </SettingsGroup>
               </section>
             ))}
           </div>
@@ -357,12 +372,14 @@ function ShortcutRow({
     <article aria-labelledby={titleId}>
       <PreferenceRow
         title={
-          <h3 id={titleId} className="m-0 text-label-sm">
+          <h4 id={titleId} className="m-0 text-label-sm">
             {row.title}
-          </h3>
+          </h4>
         }
         subtitle={
-          row.override || sharedWith.length > 0 ? (
+          row.readOnly ? (
+            "Reserved by Buzz"
+          ) : row.override || sharedWith.length > 0 ? (
             <>
               {row.override && <span className="block">Modified</span>}
               {sharedWith.length > 0 && (
@@ -389,28 +406,30 @@ function ShortcutRow({
             ) : (
               primary && <KeyCombo binding={primary} apple={apple} />
             )}
-            <IconButton
-              variant="ghost"
-              icon={
-                listening ? (
-                  <XIcon size={16} aria-hidden="true" />
-                ) : (
-                  <PencilSimpleIcon size={16} aria-hidden="true" />
-                )
-              }
-              title={listening ? "Cancel" : "Change shortcut"}
-              ref={change}
-              type="button"
-              size="sm"
-              aria-label={
-                listening
-                  ? `Cancel changing ${row.title}`
-                  : `Change shortcut for ${row.title}`
-              }
-              // Keep focus on the listening control so a click here cancels once.
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={listening ? onCancel : onStart}
-            />
+            {!row.readOnly && (
+              <IconButton
+                variant="ghost"
+                icon={
+                  listening ? (
+                    <XIcon size={16} aria-hidden="true" />
+                  ) : (
+                    <PencilSimpleIcon size={16} aria-hidden="true" />
+                  )
+                }
+                title={listening ? "Cancel" : "Change shortcut"}
+                ref={change}
+                type="button"
+                size="sm"
+                aria-label={
+                  listening
+                    ? `Cancel changing ${row.title}`
+                    : `Change shortcut for ${row.title}`
+                }
+                // Keep focus on the listening control so a click here cancels once.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={listening ? onCancel : onStart}
+              />
+            )}
             {row.override && !listening && (
               <Button
                 type="button"

@@ -239,6 +239,12 @@ export class NotificationsService extends Service implements Notifications {
       this.state.preferences.categories[item.category] !== false
     );
   }
+  private soundEnabled(category: string) {
+    return (
+      this.state.preferences.sound &&
+      resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
+    );
+  }
   revalidate() {
     for (const item of this.pending) {
       if (!this.allowed(item) || item.eligible() === false) {
@@ -248,11 +254,11 @@ export class NotificationsService extends Service implements Notifications {
     }
     // Outstanding audio decisions stay under revalidation until the platform
     // resolves them. Any interval of revoked policy/access/eligibility — or
-    // Sound turned off — cancels the sound for good; restoring the setting
-    // before the submission resolves must not resurrect it.
+    // Sound turned off or category set to Silent — cancels audio for good.
+    // Restoring the setting before submission resolves must not resurrect it.
     for (const decision of this.sounding) {
       if (
-        !this.state.preferences.sound ||
+        !this.soundEnabled(decision.item.category) ||
         !this.allowed(decision.item) ||
         decision.item.eligible() === false
       )
@@ -406,7 +412,7 @@ export class NotificationsService extends Service implements Notifications {
       // The item is out of `pending`, so register its audio decision for
       // sticky cancellation by `revalidate` while the submission is
       // outstanding. Sound off at submission means no decision at all.
-      const decision = this.state.preferences.sound
+      const decision = this.soundEnabled(item.category)
         ? { item, cancelled: false }
         : null;
       if (decision) this.sounding.add(decision);
@@ -445,7 +451,7 @@ export class NotificationsService extends Service implements Notifications {
         decision &&
         !decision.cancelled &&
         generation === this.generation &&
-        this.state.preferences.sound &&
+        this.soundEnabled(item.category) &&
         this.allowed(item) &&
         item.eligible() === true
       )

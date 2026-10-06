@@ -22,6 +22,9 @@ import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+// Public nonmember channel for search/preview/join journeys. Real channel ids
+// are UUIDs, and lifecycle commands accept only UUID channel ids.
+const OPEN_CHANNEL = "6f70656e-0000-4000-8000-000000000001";
 export const channels = ["alpha", "beta"];
 export const historySize = 640;
 
@@ -30,6 +33,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
@@ -71,6 +75,7 @@ export const test = base.extend({
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  agentManagement: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -80,6 +85,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      archiveOnDisk,
       actionProfile,
       profilePicture,
       readState,
@@ -120,6 +126,7 @@ export const test = base.extend({
       historyCounts,
       channelIds: channels,
       pluginFixtures,
+      agentManagement,
       developmentReact,
       compiledApp,
     },
@@ -160,6 +167,7 @@ export const test = base.extend({
       dmLabels || readState || exactMessages || actionProfile
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
+    const managementKey = agentManagement ? key(8) : undefined;
     const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
@@ -217,7 +225,10 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKeys.map(getPublicKey);
+      : [
+          ...peerKeys.map(getPublicKey),
+          ...(managementKey ? [getPublicKey(managementKey)] : []),
+        ];
     const dmIds = Object.keys(dmMembers).length
       ? Object.keys(dmMembers)
       : largeSidebar
@@ -397,7 +408,7 @@ export const test = base.extend({
     if (openSearch) {
       const root = sign(
         9,
-        [["h", "open"]],
+        [["h", OPEN_CHANNEL]],
         "Public conversation root",
         userKey,
         1699999000,
@@ -405,14 +416,14 @@ export const test = base.extend({
       searchTarget = sign(
         9,
         [
-          ["h", "open"],
+          ["h", OPEN_CHANNEL],
           ["e", root.id, "", "reply"],
         ],
         "crew-search exact public reply",
         userKey,
         1699999001,
       );
-      histories.set("primary/open", [root]);
+      histories.set(`primary/${OPEN_CHANNEL}`, [root]);
       targetEvents.push(searchTarget);
     }
     let exact;
@@ -734,6 +745,7 @@ export const test = base.extend({
         browserName,
         developmentReact,
         pluginFixtures,
+        agentManagement,
         compiledBuild: {
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
@@ -753,7 +765,7 @@ export const test = base.extend({
         platform: platform(),
         arch: arch(),
         viewport: testInfo.project.use.viewport,
-        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native or real relay`,
+        build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; ${agentManagement ? "mocked native agent control" : "no native"}; no real relay`,
       },
       queries: [],
       publications: [],
@@ -909,7 +921,9 @@ export const test = base.extend({
             ]),
           );
       if (filter.kinds?.includes(39000))
-        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+        return [
+          ...new Set([...rosterIds, ...(openSearch ? [OPEN_CHANNEL] : [])]),
+        ]
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map((id) =>
             sign(
@@ -921,7 +935,13 @@ export const test = base.extend({
                   renamedChannels.get(id) ??
                     channelNames[id] ??
                     lifecycleRows.find((row) => row.id === id)?.name ??
-                    (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
+                    (id === "alpha"
+                      ? "Alpha"
+                      : id === "beta"
+                        ? "Beta"
+                        : id === OPEN_CHANNEL
+                          ? "open"
+                          : id),
                 ],
                 [
                   "t",
@@ -1392,9 +1412,37 @@ export const test = base.extend({
           ]
         : events;
     };
+    let heldJoin;
+    // Live roster replacement, as the relay republishes after a join. It
+    // reaches the app through its open channel REQ, not a join response.
+    const deliverRoster = (id, community) =>
+      relay.publish(
+        community,
+        sign(
+          39002,
+          [
+            ["d", id],
+            ["p", viewer, "", "member"],
+          ],
+          "",
+          relayKey,
+          Math.floor(Date.now() / 1000),
+        ),
+      );
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (openSearch && event.kind === 9021) {
+        // NIP-29 join: the relay adds an open channel's requester to its roster.
+        expect(event.tags).toEqual([["h", OPEN_CHANNEL]]);
+        if (!rosterIds.includes(OPEN_CHANNEL)) rosterIds.push(OPEN_CHANNEL);
+        report.lifecyclePublications ??= [];
+        report.lifecyclePublications.push(event);
+        if (!heldJoin) return;
+        // The relay republishes the roster live before the requester's OK.
+        deliverRoster(OPEN_CHANNEL, community);
+        return heldJoin.promise;
+      }
       if (channelLifecycle && [9002, 9008, 9022, 41012].includes(event.kind)) {
         const id = event.tags.find(([key]) => key === "h")?.[1];
         expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
@@ -1793,6 +1841,9 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
+                  archiveFile: archiveOnDisk
+                    ? testInfo.outputPath("archive.sqlite3")
+                    : ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
@@ -1900,7 +1951,11 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
+        archiveFile: archiveOnDisk
+          ? testInfo.outputPath("archive.sqlite3")
+          : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
           return sign(13534, [["member", viewer, role]], "", relayKey);
@@ -1967,6 +2022,7 @@ export const test = base.extend({
         },
         exact,
         searchTarget,
+        openChannelId: OPEN_CHANNEL,
         membership(
           type,
           targetIndex,
@@ -2003,6 +2059,7 @@ export const test = base.extend({
           return event;
         },
         participants,
+        managementKey,
         viewer,
         relay,
         observer(raw, agentKey, community = "primary") {
@@ -2045,6 +2102,18 @@ export const test = base.extend({
         omitChannel(id) {
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
+        },
+        // Hold the join's OK; its live roster still arrives first.
+        holdJoin() {
+          let release;
+          const promise = new Promise((resolve) => {
+            release = resolve;
+          });
+          heldJoin = { promise };
+          return () => {
+            heldJoin = undefined;
+            release();
+          };
         },
         // Signed upstream-only simulations: never a browser publication or live relay.
         activity({
@@ -2209,11 +2278,25 @@ export const test = base.extend({
         sidebarFailures.splice(match, 1);
         return true;
       };
+      const githubFailures = [...(report.githubFailures ?? [])];
+      const injectedGitHubFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 403/.test(
+            message,
+          )
+        )
+          return false;
+        const match = githubFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        githubFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
             !injectedSidebarFailure(message, index) &&
+            !injectedGitHubFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

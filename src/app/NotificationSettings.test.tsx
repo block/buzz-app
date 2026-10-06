@@ -24,6 +24,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   localStorage.clear();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 it.each([true, false])(
@@ -59,15 +60,18 @@ it.each([true, false])(
       wrapper: ToastProvider,
     });
     const toggle = screen.getByRole("switch", { name: "Desktop alerts" });
-    const whileViewing = screen.getByRole("switch", {
-      name: "Notify while viewing",
-    });
+    const preferences = service.snapshot().preferences;
     if (paused) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
       await userEvent.setup().click(toggle);
       expect(service.snapshot().preferences.enabled).toBe(true);
       expect(toggle).not.toBeChecked();
-      expect(whileViewing).toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.queryByRole("switch", { name: "Notify while viewing" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("switch", { name: "Sound" }),
+      ).not.toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent(
         "Remove BUZZ_DEV_NOTIFICATIONS=0",
       );
@@ -77,16 +81,47 @@ it.each([true, false])(
     } else {
       expect(toggle).not.toHaveAttribute("aria-disabled", "true");
       expect(toggle).toBeChecked();
-      expect(whileViewing).not.toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.getByRole("switch", { name: "Notify while viewing" }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("combobox", { name: "Direct messages" }),
+      ).toBeVisible();
       await userEvent
         .setup()
         .click(screen.getByText("Desktop alerts", { selector: "label" }));
       expect(toggle).not.toBeChecked();
-      expect(service.snapshot().preferences.enabled).toBe(false);
+      expect(service.snapshot().preferences).toEqual({
+        ...preferences,
+        enabled: false,
+      });
+      expect(
+        screen.queryByRole("switch", { name: "Notify while viewing" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("switch", { name: "Sound" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("combobox", { name: "Direct messages" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Allow notifications" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Check permission" }),
+      ).not.toBeInTheDocument();
       await userEvent
         .setup()
         .click(screen.getByText("Desktop alerts", { selector: "label" }));
       expect(toggle).toBeChecked();
+      expect(service.snapshot().preferences).toEqual(preferences);
+      expect(
+        screen.getByRole("switch", { name: "Notify while viewing" }),
+      ).toBeVisible();
+      expect(screen.getByRole("switch", { name: "Sound" })).toBeChecked();
+      expect(
+        screen.getByRole("combobox", { name: "Direct messages" }),
+      ).toBeVisible();
       expect(
         screen.getByRole("button", { name: "Allow notifications" }),
       ).toBeEnabled();
@@ -172,12 +207,10 @@ it("keeps both preference recovery paths scoped to the visible section", () => {
   expect(service.snapshot().preferences.enabled).toBe(true);
 });
 
-function previewButton() {
-  const button = screen
-    .getAllByRole("button", { name: "Preview flutter" })
-    .at(0);
-  if (!button) throw new Error("Missing preview control");
-  return button;
+async function chooseSound(label: string, name: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name }));
 }
 
 it("owns one preview and stops it across replacement, disablement, inactivity, errors, and unmount", async () => {
@@ -211,47 +244,52 @@ it("owns one preview and stops it across replacement, disablement, inactivity, e
   );
   service.selectViewer("a".repeat(64));
   const view = render(<NotificationSettings notifications={service} />);
-
-  fireEvent.click(previewButton());
-  expect(audios[0]?.src).toBe("/sounds/flutter.mp3");
-  expect(screen.getByRole("button", { name: "Pause flutter" })).toBeEnabled();
-
-  fireEvent.click(previewButton());
+  expect(audios).toHaveLength(0);
+  expect(
+    screen.queryByRole("button", { name: /Preview|Pause/ }),
+  ).not.toBeInTheDocument();
+  await chooseSound("Direct messages", "ping");
+  expect(audios[0]?.src).toBe("/sounds/ping.mp3");
+  expect(audios[0]?.play).toHaveBeenCalledOnce();
+  await chooseSound("@Mentions", "boo");
   expect(audios[0]?.pause).toHaveBeenCalledOnce();
   expect(audios[0]?.onended).toBeNull();
   expect(audios).toHaveLength(2);
-
   act(() => service.updatePreferences({ categories: { mention: false } }));
   expect(audios[1]?.pause).toHaveBeenCalledOnce();
   act(() => service.updatePreferences({ categories: { mention: true } }));
-  fireEvent.click(previewButton());
+  await chooseSound("@Mentions", "doo");
   view.rerender(
     <NotificationSettings notifications={service} active={false} />,
   );
   expect(audios[2]?.pause).toHaveBeenCalledOnce();
-
   view.rerender(<NotificationSettings notifications={service} />);
-  fireEvent.click(previewButton());
+  expect(audios).toHaveLength(3);
+  await chooseSound("@Mentions", "boo");
   act(() => audios[3]?.onerror?.());
-  expect(screen.queryByRole("button", { name: "Pause flutter" })).toBeNull();
-
-  fireEvent.click(previewButton());
+  expect(audios[3]?.pause).toHaveBeenCalledOnce();
+  await chooseSound("@Mentions", "doo");
   act(() => service.updatePreferences({ sound: false }));
   expect(audios[4]?.pause).toHaveBeenCalledOnce();
   act(() => service.updatePreferences({ sound: true }));
-  fireEvent.click(previewButton());
-  view.unmount();
+  await chooseSound("@Mentions", "boo");
+  fireEvent.click(screen.getByRole("switch", { name: "Desktop alerts" }));
   expect(audios[5]?.pause).toHaveBeenCalledOnce();
-  expect(audios[5]?.onerror).toBeNull();
+  fireEvent.click(screen.getByRole("switch", { name: "Desktop alerts" }));
+  await chooseSound("@Mentions", "doo");
+  view.unmount();
+  expect(audios[6]?.pause).toHaveBeenCalledOnce();
+  expect(audios[6]?.onerror).toBeNull();
 });
 
-it("resets preview controls when playback rejects", async () => {
+it("cleans up the preview when playback rejects", async () => {
+  const pause = vi.fn();
   let reject!: (error: Error) => void;
   class RejectingAudio {
     onended: (() => void) | null = null;
     onpause: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    pause = vi.fn();
+    pause = pause;
     play = vi.fn(
       () =>
         new Promise<void>((_resolve, rejectPromise) => {
@@ -277,9 +315,9 @@ it("resets preview controls when playback rejects", async () => {
   );
   service.selectViewer("a".repeat(64));
   render(<NotificationSettings notifications={service} />);
-  fireEvent.click(previewButton());
+  await chooseSound("Direct messages", "ping");
   await act(async () => reject(new Error("blocked")));
-  expect(screen.queryByRole("button", { name: "Pause flutter" })).toBeNull();
+  expect(pause).toHaveBeenCalledOnce();
 });
 it("repeated identical permission failures retain feedback without leaving Settings", async () => {
   const ctx = new Context();
@@ -320,4 +358,63 @@ it("repeated identical permission failures retain feedback without leaving Setti
     fireEvent.click(screen.getByRole("button", { name: "Check permission" }));
   });
   expect(notice()).toHaveTextContent("Permission unavailable");
+});
+
+it("selects and restores Silent for every category, stops previews, and can restore a sound", async () => {
+  const pause = vi.fn();
+  const play = vi.fn(async () => {});
+  vi.stubGlobal(
+    "Audio",
+    class {
+      currentTime = 0;
+      pause = pause;
+      play = play;
+    },
+  );
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "granted",
+      requestPermission: async () => "granted",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  service.selectViewer("a".repeat(64));
+  render(<NotificationSettings notifications={service} />);
+  const user = userEvent.setup();
+  await chooseSound("Direct messages", "ping");
+  for (const [category, label] of [
+    ["direct", "Direct messages"],
+    ["mention", "@Mentions"],
+    ["thread", "Thread replies"],
+  ] as const) {
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: "Silent" }));
+    expect(service.snapshot().preferences.sounds[category]).toBe("silent");
+    expect(screen.getByRole("combobox", { name: label })).toHaveTextContent(
+      "Silent",
+    );
+  }
+  expect(pause).toHaveBeenCalledOnce();
+  expect(play).toHaveBeenCalledOnce();
+  act(() => service.reloadPreferences());
+  expect(service.snapshot().preferences.sounds).toEqual({
+    direct: "silent",
+    mention: "silent",
+    thread: "silent",
+  });
+  expect(play).toHaveBeenCalledOnce();
+  expect(screen.getByRole("switch", { name: "Desktop alerts" })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Sound" })).toBeChecked();
+  await user.click(screen.getByRole("combobox", { name: "Direct messages" }));
+  await user.click(await screen.findByRole("option", { name: "flutter" }));
+  expect(play).toHaveBeenCalledTimes(2);
+  expect(service.snapshot().preferences.sounds.direct).toBe("flutter");
 });

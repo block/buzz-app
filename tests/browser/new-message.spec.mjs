@@ -14,6 +14,7 @@ import { watchPageErrors } from "./page-errors.mjs";
 const test = base.extend({
   developmentReact: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
+  agentManagement: [false, { scope: "worker" }],
   companionFixture: [false, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async ({ compiledApp, page, context }, use) => {
@@ -73,6 +74,7 @@ const test = base.extend({
     };
     const socket = brokerSocket(publish);
     const broker = relayBrokerPlugin({
+      archiveFile: ":memory:",
       relayUrl: fixtureRelayUrl,
       communityAliases: fixtureAliases,
       identity: () => key,

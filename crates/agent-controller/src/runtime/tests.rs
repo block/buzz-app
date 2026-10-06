@@ -1972,6 +1972,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
             ("BUZZ_ACP_AGENTS".into(), "10".into()),
             ("BUZZ_ACP_EFFORT_LEVEL".into(), "low".into()),
             ("BUZZ_ACP_LAZY_POOL".into(), "false".into()),
+            ("BUZZ_ACP_RELAY_OBSERVER".into(), "false".into()),
         ]);
         store
             .save(
@@ -2032,6 +2033,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
         assert_eq!(env["BUZZ_ACP_AGENTS"], "2");
         assert_eq!(env["BUZZ_ACP_EFFORT_LEVEL"], "high");
         assert_eq!(env["BUZZ_ACP_LAZY_POOL"], "true");
+        assert_eq!(env["BUZZ_ACP_RELAY_OBSERVER"], "true");
     }
 }
 

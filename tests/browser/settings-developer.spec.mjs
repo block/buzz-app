@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
 
 test.use({
   developmentReact: true,
@@ -44,7 +45,7 @@ test.describe("client performance", () => {
   test("records channel opens by source and exports them", async ({
     page,
     app,
-  }) => {
+  }, info) => {
     await page.route("**/api/relay/stats", (route) =>
       route.fulfill({ json: { queries: 0, errors: 0, media: 0, connects: 0 } }),
     );
@@ -108,5 +109,60 @@ test.describe("client performance", () => {
       }),
     ]);
     expect(exported.queries.length).toBeGreaterThan(0);
+
+    // Browser geometry proves the dashboard's cards, chart and controls remain
+    // reachable; recorder semantics are covered by client-metrics unit tests.
+    const checkLayout = async () => {
+      const region = page.getByRole("region", {
+        name: "Developer",
+        exact: true,
+      });
+      await expect
+        .poll(() =>
+          region.evaluate((root) => {
+            const bounds = root.getBoundingClientRect();
+            return [...root.querySelectorAll("button, input, h3, h4, dd")]
+              .filter(
+                (node) =>
+                  node.checkVisibility() &&
+                  !node.closest('[aria-hidden="true"]'),
+              )
+              .filter((node) => {
+                const box = node.getBoundingClientRect();
+                return box.left < bounds.left || box.right > bounds.right;
+              })
+              .map((node) => ({
+                element: node.outerHTML,
+                left: node.getBoundingClientRect().left,
+                right: node.getBoundingClientRect().right,
+                bounds: [bounds.left, bounds.right],
+              }));
+          }),
+        )
+        .toEqual([]);
+    };
+    for (const mode of ["Light", "Dark"]) {
+      await selectSettingsSection(page, "Appearance");
+      await chooseColorMode(page, mode);
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 950 });
+        await selectSettingsSection(page, "Developer");
+        await checkLayout();
+        await page.screenshot({
+          path: info.outputPath(`developer-${mode}-${width}.png`),
+        });
+      }
+    }
+    await selectSettingsSection(page, "Appearance");
+    for (let step = 0; step < 10; step++)
+      await button(page, "Increase interface size").click();
+    await selectSettingsSection(page, "Developer");
+    await checkLayout();
+    await page.evaluate(() => (document.documentElement.dir = "rtl"));
+    await checkLayout();
+    await page.screenshot({
+      path: info.outputPath("developer-390-200-rtl.png"),
+    });
+    await page.evaluate(() => (document.documentElement.dir = "ltr"));
   });
 });

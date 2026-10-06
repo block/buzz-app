@@ -11,8 +11,16 @@ import { communityMedia } from "../../features/profiles/avatar-upload";
 import { CaretDownIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
+import type { ProfileResolver } from "./AgentCard";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
+import { useState } from "react";
+import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
+import {
+  type ArchiveAction,
+  type ArchiveRun,
+  useArchiveConsent,
+} from "./inventory-archive";
 import {
   localHereGroup,
   relayGroup,
@@ -35,7 +43,11 @@ export function InventoryIdentityCard({
   duplicate,
   remove,
   removeRelay,
+  archive,
+  nested = false,
   importedId,
+  resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   selectedSource,
@@ -57,7 +69,22 @@ export function InventoryIdentityCard({
   removeRelay?:
     | ((pubkey: string, signal: AbortSignal) => Promise<void>)
     | undefined;
+  /** Archive in the connected community; undefined where it does not apply. */
+  archive?:
+    | {
+        archived: boolean;
+        community: string;
+        run: ArchiveRun | undefined;
+        request(action: ArchiveAction): void;
+        /** Changes on Refresh agents, to ask for archive permission again. */
+        attempt: number;
+      }
+    | undefined;
+  /** True inside the Archived section, one heading level deeper. */
+  nested?: boolean;
   importedId: string | null;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(
     pubkey: string,
     action: "use" | "clone",
@@ -67,8 +94,20 @@ export function InventoryIdentityCard({
   selectedSource: ImportSource | undefined;
   onSourceChange(source: ImportSource): void;
 }) {
+  const [confirming, setConfirming] = useState(false);
+  // Archive is per community: offer it only where this identity is known.
+  const archivable = useArchiveConsent(
+    session.archives,
+    row.pubkey,
+    !!archive &&
+      (row.knownCommunities.has(destination) ||
+        row.localSetups.has(destination)),
+    archive?.attempt,
+  );
   const data = state.data;
   if (!data) return null;
+  const running = row.localSetups.get(destination)?.status === "running";
+  const archiveRun = archive?.run;
   const sourceProfile = sourceProfiles.get(row.pubkey);
   const avatar =
     row.avatar ??
@@ -115,16 +154,70 @@ export function InventoryIdentityCard({
   return (
     <AgentCard
       layout={tile ? "tile" : "row"}
-      headingLevel={community ? 4 : 3}
+      headingLevel={((community ? 4 : 3) + (nested ? 1 : 0)) as 3 | 4 | 5}
       name={row.displayName}
       avatar={avatar}
       media={imageCommunity ? communityMedia(imageCommunity) : undefined}
       identities={[{ pubkey: row.pubkey, name: row.displayName }]}
       session={session}
       editable={setups}
+      onViewProfile={
+        profileKeys?.has(row.pubkey) ? resolveProfile?.(row.pubkey) : undefined
+      }
       onEdit={setups.length ? edit : undefined}
       onDuplicate={setups.length ? duplicate : undefined}
       onDelete={setups.length ? remove : undefined}
+      archived={!!archive?.archived}
+      archive={
+        archive && archivable
+          ? {
+              archived: archive.archived,
+              pending: !!archiveRun && !archiveRun.error,
+              onSelect: () =>
+                archive.archived
+                  ? archive.request("unarchive")
+                  : setConfirming(true),
+            }
+          : undefined
+      }
+      feedback={
+        archiveRun && (
+          <>
+            {!archiveRun.error && (
+              <p role="status" className="m-0 text-body-sm text-secondary">
+                {archiveRun.action === "archive"
+                  ? "Archiving…"
+                  : "Unarchiving…"}
+              </p>
+            )}
+            {archive && archiveRun.error && (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <p role="alert" className="m-0 text-body-sm text-danger">
+                  {archiveRun.action === "archive" ? "Archive" : "Unarchive"}{" "}
+                  failed: {archiveRun.error}
+                </p>
+                <Button
+                  size="compact"
+                  onClick={(event) => {
+                    // Retry unmounts while the request runs. Keep focus on
+                    // the card's menu button, which stays through success
+                    // and failure; success then moves focus with the card.
+                    event.currentTarget
+                      .closest("article")
+                      ?.querySelector<HTMLElement>(
+                        'button[aria-label^="Actions for"]',
+                      )
+                      ?.focus();
+                    archive.request(archiveRun.action);
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+          </>
+        )
+      }
     >
       {setups.map((agent) => (
         <ManagedAgentActions
@@ -221,6 +314,18 @@ export function InventoryIdentityCard({
             </p>
           ))}
       </div>
+      {confirming && archive && (
+        <AgentArchiveDialog
+          name={row.displayName}
+          community={archive.community}
+          running={running}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            archive.request("archive");
+          }}
+        />
+      )}
       {decision.action === "wait" && (
         <p role="status" className="m-0 text-body-sm text-secondary">
           {decision.blocked}

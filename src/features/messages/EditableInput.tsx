@@ -450,7 +450,7 @@ export function EditableInput({
     };
     const insert = (
       text: string,
-      recipient?: MentionRecipient,
+      recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
     ) => {
       if (!editable() || composing.current) return false;
@@ -462,19 +462,30 @@ export function EditableInput({
       text = text.replace(/\r\n?/g, "\n");
       const tr = closeHistory(editor.state.tr);
       if (recipient) {
-        const token = $from.parent.type.spec.code
-          ? composerSchema.text(`@${recipient.name}`, [
-              composerSchema.marks.recipient.create(recipient),
-            ])
-          : composerSchema.nodes.token.create(
-              { source: `@${recipient.name}`, recipient, editAsText: false },
-              null,
-              marks,
-            );
+        const recipients: readonly MentionRecipient[] = Array.isArray(recipient)
+          ? recipient
+          : [recipient as MentionRecipient];
         tr.replaceWith(
           from,
           to,
-          Fragment.fromArray([token, composerSchema.text(" ", marks)]),
+          Fragment.fromArray(
+            recipients.flatMap((person) => [
+              $from.parent.type.spec.code
+                ? composerSchema.text(`@${person.name}`, [
+                    composerSchema.marks.recipient.create(person),
+                  ])
+                : composerSchema.nodes.token.create(
+                    {
+                      source: `@${person.name}`,
+                      recipient: person,
+                      editAsText: false,
+                    },
+                    null,
+                    marks,
+                  ),
+              composerSchema.text(" ", marks),
+            ]),
+          ),
         );
       } else if (text)
         tr.replaceWith(from, to, composerSchema.text(text, marks));
@@ -482,6 +493,11 @@ export function EditableInput({
       tr.setSelection(
         Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
       );
+      if (
+        Array.isArray(recipient) &&
+        projectComposerDocument(tr.doc).draft.recipients.length > 32
+      )
+        return false;
       if (
         text &&
         composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])

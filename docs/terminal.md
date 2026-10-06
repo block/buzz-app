@@ -7,6 +7,11 @@ hide the drawer without stopping work; reopening reattaches the same emulator an
 shell. **End session** explicitly terminates it; **Restart** starts a fresh shell.
 An exited shell remains visible until ended/restarted and never respawns automatically.
 
+Pointer openings reuse the panel dock’s 180ms fade and strong ease-out, with 12px
+of upward travel. Closing reclaims the conversation height immediately, matching
+docked side panels. Keyboard openings are immediate; reduced motion keeps only
+the fade. Session lifetime and focus restoration stay with their existing owners.
+
 Settings → Shortcuts can rebind the toggle. Before xterm translates a key into
 shell input, a private synchronous DOM handoff gives the original keydown to the
 host's existing dispatcher. Live overrides, eligibility and plugin lifetime stay

@@ -1,6 +1,8 @@
 import meshManifest from "./mesh-compute/manifest.json";
 import * as mesh from "./mesh-compute";
 import todosManifest from "./todos/manifest.json";
+import builderlabManifest from "./builderlab/manifest.json";
+import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
@@ -49,6 +51,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     enabledByDefault: false,
+  },
+  {
+    manifest: { ...builderlabManifest, apiVersion: 1 },
+    module: builderlab,
+    enabledByDefault: true,
   },
   {
     manifest: { ...feedbackManifest, apiVersion: 1 },

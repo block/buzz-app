@@ -476,3 +476,88 @@ test.describe("automatic catch-up after membership rows", () => {
     );
   });
 });
+
+// Browser boundary: real app reading → strict IndexedDB under pressure → reload.
+// Lower-layer tests own unseen/manual/override matrices; no new fixture controls.
+test.describe("local receipt reserve", () => {
+  test.use({ historyCounts: { [alphaId]: 20, beta: 1400 } });
+  test("a viewport receipt survives other-channel pressure and app reload", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await composer(page).focus();
+    const ids = await visible(page);
+    expect(ids.length).toBeGreaterThan(0);
+    const key = `msg:${ids[0]}`;
+    await expect
+      .poll(async () => (await journal(page)).state.frontiers[key])
+      .toBeDefined();
+    await park(page);
+    await holdReadingFocus(page); // Applied on reload, so it cannot silently reread Alpha.
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.channels.ensure("beta"),
+    );
+    const ready = () =>
+      expect
+        .poll(() =>
+          page.evaluate(() => {
+            const view = window.fixtureRelay
+              .snapshot()
+              .session.channels.window("beta");
+            return view.status === "ready" && !view.loadingOlder;
+          }),
+        )
+        .toBe(true);
+    await ready();
+    while (true) {
+      const more = await page.evaluate(async () => {
+        const { channels, unread } = window.fixtureRelay.snapshot().session;
+        const view = channels.window("beta");
+        const reading = unread.reading("beta");
+        try {
+          for (const row of view.rows) await reading.observe([row.id]);
+        } finally {
+          reading.dispose();
+        }
+        return view.hasMore;
+      });
+      if (!more) break;
+      const pending = app.pending.length;
+      await page.evaluate(() =>
+        window.fixtureRelay.snapshot().session.channels.loadOlder("beta"),
+      );
+      // This fixture deliberately gates every older-history response.
+      await expect.poll(() => app.pending.length).toBe(pending + 1);
+      app.pending[pending].release();
+      await ready();
+    }
+    const stored = await journal(page);
+    expect(stored.state.frontiers[key]).toBeUndefined();
+    expect(stored.reserve[key]).toBeDefined();
+    await expect
+      .poll(async () => (await journal(page)).acceptedRevision, {
+        timeout: 12000,
+      })
+      .toBe(stored.revision);
+    expect(
+      app.report.readPublications.at(-1).blob.contexts[key],
+    ).toBeUndefined();
+    await page.reload();
+    await openPage(page, "Messages");
+    await composer(page).waitFor();
+    await settle(page);
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.ensure(),
+    );
+    expect((await journal(page)).reserve[key]).toBe(stored.reserve[key]);
+    expect(
+      await page.evaluate(
+        ({ alphaId, id }) =>
+          window.fixtureRelay.snapshot().session.unread.attention(alphaId, id)
+            .unread,
+        { alphaId, id: ids[0] },
+      ),
+    ).toBe(false);
+  });
+});

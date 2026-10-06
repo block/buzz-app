@@ -118,6 +118,10 @@ import TablerGitBranchIcon from "@tabler/icons-react/dist/esm/icons/IconGitBranc
 export const GitBranchIcon = defineIcon("tabler", TablerGitBranchIcon);
 import TablerGitCommitIcon from "@tabler/icons-react/dist/esm/icons/IconGitCommit.mjs";
 export const GitCommitIcon = defineIcon("tabler", TablerGitCommitIcon);
+import TablerCircleDashedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDashed.mjs";
+export const CircleDashedIcon = defineIcon("tabler", TablerCircleDashedIcon);
+import TablerGitMergeIcon from "@tabler/icons-react/dist/esm/icons/IconGitMerge.mjs";
+export const GitMergeIcon = defineIcon("tabler", TablerGitMergeIcon);
 import TablerGitPullRequestIcon from "@tabler/icons-react/dist/esm/icons/IconGitPullRequest.mjs";
 export const GitPullRequestIcon = defineIcon(
   "tabler",
@@ -306,6 +310,9 @@ export const ListChecksIcon = defineIcon("tabler", TablerListChecksIcon);
 
 import TablerArchiveIcon from "@tabler/icons-react/dist/esm/icons/IconArchive.mjs";
 export const ArchiveIcon = defineIcon("tabler", TablerArchiveIcon);
+
+import TablerArchiveOffIcon from "@tabler/icons-react/dist/esm/icons/IconArchiveOff.mjs";
+export const ArchiveOffIcon = defineIcon("tabler", TablerArchiveOffIcon);
 
 import TablerArrowsLeftRightIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsLeftRight.mjs";
 export const ArrowsLeftRightIcon = defineIcon(

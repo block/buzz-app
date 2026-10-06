@@ -1,3 +1,4 @@
+import { editSidebarToggle } from "../src/features/relay/sidebar-edits.ts";
 import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
 import { decodeSidebarPreferences } from "./sidebar-preferences.mjs";
 
@@ -38,21 +39,14 @@ export function prepareSidebarMute(events, intent, secret, now = Date.now()) {
     const current = head
       ? JSON.parse(nip44.v2.decrypt(head.content, key))
       : { version: 1, channels: {} };
-    const previous = Object.hasOwn(current.channels, intent.channelId)
-      ? current.channels[intent.channelId]
-      : undefined;
-    if (previous?.muted === intent.muted) return { mutes: current };
-    const mutes = {
-      ...current,
-      channels: {
-        ...current.channels,
-        [intent.channelId]: {
-          ...previous,
-          muted: intent.muted,
-          updatedAt: Math.max(now, (previous?.updatedAt ?? 0) + 1),
-        },
-      },
-    };
+    const mutes = editSidebarToggle(
+      current,
+      intent.channelId,
+      "muted",
+      intent.muted,
+      now,
+    );
+    if (mutes === current) return { mutes };
     const event = finalizeEvent(
       {
         kind: 30078,

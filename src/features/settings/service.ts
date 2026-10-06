@@ -1,17 +1,17 @@
 // Plugin-owned cards inside existing host Settings. No persistence.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
+import type { ChatCircleIcon } from "../../shared/design-system/icons";
 import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
-import type { DefinedIcon } from "../../shared/design-system/icons/createDecorativeIcon";
 
 export type SettingsCard = {
   id: string;
   title: string;
-  /** Optional navigation icon; the host supplies its existing default when absent. */
-  icon?: DefinedIcon;
+  /** Optional design-system icon for this card's Settings destination. */
+  icon?: typeof ChatCircleIcon;
   component: ComponentType<{
     active(): boolean;
     community?: { id: string; name: string };

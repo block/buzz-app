@@ -22,6 +22,9 @@ export function useMessageReveal({
   focus?: boolean;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
+  const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
+    undefined,
+  );
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -46,7 +49,7 @@ export function useMessageReveal({
     const observer = new MutationObserver(schedule);
     const inertObserver = new MutationObserver(schedule);
     function reveal() {
-      if (signal?.aborted || !container?.isConnected) return;
+      if (!signal || signal.aborted || !container?.isConnected) return;
       const row = [
         ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
       ].find((element) => element.dataset.messageId === messageId);
@@ -58,7 +61,20 @@ export function useMessageReveal({
         behavior: "instant",
       });
       settled.current = true;
-      if (focus) row.focus({ preventScroll: true });
+      // A replacement may recover lost focus, but must not take it from another
+      // control after this request already focused a row successfully.
+      let focusPending = false;
+      if (
+        focus &&
+        (focused.current?.signal !== signal ||
+          (focused.current.row !== row &&
+            (!document.activeElement ||
+              document.activeElement === document.body)))
+      ) {
+        row.focus({ preventScroll: true });
+        focusPending = document.activeElement !== row;
+        if (!focusPending) focused.current = { signal, row };
+      }
       frame = requestAnimationFrame(() => {
         if (signal?.aborted || !row.isConnected || !container.contains(row))
           return;
@@ -71,7 +87,8 @@ export function useMessageReveal({
           box.top < Math.min(viewport.bottom, window.innerHeight) &&
           box.right > Math.max(viewport.left, 0) &&
           box.left < Math.min(viewport.right, window.innerWidth);
-        if ((focus && document.activeElement !== row) || !visible) return;
+        if ((focus && (focusPending || row.closest("[inert]"))) || !visible)
+          return;
         revealed.current = signal;
         cancel();
         complete();

@@ -52,6 +52,12 @@ function fixture(available = true) {
         for (const listener of choiceListeners) listener();
       });
   };
+  const failChoices = () => {
+    choices = { ...choices, status: "error", identities: [] };
+    act(() => {
+      for (const listener of choiceListeners) listener();
+    });
+  };
   let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
@@ -72,11 +78,11 @@ function fixture(available = true) {
   };
   const navigate = vi.fn(async () => ({ status: "opened" as const }));
   const navigation = { open: navigate } as unknown as Navigation;
-  const panel = (pubkey: string) => (
+  const panel = (pubkey: string, agentHint = false) => (
     <ProfilePanel
       relay={relay}
       navigation={navigation}
-      target={profileTarget(pubkey) ?? ""}
+      target={profileTarget(pubkey, { agent: agentHint }) ?? ""}
       close={() => {}}
     />
   );
@@ -85,7 +91,7 @@ function fixture(available = true) {
       snapshot = { ...snapshot, generation: 2, scope };
       for (const listener of listeners) listener();
     });
-  return { owner, open, navigate, panel, reconnect, agent };
+  return { owner, open, navigate, panel, reconnect, agent, failChoices };
 }
 function deferred() {
   let resolve!: (id: string) => void;
@@ -120,6 +126,18 @@ it("offers Message to a known agent only under this community's native control",
   f.agent(true);
   expect(message()).toBeTruthy();
   f.agent(false);
+  expect(message()).toBeNull();
+  view.unmount();
+  f.owner.dispose();
+});
+
+it("does not offer Message for an agent-hinted profile after native choices fail", () => {
+  const f = fixture();
+  const view = render(f.panel(person, true));
+  expect(message()).toBeNull();
+  f.agent(true);
+  expect(message()).toBeTruthy();
+  f.failChoices();
   expect(message()).toBeNull();
   view.unmount();
   f.owner.dispose();

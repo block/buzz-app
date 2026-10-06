@@ -12,6 +12,7 @@ import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
+import { retainReadState } from "./read-state-retention";
 import {
   keypair,
   message,
@@ -1123,6 +1124,116 @@ it.each([5, 9005])(
     expect(seen).toEqual([[0, 0]]);
   },
 );
+
+it.each([
+  { scenario: "owner attribution", owner: true, mentioned: false },
+  {
+    scenario: "explicit owner mention",
+    owner: true,
+    explicit: true,
+    mentioned: true,
+  },
+  { scenario: "rendered non-owner mention", owner: false, mentioned: true },
+  {
+    scenario: "forged workflow metadata",
+    owner: true,
+    forged: true,
+    mentioned: true,
+  },
+  {
+    scenario: "ordinary relay message",
+    owner: true,
+    workflow: false,
+    mentioned: true,
+  },
+  { scenario: "non-workflow kind", owner: true, kind: 40002, mentioned: true },
+  {
+    scenario: "provenance without recipient",
+    owner: true,
+    explicit: true,
+    recipient: false,
+    mentioned: false,
+  },
+])(
+  "classifies $scenario without confusing workflow ownership and mentions",
+  (test) => {
+    const h = setup();
+    h.grant("room");
+    const row = signed(test.forged ? h.alice : h.relay, {
+      kind: test.kind ?? 9,
+      created_at: 11,
+      content: "Workflow output",
+      tags: [
+        ["h", "room"],
+        ...(test.recipient === false ? [] : [["p", h.viewer.pubkey]]),
+        ...(test.workflow === false ? [] : [["buzz:workflow", "true"]]),
+        ["buzz:workflow-owner", test.owner ? h.viewer.pubkey : h.alice.pubkey],
+        ...(test.explicit ? [["buzz:workflow-mention", h.viewer.pubkey]] : []),
+      ],
+    });
+    h.emit([row]);
+    const attention = h.session.unread.attention("room", row.id);
+    expect(attention.status).toBe(test.mentioned ? "eligible" : "ineligible");
+    expect(attention.category).toBe(test.mentioned ? "mention" : undefined);
+    expect(attention.mentioned).toBe(test.mentioned ? true : undefined);
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 1,
+      attentionCount: test.mentioned ? 1 : 0,
+    });
+    expect(h.session.unread.inbox().items).toHaveLength(test.mentioned ? 1 : 0);
+  },
+);
+
+it("does not make an unrelated workflow reply relevant to its owner", async () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.alice, "room", "someone else's conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id).unread).toBe(false);
+  await flush();
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+});
+
+it("keeps workflow-owner thread participation and DM attention without inventing a mention", () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.viewer, "room", "my conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      created_at: 20,
+      content: "",
+      tags: [
+        ["d", "room"],
+        ["t", "dm"],
+      ],
+    }),
+  ]);
+  expect(h.session.unread.attention("room", row.id).category).toBe("direct");
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+});
 
 it("projects event attention through the same mention, DM, participation and frontier policy", async () => {
   const h = setup();
@@ -2724,4 +2835,76 @@ it("a read reply stays read after a reload that does not load its root", async (
       unread: false,
     }),
   );
+});
+
+it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
+  const read = message(keypair(), "dm", "read", 12);
+  // Fill the journal directly: owner tests cover bulk pressure/publication/restart.
+  // This session test exercises eviction and DM policy, not 1,600 signed events
+  // and sequential saves. Replace one full-size key with the older DM receipt.
+  const h = setup({}, true, (journal) => {
+    const state = retainReadState(
+      [
+        {
+          frontiers: Object.fromEntries(
+            Array.from({ length: 1600 }, (_, n) => [
+              `msg:${n.toString(16).padStart(64, "0")}`,
+              100 + n,
+            ]),
+          ),
+          overrides: {},
+        },
+      ],
+      {},
+      journal.clientId,
+    );
+    const frontiers = { ...state.frontiers };
+    const [replaced] = Object.keys(frontiers);
+    assert(replaced);
+    delete frontiers[replaced];
+    frontiers[`msg:${read.id}`] = 12;
+    return { ...journal, state: { ...state, frontiers } };
+  });
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unseen = message(h.alice, "dm", "unseen", 13);
+  h.emit([read, unseen]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBe(12);
+  expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  h.grant("elsewhere");
+  const later = [
+    message(h.alice, "elsewhere", "later", 1700),
+    message(h.alice, "elsewhere", "latest", 1701),
+  ];
+  h.emit(later);
+  const reading = unread.reading("elsewhere");
+  await reading.observe(later.map((event) => event.id));
+  reading.dispose();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve?.[`msg:${read.id}`]).toBe(12),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${read.id}`]).toBeUndefined();
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
+  const target = {
+    kind: "message" as const,
+    channelId: "dm",
+    messageId: read.id,
+  };
+  await unread.markUnreadLocal(target);
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  const dmReading = unread.reading("dm");
+  await dmReading.observe([read.id]);
+  dmReading.dispose();
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("dm", read.id).unread).toBe(true);
+  await unread.markMessageRead("dm", read.id);
+  expect(unread.snapshot(target).manual).toBe("none");
+  expect(unread.attention("dm", read.id).unread).toBe(false);
+  expect(unread.attention("dm", unseen.id).unread).toBe(true);
 });

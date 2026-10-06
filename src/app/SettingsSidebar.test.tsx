@@ -6,12 +6,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { SettingsSidebar } from "./SettingsSidebar";
 import type { Communities } from "../features/communities/service";
 import type { SettingsCards } from "../features/settings/service";
+import {
+  CopyIcon,
+  FolderSimpleIcon,
+  GlobeIcon,
+} from "../shared/design-system/icons";
 
 import { CpuIcon, ChatCircleIcon } from "../shared/design-system/icons";
 
 afterEach(cleanup);
 
-it("keeps permission-gated cards in a separate Administration group", () => {
+it("keeps Administration separate and uses each card's navigation icon", () => {
   const client = {
     selected: "primary",
     memberships: [{ id: "primary", name: "Primary" }],
@@ -24,7 +29,27 @@ it("keeps permission-gated cards in a separate Administration group", () => {
       pluginId: "moderation",
       revision: "one",
       title: "Membership",
+      icon: CopyIcon,
       section: "administration",
+      component: () => null,
+    },
+    {
+      id: "groups",
+      key: "channels/groups",
+      pluginId: "channels",
+      revision: "one",
+      title: "Personal groups",
+      icon: FolderSimpleIcon,
+      component: () => null,
+    },
+    {
+      id: "hosted",
+      key: "communities/hosted",
+      pluginId: "communities",
+      revision: "one",
+      title: "Hosted communities",
+      group: "Communities",
+      icon: GlobeIcon,
       component: () => null,
     },
   ];
@@ -56,6 +81,17 @@ it("keeps permission-gated cards in a separate Administration group", () => {
   expect(membership).toHaveAttribute("aria-current", "page");
   expect(membership.closest("section")).toHaveTextContent("Administration");
   expect(membership.closest("section")).not.toHaveTextContent("Primary");
+  expect(membership.querySelector("svg")).toHaveClass("tabler-icon-copy");
+  expect(
+    screen
+      .getByRole("button", { name: "Personal groups" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-folder");
+  expect(
+    screen
+      .getByRole("button", { name: "Hosted communities" })
+      .querySelector("svg"),
+  ).toHaveClass("tabler-icon-world");
 });
 
 it.each([null, "primary"])(

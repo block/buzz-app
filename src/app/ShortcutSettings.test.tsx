@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   act,
   cleanup,
@@ -26,9 +27,12 @@ import { createMemoryHistory } from "../features/navigation/history";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
 import { PageSearch, type SearchServices } from "./shell/PageSearch";
 
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.mocked(isTauri).mockReturnValue(false);
   localStorage.clear();
 });
 
@@ -175,21 +179,19 @@ it("lists live host and plugin shortcuts without search or intro text and follow
         apple
       />,
     );
+    expect(
+      screen.getByRole("heading", { name: "Shortcuts", level: 2 }),
+    ).toBeVisible();
     const groups = screen
-      .getAllByRole("heading", { level: 2 })
+      .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
-    expect(groups).toEqual([
-      "Shortcuts",
-      "Buzz",
-      "Shortcut counter",
-      "Terminal",
-    ]);
+    expect(groups).toEqual(["Buzz", "Shortcut counter", "Terminal"]);
     expect(
       screen
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Increase interface size",
@@ -199,13 +201,11 @@ it("lists live host and plugin shortcuts without search or intro text and follow
       "Increment shortcut counter",
       "Toggle channel terminal",
     ]);
-    // Chips show the first alias with glyphs; the label reads as words.
+    // One capsule shows the whole first alias; the label reads as words.
     const grow = row("Increase interface size");
     expect(within(grow).getByText("Command =")).toHaveClass("sr-only");
-    const chips = grow.querySelectorAll("kbd kbd");
-    expect([...chips].map((chip) => chip.textContent)).toEqual(["⌘", "="]);
-    expect(chips[0]?.parentElement).toHaveAttribute("aria-hidden", "true");
-    expect(grow.querySelector("[data-design-pass='pending']")).toHaveAttribute(
+    expect(within(grow).getByText("⌘=")).toHaveAttribute("aria-hidden", "true");
+    expect(grow.querySelector(".buzz-keyboard-shortcut")).toHaveAttribute(
       "data-binding",
       "⌘=",
     );
@@ -277,7 +277,7 @@ it("presents actual host registrations in navigation, interface sizing, search/s
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Home",
@@ -331,7 +331,7 @@ it("orders plugin rows by metadata then contribution key without merging duplica
         .getAllByRole("article")
         .map(
           (article) =>
-            within(article).getByRole("heading", { level: 3 }).textContent,
+            within(article).getByRole("heading", { level: 4 }).textContent,
         ),
     ).toEqual([
       "Increase interface size",
@@ -734,7 +734,7 @@ it("stores Option and Shift chords as the composed key on Apple platforms (known
     fireEvent.keyDown(capture(terminal), { key: "˚", altKey: true });
     expect(within(row(terminal)).getByText("Option ˚")).toBeInTheDocument();
     expect(
-      row(terminal).querySelector("[data-design-pass='pending']"),
+      row(terminal).querySelector(".buzz-keyboard-shortcut"),
     ).toHaveAttribute("data-binding", "⌥˚");
     expect(h.bindings.resolve("buzz.terminal/toggle")).toEqual([
       { key: "˚", alt: true },
@@ -782,7 +782,7 @@ it("refuses close and quit chords only in the desktop build", async () => {
     for (const key of ["q", "w"]) {
       fireEvent.keyDown(capture(title), { key, metaKey: true });
       expect(screen.getByRole("alert")).toHaveTextContent(
-        `⌘${key.toUpperCase()} is reserved for closing the window and quitting Buzz. Try another.`,
+        `⌘${key.toUpperCase()} is reserved for closing tabs or the window and quitting Buzz. Try another.`,
       );
     }
     expect(h.bindings.snapshot().overrides).toEqual({});
@@ -885,15 +885,9 @@ it("keeps the host group distinct from a plugin whose manifest id is buzz", asyn
     );
     expect(
       screen
-        .getAllByRole("heading", { level: 2 })
+        .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual([
-      "Shortcuts",
-      "Buzz",
-      "Buzz plugin",
-      "Shortcut counter",
-      "Terminal",
-    ]);
+    ).toEqual(["Buzz", "Buzz plugin", "Shortcut counter", "Terminal"]);
     expect(row("Ping")).toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
   } finally {
@@ -940,3 +934,55 @@ it.each([false, true])(
     }
   },
 );
+
+it("shows desktop Close as reserved and read-only while other actions remain editable", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const appearance = createAppearance(window);
+  const remove = registerAppShortcuts(shortcuts, appearance, vi.fn(), true);
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={shortcuts}
+        bindings={bindings}
+        plugins={catalog([])}
+      />,
+    );
+    const closeRow = within(row("Close tab or window"));
+    expect(closeRow.getByText("Reserved by Buzz")).toBeVisible();
+    expect(closeRow.getByText("Control W")).toBeInTheDocument();
+    expect(closeRow.queryByRole("button")).not.toBeInTheDocument();
+    expect(change("Open Settings")).toBeEnabled();
+    fireEvent.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), { key: "w", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent("reserved");
+    expect(bindings.snapshot().overrides).toEqual({});
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel changing Open Settings" }),
+    );
+    fireEvent.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), { key: "p", ctrlKey: true });
+    expect(bindings.snapshot().overrides.settings).toEqual({
+      key: "p",
+      mod: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset all shortcuts" }),
+    );
+    expect(closeRow.queryByRole("button")).not.toBeInTheDocument();
+    expect(bindings.snapshot().overrides).toEqual({});
+  } finally {
+    cleanup();
+    remove();
+    appearance.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});

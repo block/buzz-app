@@ -12,6 +12,8 @@ import {
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import {
+  ArchiveIcon,
+  ArchiveOffIcon,
   CopyIcon,
   DotsThreeIcon,
   PencilSimpleIcon,
@@ -32,6 +34,10 @@ import type { AgentLibrary } from "../../features/agents/library";
 import type { AgentView } from "../../features/agents/control";
 import type { RelaySession } from "../../features/relay/session";
 
+export type ProfileResolver = (
+  pubkey: string,
+) => ((trigger: HTMLButtonElement) => void) | undefined;
+
 export function AgentCard({
   name,
   avatar,
@@ -40,8 +46,12 @@ export function AgentCard({
   media,
   editable = [],
   onEdit,
+  onViewProfile,
   onDuplicate,
   onDelete,
+  archive,
+  archived = false,
+  feedback,
   children,
   identityLabel = (identity) => identity.name,
   layout = "tile",
@@ -50,7 +60,7 @@ export function AgentCard({
   children?: ReactNode;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
   layout?: "tile" | "row";
-  headingLevel?: 3 | 4;
+  headingLevel?: 3 | 4 | 5;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
@@ -58,11 +68,24 @@ export function AgentCard({
   media?: RelaySession["media"] | undefined;
   editable?: AgentView[];
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
+  onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
+  /** Visibility in the connected community; undefined when it cannot change. */
+  archive?:
+    | {
+        archived: boolean;
+        pending: boolean;
+        onSelect(): void;
+      }
+    | undefined;
+  archived?: boolean;
+  /** Status for a whole-card operation, shown on its own full-width line. */
+  feedback?: ReactNode;
 }) {
-  const Heading = headingLevel === 4 ? "h4" : "h3";
+  const Heading = `h${headingLevel}` as "h3" | "h4" | "h5";
   const trigger = useRef<HTMLButtonElement>(null);
+  const profileHandoff = useRef(false);
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
@@ -108,11 +131,18 @@ export function AgentCard({
   return (
     <article
       aria-label={`Agent ${name}`}
+      data-agent-pubkey={
+        identities.length === 1 ? identities[0]?.pubkey : undefined
+      }
       className={`relative min-w-0 ${layout === "row" ? "agent-inventory-row" : `flex flex-col gap-4 rounded-2xl border border-primary ${children ? "p-4" : "px-4 py-8"}`}`}
     >
-      {onEdit && (
+      {(onEdit || onViewProfile || archive) && (
         <div className="absolute right-2 top-2">
-          <MenuRoot>
+          <MenuRoot
+            onOpenChange={(open) => {
+              if (open) profileHandoff.current = false;
+            }}
+          >
             <MenuTrigger
               ref={trigger}
               render={
@@ -123,89 +153,127 @@ export function AgentCard({
                 />
               }
             />
-            <MenuPopup align="end" size="wide">
-              {editable.length ? (
-                editable.map((agent) => (
-                  <Fragment key={agent.id}>
-                    <MenuItem
-                      onClick={() => {
-                        // The menu item unmounts; return from the dialog to the card.
-                        trigger.current?.focus();
-                        onEdit(agent, source);
-                      }}
-                    >
-                      <MenuIcon>
-                        <PencilSimpleIcon size={14} />
-                      </MenuIcon>
-                      {editable.length === 1 ? (
-                        "Edit"
-                      ) : (
-                        <ChoiceRow
-                          label={`Edit ${identityLabel(agent)}`}
-                          description={
-                            <>
-                              <span className="block break-all text-body-sm text-secondary">
-                                {agent.relayUrl}
-                              </span>
-                              <span className="block break-all text-mono-sm text-secondary">
-                                {npubEncode(agent.pubkey)}
-                              </span>
-                            </>
-                          }
-                        />
-                      )}
-                    </MenuItem>
-                    {onDuplicate && (
+            <MenuPopup
+              align="end"
+              size="wide"
+              finalFocus={() => !profileHandoff.current}
+            >
+              {onViewProfile && (
+                <MenuItem
+                  onClick={() => {
+                    const button = trigger.current;
+                    if (button) {
+                      profileHandoff.current = true;
+                      requestAnimationFrame(() => onViewProfile(button));
+                    }
+                  }}
+                >
+                  View profile
+                </MenuItem>
+              )}
+              {archive && (
+                <MenuItem
+                  disabled={archive.pending}
+                  onClick={() => {
+                    trigger.current?.focus();
+                    archive.onSelect();
+                  }}
+                >
+                  <MenuIcon>
+                    {archive.archived ? (
+                      <ArchiveOffIcon size={14} />
+                    ) : (
+                      <ArchiveIcon size={14} />
+                    )}
+                  </MenuIcon>
+                  {archive.archived ? "Unarchive agent" : "Archive agent"}
+                </MenuItem>
+              )}
+              {(onViewProfile || archive) && onEdit && <MenuSeparator />}
+              {onEdit ? (
+                editable.length ? (
+                  editable.map((agent) => (
+                    <Fragment key={agent.id}>
                       <MenuItem
                         onClick={() => {
+                          // The menu item unmounts; return from the dialog to the card.
                           trigger.current?.focus();
-                          onDuplicate(agent);
+                          onEdit(agent, source);
                         }}
                       >
                         <MenuIcon>
-                          <CopyIcon size={14} />
+                          <PencilSimpleIcon size={14} />
                         </MenuIcon>
-                        {editable.length === 1
-                          ? "Duplicate"
-                          : `Duplicate ${identityLabel(agent)}`}
+                        {editable.length === 1 ? (
+                          "Edit"
+                        ) : (
+                          <ChoiceRow
+                            label={`Edit ${identityLabel(agent)}`}
+                            description={
+                              <>
+                                <span className="block break-all text-body-sm text-secondary">
+                                  {agent.relayUrl}
+                                </span>
+                                <span className="block break-all text-mono-sm text-secondary">
+                                  {npubEncode(agent.pubkey)}
+                                </span>
+                              </>
+                            }
+                          />
+                        )}
                       </MenuItem>
-                    )}
-                    {onDelete && (
-                      <>
-                        <MenuSeparator />
+                      {onDuplicate && (
                         <MenuItem
-                          tone="danger"
                           onClick={() => {
                             trigger.current?.focus();
-                            onDelete(agent);
+                            onDuplicate(agent);
                           }}
                         >
                           <MenuIcon>
-                            <TrashIcon size={14} />
+                            <CopyIcon size={14} />
                           </MenuIcon>
                           {editable.length === 1
-                            ? "Delete"
-                            : `Delete ${identityLabel(agent)}`}
+                            ? "Duplicate"
+                            : `Duplicate ${identityLabel(agent)}`}
                         </MenuItem>
-                      </>
-                    )}
-                  </Fragment>
-                ))
-              ) : (
-                <>
-                  <MenuItem disabled>
-                    <MenuIcon>
-                      <PencilSimpleIcon size={14} />
-                    </MenuIcon>
-                    Edit
-                  </MenuItem>
-                  <MenuNote>
-                    {identities.length
-                      ? "Import this identity to edit in Foundation."
-                      : "No linked identity to edit."}
-                  </MenuNote>
-                </>
-              )}
+                      )}
+                      {onDelete && (
+                        <>
+                          <MenuSeparator />
+                          <MenuItem
+                            tone="danger"
+                            onClick={() => {
+                              trigger.current?.focus();
+                              onDelete(agent);
+                            }}
+                          >
+                            <MenuIcon>
+                              <TrashIcon size={14} />
+                            </MenuIcon>
+                            {editable.length === 1
+                              ? "Delete"
+                              : `Delete ${identityLabel(agent)}`}
+                          </MenuItem>
+                        </>
+                      )}
+                    </Fragment>
+                  ))
+                ) : (
+                  <>
+                    <MenuItem disabled>
+                      <MenuIcon>
+                        <PencilSimpleIcon size={14} />
+                      </MenuIcon>
+                      Edit
+                    </MenuItem>
+                    <MenuNote>
+                      {identities.length
+                        ? "Import this identity to edit in Foundation."
+                        : "No linked identity to edit."}
+                    </MenuNote>
+                  </>
+                )
+              ) : null}
             </MenuPopup>
           </MenuRoot>
         </div>
@@ -213,7 +281,7 @@ export function AgentCard({
       <div
         className={
           children
-            ? `flex min-w-0 items-center gap-3 ${onEdit ? "pr-6" : ""}`
+            ? `flex min-w-0 items-center gap-3 ${onEdit || onViewProfile || archive ? "pr-6" : ""}`
             : "flex flex-col items-center gap-6 text-center"
         }
       >
@@ -231,23 +299,41 @@ export function AgentCard({
             statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
-        <Heading
-          className="m-0 min-w-0 max-w-full truncate text-label"
-          title={name}
-        >
-          {name}
-        </Heading>
+        {archived ? (
+          // The badge wraps below the name before the name truncates.
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Heading
+              className="m-0 min-w-0 max-w-full truncate text-label"
+              title={name}
+            >
+              {name}
+            </Heading>
+            <span className="shrink-0 rounded-full border border-primary px-2 text-caption text-secondary">
+              Archived
+            </span>
+          </div>
+        ) : (
+          <Heading
+            className="m-0 min-w-0 max-w-full truncate text-label"
+            title={name}
+          >
+            {name}
+          </Heading>
+        )}
       </div>
       {children && (
         <div
           className={
             layout === "row"
-              ? `flex min-w-0 flex-wrap items-center gap-2 ${onEdit ? "pr-8" : ""}`
+              ? `agent-inventory-actions flex min-w-0 flex-wrap items-center gap-2 ${onEdit || onViewProfile || archive ? "pr-8" : ""}`
               : "flex min-w-0 flex-col gap-3"
           }
         >
           {children}
         </div>
+      )}
+      {feedback && (
+        <div className="agent-card-feedback min-w-0">{feedback}</div>
       )}
       {identities.length && !children ? (
         <div className="-mt-3 flex justify-center">

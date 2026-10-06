@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import {
   type ReactNode,
   useCallback,
@@ -12,6 +13,8 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
@@ -23,31 +26,28 @@ import {
   CheckCircleIcon,
   CircleNotchIcon,
   LinkBreakIcon,
+  GlobeIcon,
   SignOutIcon,
   TrashIcon,
   WarningCircleIcon,
 } from "../../shared/design-system/icons";
 import {
-  admitDeletion,
   ApiFailure,
   boundKey,
-  call,
   check,
   clearPendingDeletion,
-  getAuth,
   HOST_SUFFIX,
   isDefinitiveDeletionRejection,
-  login,
   makePendingDeletion,
   persistPendingDeletion,
   quota,
   quotaLimitMessage,
   readPendingDeletion,
   relayUrl,
-  signOut,
   Unsupported,
   VALID_NAME,
   type Account,
+  type Api,
   type Community,
   type Identity,
   type PendingDeletion,
@@ -55,6 +55,7 @@ import {
 } from "./api";
 
 const card = "mt-6 rounded-xl border border-default p-5";
+const sectionClassName = "mt-section-gap";
 const npub = (hex?: string | null) => (hex ? npubEncode(hex) : "Unavailable");
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
@@ -65,7 +66,13 @@ type Confirm = {
   run(): Promise<void>;
 };
 
-export function HostedCommunities({ active }: { active(): boolean }) {
+export function HostedCommunities({
+  api,
+  active,
+}: {
+  api: Api;
+  active(): boolean;
+}) {
   const activeRef = useRef(active);
   activeRef.current = active;
   const [auth, setAuth] = useState<Account | null>();
@@ -98,101 +105,110 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const acceptedDeletions = useRef(new Map<string, PendingDeletion>());
   const loadedOwner = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(async (reconcileAccepted = false) => {
-    const at = generation.current;
-    const [current, list] = await Promise.all([call("identity"), call("list")]);
-    if (at !== generation.current) return null;
-    // A setup-needed mapping is the connect state. An upstream unauthorized
-    // response may also be an expired session (dev/builderlab.mjs forwards it).
-    if (
-      current.error?.code === "unauthorized" ||
-      list.error?.code === "unauthorized"
-    ) {
-      setIdentityLoadFailed(true);
-      setIdentity(null);
-      setCommunities([]);
-      setQuotaState(null);
-      setPendingDeletion(null);
-      setBlockedOwner(null);
-      setDeletionNotice("");
-    }
-    if (!current.error?.setup_needed)
-      check(current, "Could not load the connected Buzz identity.");
-    if (!list.error?.setup_needed) check(list, "Could not load communities.");
-    setIdentityLoadFailed(false);
-    const nextIdentity = current.identity ?? null;
-    const nextOwner = boundKey(nextIdentity);
-    if (
-      loadedOwner.current !== undefined &&
-      loadedOwner.current !== nextOwner
-    ) {
-      acceptedDeletions.current.clear();
-      setDeletionNotice("");
-    }
-    loadedOwner.current = nextOwner;
-    const stored = readPendingDeletion();
-    setBlockedOwner(
-      stored &&
-        (stored.owner_pubkey !== nextOwner ||
-          stored.backend_origin !== window.location.origin)
-        ? stored.owner_pubkey
-        : null,
-    );
-    setPendingDeletion(
-      stored?.owner_pubkey === nextOwner &&
-        stored.backend_origin === window.location.origin
-        ? stored
-        : null,
-    );
-    const listed = list.communities ?? [];
-    if (
-      reconcileAccepted &&
-      nextOwner &&
-      listed.some((community) =>
-        acceptedDeletions.current.has(community.id ?? ""),
-      )
-    ) {
-      const currentAuth = await getAuth().catch(() => null);
-      if (at !== generation.current || !activeRef.current()) return null;
-      if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
-        for (const community of listed) {
-          if (at !== generation.current || !activeRef.current()) return null;
-          const accepted = acceptedDeletions.current.get(community.id ?? "");
-          if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
-          try {
-            await admitDeletion(accepted.request, "recovery");
-          } catch (reason) {
-            if (
-              at === generation.current &&
-              activeRef.current() &&
-              acceptedDeletions.current.get(accepted.request.community_id) ===
-                accepted
-            ) {
+  const load = useCallback(
+    async (reconcileAccepted = false) => {
+      const at = generation.current;
+      const [current, list] = await Promise.all([
+        api.call("identity"),
+        api.call("list"),
+      ]);
+      if (at !== generation.current) return null;
+      // A setup-needed mapping is the connect state. An upstream unauthorized
+      // response may also be an expired session (dev/builderlab.mjs forwards it).
+      if (
+        current.error?.code === "unauthorized" ||
+        list.error?.code === "unauthorized"
+      ) {
+        setIdentityLoadFailed(true);
+        setIdentity(null);
+        setCommunities([]);
+        setQuotaState(null);
+        setPendingDeletion(null);
+        setBlockedOwner(null);
+        setDeletionNotice("");
+      }
+      if (!current.error?.setup_needed)
+        check(current, "Could not load the connected Buzz identity.");
+      if (!list.error?.setup_needed) check(list, "Could not load communities.");
+      setIdentityLoadFailed(false);
+      const nextIdentity = current.identity ?? null;
+      const nextOwner = boundKey(nextIdentity);
+      if (
+        loadedOwner.current !== undefined &&
+        loadedOwner.current !== nextOwner
+      ) {
+        acceptedDeletions.current.clear();
+        setDeletionNotice("");
+      }
+      loadedOwner.current = nextOwner;
+      const stored = readPendingDeletion();
+      setBlockedOwner(
+        stored &&
+          (stored.owner_pubkey !== nextOwner ||
+            stored.backend_origin !== api.origin())
+          ? stored.owner_pubkey
+          : null,
+      );
+      setPendingDeletion(
+        stored?.owner_pubkey === nextOwner &&
+          stored.backend_origin === api.origin()
+          ? stored
+          : null,
+      );
+      const listed = list.communities ?? [];
+      if (
+        reconcileAccepted &&
+        nextOwner &&
+        listed.some((community) =>
+          acceptedDeletions.current.has(community.id ?? ""),
+        )
+      ) {
+        const currentAuth = await api.getAuth().catch(() => null);
+        if (at !== generation.current || !activeRef.current()) return null;
+        if (currentAuth?.capabilities?.can_delete_buzz_communities === true)
+          for (const community of listed) {
+            if (at !== generation.current || !activeRef.current()) return null;
+            const accepted = acceptedDeletions.current.get(community.id ?? "");
+            if (!accepted || accepted.owner_pubkey !== nextOwner) continue;
+            try {
+              await api.admitDeletion(accepted.request, "recovery");
+            } catch (reason) {
               if (
-                reason instanceof ApiFailure &&
-                reason.code === "deletion_aborted"
+                at === generation.current &&
+                activeRef.current() &&
+                acceptedDeletions.current.get(accepted.request.community_id) ===
+                  accepted
               ) {
-                acceptedDeletions.current.delete(accepted.request.community_id);
-                if (acceptedDeletions.current.size === 0) setDeletionNotice("");
-                setError(
-                  `Deletion of ${accepted.request.host} stopped. This community is not being deleted.`,
-                );
-              } else setError("Couldn't check deletion status.");
+                if (
+                  reason instanceof ApiFailure &&
+                  reason.code === "deletion_aborted"
+                ) {
+                  acceptedDeletions.current.delete(
+                    accepted.request.community_id,
+                  );
+                  if (acceptedDeletions.current.size === 0)
+                    setDeletionNotice("");
+                  setError(
+                    `Deletion of ${accepted.request.host} stopped. This community is not being deleted.`,
+                  );
+                } else setError("Couldn't check deletion status.");
+              }
             }
+            if (at !== generation.current || !activeRef.current()) return null;
           }
-          if (at !== generation.current || !activeRef.current()) return null;
-        }
-    }
-    const nextCommunities = listed.filter(
-      (community) =>
-        !community.id || !acceptedDeletions.current.has(community.id),
-    );
-    const nextQuota = quota(list);
-    setIdentity(nextIdentity);
-    setCommunities(nextCommunities);
-    setQuotaState(nextQuota);
-    return { identity: nextIdentity, communities: nextCommunities };
-  }, []);
+      }
+      const nextCommunities = listed.filter(
+        (community) =>
+          !community.id || !acceptedDeletions.current.has(community.id),
+      );
+      const nextQuota = quota(list);
+      setIdentity(nextIdentity);
+      setCommunities(nextCommunities);
+      setQuotaState(nextQuota);
+      return { identity: nextIdentity, communities: nextCommunities };
+    },
+    [api],
+  );
 
   const markDeletionAccepted = useCallback(
     (pending: PendingDeletion, at: number) => {
@@ -214,20 +230,16 @@ export function HostedCommunities({ active }: { active(): boolean }) {
   const loadLocal = useCallback(() => {
     const at = ++localRead.current;
     setLocal(undefined);
-    void fetch("/api/relay/identity")
-      .then((response): Promise<{ viewer?: string }> => {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json();
-      })
-      .then(({ viewer }) => boundKey(viewer ? { pubkey_hex: viewer } : null))
-      .catch(() => null)
+    void api
+      .localKey()
       .then((key) => at === localRead.current && setLocal(key));
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     const at = ++generation.current;
     loadLocal();
-    void getAuth()
+    void api
+      .getAuth()
       .then((next) => {
         if (at !== generation.current) return;
         setAuth(next);
@@ -246,7 +258,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       generation.current++;
       loginAbort.current?.abort();
     };
-  }, [load, loadLocal]);
+  }, [api, load, loadLocal]);
 
   /** Runs one account operation at a time; resolves whether it succeeded. */
   async function run(label: string, operation: () => Promise<unknown>) {
@@ -317,14 +329,14 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       const at = generation.current;
       const snapshot = await load();
       if (at !== generation.current || !activeRef.current()) return;
-      const currentAuth = await getAuth();
+      const currentAuth = await api.getAuth();
       if (at !== generation.current || !activeRef.current()) return;
       const stored = readPendingDeletion();
       if (
         !snapshot ||
         !stored ||
         JSON.stringify(stored) !== JSON.stringify(pending) ||
-        stored.backend_origin !== window.location.origin ||
+        stored.backend_origin !== api.origin() ||
         boundKey(snapshot.identity) !== pending.owner_pubkey
       )
         throw new Error(
@@ -334,7 +346,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
       if (currentAuth?.capabilities?.can_delete_buzz_communities !== true)
         throw new Error("Community deletion is no longer available.");
       await settleDeletion(pending, at, () =>
-        admitDeletion(pending.request, "recovery"),
+        api.admitDeletion(pending.request, "recovery"),
       );
     });
   const busy = action !== null;
@@ -377,7 +389,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
 
   const bind = async () => {
     const reply = check(
-      await call("bind"),
+      await api.call("bind"),
       "Could not connect the Buzz identity.",
     );
     setIdentity(reply.identity ?? null);
@@ -388,7 +400,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
     community: Community,
     fallback: string,
   ) => {
-    const reply = await call(kind, { community_id: community.id ?? "" });
+    const reply = await api.call(kind, { community_id: community.id ?? "" });
     const archivedAt = reply.community?.archived_at;
     const done = kind === "archive" ? Boolean(archivedAt) : archivedAt === null;
     if (!done) check(reply, fallback);
@@ -406,17 +418,16 @@ export function HostedCommunities({ active }: { active(): boolean }) {
 
   return (
     <section aria-labelledby="hosted-communities-title">
-      <h2 id="hosted-communities-title" className="mt-0 mb-2 text-label">
-        Hosted communities
-      </h2>
-      <p className="text-body-sm text-muted">
-        Buzz works with any relay. This page is only for relay hosting provided
-        by Block — sign in with a Builderlab account to create and manage
-        Block-hosted communities. Builderlab sign-in is used on this page alone.
-      </p>
+      <Header
+        id="hosted-communities-title"
+        title="Hosted communities"
+        subtitle="Manage Block-hosted communities with Builderlab. Other relays don’t require this sign-in."
+      />
       {failure}
       {unsupported ? (
-        <p className={`${card} text-body-sm text-muted`}>{unsupported}</p>
+        <p className={`${sectionClassName} text-body-sm text-muted`}>
+          {unsupported}
+        </p>
       ) : auth === undefined ? (
         <p
           role="status"
@@ -430,196 +441,190 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           Checking sign-in…
         </p>
       ) : !auth ? (
-        <div className={card}>
-          <h3 className="m-0 text-label">
-            Sign in to manage hosted communities
-          </h3>
-          <p className="text-body-sm text-muted">
-            Authentication opens in your browser and returns securely to Buzz.
-            You can use every other part of the app without signing in.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <Button
-              variant="primary"
-              loading={action === "login"}
-              disabled={busy}
-              onClick={() =>
-                void run("login", async () => {
-                  loginAbort.current = new AbortController();
-                  const next = await login(loginAbort.current.signal);
-                  setAuth(next);
-                  await settle();
-                })
-              }
-            >
-              <ArrowSquareOutIcon size={18} aria-hidden="true" /> Sign in with
-              Builderlab
-            </Button>
-            {action === "login" && (
-              <Button onClick={() => loginAbort.current?.abort()}>
-                Cancel
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div
-            className={`${card} flex flex-wrap items-center justify-between gap-3`}
-          >
-            <div>
-              <p className="m-0 text-label">
-                {auth.name || auth.email || "Builderlab account"}
-              </p>
-              {auth.name && auth.email && (
-                <p className="m-0 text-body-sm text-muted">{auth.email}</p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() =>
-                void run("sign-out", async () => {
-                  await signOut();
-                  setPendingDeletion(null);
-                  setAuth(null);
-                  setIdentity(null);
-                  setCommunities([]);
-                  setQuotaState(null);
-                })
-              }
-            >
-              <SignOutIcon aria-hidden="true" /> Sign out
-            </Button>
-          </div>
-          {!identity ? (
-            identityLoadFailed ? null : (
-              <div className={card}>
-                <h3 className="m-0 text-label">
-                  Link this account to your Buzz identity
-                </h3>
-                <p className="text-body-sm text-muted">
-                  This Builderlab account isn’t linked to a Buzz identity yet.
-                  Connect this device’s key to create and own communities under
-                  it — Buzz signs a one-time challenge locally, so your private
-                  key never leaves this computer.
-                </p>
-                <Button
-                  variant="primary"
-                  loading={action === "bind"}
-                  disabled={busy}
-                  onClick={() => void run("bind", bind)}
-                >
-                  Connect Buzz identity
-                </Button>
-              </div>
-            )
-          ) : local === undefined && bound ? (
-            <p role="status" className={card}>
-              Checking this device’s Buzz identity…
-            </p>
-          ) : local === null && bound ? (
-            <div className={card}>
-              <p role="alert" className="error m-0">
-                Could not read this device’s Buzz identity, so community actions
-                are paused.
-              </p>
-              <div className="mt-3">
-                <Button onClick={loadLocal}>Try again</Button>
-              </div>
-            </div>
-          ) : mismatch ? (
-            <section className={card} aria-label="Identity mismatch">
-              <h3 className="m-0 flex items-center gap-2 text-label">
-                <WarningCircleIcon size={16} aria-hidden="true" />
-                This account is connected to a different Buzz identity
-              </h3>
-              <p className="text-body-sm text-muted">
-                Your Builderlab account is linked to another Buzz key. Creating
-                communities and copying addresses are paused until the
-                identities match.
-              </p>
-              <dl className="text-body-sm">
-                <dt className="text-muted">Account uses</dt>
-                <dd className="m-0 break-all font-mono">{npub(bound)}</dd>
-                <dt className="mt-2 text-muted">This device</dt>
-                <dd className="m-0 break-all font-mono">{npub(local)}</dd>
-              </dl>
+        <EmptyState
+          icon={<GlobeIcon />}
+          title="Sign in to manage hosted communities"
+          description="Sign in through your browser to manage Block hosting. The rest of Buzz works without a Builderlab account."
+          action={
+            <>
               <Button
                 variant="primary"
-                loading={action === "switch"}
-                disabled={busy || !local}
+                loading={action === "login"}
+                disabled={busy}
                 onClick={() =>
-                  void run("switch", async () => {
-                    check(
-                      await call("unbind"),
-                      "Could not release the previously connected Buzz identity.",
-                    );
-                    setPendingDeletion(null);
-                    // Unbound is a valid resting state; Connect recovers it.
-                    setIdentity(null);
-                    if (activeRef.current()) await bind();
+                  void run("login", async () => {
+                    loginAbort.current = new AbortController();
+                    const next = await api.login(loginAbort.current.signal);
+                    setAuth(next);
+                    await settle();
                   })
                 }
               >
-                Switch to this device’s identity
+                <ArrowSquareOutIcon size={18} aria-hidden="true" /> Sign in with
+                Builderlab
               </Button>
-            </section>
-          ) : (
-            <div
-              className={`${card} flex flex-wrap items-center justify-between gap-3`}
-            >
-              <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">
-                <CheckCircleIcon size={16} aria-hidden="true" />
-                Buzz identity connected{" "}
-                <span className="break-all font-mono text-muted">
-                  {npub(bound)}
-                </span>
-              </p>
+              {action === "login" && (
+                <Button onClick={() => loginAbort.current?.abort()}>
+                  Cancel
+                </Button>
+              )}
+            </>
+          }
+        />
+      ) : (
+        <>
+          <InlineHeader title="Account" />
+          <SettingsGroup layout="form">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="m-0 text-label">
+                  {auth.name || auth.email || "Builderlab account"}
+                </p>
+                {auth.name && auth.email && (
+                  <p className="m-0 text-body-sm text-muted">{auth.email}</p>
+                )}
+              </div>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 disabled={busy}
                 onClick={() =>
-                  setConfirm({
-                    title: "Unpair this Buzz identity?",
-                    description:
-                      "Your Builderlab account will no longer be connected to this Buzz key. You can reconnect any key later, but community actions stay unavailable until you do.",
-                    action: "Unpair identity",
-                    run: async () => {
-                      check(
-                        await call("unbind"),
-                        "Could not unpair the Buzz identity.",
-                      );
-                      setPendingDeletion(null);
-                      setIdentity(null);
-                      await settle();
-                    },
+                  void run("sign-out", async () => {
+                    await api.signOut();
+                    setPendingDeletion(null);
+                    setAuth(null);
+                    setIdentity(null);
+                    setCommunities([]);
+                    setQuotaState(null);
                   })
                 }
               >
-                <LinkBreakIcon aria-hidden="true" /> Unpair identity
+                <SignOutIcon aria-hidden="true" /> Sign out
               </Button>
             </div>
-          )}
-          <div className="mt-8 flex items-center justify-between gap-3">
-            <h3 className="m-0 text-label">
-              Your communities{" "}
-              {quotaState && (
-                <span className="text-body-sm text-muted">
-                  {quotaState.used} of {quotaState.limit} used
-                </span>
-              )}
-            </h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy}
-              onClick={() => void run("refresh", () => load(true))}
-            >
-              <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
-            </Button>
+            {!identity ? (
+              identityLoadFailed ? null : (
+                <div className="space-y-3">
+                  <InlineHeader
+                    title="Link this account to your Buzz identity"
+                    subtitle="This Builderlab account isn’t linked to a Buzz identity yet. Connect this device’s key to create and own communities under it — Buzz signs a one-time challenge locally, so your private key never leaves this computer."
+                  />
+                  <Button
+                    variant="primary"
+                    loading={action === "bind"}
+                    disabled={busy}
+                    onClick={() => void run("bind", bind)}
+                  >
+                    Connect Buzz identity
+                  </Button>
+                </div>
+              )
+            ) : local === undefined && bound ? (
+              <p role="status" className="space-y-3">
+                Checking this device’s Buzz identity…
+              </p>
+            ) : local === null && bound ? (
+              <div className="space-y-3">
+                <p role="alert" className="error m-0">
+                  Could not read this device’s Buzz identity, so community
+                  actions are paused.
+                </p>
+                <div className="mt-3">
+                  <Button onClick={loadLocal}>Try again</Button>
+                </div>
+              </div>
+            ) : mismatch ? (
+              <section className="space-y-3" aria-label="Identity mismatch">
+                <InlineHeader
+                  icon={<WarningCircleIcon size={16} aria-hidden="true" />}
+                  title="This account is connected to a different Buzz identity"
+                />
+                <p className="text-body-sm text-muted">
+                  Your Builderlab account is linked to another Buzz key.
+                  Creating communities and copying addresses are paused until
+                  the identities match.
+                </p>
+                <dl className="text-body-sm">
+                  <dt className="text-muted">Account uses</dt>
+                  <dd className="m-0 break-all font-mono">{npub(bound)}</dd>
+                  <dt className="mt-2 text-muted">This device</dt>
+                  <dd className="m-0 break-all font-mono">{npub(local)}</dd>
+                </dl>
+                <Button
+                  variant="primary"
+                  loading={action === "switch"}
+                  disabled={busy || !local}
+                  onClick={() =>
+                    void run("switch", async () => {
+                      check(
+                        await api.call("unbind"),
+                        "Could not release the previously connected Buzz identity.",
+                      );
+                      setPendingDeletion(null);
+                      // Unbound is a valid resting state; Connect recovers it.
+                      setIdentity(null);
+                      if (activeRef.current()) await bind();
+                    })
+                  }
+                >
+                  Switch to this device’s identity
+                </Button>
+              </section>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">
+                  <CheckCircleIcon size={16} aria-hidden="true" />
+                  Buzz identity connected{" "}
+                  <span className="break-all font-mono text-muted">
+                    {npub(bound)}
+                  </span>
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    setConfirm({
+                      title: "Unpair this Buzz identity?",
+                      description:
+                        "Your Builderlab account will no longer be connected to this Buzz key. You can reconnect any key later, but community actions stay unavailable until you do.",
+                      action: "Unpair identity",
+                      run: async () => {
+                        check(
+                          await api.call("unbind"),
+                          "Could not unpair the Buzz identity.",
+                        );
+                        setPendingDeletion(null);
+                        setIdentity(null);
+                        await settle();
+                      },
+                    })
+                  }
+                >
+                  <LinkBreakIcon aria-hidden="true" /> Unpair identity
+                </Button>
+              </div>
+            )}
+          </SettingsGroup>
+          <div className="mt-section-gap">
+            <InlineHeader
+              title="Your communities"
+              subtitle={
+                quotaState
+                  ? `${quotaState.used} of ${quotaState.limit} used`
+                  : undefined
+              }
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void run("refresh", () => load(true))}
+                >
+                  <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
+                </Button>
+              }
+            />
           </div>
           {deletionNotice && (
             <p role="status" className={`${card} text-body-sm`}>
@@ -682,131 +687,142 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </p>
           )}
           {communities.length === 0 ? (
-            <p className={`${card} text-body-sm text-muted`}>
-              No hosted communities yet.
-            </p>
+            identity && !error && action !== "refresh" ? (
+              <EmptyState
+                icon={<GlobeIcon />}
+                level={4}
+                title="No hosted communities yet"
+                description={
+                  ready
+                    ? "Create a community below to give your team a place to connect."
+                    : "Communities hosted by this account will appear here."
+                }
+              />
+            ) : null
           ) : (
-            <ul className="m-0 list-none p-0">
-              {[...communities]
-                .sort(
-                  (a, b) =>
-                    Number(Boolean(a.archived_at)) -
-                    Number(Boolean(b.archived_at)),
-                )
-                .map((community, index) => {
-                  const name =
-                    community.name ?? community.slug ?? "Hosted community";
-                  const url = relayUrl(community);
-                  const archived = Boolean(community.archived_at);
-                  const deletionPending =
-                    pendingDeletion?.request.community_id === community.id;
-                  return (
-                    <li
-                      key={community.id ?? community.normalized_host ?? index}
-                      className={`${card} flex flex-wrap items-center justify-between gap-3${archived ? " opacity-70" : ""}`}
-                    >
-                      <div className="min-w-0">
-                        <p className="m-0 text-label">{name}</p>
-                        <p className="m-0 text-body-sm text-muted">
-                          {community.normalized_host}
-                          {archived ? " · Archived" : ""}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {archived ? (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={
-                                busy || !community.id || deletionPending
-                              }
-                              onClick={() =>
-                                setConfirm({
-                                  title: `Unarchive ${name}?`,
-                                  description:
-                                    "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
-                                  action: "Unarchive",
-                                  run: () =>
-                                    mutate(
-                                      "unarchive",
-                                      community,
-                                      "Could not unarchive the community.",
-                                    ),
-                                })
-                              }
-                            >
-                              <BoxArrowUpIcon aria-hidden="true" /> Unarchive
-                            </Button>
-                            {deletionEnabled &&
-                              ready &&
-                              community.id &&
-                              community.normalized_host && (
-                                <Button
-                                  variant="prominent"
-                                  size="sm"
-                                  disabled={
-                                    busy ||
-                                    Boolean(pendingDeletion) ||
-                                    Boolean(blockedOwner)
-                                  }
-                                  onClick={() => setDeleteTarget(community)}
-                                >
-                                  <TrashIcon aria-hidden="true" /> Delete
-                                </Button>
-                              )}
-                          </>
-                        ) : (
-                          <>
-                            {url && ready && (
+            <SettingsGroup>
+              <ul className="m-0 list-none p-0">
+                {[...communities]
+                  .sort(
+                    (a, b) =>
+                      Number(Boolean(a.archived_at)) -
+                      Number(Boolean(b.archived_at)),
+                  )
+                  .map((community, index) => {
+                    const name =
+                      community.name ?? community.slug ?? "Hosted community";
+                    const url = relayUrl(community);
+                    const archived = Boolean(community.archived_at);
+                    const deletionPending =
+                      pendingDeletion?.request.community_id === community.id;
+                    return (
+                      <li
+                        key={community.id ?? community.normalized_host ?? index}
+                        className={`flex flex-wrap items-center justify-between gap-3 border-b border-line py-4${archived ? " opacity-70" : ""}`}
+                      >
+                        <div className="min-w-0">
+                          <p className="m-0 text-label">{name}</p>
+                          <p className="m-0 text-body-sm text-muted">
+                            {community.normalized_host}
+                            {archived ? " · Archived" : ""}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {archived ? (
+                            <>
                               <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={busy}
-                                onClick={() => void copy(url)}
+                                disabled={
+                                  busy || !community.id || deletionPending
+                                }
+                                onClick={() =>
+                                  setConfirm({
+                                    title: `Unarchive ${name}?`,
+                                    description:
+                                      "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
+                                    action: "Unarchive",
+                                    run: () =>
+                                      mutate(
+                                        "unarchive",
+                                        community,
+                                        "Could not unarchive the community.",
+                                      ),
+                                  })
+                                }
                               >
-                                {shown?.copied && shown.url === url
-                                  ? "Copied"
-                                  : "Copy address"}
+                                <BoxArrowUpIcon aria-hidden="true" /> Unarchive
                               </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy || !community.id}
-                              onClick={() => setTransfer(community)}
-                            >
-                              <ArrowsLeftRightIcon aria-hidden="true" />{" "}
-                              Transfer
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy || !community.id}
-                              onClick={() =>
-                                setConfirm({
-                                  title: `Archive ${name}?`,
-                                  description:
-                                    "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
-                                  action: "Archive",
-                                  run: () =>
-                                    mutate(
-                                      "archive",
-                                      community,
-                                      "Could not archive the community.",
-                                    ),
-                                })
-                              }
-                            >
-                              <ArchiveIcon aria-hidden="true" /> Archive
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-            </ul>
+                              {deletionEnabled &&
+                                ready &&
+                                community.id &&
+                                community.normalized_host && (
+                                  <Button
+                                    variant="prominent"
+                                    size="sm"
+                                    disabled={
+                                      busy ||
+                                      Boolean(pendingDeletion) ||
+                                      Boolean(blockedOwner)
+                                    }
+                                    onClick={() => setDeleteTarget(community)}
+                                  >
+                                    <TrashIcon aria-hidden="true" /> Delete
+                                  </Button>
+                                )}
+                            </>
+                          ) : (
+                            <>
+                              {url && ready && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() => void copy(url)}
+                                >
+                                  {shown?.copied && shown.url === url
+                                    ? "Copied"
+                                    : "Copy address"}
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busy || !community.id}
+                                onClick={() => setTransfer(community)}
+                              >
+                                <ArrowsLeftRightIcon aria-hidden="true" />{" "}
+                                Transfer
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busy || !community.id}
+                                onClick={() =>
+                                  setConfirm({
+                                    title: `Archive ${name}?`,
+                                    description:
+                                      "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
+                                    action: "Archive",
+                                    run: () =>
+                                      mutate(
+                                        "archive",
+                                        community,
+                                        "Could not archive the community.",
+                                      ),
+                                  })
+                                }
+                              >
+                                <ArchiveIcon aria-hidden="true" /> Archive
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+              </ul>
+            </SettingsGroup>
           )}
           {shown?.copied && (
             <p role="status" className="text-body-sm text-muted">
@@ -832,6 +848,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             </div>
           )}
           <CreateCommunity
+            api={api}
             enabled={ready && quotaState?.canCreate !== false}
             atLimit={
               quotaState?.canCreate === false
@@ -843,7 +860,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             onCreate={(name) =>
               run("create", async () => {
                 const reply = check(
-                  await call("create", { name }),
+                  await api.call("create", { name }),
                   "Could not create the community.",
                   quotaState?.limit,
                 );
@@ -872,7 +889,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             if (blockedOwner || occupied) {
               if (
                 occupied?.owner_pubkey === bound &&
-                occupied.backend_origin === window.location.origin
+                occupied.backend_origin === api.origin()
               ) {
                 setPendingDeletion(occupied);
                 setError(
@@ -890,13 +907,13 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             }
             let pending: PendingDeletion;
             try {
-              pending = makePendingDeletion(bound, deleteTarget);
+              pending = makePendingDeletion(bound, deleteTarget, api.origin());
               persistPendingDeletion(pending);
             } catch {
               const stored = readPendingDeletion();
               if (
                 stored?.owner_pubkey === bound &&
-                stored.backend_origin === window.location.origin
+                stored.backend_origin === api.origin()
               )
                 setPendingDeletion(stored);
               setError(
@@ -909,7 +926,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
             void run("delete", async () => {
               const at = generation.current;
               await settleDeletion(pending, at, () =>
-                admitDeletion(pending.request, "fresh"),
+                api.admitDeletion(pending.request, "fresh"),
               );
             });
           }}
@@ -950,7 +967,7 @@ export function HostedCommunities({ active }: { active(): boolean }) {
           close={() => setTransfer(null)}
           onTransfer={(recipient) =>
             run("transfer", async () => {
-              const reply = await call("transfer", {
+              const reply = await api.call("transfer", {
                 communityId: transfer.id ?? "",
                 transfereeNpub: recipient,
               });
@@ -1042,12 +1059,14 @@ function DeleteCommunityDialog({
 }
 
 function CreateCommunity({
+  api,
   enabled,
   atLimit,
   busy,
   creating,
   onCreate,
 }: {
+  api: Api;
   enabled: boolean;
   atLimit: string | null;
   busy: boolean;
@@ -1069,7 +1088,8 @@ function CreateCommunity({
     if (!enabled || !valid) return;
     let current = true;
     const timer = setTimeout(() => {
-      void call("availability", { name })
+      void api
+        .call("availability", { name })
         .then((reply) => {
           check(reply, "Could not check that address.");
           if (current) setAvailable(Boolean(reply.available));
@@ -1080,79 +1100,81 @@ function CreateCommunity({
       current = false;
       clearTimeout(timer);
     };
-  }, [enabled, name, valid, attempt]);
+  }, [api, enabled, name, valid, attempt]);
   return (
     <form
-      className={card}
+      className={sectionClassName}
       onSubmit={(event) => {
         event.preventDefault();
         if (enabled && valid && available)
           void onCreate(name).then((ok) => ok && setName(""));
       }}
     >
-      <h3 className="m-0 text-label">Create a community</h3>
-      <p className="mt-1 text-body-sm text-muted">
-        Choose the address your team will use to connect.
-      </p>
-      {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
-      <Field
-        label="Community address"
-        labelVisibility="hidden"
-        invalid={Boolean(name) && !valid}
-        error={
-          name && !valid
-            ? "Use lowercase letters, numbers, and single hyphens."
-            : available === false
-              ? "That address is already taken."
-              : undefined
-        }
-      >
-        <div className="flex max-w-xl flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1 basis-48">
-            <Input
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={63}
-              placeholder="north-star"
-              aria-describedby={suffixId}
-              disabled={!enabled || busy}
-              value={name}
-              onValueChange={(value) => setName(value.trim().toLowerCase())}
-            />
+      <InlineHeader
+        title="Create a community"
+        subtitle="Choose the address your team will use to connect."
+      />
+      <SettingsGroup layout="form">
+        {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
+        <Field
+          label="Community address"
+          labelVisibility="hidden"
+          invalid={Boolean(name) && !valid}
+          error={
+            name && !valid
+              ? "Use lowercase letters, numbers, and single hyphens."
+              : available === false
+                ? "That address is already taken."
+                : undefined
+          }
+        >
+          <div className="flex max-w-xl flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1 basis-48">
+              <Input
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={63}
+                placeholder="north-star"
+                aria-describedby={suffixId}
+                disabled={!enabled || busy}
+                value={name}
+                onValueChange={(value) => setName(value.trim().toLowerCase())}
+              />
+            </div>
+            <span id={suffixId} className="shrink-0 text-body-sm text-muted">
+              .{HOST_SUFFIX}
+            </span>
           </div>
-          <span id={suffixId} className="shrink-0 text-body-sm text-muted">
-            .{HOST_SUFFIX}
-          </span>
-        </div>
-      </Field>
-      {valid && enabled && failed ? (
-        <div role="alert" className="text-body-sm">
-          <p className="error m-0 break-words">{failed}</p>
-          <div className="mt-2">
-            <Button onClick={() => setAttempt((count) => count + 1)}>
-              Check again
-            </Button>
+        </Field>
+        {valid && enabled && failed ? (
+          <div role="alert" className="text-body-sm">
+            <p className="error m-0 break-words">{failed}</p>
+            <div className="mt-2">
+              <Button onClick={() => setAttempt((count) => count + 1)}>
+                Check again
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <p role="status" className="text-body-sm text-muted">
-          {valid && enabled
-            ? available === null
-              ? "Checking availability…"
-              : available
-                ? "That address is available."
-                : ""
-            : ""}
-        </p>
-      )}
-      <Button
-        type="submit"
-        variant="primary"
-        loading={creating}
-        disabled={!enabled || !valid || !available || busy}
-      >
-        Create community
-      </Button>
+        ) : (
+          <p role="status" className="text-body-sm text-muted">
+            {valid && enabled
+              ? available === null
+                ? "Checking availability…"
+                : available
+                  ? "That address is available."
+                  : ""
+              : ""}
+          </p>
+        )}
+        <Button
+          type="submit"
+          variant="primary"
+          loading={creating}
+          disabled={!enabled || !valid || !available || busy}
+        >
+          Create community
+        </Button>
+      </SettingsGroup>
     </form>
   );
 }

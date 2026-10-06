@@ -1,3 +1,5 @@
+import { archiveClient } from "../archive/client";
+import type { ArchiveHost } from "../archive/types";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -9,7 +11,11 @@ import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
-import { projectGitHost, type ProjectGit } from "../projects/git";
+import {
+  communityGitRepository,
+  projectGitHost,
+  type ProjectGit,
+} from "../projects/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
@@ -75,6 +81,11 @@ export interface ReadTransport {
     target: { id: string; pubkey: string; relayUrl: string },
     nonce: string,
   ) => Promise<string>;
+  /** One-repository Git authorization for this community's Buzz git; null for any other URL.
+   * The token is the NIP-98 value after `Authorization: Nostr `. */
+  readonly authorizeGit?: (
+    repository: string,
+  ) => Promise<{ repository: string; token: string } | null>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -91,6 +102,7 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
+  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
@@ -171,8 +183,8 @@ export function mediaUrl(
 export interface Signer {
   getPublicKey(): Promise<string>;
   signEvent(event: EventTemplate): Promise<VerifiedEvent>;
-  /** Native hosts authenticate and send exact bytes without exposing credentials to JS. */
-  request?(url: string, body: string, signal?: AbortSignal): Promise<Response>;
+  /** The host authenticates and sends exact bytes without exposing credentials to JS. */
+  request(url: string, body: string, signal?: AbortSignal): Promise<Response>;
   /** Native hosts sign and send `PUT /upload` for these exact bytes. */
   upload?(file: File, signal: AbortSignal): Promise<Response>;
   /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
@@ -392,6 +404,7 @@ export async function connectBrokerTransport(
     agentLibrary?: boolean;
     agentMemories?: boolean;
     agentLogProof?: boolean;
+    gitAuthorization?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -488,6 +501,26 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
+    ...(session.agentActivity === true && session.live === true
+      ? {
+          activityArchive: archiveClient("broker", async (input, signal) => {
+            const response = await fetch(`${endpoint}/archive`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ viewer: session.viewer, ...input }),
+              signal: signal
+                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+                : AbortSignal.timeout(10000),
+            });
+            if (!response.ok)
+              throw new Error(
+                "Archive operation failed; retry without deleting stored data",
+              );
+            return response.json();
+          }).host,
+        }
+      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
@@ -591,6 +624,32 @@ export async function connectBrokerTransport(
             )
               throw new Error("Log authorization unavailable");
             return value.signature;
+          },
+        }
+      : {}),
+    ...(session.gitAuthorization === true && community && session.relayUrl
+      ? {
+          authorizeGit: async (input: string) => {
+            const repository = communityGitRepository(
+              relayOrigin(session.relayUrl ?? ""),
+              input,
+            );
+            if (!repository) return null;
+            const response = await fetch(`${endpoint}/git-authorization`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repository }),
+            });
+            const value: unknown = response.ok ? await response.json() : null;
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("token" in value) ||
+              typeof value.token !== "string"
+            )
+              throw new Error("Repository sign-in unavailable");
+            return { repository, token: value.token };
           },
         }
       : {}),
@@ -982,10 +1041,6 @@ export async function connectBrokerTransport(
   };
 }
 
-const hex = (buffer: ArrayBuffer) =>
-  [...new Uint8Array(buffer)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 const signedAdmissions = createHostAdmission();
 /** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
 export function admittedSignedWorkflowRead(
@@ -1013,7 +1068,7 @@ export const admitSignedRequest = (
     signal,
     priority,
   );
-/** NIP-98 signed reads for a host that owns a signer (Tauri, NIP-07). Reads and writes use the same identity and relay scope. */
+/** NIP-98 signed reads and writes through a host that owns the signer and authenticates each HTTP request. Reads and writes use the same identity and relay scope. */
 export async function connectSignedTransport(
   signer: Signer,
   httpOrigin: string,
@@ -1178,58 +1233,12 @@ async function signedPost(
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
-    const request = signer.request?.bind(signer);
-    if (request)
-      return dispatch(() => {
-        signal?.throwIfAborted();
-        return profiling.measureAsync("http.fetch", id, () =>
-          request(url, body, signal),
-        );
-      });
-    const payload = hex(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
-    );
-    if (signal?.aborted) throw signal.reason;
-    const auth = await profiling.measureAsync("http.auth", id, () =>
-      signer.signEvent({
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        content: "",
-        tags: [
-          ["u", url],
-          ["method", "POST"],
-          ["payload", payload],
-          ["nonce", crypto.randomUUID()],
-        ],
-      }),
-    );
-    if (signal?.aborted) throw signal.reason;
-    // Preparation retains this principal. Dispatch rechecks capacity and any
-    // server pause learned during asynchronous signing.
-    const queued = profiling.start("http.admission", id);
-    try {
-      return await dispatch(() => {
-        queued();
-        signal?.throwIfAborted();
-        if (Math.abs(Math.floor(Date.now() / 1000) - auth.created_at) > 45)
-          throw new ApiNotSent(
-            "Request authentication expired before dispatch; retry available",
-          );
-        return profiling.measureAsync("http.fetch", id, () =>
-          fetch(url, {
-            method: "POST",
-            headers: {
-              Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-              "Content-Type": "application/json",
-            },
-            body,
-            signal: signal ?? null,
-          }),
-        );
-      });
-    } finally {
-      queued();
-    }
+    return dispatch(() => {
+      signal?.throwIfAborted();
+      return profiling.measureAsync("http.fetch", id, () =>
+        signer.request(url, body, signal),
+      );
+    });
   });
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */

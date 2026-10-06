@@ -44,20 +44,28 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   });
   await input.fill("@M");
   const reads = () => page.evaluate(() => window.mentionFixture.reads());
+  // General is untyped, so the community directory also searches each new
+  // query after its debounce. Those reads belong to the query, not cold work,
+  // so the baseline holds when the first search starts before or after it.
+  const session = ({ kinds, searches }) =>
+    kinds.filter((_, index) => searches[index] === null);
   await expect
     .poll(
       async () =>
-        (await reads()).kinds.filter((kinds) => kinds.includes(0)).length,
+        session(await reads()).filter((kinds) => kinds.includes(0)).length,
     )
     .toBeGreaterThan(0);
-  const cold = await reads();
+  const cold = session(await reads());
   const coldLibraryReads = await page.evaluate(() =>
     window.mentionFixture.libraryReads(),
   );
   try {
     await input.pressSequentially("ary J");
     await expect(input).toHaveJSProperty("value", "@Mary J");
-    expect((await reads()).kinds).toEqual(cold.kinds);
+    // Wait for the final query's search; any other read added by typing
+    // would repeat cold work.
+    await expect.poll(async () => (await reads()).searches).toContain("Mary J");
+    expect(session(await reads())).toEqual(cold);
     expect(
       await page.evaluate(() => window.mentionFixture.libraryReads()),
     ).toBe(coldLibraryReads);
@@ -102,7 +110,7 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   const after = await reads();
   const report = {
     characters: prose.length,
-    coldReads: cold.kinds,
+    coldReads: cold,
     warmAdditionalReads: after.kinds.length - warm.kinds.length,
     libraryReads: await page.evaluate(() =>
       window.mentionFixture.libraryReads(),

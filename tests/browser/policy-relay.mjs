@@ -579,8 +579,14 @@ export function policyRelay({
               expect(this.authenticated).toBe(true);
               setTimeout(() => {
                 try {
-                  acceptPublication(this.community, id);
-                  emit(this, ["OK", id.id, true, ""]);
+                  const accepted = acceptPublication(this.community, id);
+                  // A fixture may hold the OK while relay side effects proceed.
+                  if (typeof accepted?.then === "function")
+                    accepted.then(
+                      () => emit(this, ["OK", id.id, true, ""]),
+                      fault,
+                    );
+                  else emit(this, ["OK", id.id, true, ""]);
                 } catch (error) {
                   fault(error);
                 }
@@ -713,6 +719,12 @@ export function policyRelay({
     },
     publish(community, event) {
       let deliveries = 0;
+      // Relay-authored group state names its channel with d, not h.
+      const destinationTag =
+        [39000, 39002].includes(event.kind) &&
+        !event.tags.some(([k]) => k === "h")
+          ? "d"
+          : "h";
       for (const socket of sockets) {
         if (socket.readyState !== 1 || socket.community !== community) continue;
         for (const [id, filters] of socket.routes) {
@@ -721,7 +733,7 @@ export function policyRelay({
               (filter) =>
                 filter.kinds.includes(event.kind) &&
                 filter["#h"]?.some((h) =>
-                  event.tags.some(([k, v]) => k === "h" && h === v),
+                  event.tags.some(([k, v]) => k === destinationTag && h === v),
                 ),
             )
           )

@@ -11,6 +11,9 @@
 # These owners will be the default owners for everything in the repo.
 *       @wesbillman @comp615 @block/buzz-oss-team
 
+# Builderlab's bundled plugin, including files in nested directories.
+/src/bundled/builderlab/ @wesbillman @comp615 @block/buzz-oss-team @block/buzz-builderlab-oss-team
+
 
 # -----------------------------------------------
 # BELOW THIS LINE ARE TEMPLATES, UNUSED

@@ -26,7 +26,7 @@ buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "4f51b9e1010e086a16c099cd8d8218ca974a5e18" }
-tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
@@ -39,12 +39,14 @@ tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 bech32 = "0.11"
 secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
 getrandom = "0.3"
 zeroize = "1.9"
 nostr = { version = "=0.45.5", default-features = false, features = ["std", "nip44", "os-rng"] }
 tempfile = "3"
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
@@ -57,12 +59,11 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
-mac-notification-sys = "=0.6.15"
 block2 = "=0.6.2"
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSScreen", "NSWindow"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSError", "NSUserDefaults"] }
-objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNUserNotificationCenter", "UNNotificationSettings", "block2"] }
+objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNUserNotificationCenter", "UNNotificationSettings", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "block2"] }
 
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin"] }
 

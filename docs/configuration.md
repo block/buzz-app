@@ -11,14 +11,14 @@ not in source. Build defaults are readable binary data, **never secret storage**
 | `BUZZ_BUILD_AGENT_ENV` | Native build: allowlisted multiline Databricks host/model/filter defaults. Runtime, OAuth/discovery and editor share one compiled floor. |
 | `BUZZ_BUILD_BUZZ_AGENT_PROVIDER` | Native build: lowest-precedence Buzz Agent provider, never a default for other harnesses. |
 | `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` | Native build: presence-only local listener policy clamp, including saved/imported agents. |
-| `BUZZ_BUILDERLAB_URL` | Vite build: public URL exposed as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL` in web and packaged desktop frontend code; no runtime override. |
+| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. The macOS prerelease workflow supplies both (see [releases](releases.md)); other builds report automatic updates as unavailable. |
 
-The three native inputs read only repository-root `.env.local` plus explicit
+The three native agent inputs read only repository-root `.env.local` plus explicit
 process values. Process presence wins, even empty. No `.env.production`, arbitrary
 environment passthrough or runtime environment inheritance is added. See the
 [agent-default precedence and example](agent-control.md#nonsecret-build-defaults).
@@ -45,17 +45,27 @@ Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
 the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
 
 ```sh
-BUZZ_BUILDERLAB_URL=https://builderlab.example.com bin/pnpm tauri build
+BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
 ```
 
-Vite loads this public input through its existing `BUZZ_` allowlist and exposes it
-as `import.meta.env.VITE_BUZZ_BUILDERLAB_URL`. Its standard mode-specific `.env`
-files also apply. The process environment takes precedence, including an explicit
-empty value. When unset, the value is an empty string; the repository supplies no
-deployment default. Never put credentials in it.
+Vite uses its existing environment loader; the native plugin-manager build reads
+repository-root `.env.local` and process values using the native dotenv pattern.
+For desktop, supply the full URL in `.env.local` or the build process environment
+so both stages receive it. Vite's additional `.env` and mode-specific files do
+not configure native grants. Process values take precedence, including an
+explicit empty value. When unset or empty, login is unconfigured and no network
+origin is granted. The repository supplies no deployment default.
 
-Restart Vite after changing development inputs. Production web and desktop
-frontend builds substitute the value into compiled code: changing `.env.local`
+Any HTTPS host is supported, including an explicit port or deployment path. URL
+credentials, query parameters and fragments are rejected by the native build.
+The desktop's native plugin catalog supplies the effective manifest, granting
+only the configured URL's exact origin. Never put credentials in this input.
+
+The bundled Builderlab login consumes this public URL and appends `/api/goose`.
+
+Restart desktop development after changing this input so Vite and the native
+grant rebuild together; browser-only development needs a Vite restart. Production
+web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
 
@@ -80,9 +90,9 @@ copied here.
 | Mobile `BUZZ_AGE_GATING_ENABLED`, Android `BUZZ_ANDROID_RELEASE_SIGNING=external` | No corresponding Flutter/Android target in this app. |
 | CI version/tag metadata, artifact paths/upload controls, signing teams/profiles, Apple/App Store/Artifactory/Play credentials, Android signer roles/sockets, SDK/JDK/toolchain settings, Tauri bundle/config arguments | Release infrastructure and packaging controls, not product defaults. No new build-variable forwarding API. |
 
-Ignored `.env.local` can contain unrelated development settings, but only the
-three allowlisted native keys are compiled. Unrelated syntax is ignored; quoted
-multiline records are skipped as a whole, including the rest of the file when
+Ignored `.env.local` can contain unrelated development settings, but the native
+agent build compiles only its three allowlisted keys. Unrelated syntax is ignored;
+quoted multiline records are skipped as a whole, including the rest of the file when
 an unrelated quote is unclosed. Selected, non-overridden build assignments still
 require valid dotenv syntax. Unknown keys **inside**
 `BUZZ_BUILD_AGENT_ENV` fail closed instead of silently implying support. Do not

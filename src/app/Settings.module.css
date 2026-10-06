@@ -35,8 +35,15 @@
   flex-direction: column;
 }
 .detail {
-  padding: var(--space-6);
+  overflow-wrap: anywhere;
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  scroll-padding-block: var(--space-6);
   container-type: inline-size;
+}
+
+.detail > * {
+  max-inline-size: 48rem;
+  margin-inline: auto;
 }
 
 @container (max-width: 36rem) {
@@ -45,6 +52,7 @@
        to nothing in a short window or at large text sizes. */
     display: block;
     overflow-y: auto;
+    scroll-padding-block: var(--space-6);
   }
   .sidebar,
   .detail {
@@ -66,7 +74,7 @@
     margin-top: 0;
   }
   .detail {
-    padding: var(--space-4);
+    padding: var(--space-8) var(--space-4) var(--space-4);
     /* Reserve a scrollable landing area for the final control above the
        panel's rounded, clipped bottom edge at short heights and large text. */
     padding-bottom: var(--space-16);
@@ -88,10 +96,12 @@
 .settingsGroupTitle {
   margin: 0 0 var(--space-1);
   padding-inline: var(--space-2);
-  color: var(--text-unavailable);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  font-weight: var(--type-weight-normal);
+  color: var(--text-metadata);
+  @apply text-caption;
+}
+.settingsSidebar,
+.navigation {
+  @apply text-body-sm;
 }
 .settingsGroupItems {
   display: flex;

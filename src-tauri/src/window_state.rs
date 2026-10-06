@@ -18,6 +18,13 @@ pub(crate) fn builder() -> Builder {
 
 // Called from app setup, after the configured main window has been created.
 pub(crate) fn restore<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
+    if let Err(error) = restore_geometry(window) {
+        eprintln!("Could not restore Buzz window geometry: {error}");
+    }
+    window.restore_state(StateFlags::MAXIMIZED | StateFlags::FULLSCREEN)
+}
+
+fn restore_geometry<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
     window.restore_state(StateFlags::SIZE | StateFlags::POSITION)?;
     let monitors = window.available_monitors()?;
     let areas: Vec<_> = monitors
@@ -33,9 +40,15 @@ pub(crate) fn restore<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
             position: window.outer_position()?,
             size: window.outer_size()?,
         };
+        // Client bounds exclude Windows' invisible DWM resize borders, which
+        // legitimately extend outside the work area for edge-flush windows.
+        let client = PhysicalRect {
+            position: window.inner_position()?,
+            size: window.inner_size()?,
+        };
         // AppShell owns a 48 logical-pixel header on all desktop platforms.
         let header_height = (48.0 * window.scale_factor()?).ceil() as u32;
-        if let Some(target) = reachable_frame(frame, header_height, &areas, fallback) {
+        if let Some(target) = reachable_frame(frame, client, header_height, &areas, fallback) {
             if target.size != frame.size {
                 let inner = window.inner_size()?;
                 window.set_size(PhysicalSize::new(
@@ -52,25 +65,32 @@ pub(crate) fn restore<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
             window.set_position(target.position)?;
         }
     }
-    window.restore_state(StateFlags::MAXIMIZED | StateFlags::FULLSCREEN)
+    Ok(())
 }
 
 fn reachable_frame(
     frame: PhysicalRect<i32, u32>,
+    client: PhysicalRect<i32, u32>,
     header_height: u32,
     areas: &[PhysicalRect<i32, u32>],
     fallback: PhysicalRect<i32, u32>,
 ) -> Option<PhysicalRect<i32, u32>> {
-    let x = i64::from(frame.position.x);
-    let y = i64::from(frame.position.y);
-    let reachable = areas.iter().any(|area| {
-        x >= i64::from(area.position.x)
-            && y >= i64::from(area.position.y)
-            && x + i64::from(frame.size.width)
-                <= i64::from(area.position.x) + i64::from(area.size.width)
-            && y + i64::from(header_height)
-                <= i64::from(area.position.y) + i64::from(area.size.height)
-    });
+    let x = i64::from(client.position.x);
+    let y = i64::from(client.position.y);
+    let right = x + i64::from(client.size.width.saturating_sub(1));
+    let bottom = y + i64::from(header_height.saturating_sub(1));
+    // A header may span adjacent monitors. Both control regions must remain
+    // reachable, but need not belong to the same monitor.
+    let reachable = [(x, y), (right, y), (x, bottom), (right, bottom)]
+        .into_iter()
+        .all(|(x, y)| {
+            areas.iter().any(|area| {
+                x >= i64::from(area.position.x)
+                    && y >= i64::from(area.position.y)
+                    && x < i64::from(area.position.x) + i64::from(area.size.width)
+                    && y < i64::from(area.position.y) + i64::from(area.size.height)
+            })
+        });
     if reachable {
         return None;
     }
@@ -124,12 +144,12 @@ mod tests {
         let laptop = rect(0, 25, 1440, 875);
         let saved = rect(100, -450, 960, 640);
         assert_frame(
-            super::reachable_frame(saved, 48, &[laptop], laptop),
+            super::reachable_frame(saved, saved, 48, &[laptop], laptop),
             Some(rect(240, 25, 960, 640)),
         );
         let upper = rect(0, -900, 1440, 900);
         assert_frame(
-            super::reachable_frame(saved, 48, &[laptop, upper], laptop),
+            super::reachable_frame(saved, saved, 48, &[laptop, upper], laptop),
             None,
         );
     }
@@ -140,7 +160,7 @@ mod tests {
         let left = rect(-1920, 0, 1920, 1080);
         for saved in [rect(100, 120, 960, 640), rect(-1800, 80, 960, 640)] {
             assert_frame(
-                super::reachable_frame(saved, 48, &[primary, left], primary),
+                super::reachable_frame(saved, saved, 48, &[primary, left], primary),
                 None,
             );
         }
@@ -156,7 +176,7 @@ mod tests {
             rect(100, 860, 960, 640),
         ] {
             assert_frame(
-                super::reachable_frame(saved, 48, &[area], area),
+                super::reachable_frame(saved, saved, 48, &[area], area),
                 Some(rect(240, 25, 960, 640)),
             );
         }
@@ -166,16 +186,65 @@ mod tests {
     fn oversized_window_fits_remaining_work_area_and_scaled_header_is_checked() {
         let area = rect(0, 50, 1440, 850);
         assert_frame(
-            super::reachable_frame(rect(0, 50, 2800, 1800), 96, &[area], area),
+            super::reachable_frame(
+                rect(0, 50, 2800, 1800),
+                rect(0, 50, 2800, 1800),
+                96,
+                &[area],
+                area,
+            ),
             Some(area),
         );
         assert_frame(
-            super::reachable_frame(rect(100, 820, 960, 640), 48, &[area], area),
+            super::reachable_frame(
+                rect(100, 820, 960, 640),
+                rect(100, 820, 960, 640),
+                48,
+                &[area],
+                area,
+            ),
             None,
         );
         assert_frame(
-            super::reachable_frame(rect(100, 820, 960, 640), 96, &[area], area),
+            super::reachable_frame(
+                rect(100, 820, 960, 640),
+                rect(100, 820, 960, 640),
+                96,
+                &[area],
+                area,
+            ),
             Some(rect(240, 50, 960, 640)),
+        );
+    }
+
+    #[test]
+    fn invisible_windows_frame_border_does_not_displace_edge_flush_client() {
+        let area = rect(0, 0, 1920, 1040);
+        assert_frame(
+            super::reachable_frame(
+                rect(-7, 0, 1934, 1047),
+                rect(0, 0, 1920, 1040),
+                48,
+                &[area],
+                area,
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn header_can_span_adjacent_monitors_but_not_extend_above_either() {
+        let left = rect(-1920, 0, 1920, 1080);
+        let right = rect(0, 0, 1920, 1080);
+        let spanning = rect(-480, 100, 960, 640);
+        assert_frame(
+            super::reachable_frame(spanning, spanning, 48, &[left, right], right),
+            None,
+        );
+        let below = rect(0, 300, 1920, 1080);
+        assert_frame(
+            super::reachable_frame(spanning, spanning, 48, &[left, below], left),
+            Some(rect(-1440, 0, 960, 640)),
         );
     }
 

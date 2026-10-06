@@ -184,6 +184,62 @@ it("removal validates every loaded author and conversation before queuing one de
   });
 });
 
+it("requires matching viewer and agent identities to remove agent messages", () => {
+  const mine = reaction(),
+    agentReaction = reaction(other),
+    agentMessage = message(other, "c", "Agent message", 4);
+  const events = [root, mine, agentReaction, agentMessage];
+  const send = vi.fn(() => "operation");
+  const messages = createMessages(
+    {
+      ready: async () => {},
+      recover: async () => {},
+      acknowledge: async () => {},
+      supports: () => true,
+      send,
+      retry() {},
+      dismiss: async () => {},
+      snapshot: () => [],
+      subscribe: () => () => {},
+      observeSend: () => () => {},
+    },
+    viewer.pubkey,
+    (id) => events.find((item) => item.id === id),
+    () => [],
+    () => {},
+  );
+  const authorization = { agentId: other.pubkey, ownerId: viewer.pubkey };
+
+  expect(() => messages.remove([agentMessage.id])).toThrow(/Only your own/);
+  expect(() =>
+    messages.remove([agentMessage.id], {
+      ...authorization,
+      ownerId: other.pubkey,
+    }),
+  ).toThrow(/Only your own/);
+  expect(() =>
+    messages.remove([agentMessage.id], {
+      ...authorization,
+      agentId: viewer.pubkey,
+    }),
+  ).toThrow(/Only your own/);
+  expect(() => messages.remove([agentReaction.id], authorization)).toThrow(
+    /Only your own/,
+  );
+  expect(send).not.toHaveBeenCalled();
+
+  messages.remove([agentMessage.id], authorization);
+  expect(send).toHaveBeenCalledExactlyOnceWith({
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["e", agentMessage.id],
+      ["k", "9"],
+    ],
+  });
+});
+
 it("real session retries the same signed deletion and keeps the reaction removed after confirmation", async () => {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;

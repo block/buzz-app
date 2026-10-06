@@ -17,9 +17,11 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
@@ -59,6 +61,7 @@ const empty = () => emptyOperations;
 const noop = () => () => {};
 type Deletion = {
   row: ChannelMessage;
+  authorization?: AgentOwnerAuthorization | undefined;
   done?: (() => void) | undefined;
   focus?: (() => HTMLElement | null) | undefined;
 };
@@ -68,6 +71,7 @@ const Management = createContext<
         row: ChannelMessage,
         done?: () => void,
         focus?: () => HTMLElement | null,
+        authorization?: AgentOwnerAuthorization,
       ): void;
       report(error: string | undefined): void;
       operations: readonly OutgoingEvent[];
@@ -181,8 +185,8 @@ export function MessageManagement({
         channelId,
         operations,
         report,
-        remove(row, done, focus) {
-          setSelection({ row, done, focus });
+        remove(row, done, focus, authorization) {
+          setSelection({ row, done, focus, authorization });
         },
       }}
     >
@@ -230,6 +234,18 @@ export function MessageManagementItems({
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
     session.unread.following(row.channelId, threadRootId),
   );
+  const ownership = useAgentOwnerEvidence(
+    session,
+    management &&
+      writable &&
+      !archived &&
+      !row.membership &&
+      !row.diff &&
+      (!row.delivery || ["accepted", "seen"].includes(row.delivery)) &&
+      row.authorId !== session.viewer
+      ? row.authorId
+      : undefined,
+  );
   const target = {
     kind: "message" as const,
     channelId: row.channelId,
@@ -255,7 +271,15 @@ export function MessageManagementItems({
   );
   const own = row.authorId === session.viewer && !archived;
   const canEdit = own && editor && lastEditableMessage(session, [row]);
-  const canDelete = own && session.outbox?.supports(5);
+  const authorization =
+    row.authorId !== session.viewer &&
+    session.viewer &&
+    ownership.status === "ready" &&
+    ownership.owner === session.viewer
+      ? { agentId: row.authorId, ownerId: session.viewer }
+      : undefined;
+  const agentOwnedByViewer = !!authorization;
+  const canDelete = (own || agentOwnedByViewer) && session.outbox?.supports(5);
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   const act = (action: () => void) =>
@@ -300,6 +324,7 @@ export function MessageManagementItems({
                 row,
                 undefined,
                 () => editor?.focusTarget() ?? null,
+                authorization,
               ),
             )
           }
@@ -363,7 +388,7 @@ function DeleteMessageDialog({
   operations: readonly OutgoingEvent[];
   close(): void;
 }) {
-  const { row } = selection;
+  const { row, authorization } = selection;
   const [operationId, setOperationId] = useState(
     () =>
       operations.find(
@@ -405,7 +430,7 @@ function DeleteMessageDialog({
           "This conversation is no longer available for changes.",
         );
       if (operationId) session.outbox?.retry(operationId);
-      else setOperationId(session.messages.remove([row.id]));
+      else setOperationId(session.messages.remove([row.id], authorization));
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -417,7 +442,7 @@ function DeleteMessageDialog({
   return (
     <AlertDialog
       title="Delete message?"
-      description="Request deletion of this message from the conversation. People may still have copies. This cannot be undone."
+      description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
       pending={pending}
       finalFocus={() => (operationId ? (selection.focus?.() ?? true) : true)}
       onClose={close}

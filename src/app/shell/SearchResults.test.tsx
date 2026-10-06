@@ -1743,6 +1743,63 @@ it.each([
   },
 );
 
+it("keeps both exact authors selectable ahead of a crowded prefix page", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    first = keypair(),
+    second = keypair();
+  const prefixes = Array.from({ length: 12 }, () => keypair());
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          ...prefixes.map((person, index) =>
+            profile(person, { display_name: `Samantha ${index}` }),
+          ),
+          profile(first, { display_name: "Sam" }),
+          profile(second, { display_name: "Sam" }),
+        ]);
+      return Promise.resolve([]);
+    },
+  });
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:sam deploy"
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    await waitFor(() => expect(people.getAllByRole("option")).toHaveLength(12));
+    for (const pubkey of [first.pubkey, second.pubkey]) {
+      expect(
+        people.getByRole("option", { name: new RegExp(pubkey.slice(0, 12)) }),
+      ).toBeVisible();
+    }
+    expect(reads).toHaveLength(0);
+    fireEvent.click(
+      people.getByRole("option", {
+        name: new RegExp(second.pubkey.slice(0, 12)),
+      }),
+    );
+    expect(change).toHaveBeenCalledExactlyOnceWith(
+      `from:${second.pubkey} deploy`,
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("keeps a person visible when agent candidates exceed the picker cap", async () => {
   const relay = keypair(),
     viewer = keypair(),

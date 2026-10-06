@@ -256,8 +256,16 @@ export function SearchResults({
                     (agent) => agent.pubkey === pubkey,
                   )),
             )
+            // Exact names must survive the cap when the author resolver
+            // reports ambiguity; otherwise neither identity can be selected.
             .sort(
               ([left, leftProfile], [right, rightProfile]) =>
+                Number(
+                  rightProfile.name.trim().toLowerCase() === authorNeedle,
+                ) -
+                  Number(
+                    leftProfile.name.trim().toLowerCase() === authorNeedle,
+                  ) ||
                 Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                   Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
                 Number(members.includes(right)) -

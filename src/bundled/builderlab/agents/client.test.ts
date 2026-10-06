@@ -4,10 +4,19 @@ import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 
-beforeEach(() =>
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
-);
-afterEach(() => vi.unstubAllEnvs());
+beforeEach(() => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 const row = {
   agent_id: "agent-1",
   agent_name: "Helper",
@@ -19,10 +28,10 @@ const response = (value: unknown, status = 200): HostResponse => ({
   headers: {},
   body: JSON.stringify(value),
 });
-async function fixture() {
+async function fixture(subject = "user") {
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { email: "a@example.com" },
+    account: { subject, email: "a@example.com" },
   }));
   await session.signIn();
   const host: Host = {
@@ -150,3 +159,165 @@ it("does not dispatch signed-out or canceled requests", async () => {
   await expect(h.client.list(h.signal)).rejects.toThrow("Sign in");
   expect(h.host.request).not.toHaveBeenCalled();
 });
+
+const proof = ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const;
+it("registers with a saved UUID and attests through the existing owner signer", async () => {
+  const h = await fixture();
+  h.host.prepareRemoteAgentAuthorization = vi.fn(async () => proof);
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(
+      response({
+        status: "REGISTER_AGENT_STATUS_UNATTESTED",
+        agent_id: row.agent_id,
+        agent_pubkey: row.agent_pubkey,
+      }),
+    )
+    .mockResolvedValueOnce(response({ status: "ATTEST_AGENT_STATUS_ACTIVE" }));
+  const agent = await h.client.register(" Helper ", h.signal);
+  expect(agent).toMatchObject({ name: "Helper", status: "Unattested" });
+  const input = vi.mocked(h.host.request).mock.calls[0]?.[0];
+  expect(input).toMatchObject({
+    url: "https://builderlab.example/api/goose/v3/beekeeper/register-agent",
+    method: "POST",
+  });
+  expect(JSON.parse(input?.body ?? "{}")).toEqual({
+    agent_name: "Helper",
+    idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+  });
+  expect(await h.client.attest(agent, h.signal)).toMatchObject({
+    status: "Active",
+  });
+  expect(h.host.prepareRemoteAgentAuthorization).toHaveBeenCalledWith(
+    row.agent_pubkey,
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: expect.stringContaining("/attest-agent"),
+      body: JSON.stringify({
+        agent_pubkey: row.agent_pubkey,
+        owner_auth_tag_json: JSON.stringify(proof),
+      }),
+    }),
+  );
+});
+it.each(["network", "server", "malformed", "cancel"])(
+  "retains the registration UUID after an uncertain %s result",
+  async (failure) => {
+    const h = await fixture();
+    const controller = new AbortController();
+    vi.mocked(h.host.request).mockImplementationOnce(async () => {
+      if (failure === "network") throw new Error("private transport details");
+      if (failure === "cancel") controller.abort();
+      return failure === "server" ? response({}, 503) : response({});
+    });
+    await expect(
+      h.client.register("Helper", controller.signal),
+    ).rejects.toThrow();
+    vi.mocked(h.host.request).mockResolvedValueOnce(
+      response({
+        status: 1,
+        agent_id: row.agent_id,
+        agent_pubkey: row.agent_pubkey,
+      }),
+    );
+    // A fresh consumer after navigation/restart reuses the persisted intent.
+    await createAgentClient(h.host, h.session).register("Helper", h.signal);
+    const bodies = vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+    expect(bodies[1].idempotency_key).toBe(bodies[0].idempotency_key);
+  },
+);
+it("does not reuse a pending creation for another verified account with the same email", async () => {
+  const first = await fixture("account-a");
+  vi.mocked(first.host.request).mockRejectedValueOnce(new Error("offline"));
+  await expect(first.client.register("Helper", first.signal)).rejects.toThrow(
+    "Retry the same name",
+  );
+  first.session.signOut();
+  const second = await fixture("account-b");
+  vi.mocked(second.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agent_id: row.agent_id,
+      agent_pubkey: row.agent_pubkey,
+    }),
+  );
+  await second.client.register("Helper", second.signal);
+  const oldBody = JSON.parse(
+    vi.mocked(first.host.request).mock.calls[0]?.[0].body ?? "{}",
+  );
+  const newBody = JSON.parse(
+    vi.mocked(second.host.request).mock.calls[0]?.[0].body ?? "{}",
+  );
+  expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
+});
+it.each([2, 3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
+  "reports a terminal registration status %s and allows a fresh retry",
+  async (status) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValueOnce(response({ status }));
+    await expect(h.client.register("Helper", h.signal)).rejects.toThrow(
+      /disabled|setup|limit|conflicts/,
+    );
+    vi.mocked(h.host.request).mockResolvedValueOnce(
+      response({
+        status: 1,
+        agent_id: row.agent_id,
+        agent_pubkey: row.agent_pubkey,
+      }),
+    );
+    await h.client.register("Helper", h.signal);
+    const bodies = vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+    expect(bodies[1].idempotency_key).not.toBe(bodies[0].idempotency_key);
+  },
+);
+it.each(["", "bad/name", "x".repeat(65)])(
+  "does not register invalid name %s",
+  async (name) => {
+    const h = await fixture();
+    await expect(h.client.register(name, h.signal)).rejects.toThrow(
+      "agent name",
+    );
+    expect(h.host.request).not.toHaveBeenCalled();
+  },
+);
+it("blocks creation when the intent cannot be stored", async () => {
+  const h = await fixture();
+  vi.stubGlobal("localStorage", {
+    getItem: () => null,
+    setItem: () => {
+      throw new Error("full");
+    },
+  });
+  await expect(h.client.register("Helper", h.signal)).rejects.toThrow(
+    "Could not save",
+  );
+  expect(h.host.request).not.toHaveBeenCalled();
+});
+it.each(["sign-out", "cancel"])(
+  "does not attest after %s during owner signing",
+  async (action) => {
+    const h = await fixture();
+    const held = deferred<typeof proof>();
+    h.host.prepareRemoteAgentAuthorization = vi.fn(() => held.promise);
+    const controller = new AbortController();
+    const pending = h.client.attest(
+      {
+        id: row.agent_id,
+        name: "Helper",
+        pubkey: row.agent_pubkey,
+        status: "Unattested",
+      },
+      controller.signal,
+    );
+    if (action === "cancel") controller.abort();
+    else h.session.signOut();
+    held.resolve(proof);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(h.host.request).not.toHaveBeenCalled();
+  },
+);

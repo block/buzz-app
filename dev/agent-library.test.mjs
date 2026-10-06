@@ -11,21 +11,21 @@ import {
 
 it("locates the installed Buzz data directory per platform and refuses to guess elsewhere", () => {
   expect(installedBuzzDataDir("darwin", {}, "/Users/t")).toBe(
-    "/Users/t/Library/Application Support/xyz.block.buzz.app",
+    "/Users/t/Library/Application Support/dev.local.buzz.foundation",
   );
   expect(installedBuzzDataDir("linux", {}, "/home/t")).toBe(
-    "/home/t/.local/share/xyz.block.buzz.app",
+    "/home/t/.local/share/dev.local.buzz.foundation",
   );
   expect(
     installedBuzzDataDir("linux", { XDG_DATA_HOME: "/data" }, "/home/t"),
-  ).toBe("/data/xyz.block.buzz.app");
+  ).toBe("/data/dev.local.buzz.foundation");
   // Tauri's dirs crate ignores a relative XDG_DATA_HOME; so must this reader,
   // or it would look where the installed app never writes.
   for (const XDG_DATA_HOME of ["relative", "./data", ""])
     expect(
       installedBuzzDataDir("linux", { XDG_DATA_HOME }, "/home/t"),
       JSON.stringify(XDG_DATA_HOME),
-    ).toBe("/home/t/.local/share/xyz.block.buzz.app");
+    ).toBe("/home/t/.local/share/dev.local.buzz.foundation");
   expect(installedBuzzDataDir("win32", {}, "/home/t")).toBeUndefined();
   expect(installedBuzzDataDir("freebsd", {}, "/home/t")).toBeUndefined();
 });
@@ -183,3 +183,79 @@ it("actual broker and transport expose only the library projection, reject cross
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("projects current Buzz 1.0 saved agents without parked legacy identities or private fields", () => {
+  const current = {
+    version: 1,
+    agents: [
+      {
+        id: "sol",
+        pubkey: key,
+        name: "Sol",
+        picture: "https://images.example/sol.png",
+        enabled: false,
+        systemPrompt: "private instructions",
+        environment: { TOKEN: "private token" },
+        imported: {
+          record: { private_key_nsec: "secret", persona_id: "legacy-profile" },
+        },
+        authTag: "private auth",
+        credentialId: "private credential reference",
+      },
+      {
+        id: "sol-2",
+        pubkey: "b".repeat(64),
+        name: "Sol",
+        picture: "file:///private",
+      },
+    ],
+    parked: {
+      ["c".repeat(64)]: {
+        pubkey: "c".repeat(64),
+        name: "Old Bumble",
+        sources: ["installed"],
+      },
+    },
+  };
+  expect(projectAgentLibrary(current)).toEqual({
+    definitions: [],
+    identities: [
+      { pubkey: key, name: "Sol", avatar: "https://images.example/sol.png" },
+      { pubkey: "b".repeat(64), name: "Sol" },
+    ],
+  });
+  expect(
+    projectAgentLibrary({ version: 1, agents: [], parked: current.parked }),
+  ).toEqual({ definitions: [], identities: [] });
+});
+it("reads the current saved agent document byte-for-byte without rewriting it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "buzz-current-library-"));
+  const path = join(root, "agents.json");
+  const raw = JSON.stringify({
+    version: 1,
+    agents: [{ pubkey: key, name: "Sol", environment: { TOKEN: "secret" } }],
+    parked: {},
+  });
+  try {
+    await writeFile(path, raw);
+    expect(await readAgentLibrary(path)).toEqual({
+      definitions: [],
+      identities: [{ pubkey: key, name: "Sol" }],
+    });
+    expect(await readFile(path, "utf8")).toBe(raw);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+it.each([
+  { version: 2, agents: [] },
+  { version: 1 },
+  { version: 1, agents: null },
+  { version: 1, agents: [null] },
+  { version: 1, agents: [{ pubkey: "bad", name: "Sol" }] },
+])(
+  "rejects unsupported or malformed current agent storage without returning an empty inventory (%#)",
+  (raw) => {
+    expect(() => projectAgentLibrary(raw)).toThrow("Could not read");
+  },
+);

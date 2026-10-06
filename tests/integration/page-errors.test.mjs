@@ -6,6 +6,8 @@ import { watchPageErrors } from "../browser/page-errors.mjs";
 // A Playwright page reduced to the events and browser identity the watcher reads.
 const fakePage = (engine) => {
   const page = new EventEmitter();
+  const mainFrame = {};
+  page.mainFrame = () => mainFrame;
   page.context = () => ({
     browser: () => ({ browserType: () => ({ name: () => engine }) }),
   });
@@ -66,6 +68,62 @@ test("the access-control log fails without a matching cancelled request", () => 
     page.emit("pageerror", reloadCancelLog());
     assert.equal(watched.unexplained().length, 1);
   }
+});
+
+// Replayed from the Linux WebKit trace of channel-archive-delete-pane.spec.mjs:28
+// on main (run 37478134645 for 2bb37a55): a presence timer fired during the
+// reload, and WebKit refused both fetches without a request event.
+const presenceAuthors =
+  "http://127.0.0.1:40091/api/relay/primary/stream-presence-authors";
+const navigate = (page, frame = page.mainFrame()) => {
+  const request = {
+    isNavigationRequest: () => true,
+    frame: () => frame,
+    url: () => "http://127.0.0.1:40091/",
+    failure: () => ({ errorText: "Load request cancelled" }),
+  };
+  page.emit("request", request);
+  return request;
+};
+
+test("WebKit's log for a fetch refused while the document is replaced is explained", () => {
+  const page = fakePage("webkit");
+  const watched = watchPageErrors(page);
+  navigate(page);
+  page.emit("pageerror", reloadCancelLog(presenceAuthors));
+  page.emit("framenavigated", page.mainFrame());
+  assert.deepEqual(watched.errors, [
+    `Fetch API cannot load ${presenceAuthors} due to access control checks.`,
+  ]);
+  assert.deepEqual(watched.unexplained(), []);
+});
+
+test("only the main frame's pending navigation explains a refused fetch", () => {
+  for (const setup of [
+    // The new document has committed.
+    (page) => {
+      navigate(page);
+      page.emit("framenavigated", page.mainFrame());
+    },
+    // The navigation failed, so the old document stays.
+    (page) => page.emit("requestfailed", navigate(page)),
+    // A child frame navigates.
+    (page) => navigate(page, {}),
+  ]) {
+    const page = fakePage("webkit");
+    const watched = watchPageErrors(page);
+    setup(page);
+    page.emit("pageerror", reloadCancelLog(presenceAuthors));
+    assert.equal(watched.unexplained().length, 1);
+  }
+});
+
+test("a pending navigation does not explain other page errors", () => {
+  const page = fakePage("webkit");
+  const watched = watchPageErrors(page);
+  navigate(page);
+  page.emit("pageerror", new TypeError("a: b"));
+  assert.deepEqual(watched.unexplained(), ["TypeError: a: b"]);
 });
 
 test("one cancellation explains one log", () => {

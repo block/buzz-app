@@ -22,11 +22,12 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function setup() {
+function setup(archiveAuthority?: string) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
     ...wire.transport,
+    ...(archiveAuthority ? { archiveAuthority } : {}),
     subscribe(callbacks) {
       traffic = callbacks;
       return { update() {}, retry() {}, dispose() {} };
@@ -831,3 +832,34 @@ it("does not lose tombstones through missing-root recovery, and clears handles o
   h.traffic.receive([root, row]);
   expect(h.view.snapshot().root).toBeUndefined();
 });
+
+it.each([
+  ["explicit NIP-11 self", relay.pubkey, alice.pubkey],
+  ["contact-key fallback", undefined, relay.pubkey],
+])(
+  "attributes relay-signed workflow output only under an %s",
+  async (_, authority, author) => {
+    const h = setup(authority);
+    const output = signed(relay, {
+      kind: 9,
+      content: "Scheduled",
+      created_at: 1,
+      tags: [
+        ["p", alice.pubkey],
+        ["h", "a"],
+        ["buzz:workflow", "true"],
+      ],
+    });
+    h.traffic.receive([roster(relay, "a", [viewer.pubkey])]);
+    h.session.channels.ensure("a");
+    h.next().respond([
+      output,
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(h.session.channels.window("a").rows[0]?.authorId).toBe(author);
+    expect(h.session.thread("a", output.id).snapshot().root?.authorId).toBe(
+      author,
+    );
+  },
+);

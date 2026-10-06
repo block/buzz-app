@@ -140,3 +140,38 @@ it("runs despite a lost earlier run receipt, opens history on success and report
     await screen.findByRole("menuitem", { name: "Delete workflow" }),
   ).not.toHaveAttribute("aria-disabled", "true");
 });
+
+it("runs once a newer head supersedes a save whose receipt was lost", async () => {
+  const fixture = createWorkflowFixture();
+  act(() => {
+    fixture.capability.save({
+      channelId: fixtureChannel,
+      existing: fixtureDefinition,
+      yaml: fixtureDefinition.yaml,
+    });
+    fixture.finish("unknown");
+  });
+  const head = {
+    ...fixtureDefinition,
+    revision: "bb".repeat(32),
+    createdAt: fixtureDefinition.createdAt + 100,
+  };
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={head}
+      initialAction="run"
+      onDelete={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Run now",
+    }),
+  );
+  expect(fixture.calls.trigger).toBe(1);
+});

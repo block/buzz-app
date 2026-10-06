@@ -689,6 +689,7 @@ export function createRelaySession(
           read: (filters, settings) => readVerified(filters, settings, false),
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
+          archiveAuthority: transport.archiveAuthority,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
@@ -1684,6 +1685,7 @@ export function createRelaySession(
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
+        signingAuthority: transport?.archiveAuthority,
         reader: options?.exact
           ? {
               async read(filters, settings) {

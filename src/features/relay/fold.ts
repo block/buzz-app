@@ -183,10 +183,12 @@ function parseSummary(
   }
 }
 
-/** Base Buzz's displayed author: relay-signed workflow output names its author in
- * `actor`, else a leading `p` on channel events. Other signers are the author. */
-function messageAuthor(event: EventData, relayAuthor: string) {
-  if (!relayAuthor || event.pubkey !== relayAuthor) return event.pubkey;
+/** Base Buzz's displayed author: output signed by the relay's explicit NIP-11
+ * `self` names its author in `actor`, else a leading `p` on channel events.
+ * Any other signer, including a contact-key fallback, is the author. */
+function messageAuthor(event: EventData, signingAuthority: string | undefined) {
+  if (!signingAuthority || event.pubkey !== signingAuthority)
+    return event.pubkey;
   const actor = event.tags.find(
     ([name, value]) => name === "actor" && HEX64.test(value ?? ""),
   )?.[1];
@@ -207,7 +209,10 @@ export function foldMessages(
   channelId: string,
   relayAuthor: string,
   events: readonly EventData[],
-  { includeReplies = false }: { includeReplies?: boolean } = {},
+  {
+    includeReplies = false,
+    signingAuthority,
+  }: { includeReplies?: boolean; signingAuthority?: string | undefined } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
@@ -229,7 +234,7 @@ export function foldMessages(
   // The relay lets an attributed author edit and delete like the signer.
   const byAuthor = (item: EventData, event: EventData) =>
     item.pubkey === event.pubkey ||
-    item.pubkey === messageAuthor(event, relayAuthor);
+    item.pubkey === messageAuthor(event, signingAuthority);
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)
@@ -318,7 +323,7 @@ export function foldMessages(
               }
             : undefined;
         })(),
-        authorId: messageAuthor(event, relayAuthor),
+        authorId: messageAuthor(event, signingAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,

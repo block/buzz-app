@@ -95,10 +95,17 @@ export function workflowOperationLocked(
       return true;
     if (operation.action === "save") newestSave ??= operation;
   }
+  return !!newestSave && saveAwaitsReadback(newestSave, definition);
+}
+
+/** A save is resolved once its exact revision, or a newer head, is read. */
+export function saveAwaitsReadback(
+  save: WorkflowOperation,
+  definition: WorkflowDefinition,
+) {
   return (
-    !!newestSave &&
-    newestSave.eventId !== definition.revision &&
-    definition.createdAt <= newestSave.createdAt
+    save.eventId !== definition.revision &&
+    definition.createdAt <= save.createdAt
   );
 }
 

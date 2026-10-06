@@ -61,7 +61,9 @@ through generic Outbox Retry either; inspection and dismissal remain available.
 
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different
-heads retain the draft for review. Dismissal clears the notice and editor lock
+heads retain the draft for review. A verified head newer than the save releases
+its lock on toggle, run and delete; the relay's expected-revision check still
+rejects stale saves. Run requests never lock configuration. Dismissal clears the notice and editor lock
 only after durable dismissal; it neither undoes nor repeats a command. Exact
 readback does not retire a pending one-time-secret receipt, and a missing receipt
 does not undo verified configuration success. Unknown

@@ -215,7 +215,7 @@ describe("message fold", () => {
       created_at: 13,
       tags: tags(alice.pubkey),
     });
-    const rows = foldMessages(channel, relay.pubkey, [
+    const events = [
       run,
       actor,
       notLeading,
@@ -232,15 +232,28 @@ describe("message fold", () => {
         created_at: 15,
         tags: [["e", notLeading.id]],
       }),
-    ]);
+    ];
+    const rows = foldMessages(channel, relay.pubkey, events, {
+      signingAuthority: relay.pubkey,
+    });
     expect(rows.map(({ authorId, content }) => [authorId, content])).toEqual([
       [alice.pubkey, "edited by owner"],
       [bob.pubkey, "acted"],
       [relay.pubkey, "system"],
       [bob.pubkey, "spoof"],
     ]);
-    // An unknown relay identity leaves the signer as the author.
-    expect(foldMessages(channel, "", [run])[0]?.authorId).toBe(relay.pubkey);
+    // Without an explicit NIP-11 self (e.g. a contact-key fallback), the signer
+    // stays the author and gains no delegated edit authority.
+    expect(
+      foldMessages(channel, relay.pubkey, events).map(
+        ({ authorId, content }) => [authorId, content],
+      ),
+    ).toEqual([
+      [relay.pubkey, "scheduled"],
+      [relay.pubkey, "acted"],
+      [relay.pubkey, "system"],
+      [bob.pubkey, "spoof"],
+    ]);
   });
   it("reads relay-signed thread summaries only and tolerates malformed ones", () => {
     const a = message(alice, channel, "a", 10),

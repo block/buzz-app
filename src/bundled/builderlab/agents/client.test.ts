@@ -47,6 +47,27 @@ async function fixture(subject = "user") {
     signal: new AbortController().signal,
   };
 }
+it("rejects an owner proof from a different community identity before attestation", async () => {
+  const h = await fixture();
+  h.host.prepareRemoteAgentAuthorization = vi.fn(
+    async () => ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const,
+  );
+  await expect(
+    h.client.attest(
+      {
+        id: "one",
+        name: "Helper",
+        pubkey: row.agent_pubkey,
+        status: "Unattested",
+      },
+      h.signal,
+      () => true,
+      "12".repeat(32),
+    ),
+  ).rejects.toThrow("identities differ");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
+
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
   expect(await h.client.list(h.signal)).toEqual([

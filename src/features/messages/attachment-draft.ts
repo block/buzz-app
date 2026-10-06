@@ -13,6 +13,8 @@ export type DraftAttachment = Readonly<{
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
+  /** Host-reported bytes for the current prepared transfer. */
+  transfer?: Readonly<{ sent: number; total: number }> | undefined;
 }>;
 export type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
@@ -72,6 +74,7 @@ export function attachmentDraft(
             ...item,
             status: "error",
             error: "Upload paused. Retry to continue.",
+            transfer: undefined,
           }
         : item,
     );
@@ -110,13 +113,28 @@ export function attachmentDraft(
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     active.set(item.id, controller);
-    replace(item.id, { status: "preparing", error: undefined });
+    replace(item.id, {
+      status: "preparing",
+      error: undefined,
+      transfer: undefined,
+    });
     try {
       const prepared = await prepareAttachment(item.file, combined);
       combined.throwIfAborted();
       replace(item.id, { status: "uploading" });
       const uploaded = await abortable(
-        attachments.upload(prepared, channelId, combined),
+        attachments.upload(prepared, channelId, combined, (sent, total) => {
+          if (
+            !combined.aborted &&
+            active.get(item.id) === controller &&
+            Number.isSafeInteger(sent) &&
+            Number.isSafeInteger(total) &&
+            total > 0 &&
+            sent >= 0 &&
+            sent <= total
+          )
+            replace(item.id, { transfer: { sent, total } });
+        }),
         combined,
       );
       combined.throwIfAborted();
@@ -125,10 +143,15 @@ export function attachmentDraft(
     } catch (error) {
       if (combined.aborted) {
         if (signal.aborted && !controller.signal.aborted)
-          replace(item.id, { status: "queued", error: undefined });
+          replace(item.id, {
+            status: "queued",
+            error: undefined,
+            transfer: undefined,
+          });
       } else
         replace(item.id, {
           status: "error",
+          transfer: undefined,
           error:
             error instanceof Error
               ? error.message
@@ -209,7 +232,7 @@ export function attachmentDraft(
     retry(id: string) {
       if (!items.some((item) => item.id === id && item.status === "error"))
         return;
-      replace(id, { status: "queued", error: undefined });
+      replace(id, { status: "queued", error: undefined, transfer: undefined });
     },
     cancel: cancelActive,
     clear() {

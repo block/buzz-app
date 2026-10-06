@@ -1868,6 +1868,7 @@ async fn upload_signs_the_exact_bytes_it_sends() {
         url.clone(),
         Some("image/png"),
         body.clone(),
+        None,
     )
     .await
     .unwrap();
@@ -1885,9 +1886,82 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
     assert_strict(&event, "upload", server);
     assert_eq!(tag(&event, "x"), [hash.as_str()]);
-    assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
-        .await
-        .is_err());
+    assert!(
+        upload(&IdentityHost::fixture(), url, None, Vec::new(), None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn upload_reports_bytes_handed_to_the_connection() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+    );
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let channel = tauri::ipc::Channel::new(move |message| {
+        let tauri::ipc::InvokeResponseBody::Json(json) = message else {
+            panic!("progress must be JSON");
+        };
+        sink.lock()
+            .unwrap()
+            .push(serde_json::from_str::<serde_json::Value>(&json).unwrap());
+        Ok(())
+    });
+    // Four 64 KiB chunks, ASCII for the fixture server's text comparison.
+    let body = vec![b'a'; 3 * UPLOAD_CHUNK + 1];
+    let result = upload(
+        &IdentityHost::fixture(),
+        base.join("/upload").unwrap(),
+        Some("image/png"),
+        body.clone(),
+        Some(channel),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.status, 200);
+    let (headers, sent) = task.join().unwrap();
+    assert_eq!(sent.as_bytes(), body);
+    assert!(headers
+        .lines()
+        .any(|line| line == format!("content-length: {}", body.len())));
+    let total = body.len();
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UPLOAD_CHUNK, 2 * UPLOAD_CHUNK, 3 * UPLOAD_CHUNK, total]
+            .map(|sent| serde_json::json!({ "sent": sent, "total": total }))
+    );
+}
+
+#[test]
+fn single_chunk_upload_reports_its_whole_body() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 5263], move |sent| sink.lock().unwrap().push(sent));
+    assert_eq!(chunks.count(), 1);
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UploadSent {
+            sent: 5263,
+            total: 5263
+        }]
+    );
+}
+
+#[test]
+fn progress_reports_change_by_whole_percent_only() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 1000 * UPLOAD_CHUNK], move |sent| {
+        sink.lock().unwrap().push(sent.sent)
+    });
+    assert_eq!(chunks.count(), 1000);
+    let reports = reports.lock().unwrap();
+    // Percent 0 (first nine chunks) through 100, once each.
+    assert_eq!(reports.len(), 101);
+    assert!(reports.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(reports.last(), Some(&(1000 * UPLOAD_CHUNK as u64)));
 }
 
 #[test]

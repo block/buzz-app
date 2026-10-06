@@ -637,6 +637,7 @@ dependencies = [
  "dirs",
  "keyring",
  "nix 0.31.3",
+ "security-framework",
  "sha2 0.10.9",
  "tempfile",
  "zeroize",
@@ -702,10 +703,13 @@ dependencies = [
 name = "buzzodz-plugins"
 version = "0.1.0"
 dependencies = [
+ "bech32 0.11.1",
+ "buzz-credential-store",
  "cap-std",
  "dirs",
  "dotenvy",
  "libc",
+ "nostr",
  "serde",
  "serde_json",
  "sha2 0.10.9",

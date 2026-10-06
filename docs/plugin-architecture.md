@@ -461,6 +461,20 @@ isolate a malicious plugin. Load only trusted plugin code.
 
 ### Loading from folders and repositories
 
+Authors can sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`
+after `buzzodz plugin build`. The command reads the saved Buzz human identity
+from the same OS credential slot as the desktop app; it never exports or creates
+a key. Use the same OS account and matching debug or release build. Missing or
+locked storage fails. It writes `plugin.artifact.json` and
+`plugin.signature.json` as the local [NIP-PS](nips/NIP-PS.md) file pair. No relay
+or URL is needed. Include both files in the imported folder or Git repository.
+Buzz checks the event ID, signature and exact artifact bytes before install and
+each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
+local development.
+A signed installation can only update from the same publisher; remove and
+reinstall to choose a different publisher. Signing identifies an author, but
+does not sandbox plugin code or make a publisher trustworthy.
+
 Desktop Settings → Plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with

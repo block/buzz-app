@@ -22,6 +22,8 @@ mod secret;
 pub mod security;
 mod store;
 mod supervisor;
+#[cfg(test)]
+mod test_executable;
 pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};

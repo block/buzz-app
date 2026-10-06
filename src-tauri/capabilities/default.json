@@ -3,6 +3,12 @@
   "identifier": "main-window",
   "description": "Allow the main application commands, title bar controls and external HTTP(S) links.",
   "permissions": [
+    "allow-pairing-account",
+    "allow-pairing-start",
+    "allow-pairing-status",
+    "allow-pairing-confirm",
+    "allow-pairing-deny",
+    "allow-pairing-cancel",
     "allow-identity-restore",
     "allow-identity-import",
     "allow-identity-create",

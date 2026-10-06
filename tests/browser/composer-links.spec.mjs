@@ -294,9 +294,16 @@ test("editable composer renders links and mentions while preserving source and n
           clipboardData,
         }),
       );
-      return clipboardData.getData("text/plain");
+      return {
+        text: clipboardData.getData("text/plain"),
+        html: clipboardData.getData("text/html"),
+      };
     });
-    expect(copied).toBe(linkSource);
+    // The edit left the URL plain, so neither flavor links it.
+    expect(copied).toEqual({
+      text: linkSource,
+      html: `<div data-buzz-copy="composer"><p>${linkSource}</p></div>`,
+    });
 
     // Paste, Space and continued typing must not require refocusing the field.
     const pastedUrl = "https://github.com/block/buzz-app/pulls";

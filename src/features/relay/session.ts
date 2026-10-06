@@ -50,6 +50,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { createTyping } from "./typing";
+import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
@@ -837,6 +838,7 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
+    workflowAuthority: transport?.archiveAuthority,
     ...(transport?.archiveAuthority
       ? { signingAuthority: transport.archiveAuthority }
       : {}),
@@ -1541,6 +1543,7 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,
     scope: readScope,
@@ -2315,6 +2318,7 @@ export function createRelaySession(
               messageId: event.id,
               createdAt: event.created_at,
               authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
             }),
           ];

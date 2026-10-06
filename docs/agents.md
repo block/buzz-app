@@ -124,7 +124,7 @@ Action policy stays explicit: ordinary member mentions use the channel roster an
 hide known-archived identities without requiring verified non-archived evidence.
 Ordinary nonmember mentions also offer people from the selected community directory
 and eligible managed agents. Send asks before adding them; selection grants no
-access. Session invitations retain their existing rules, including legacy choices.
+access. A pasted mention of a known profile is offered the same way. Session invitations retain their existing rules, including legacy choices.
 Templates additionally require verified non-archived state (`templateAgentChoices`
 returns nothing until archive evidence is ready), and legacy-only choices
 need visible community membership. Saved keys are never rebound to a namesake.
@@ -376,8 +376,16 @@ feedback on them. Broader agent architecture proposals are outside the V1 scope.
 ## Raw Agent Activity plugin
 
 **Agent Activity** is an independently toggleable bundled plugin. Compact
-avatar/name/status rows sit below messages and above the channel and thread
-composers. Hover/focus shows an owner-only summary; click, tap, Enter or Space
+avatar/name/status rows sit below messages and above the thread composer. The
+channel composer instead shows a collapsed **Channel-wide activity** summary
+with an agent count. Expand it to inspect all channel activity, including work
+in threads and unknown statuses; it does not imply another job is running in
+the channel conversation. Sidebar and thread-summary working dots are unchanged.
+Observer turns have no thread identity, so thread typing never hides channel
+telemetry for that agent, including simultaneous work. Channel navigation resets
+the disclosure; ordinary activity updates preserve its open state while activity
+remains. When the last evidence disappears, the disclosure unmounts and resets.
+Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
 opens that exact agent's **channel activity** in the right panel, including work
 in other threads. Optional names and avatars reuse shared background profile
 queries; key fragments distinguish identities without profiles.

@@ -55,12 +55,15 @@ export const geometrySignature = (
         ? [event.membership.actor, event.membership.target]
         : [
             event.authorId,
+            ...(event.workflowOwnerId ? [event.workflowOwnerId] : []),
             ...event.mentions,
             ...(event.mentionReferences ?? []),
           ];
       const names = resolveName
         ? ids.map((id) => resolveName(id, profiles.get(id)?.name ?? id))
-        : [];
+        : event.workflowOwnerId
+          ? [profiles.get(event.workflowOwnerId)?.name]
+          : [];
       return `${JSON.stringify(names)}:${signature.length}:${signature}:${JSON.stringify(event.membership ? [profiles.get(event.membership.actor), profiles.get(event.membership.target)] : profiles.get(event.authorId))}`;
     })
     .join("");

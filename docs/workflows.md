@@ -156,3 +156,38 @@ This is not live acceptance:
 create → edit → run → inspect against an unchanged backend and packaged-native
 acceptance remain unverified. Live credentials, native launch and real workflow
 writes require separate consent; no backend work belongs to this plugin PR.
+
+## Message attribution
+
+Relay-attested workflow messages show an automation icon and **Workflow · owned
+by …**, not a message authored by the owner. The full message byline links the
+owner profile and discloses the separate relay signing key. Compact Search,
+Inbox/activity, link previews and notification titles retain the automation label;
+opening the message provides the full disclosure. Notifications use cached names
+only and do not add profile reads.
+
+Attribution requires a verified kind-9 event from the selected community's
+explicit NIP-11 `self`, exactly one canonical `buzz:workflow=true` marker and one
+canonical lowercase-hex `buzz:workflow-owner` tag. Admission-owned immutable
+records carry reusable verification evidence; unsigned local intent, copied
+caller proof symbols and ordinary senders cannot establish it. No signature
+verification runs while folding retained history.
+
+Cached-only startup intentionally shows the actual signer until a live connection
+establishes explicit relay authority. Saved operator-contact `relayAuthor` is not
+promoted to `self`, and no new trusted storage is introduced. Signer-based search
+and Inbox sender filters, permissions, mention policy and relay-reported participant
+summaries are unchanged by workflow presentation. Channel/thread rows retain the
+effective-author attribution and owner edit/delete behavior added separately in
+#661; when that author differs from the signer, the row carries a separate signing
+key so the disclosure still identifies the actual relay. Thread and media views
+request workflow-owner profiles through the existing background profile directory.
+The workflow proof check controls only the automation label, not main's effective
+message-author policy. With explicit authority, an unadmitted copy has no workflow
+label but can still receive main's effective-author attribution; production reads
+must retain their admission-owned event objects. Without explicit authority,
+cached-only startup keeps the signer fallback described above.
+Participant summaries have no per-message owner evidence
+and continue to identify signing participants, not workflow owners. Workflow rows
+are not grouped together because the message metadata lacks a workflow/run ID.
+Exact workflow/run navigation and historical execution configuration are not claimed.

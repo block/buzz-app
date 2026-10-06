@@ -7,7 +7,7 @@ import {
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
@@ -37,6 +37,7 @@ function setup(
   options: ChannelStoreOptions = {},
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
+  workflowAuthority = false,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -96,7 +97,7 @@ function setup(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
-      archiveAuthority: relay.pubkey,
+      ...(workflowAuthority ? { archiveAuthority: relay.pubkey } : {}),
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
@@ -277,7 +278,7 @@ it("unread repair observes history without seeding the channel window or consumi
 });
 
 it("owner deletion reconciles agent message unread evidence but keeps agent reactions", async () => {
-  const h = setup();
+  const h = setup({}, true, undefined, true);
   h.grant("room");
   const agent = keypair();
   const attributed = signed(h.relay, {
@@ -3193,3 +3194,35 @@ it("a DM dwell with no verified message does not read the DM", async () => {
   lease.dispose();
   expect(h.journal()?.state.frontiers.dm).toBeUndefined();
 });
+
+it.each([false, true])(
+  "projects workflow ownership into Inbox/activity only with explicit authority: %s",
+  (trusted) => {
+    const h = setup({}, true, undefined, trusted);
+    h.grant("room");
+    const parent = eventDto(message(h.viewer, "room", "my thread", 11));
+    const reply = eventDto(
+      message(h.relay, "room", "workflow output", 12, [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", h.viewer.pubkey],
+        ["p", h.viewer.pubkey],
+        ["e", parent.id, "", "reply"],
+      ]),
+    );
+    h.emit([parent, reply]);
+    for (const item of [
+      h.session.unread.inbox().items[0],
+      h.session.unread.activity("room").items?.[0],
+    ]) {
+      expect(item?.authorId).toBe(h.relay.pubkey);
+      expect(item?.workflowOwnerId).toBe(trusted ? h.viewer.pubkey : undefined);
+    }
+    expect(h.session.unread.attention("room", reply.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    });
+    expect(
+      h.session.unread.attention("room", reply.id).mentioned,
+    ).toBeUndefined();
+  },
+);

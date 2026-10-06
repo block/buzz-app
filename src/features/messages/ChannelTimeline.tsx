@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import { useChannelIdentityNames } from "../identity-names/react";
+import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
@@ -176,6 +177,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
+  useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
     transient
       ? null

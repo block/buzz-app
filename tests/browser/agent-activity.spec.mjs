@@ -17,6 +17,12 @@ const channelActivity = (page) =>
     name: "Agent activity in this channel",
     exact: true,
   });
+const expandChannelActivity = async (page) => {
+  const disclosure = channelActivity(page).locator("details");
+  await expect(disclosure).toBeVisible();
+  if (!(await disclosure.evaluate((element) => element.open)))
+    await disclosure.locator("summary").click();
+};
 const agentEntry = (page, agent) =>
   channelActivity(page).getByRole("button", {
     name: new RegExp(
@@ -88,8 +94,8 @@ test("mention picker demands the relay's protected archive snapshot", async ({
   ).toBe(true);
 });
 
-// The composer entry is the only channel launcher. Profile activity remains the
-// durable fallback after fresh working evidence disappears (covered below).
+// The composer disclosure retains every channel launcher. Profile activity
+// remains the durable fallback after fresh evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and retains history on disable", async ({
   page,
   app,
@@ -151,6 +157,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     );
 
     await expect(region).toBeVisible();
+    await expect(firstEntry).toBeHidden();
+    await expandChannelActivity(page);
     await expect(firstEntry).toBeVisible();
     expect(firstAuthors).not.toContain(first);
     expect(firstAuthors).not.toContain(second);
@@ -317,6 +325,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
+  await expandChannelActivity(page);
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
   await agentEntry(page, first).click();
@@ -337,6 +346,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     },
     firstKey,
   );
+  await expandChannelActivity(page);
   await expect(agentEntry(page, first)).toContainText("status unknown");
   await expect(
     agentEntry(page, first).locator(".navigation-item-trailing svg"),
@@ -374,6 +384,7 @@ for (const mode of ["light", "dark"]) {
       }),
       agentKey,
     );
+    await expandChannelActivity(page);
     const entry = agentEntry(page, agent);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -430,9 +441,9 @@ for (const mode of ["light", "dark"]) {
       // resize can keep WebKit's pointer over it, so make the next entry explicit.
       await page.mouse.move(0, 0);
       await entry.hover();
-      await expect(page.getByRole("tooltip")).toContainText(
-        "in this channel, including threads.",
-      );
+      await expect(
+        page.getByRole("tooltip").filter({ hasText: agent }),
+      ).toContainText("in this channel, including threads.");
       await page.screenshot({
         path: testInfo.outputPath(`activity-entry-${mode}-${width}.png`),
       });
@@ -827,7 +838,8 @@ test.describe("thread activity", () => {
     };
     // Owner telemetry recognizes the agent without claiming a working channel turn.
     app.observer(activity("turn_liveness", "alpha", "previous"), key);
-    await expect(agentEntry(page, agent)).toBeVisible();
+    await expect(channelActivity(page)).toBeVisible();
+    await expect(agentEntry(page, agent)).toBeHidden();
     app.observer(activity("turn_completed", "alpha", "previous"), key);
     await expect(agentEntry(page, agent)).toHaveCount(0);
     sendTyping(root.id, generateSecretKey());
@@ -876,9 +888,32 @@ test.describe("thread activity", () => {
     await expect(page.getByRole("tooltip")).toContainText(
       "Details show channel activity",
     );
+    // Same agent, two observer turns, and scoped thread typing. Do not infer
+    // that either channel-wide turn belongs to this thread, or hide other work.
+    app.observer(activity("turn_liveness", "alpha", "parallel-one"), key);
+    app.observer(activity("turn_liveness", "alpha", "parallel-two"), key);
+    sendTyping(root.id);
+    const summary = channelActivity(page).locator("summary");
+    await expect(summary).toHaveText("Channel-wide activity · 1 agent");
+    await expect(agentEntry(page, agent)).toBeHidden();
+    await expect(entry).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(
+      page.getByRole("tooltip", { includeHidden: true }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
+    // Native disclosure semantics and keyboard operation need real browsers.
+    await summary.focus();
+    await summary.press("Enter");
+    await expect(agentEntry(page, agent)).toBeVisible();
+    await agentEntry(page, agent).hover();
+    await expect(page.getByRole("tooltip")).toContainText("2 working turn(s)");
+    await page.mouse.move(0, 0);
+    await summary.focus();
+    await summary.press("Space");
+    await expect(agentEntry(page, agent)).toBeHidden();
     await page.mouse.move(0, 0);
     // A closing tooltip retains its desktop position until its exit completes.
     await expect(
@@ -925,6 +960,8 @@ test.describe("thread activity", () => {
     await page
       .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
       .click();
+    app.observer(activity("turn_completed", "alpha", "parallel-one"), key);
+    app.observer(activity("turn_completed", "alpha", "parallel-two"), key);
     sendTyping();
     await expect(marker).toBeVisible();
     const workingBox = await marker.boundingBox();
@@ -932,6 +969,7 @@ test.describe("thread activity", () => {
       expect.objectContaining({ width: 26, height: 15 }),
     );
     await expect(channelActivity(page)).toBeVisible();
+    await expandChannelActivity(page);
     const channelBox = await channelActivity(page)
       .getByRole("button")
       .first()
@@ -975,6 +1013,7 @@ test.describe("host archive durability", () => {
       }),
       key,
     );
+    await expandChannelActivity(page);
     await agentEntry(page, agent).click();
     const panel = activityPanel(page);
     await expect(

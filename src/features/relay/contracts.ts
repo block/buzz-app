@@ -81,6 +81,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
+  /** Actual signing key when relay attribution makes authorId a different identity. */
+  signerId?: string | undefined;
+  /** Display-only owner attested by this community’s explicit relay signer. */
+  workflowOwnerId?: string | undefined;
   /** Unix seconds from the signed event. */
   createdAt: number;
   /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */

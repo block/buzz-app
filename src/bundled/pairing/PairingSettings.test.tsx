@@ -18,7 +18,64 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
+it.each([
+  { live: "1", tauri: true, available: false },
+  { live: "0", tauri: true, available: true },
+  { live: "0", tauri: false, available: false },
+])(
+  "uses native identity availability (live: $live, tauri: $tauri)",
+  ({ live, tauri, available }) => {
+    vi.stubGlobal("isTauri", tauri);
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    vi.stubEnv("VITE_BUZZ_LIVE", live);
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const native = {
+      account: vi.fn(async () => "a".repeat(64)),
+      start: vi.fn(async () => {}),
+      status: vi.fn(async (): Promise<PairingStatus> => ({ phase: "idle" })),
+      cancel: vi.fn(async () => {}),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+    } satisfies PairingNative;
+    const snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      viewer: "a".repeat(64),
+      selected: null,
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    render(
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        native={native}
+      />,
+    );
+    if (available) {
+      expect(
+        screen.queryByText(/unavailable with the development broker/),
+      ).toBeNull();
+      expect(screen.getByLabelText("Community address")).toBeTruthy();
+    } else {
+      expect(screen.getByRole("status").textContent).toContain(
+        tauri
+          ? "unavailable with the development broker"
+          : "Open the Buzz desktop app",
+      );
+      expect(screen.queryByLabelText("Community address")).toBeNull();
+    }
+    expect(native.account).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
+  },
+);
 it.each([true, false])(
   "renews a committed manual destination and pairs another phone (known viewer: %s)",
   async (knownViewer) => {

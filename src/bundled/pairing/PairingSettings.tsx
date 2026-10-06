@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import {
   useEffect,
   useMemo,
@@ -189,7 +190,9 @@ export function PairingSettings({
             <div className="flex h-64 w-full flex-col items-center justify-center gap-4 overflow-auto text-center">
               {!available ? (
                 <p role="status" className="text-body-sm text-muted">
-                  Open the Buzz desktop app to pair your phone.
+                  {isTauri()
+                    ? "Pairing uses this app’s native identity and is unavailable with the development broker. Restart with BUZZ_DEV_VIEWER empty to use native sign-in."
+                    : "Open the Buzz desktop app to pair your phone."}
                 </p>
               ) : (
                 <>

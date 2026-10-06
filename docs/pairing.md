@@ -46,8 +46,11 @@ new plugin security sandbox. The frontend CSP is unchanged.
 Pairing uses the current native app identity through a purpose-bound
 `IdentityHost.with_key` operation. The public viewer is checked before producing
 the encrypted transfer payload. It never reads or mutates the original Buzz
-credential store. Browsers explain that pairing requires desktop. The mobile
-implementation remains in `block/buzz`.
+credential store. Browsers explain that pairing requires desktop. Live development
+with `BUZZ_DEV_VIEWER` uses the separate broker identity, so pairing is unavailable
+there; start `BUZZ_DEV_VIEWER= bin/just desktop` (also overrides a viewer
+pin in `.env.local`) and use the native identity setup for the same account to
+test pairing. The mobile implementation remains in `block/buzz`.
 
 Only secure community origins and secure advertised pairing URLs are accepted.
 Redirects are disabled for discovery, setup traffic is bounded, and both early

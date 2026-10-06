@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { nativeIdentityEnabled } from "../identity/service";
 export type PairingStatus =
   | {
       phase:
@@ -31,7 +32,7 @@ export const nativePairing: PairingNative = {
   deny: (id) => invoke("pairing_deny", { id }),
   cancel: (id) => invoke("pairing_cancel", { id }),
 };
-export const pairingAvailable = isTauri;
+export const pairingAvailable = nativeIdentityEnabled;
 
 export function createPairingClient(native: PairingNative = nativePairing) {
   let state: PairingStatus = { phase: "idle" };

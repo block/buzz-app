@@ -21,6 +21,8 @@ pub(crate) struct Snapshot {
     local_inventory_actions: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
+    // Setup only until Claude's agent launch contract is implemented.
+    claude_setup: ClaudeSetup,
     databricks_defaults: crate::agent_models::Defaults,
     agent_defaults: buzz_agent_controller::BuildDefaults,
     /// Running agents restarted by this save; absent on other responses.
@@ -51,6 +53,7 @@ impl Snapshot {
             local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: harness_options(app_data),
+            claude_setup: claude_setup(app_data),
             databricks_defaults: crate::agent_models::defaults(),
             agent_defaults: buzz_agent_controller::build_defaults(),
             restarted: None,
@@ -74,6 +77,109 @@ struct HarnessOption {
     default_args: Vec<String>,
     providers: &'static [ProviderOption],
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeSetup {
+    status: &'static str,
+    install_supported: bool,
+    login_command: Option<String>,
+    #[serde(skip)]
+    cli: Option<PathBuf>,
+    #[serde(skip)]
+    node: Option<PathBuf>,
+}
+
+fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
+    let cli = buzz_agent_controller::installed_npm_tool("claude");
+    let managed_cli = buzz_agent_controller::managed_tool(app_data, "claude");
+    let managed_node = buzz_agent_controller::managed_tool(app_data, "node");
+    let (_, status, managed) = npm_choice(
+        NpmTools {
+            cli: cli.clone(),
+            adapter: buzz_agent_controller::installed_npm_tool("claude-agent-acp"),
+            node: buzz_agent_controller::installed_npm_tool("node"),
+        },
+        NpmTools {
+            cli: managed_cli.clone(),
+            adapter: buzz_agent_controller::managed_tool(app_data, "claude-agent-acp"),
+            node: managed_node.clone(),
+        },
+    );
+    let quote = |path: &std::path::Path| {
+        format!(
+            "'{}'",
+            path.to_string_lossy()
+                .replace('\'', if cfg!(windows) { "''" } else { "'\\''" })
+        )
+    };
+    let cli = if managed { managed_cli.or(cli) } else { cli };
+    let node = managed.then_some(managed_node).flatten();
+    let login_command = cli.as_ref().map(|cli| {
+        if let Some(node_bin) = node.as_ref().and_then(|node| node.parent()) {
+            format!(
+                "PATH={}:\"$PATH\" {} auth login",
+                quote(node_bin),
+                quote(cli)
+            )
+        } else {
+            format!(
+                "{}{} auth login",
+                if cfg!(windows) { "& " } else { "" },
+                quote(cli)
+            )
+        }
+    });
+    ClaudeSetup {
+        status,
+        install_supported: cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )),
+        login_command,
+        cli,
+        node,
+    }
+}
+/// Explicit Settings read, never part of periodic snapshots or controller writes.
+#[tauri::command]
+pub(crate) async fn claude_auth_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Option<bool> {
+    use tauri::Manager as _;
+    let app_data = app.path().app_data_dir().ok()?;
+    let setup = claude_setup(&app_data);
+    let cli = setup.cli?;
+    let mut path = crate::host_command::effective_path();
+    if let Some(node_bin) = setup.node.as_ref().and_then(|node| node.parent()) {
+        path = std::env::join_paths(
+            std::iter::once(node_bin.to_path_buf()).chain(std::env::split_paths(&path)),
+        )
+        .ok()?;
+    }
+    probe_claude_auth(&cli, &path).await
+}
+
+async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Option<bool> {
+    let (output, status) = crate::host_command::run_output(
+        cli,
+        &["auth".into(), "status".into()],
+        std::time::Duration::from_secs(5),
+        path,
+        4096,
+    )
+    .await?;
+    let logged_in = serde_json::from_str::<serde_json::Value>(&output)
+        .ok()?
+        .get("loggedIn")?
+        .as_bool()?;
+    match (status.code(), logged_in) {
+        (Some(0), true) => Some(true),
+        (Some(1), false) => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderOption {
     value: &'static str,
@@ -140,7 +246,7 @@ const GOOSE_PROVIDERS: &[ProviderOption] = &[
     },
 ];
 
-fn pi_status(cli: bool, adapter: bool, node: bool) -> &'static str {
+fn npm_status(cli: bool, adapter: bool, node: bool) -> &'static str {
     if !cli || !node {
         "cli-needed"
     } else if !adapter {
@@ -150,13 +256,13 @@ fn pi_status(cli: bool, adapter: bool, node: bool) -> &'static str {
     }
 }
 
-struct PiTools {
+struct NpmTools {
     cli: Option<PathBuf>,
     adapter: Option<PathBuf>,
     node: Option<PathBuf>,
 }
 
-fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str, bool) {
+fn npm_choice(user: NpmTools, managed: NpmTools) -> (Option<PathBuf>, &'static str, bool) {
     // An existing, complete user install always wins. Otherwise use the
     // app-owned pair only when its pinned Node can run its npm shims.
     let user_ready = user.cli.is_some() && user.adapter.is_some() && user.node.is_some();
@@ -164,14 +270,14 @@ fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str,
     let selected = if user_ready {
         user
     } else if managed_selected {
-        PiTools {
+        NpmTools {
             cli: managed.cli.or(user.cli),
             ..managed
         }
     } else {
         user
     };
-    let status = pi_status(
+    let status = npm_status(
         selected.cli.is_some(),
         selected.adapter.is_some(),
         selected.node.is_some(),
@@ -181,7 +287,7 @@ fn pi_choice(user: PiTools, managed: PiTools) -> (Option<PathBuf>, &'static str,
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn pi_current(app_data: &std::path::Path) -> bool {
-    crate::managed_pi::current(app_data)
+    crate::managed_npm::current(app_data)
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn pi_current(_: &std::path::Path) -> bool {
@@ -189,13 +295,13 @@ fn pi_current(_: &std::path::Path) -> bool {
 }
 
 fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
-    let (pi, pi_status, pi_managed) = pi_choice(
-        PiTools {
+    let (pi, pi_status, pi_managed) = npm_choice(
+        NpmTools {
             cli: buzz_agent_controller::installed("pi"),
             adapter: buzz_agent_controller::installed("buzz-pi-acp"),
             node: buzz_agent_controller::installed("node"),
         },
-        PiTools {
+        NpmTools {
             cli: buzz_agent_controller::managed_tool(app_data, "pi"),
             adapter: buzz_agent_controller::managed_tool(app_data, "buzz-pi-acp"),
             node: buzz_agent_controller::managed_tool(app_data, "node"),

@@ -244,8 +244,9 @@ installation guidance and device-wide defaults.
 
 ### Harnesses
 
-The **Harnesses** card always lists the Tier 1 options **Buzz Agent**, **Goose**,
-and **Pi**. **Add harness** opens the Tier 2 Hermes chooser and setup details.
+The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
+**Claude Code**. Claude Code supports installation only in this slice; it is
+not yet a choice when creating an agent. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected:
 
 - **Buzz Agent** is bundled and shows **Ready**.
@@ -274,8 +275,46 @@ Hermes also appears in the main list once its executable is detected:
 - **Hermes Agent** shows **Ready** or **CLI needed** in **Add harness**, with a
   manual setup guide and no Install/Update action. **Check again** updates the
   chooser and main list; removing its executable hides the main row again.
-  Discovery searches for the exact `hermes-acp` launcher name. Windows `.exe`/`.cmd`/`.bat` launchers are a known discovery
-  limitation in this slice; saved absolute paths remain recognizable/editable.
+  Discovery searches for the exact `hermes-acp` launcher name. Windows
+  `.exe`/`.cmd`/`.bat` launchers are a known discovery limitation in this slice;
+  saved absolute paths remain recognizable/editable.
+
+- **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
+  **Sign-in needed** when its CLI reports signed out, and **Ready** once tools
+  and sign-in are confirmed. A failed auth check shows **Sign-in unconfirmed**.
+  On macOS/Linux x64 and arm64, **Install** reuses the checksum-verified managed
+  Node and installs `@anthropic-ai/claude-code@2.1.289` and
+  `@agentclientprotocol/claude-agent-acp@0.85.1` into a new app-owned
+  `claude-tools/releases` directory. Both launchers must pass `--version` before
+  activation; a failed install preserves the previous release. Pi and Claude
+  use separate release storage and share the native install/quit owner, so only
+  one installation runs at a time. Stop remains available for running agents.
+  The result and private log survive leaving Settings, and completion refreshes
+  native detection. Complete external installations take precedence and remain
+  untouched. Windows and unsupported architectures retain manual setup with
+  Node.js 22 or newer. The fallback commands are:
+
+  ```sh
+  npm install -g @anthropic-ai/claude-code@2.1.289
+  npm install -g @agentclientprotocol/claude-agent-acp@0.85.1
+  ```
+
+  Windows discovery resolves `node.exe` and native/Windows npm launchers;
+  the PowerShell sign-in command uses the selected `.exe`/`.cmd`/`.bat` path.
+  While installation runs, Install keeps keyboard focus but blocks activation.
+  Failure leaves it focused for retry. Success moves focus to the status if
+  Install still owns focus, without taking it from another control.
+
+  **Sign in to Claude Code** shows the resolved CLI's `auth login` command,
+  including managed Node on PATH when needed. Settings checks the selected CLI
+  with a bounded, read-only `auth status` command on opening, Check again, and
+  after installation. Only its `loggedIn` boolean is exposed; account metadata
+  is discarded. Ready rows hide setup guidance; failed installs retain their
+  error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
+  runtime; the separate CLI provides the sign-in command. This PR does not
+  launch Claude agents, discover models or restart agents.
+  Native reports this setup separately through `claudeSetup`, outside
+  `harnessOptions`, so it cannot become a creation or default-harness choice.
 
 Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
 owned by the controller and read by both Rust and TypeScript. Native discovery

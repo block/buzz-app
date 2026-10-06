@@ -267,6 +267,18 @@ async fn run(
     path: &OsStr,
     max_output_bytes: u64,
 ) -> Option<String> {
+    let (output, status) = run_output(executable, args, deadline, path, max_output_bytes).await?;
+    status.success().then_some(output)
+}
+
+/// Bounded stdout and exit status; callers must project away private command output.
+pub(crate) async fn run_output(
+    executable: &Path,
+    args: &[String],
+    deadline: Duration,
+    path: &OsStr,
+    max_output_bytes: u64,
+) -> Option<(String, std::process::ExitStatus)> {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -307,16 +319,12 @@ async fn run(
         {
             process_group.armed = false;
         }
-        Some((bytes, status.success()))
+        Some((bytes, status))
     })
     .await;
 
-    if let Ok(Some((bytes, success))) = output {
-        return if success {
-            String::from_utf8(bytes).ok()
-        } else {
-            None
-        };
+    if let Ok(Some((bytes, status))) = output {
+        return Some((String::from_utf8(bytes).ok()?, status));
     }
 
     #[cfg(unix)]

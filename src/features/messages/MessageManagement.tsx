@@ -201,6 +201,67 @@ export function MessageManagement({
   );
 }
 
+/** Read-state, edit and delete items share one gate: a managed, delivered row
+ * in a writable channel. */
+function useManagedMessage(row: ChannelMessage, session: RelaySession) {
+  const management = useContext(Management);
+  const writable = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel && !channel.readOnly,
+  );
+  return management &&
+    writable &&
+    !row.membership &&
+    !row.diff &&
+    (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+    ? management
+    : undefined;
+}
+
+export function MessageReadStateItem({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  const management = useManagedMessage(row, session);
+  const target = {
+    kind: "message" as const,
+    channelId: row.channelId,
+    messageId: row.id,
+  };
+  useSyncExternalStore(
+    (listener) => session.unread.subscribe(target, listener),
+    () => session.unread.snapshot(target),
+  );
+  if (!management) return null;
+  const attention = session.unread.attention(row.channelId, row.id);
+  const unread = attention.unread || attention.forced;
+  return (
+    <MenuItem
+      onClick={() => {
+        management.report(undefined);
+        void (
+          unread
+            ? session.unread.markMessageRead(row.channelId, row.id)
+            : session.unread.markMessageUnread(row.channelId, row.id)
+        ).catch((cause) =>
+          management.report(
+            cause instanceof Error
+              ? cause.message
+              : "Could not update unread state. Try again.",
+          ),
+        );
+      }}
+    >
+      <MenuIcon>{unread ? <EnvelopeOpenIcon /> : <EnvelopeIcon />}</MenuIcon>
+      {unread ? "Mark read" : "Mark unread"}
+    </MenuItem>
+  );
+}
+
 export function MessageManagementItems({
   row,
   session,
@@ -208,14 +269,9 @@ export function MessageManagementItems({
   row: ChannelMessage;
   session: RelaySession;
 }) {
-  const management = useContext(Management);
+  const management = useManagedMessage(row, session);
   const editor = useMessageEditScope();
   const afterClose = useAfterMessageMenuClose();
-  const writable = useListedChannel(
-    session.channels,
-    row.channelId,
-    (channel) => !!channel && !channel.readOnly,
-  );
   const archived = useListedChannel(
     session.channels,
     row.channelId,
@@ -230,23 +286,7 @@ export function MessageManagementItems({
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
     session.unread.following(row.channelId, threadRootId),
   );
-  const target = {
-    kind: "message" as const,
-    channelId: row.channelId,
-    messageId: row.id,
-  };
-  useSyncExternalStore(
-    (listener) => session.unread.subscribe(target, listener),
-    () => session.unread.snapshot(target),
-  );
-  if (
-    !management ||
-    row.membership ||
-    row.diff ||
-    (row.delivery && !["accepted", "seen"].includes(row.delivery))
-  )
-    return null;
-  if (!writable) return null;
+  if (!management) return null;
   const busy = management.operations.some(
     (item) =>
       ["sending", "accepted"].includes(item.delivery) &&
@@ -256,8 +296,6 @@ export function MessageManagementItems({
   const own = row.authorId === session.viewer && !archived;
   const canEdit = own && editor && lastEditableMessage(session, [row]);
   const canDelete = own && session.outbox?.supports(5);
-  const attention = session.unread.attention(row.channelId, row.id);
-  const unread = attention.unread || attention.forced;
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -310,25 +348,6 @@ export function MessageManagementItems({
           Delete message
         </MenuItem>
       )}
-      <MenuItem
-        onClick={() => {
-          management.report(undefined);
-          void (
-            unread
-              ? session.unread.markMessageRead(row.channelId, row.id)
-              : session.unread.markMessageUnread(row.channelId, row.id)
-          ).catch((cause) =>
-            management.report(
-              cause instanceof Error
-                ? cause.message
-                : "Could not update unread state. Try again.",
-            ),
-          );
-        }}
-      >
-        <MenuIcon>{unread ? <EnvelopeOpenIcon /> : <EnvelopeIcon />}</MenuIcon>
-        {unread ? "Mark read" : "Mark unread"}
-      </MenuItem>
       {!dm && (
         <MenuItem
           onClick={() => {

@@ -20,6 +20,7 @@ import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
@@ -1077,6 +1078,44 @@ it("retires the fullscreen image viewer when its retained row is suspended", () 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     view.rerender(tree(true));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("lists Mark unread above Copy message for a managed peer message", async () => {
+  const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => snapshot, subscribeList: () => () => {} },
+    messages: { report: vi.fn(async () => {}) },
+    unread: {
+      subscribe: () => () => {},
+      snapshot: () => undefined,
+      attention: () => ({ unread: false, forced: false, viewing: true }),
+    },
+  } as unknown as RelaySession;
+  renderDom(
+    <MessageManagement session={session} channelId={row.channelId}>
+      <MessageRow
+        row={row}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />
+    </MessageManagement>,
+  );
+  try {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(["Mark unread", "Copy message", "Report"]);
   } finally {
     cleanup();
   }

@@ -60,6 +60,7 @@ export function createThreadView({
   channelId,
   messageId,
   relayAuthor,
+  workflowAuthority,
   reader,
   seed,
   local,
@@ -73,6 +74,7 @@ export function createThreadView({
   channelId: string;
   messageId: string;
   relayAuthor: string;
+  workflowAuthority?: string | undefined;
   reader: RelayReader;
   seed: RelayEvent | undefined;
   local: LocalEvents | undefined;
@@ -190,6 +192,7 @@ export function createThreadView({
         rootUnavailable && !exact ? [] : [...inputs.values()],
         {
           includeReplies: true,
+          workflowAuthority,
         },
       ).map((row) => {
         const item = deliveries.get(row.id);

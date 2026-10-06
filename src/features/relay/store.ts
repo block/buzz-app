@@ -95,6 +95,7 @@ export function createChannelStore(
     | (RelayReader & {
         viewer: string;
         relayAuthor: string;
+        workflowAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
@@ -116,6 +117,7 @@ export function createChannelStore(
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
       includeReplies: discovery?.isSession(channelId) ?? false,
+      workflowAuthority: transport?.workflowAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
@@ -363,6 +365,7 @@ export function createChannelStore(
         profiling,
         () => discovery?.isSession(channelId) ?? false,
         clock,
+        transport?.workflowAuthority,
       ),
       channelId,
       snapshot: idleWindow(channelId),

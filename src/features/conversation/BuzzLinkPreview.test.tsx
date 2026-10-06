@@ -160,3 +160,12 @@ it("fails safely when an exact target timestamp is outside Date range", () => {
   });
   expect(text(result.tree)).toBe("Message preview unavailable.");
 });
+
+it("labels a workflow preview as automation, with an owner fallback instead of a signer avatar", () => {
+  const workflow = { ...root, workflowOwnerId: "c".repeat(64) };
+  const { tree } = setup({ ...base, status: "ready", root: workflow });
+  expect(tree.querySelector("strong")?.textContent).toBe(
+    "Workflow · owned by cccccccccc",
+  );
+  expect(tree.querySelector("img")).toBeNull();
+});

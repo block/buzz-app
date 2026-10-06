@@ -22,6 +22,7 @@ export class MessageProjection {
     private profiling: RelayProfiler,
     private includeReplies: () => boolean = () => false,
     private clock = new MessageClock(),
+    private workflowAuthority?: string,
   ) {}
   snapshot() {
     return this.rows;
@@ -111,7 +112,10 @@ export class MessageProjection {
                       event,
                       ...[...overlayIds].flatMap((ref) => next.get(ref) ?? []),
                     ],
-                    { includeReplies: this.includeReplies() },
+                    {
+                      includeReplies: this.includeReplies(),
+                      workflowAuthority: this.workflowAuthority,
+                    },
                   )[0]
                 : undefined;
             if (row)

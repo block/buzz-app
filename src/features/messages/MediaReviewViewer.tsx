@@ -1,3 +1,4 @@
+import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
 import { readReviewOrigin, useReviewEntrance } from "./use-review-entrance";
@@ -237,17 +238,20 @@ function ReviewShell({
     ? replies.flatMap((row) => {
         const parsed = parseMediaTimeReply(row.content);
         if (!parsed) return [];
-        const profile = profiles.get(row.authorId);
+        const displayId = row.workflowOwnerId ?? row.authorId;
+        const profile = profiles.get(displayId);
+        const name = profile?.name ?? displayId.slice(0, 10);
         return [
           {
             id: row.id,
             seconds: parsed.anchor.seconds,
             label: parsed.label,
             text: parsed.content,
-            author: profile?.name ?? row.authorId.slice(0, 10),
-            picture: profile?.picture
-              ? session.media(profile.picture)
-              : undefined,
+            author: row.workflowOwnerId ? workflowLabel(name) : name,
+            picture:
+              !row.workflowOwnerId && profile?.picture
+                ? session.media(profile.picture)
+                : undefined,
           },
         ];
       })

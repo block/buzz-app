@@ -1641,3 +1641,35 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
     cleanup();
   }
 });
+
+it("presents automation, links the owner and discloses the separate relay signer", async () => {
+  const ownerId = "ab".repeat(32),
+    signer = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: { ...row, authorId: signer, workflowOwnerId: ownerId },
+      profile: { name: "Relay" },
+      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    expect(screen.getByText("Workflow")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View workflow owner Wes profile" }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Workflow message details" }),
+    );
+    expect(
+      await screen.findByText(/the owner did not sign this message/),
+    ).toBeTruthy();
+    expect(screen.getByText("Signed by the relay")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "View Relay profile" }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+  }
+});

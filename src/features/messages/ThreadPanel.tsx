@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { ReplySummary } from "./ReplySummary";
@@ -315,6 +316,14 @@ function ThreadMessages({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
+  const senderName = (row: ChannelMessage) => {
+    const id = row.workflowOwnerId ?? row.authorId;
+    const name = resolveName(
+      id,
+      profiles.get(id)?.name ?? formatPublicKey(id) ?? "Unknown author",
+    );
+    return row.workflowOwnerId ? workflowLabel(name) : name;
+  };
   const rows = useMemo(
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
@@ -1070,7 +1079,7 @@ function ThreadMessages({
             scope={scope}
             channelId={channelId}
             channelName={channelName}
-            placeholder={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
+            placeholder={`Reply in thread to ${senderName(snapshot.root)}`}
             threadRootId={snapshot.root.id}
             replyParentId={replyParent}
             disabled={
@@ -1090,15 +1099,7 @@ function ThreadMessages({
                 selectedParent && (
                   <div className={styles.replyContext}>
                     <div>
-                      <span>
-                        Replying to{" "}
-                        {resolveName(
-                          selectedParent.authorId,
-                          profiles.get(selectedParent.authorId)?.name ??
-                            formatPublicKey(selectedParent.authorId) ??
-                            "Unknown author",
-                        )}
-                      </span>
+                      <span>Replying to {senderName(selectedParent)}</span>
                       <p>{selectedParent.content}</p>
                     </div>
                     <IconButton

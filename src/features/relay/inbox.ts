@@ -12,6 +12,7 @@ export type InboxItem = Readonly<{
   messageIds: readonly string[];
   rootId?: string;
   authorId: string;
+  workflowOwnerId?: string | undefined;
   preview: string;
   createdAt: number;
   mentioned: boolean;

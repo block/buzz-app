@@ -1,3 +1,4 @@
+import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
@@ -190,7 +191,10 @@ export function foldMessages(
   channelId: string,
   relayAuthor: string,
   events: readonly EventData[],
-  { includeReplies = false }: { includeReplies?: boolean } = {},
+  {
+    includeReplies = false,
+    workflowAuthority,
+  }: { includeReplies?: boolean; workflowAuthority?: string | undefined } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
@@ -298,6 +302,7 @@ export function foldMessages(
             : undefined;
         })(),
         authorId: event.pubkey,
+        workflowOwnerId: workflowOwner(event, workflowAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,

@@ -1,3 +1,4 @@
+import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { npubEncode } from "nostr-tools/nip19";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -386,7 +387,10 @@ export function SearchResults({
       ...channels.flatMap((channel) =>
         channel.channelType === "dm" ? (channel.participants ?? []) : [],
       ),
-      ...search.messages.map((message) => message.authorId),
+      ...search.messages.flatMap((message) => [
+        message.authorId,
+        ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
+      ]),
     ]),
   ]
     .sort()
@@ -519,13 +523,22 @@ export function SearchResults({
           },
         ]
       : [];
-  const messages: SearchDestination[] = search.messages.map((message) => ({
-    key: message.id,
-    label: message.preview,
-    detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${resolveName(message.authorId, profiles.get(message.authorId)?.name ?? message.authorId.slice(0, 10), list.channels.find((channel) => channel.id === message.channelId)?.members ?? [])} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
-    icon: ChatCircleIcon,
-    run: () => openConversation(message.channelId, message.id),
-  }));
+  const messages: SearchDestination[] = search.messages.map((message) => {
+    const displayId = message.workflowOwnerId ?? message.authorId;
+    const name = resolveName(
+      displayId,
+      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
+      list.channels.find((channel) => channel.id === message.channelId)
+        ?.members ?? [],
+    );
+    return {
+      key: message.id,
+      label: message.preview,
+      detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      icon: ChatCircleIcon,
+      run: () => openConversation(message.channelId, message.id),
+    };
+  });
   const operatorLookupPending =
     needsPublicLookup &&
     (list.status !== "ready" || operatorPublicChannels.loading);

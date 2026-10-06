@@ -1,3 +1,4 @@
+import { workflowOwner } from "./workflow-attribution";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
@@ -55,6 +56,7 @@ export type ThreadActivityItem = Readonly<{
   rootId: string;
   latestMessageId: string;
   authorId: string;
+  workflowOwnerId?: string | undefined;
   createdAt: number;
   preview: string;
   unreadCount: number;
@@ -188,6 +190,7 @@ export function createUnread({
   reader,
   viewer,
   relayAuthor,
+  workflowAuthority,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
 }: {
@@ -196,6 +199,7 @@ export function createUnread({
   reader: RelayReader;
   viewer: string;
   relayAuthor?: string;
+  workflowAuthority?: string | undefined;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
 }) {
@@ -758,6 +762,7 @@ export function createUnread({
             rootId,
             latestMessageId: event.id,
             authorId: event.pubkey,
+            workflowOwnerId: workflowOwner(event, workflowAuthority),
             createdAt: event.created_at,
             preview,
             unreadCount: 1,
@@ -776,6 +781,9 @@ export function createUnread({
           rootId,
           latestMessageId: latest ? event.id : current.latestMessageId,
           authorId: latest ? event.pubkey : current.authorId,
+          workflowOwnerId: latest
+            ? workflowOwner(event, workflowAuthority)
+            : current.workflowOwnerId,
           createdAt: latest ? event.created_at : current.createdAt,
           preview: latest ? preview : current.preview,
           unreadCount: current.unreadCount + 1,
@@ -813,6 +821,7 @@ export function createUnread({
             item.rootId === other?.rootId &&
             item.latestMessageId === other.latestMessageId &&
             item.authorId === other.authorId &&
+            item.workflowOwnerId === other.workflowOwnerId &&
             item.createdAt === other.createdAt &&
             item.preview === other.preview &&
             item.unreadCount === other.unreadCount
@@ -933,6 +942,10 @@ export function createUnread({
                 ? { rootId: representative.rootId }
                 : {}),
               authorId: representative.event.pubkey,
+              workflowOwnerId: workflowOwner(
+                representative.event,
+                workflowAuthority,
+              ),
               preview:
                 content.get(representative.event.id) ??
                 representative.event.content,

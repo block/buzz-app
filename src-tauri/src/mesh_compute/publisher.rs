@@ -137,6 +137,26 @@ pub(super) async fn display_names(console_url: &str) -> Option<serde_json::Value
     Some(publication::display_names_from_models(&models))
 }
 
+/// Withdraw this member's serving advertisement right after Share Off, as legacy
+/// `mesh_stop_node` did with `publish_stopped_status_once_at`. Best-effort and bounded;
+/// the periodic publisher still follows up.
+pub(super) async fn publish_stopped(
+    identity: &crate::identity::IdentityHost,
+    community: &str,
+    member: &str,
+) {
+    match tokio::time::timeout(
+        Duration::from_secs(5),
+        send(identity, community, member, false, None),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("Mesh stopped-status publication failed: {error}"),
+        Err(_) => eprintln!("Mesh stopped-status publication timed out"),
+    }
+}
+
 async fn send(
     identity: &crate::identity::IdentityHost,
     community: &str,

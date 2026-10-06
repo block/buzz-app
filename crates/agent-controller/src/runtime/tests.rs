@@ -2955,6 +2955,7 @@ fn mesh_output_default_matches_legacy_and_user_generation_controls_win() {
     for (name, value) in [
         ("BUZZ_AGENT_MAX_OUTPUT_TOKENS", "20000"),
         ("BUZZ_AGENT_MAX_CONTEXT_TOKENS", "65536"),
+        ("BUZZ_AGENT_LLM_TIMEOUT_SECS", "90"),
     ] {
         saved.environment.insert(name.into(), value.into());
     }
@@ -2964,6 +2965,8 @@ fn mesh_output_default_matches_legacy_and_user_generation_controls_win() {
         runtime.environment["BUZZ_AGENT_MAX_CONTEXT_TOKENS"],
         "65536"
     );
+    // Legacy relay_mesh preserves an explicit request timeout.
+    assert_eq!(runtime.environment["BUZZ_AGENT_LLM_TIMEOUT_SECS"], "90");
 }
 
 #[test]

@@ -84,8 +84,12 @@ impl MeshLaunch {
             .entry("BUZZ_AGENT_MAX_OUTPUT_TOKENS".into())
             .or_insert_with(|| "4096".into());
         // Explicit last-writer runtime settings; user environment cannot reroute this grant.
+        // Legacy default just above MeshLLM's 600 s backend budget; a user value wins.
+        runtime
+            .environment
+            .entry("BUZZ_AGENT_LLM_TIMEOUT_SECS".into())
+            .or_insert_with(|| "660".into());
         for (name, value) in [
-            ("BUZZ_AGENT_LLM_TIMEOUT_SECS", "660".to_owned()),
             ("BUZZ_AGENT_PROVIDER", "openai".to_owned()),
             ("BUZZ_AGENT_MODEL", self.model.clone()),
             ("OPENAI_COMPAT_MODEL", self.model.clone()),

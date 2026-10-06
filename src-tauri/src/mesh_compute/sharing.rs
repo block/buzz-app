@@ -81,6 +81,7 @@ pub async fn mesh_compute_share(
     let identity = app.state::<crate::identity::IdentityHost>();
     let stopping = model.is_none();
     let viewer = identity.viewer().await?;
+    let member = viewer.clone();
     {
         let _guard = host.preparing.lock().await;
         let community = host.lease.community(&lease)?;
@@ -196,6 +197,10 @@ pub async fn mesh_compute_share(
     }
     // Reuses discovery and the same private SDK slot. Solo serving needs no target.
     if stopping {
+        // Withdraw the serving advertisement now rather than at the next heartbeat.
+        if let Ok(community) = host.lease.community(&lease) {
+            super::publisher::publish_stopped(&identity, &community, &member).await;
+        }
         Ok(())
     } else {
         let result = super::start(&app, &host, &identity, &lease).await;

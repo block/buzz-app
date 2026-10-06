@@ -71,6 +71,14 @@ export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
+/** The relay's fixed refusal for created_at outside its ±15 minute window. */
+const STALE_TIMESTAMP = "event timestamp too far from server time";
+/** A chat message the relay refused as too old provably never landed (the
+ * relay checks duplicates before age), so it is re-stamped with a new
+ * created_at, client-id and id and sent at its delivery time. Other kinds keep
+ * their id because callers reconcile them by it. */
+const restampable = (item: OutgoingEvent) =>
+  item.event.kind === 9 && !item.recovery && !item.guarded;
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
 export function createOutbox(
@@ -131,6 +139,10 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
+  /** Copies made by restamp; a stale refusal of one is not re-stamped again. */
+  const restamped = new Set<string>();
+  /** Re-stamped original id → its copy, for callers retrying by the old id. */
+  const replaced = new Map<string, string>();
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
@@ -421,6 +433,7 @@ export function createOutbox(
     attempt.controller = controller;
     const signal = controller.signal;
     let publishing = false;
+    let stale: OutgoingEvent | undefined;
     const total = profiling.start("send.delivery", id);
     const aborted = new Promise<never>((_, reject) =>
       signal.addEventListener(
@@ -490,6 +503,21 @@ export function createOutbox(
       onAccepted(signed);
     } catch (error) {
       const latest = find(id);
+      // The relay checks duplicates before age, so this refusal proves the
+      // event never landed: re-stamp it once instead of leaving it stuck.
+      if (
+        !closed &&
+        latest &&
+        error instanceof PublishRejected &&
+        error.message.includes(STALE_TIMESTAMP) &&
+        restampable(latest) &&
+        !restamped.has(id) &&
+        attempt.previousDelivery !== "accepted" &&
+        attempt.previousDelivery !== "seen"
+      ) {
+        stale = latest;
+        return;
+      }
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
@@ -533,6 +561,8 @@ export function createOutbox(
       total();
       clearTimeout(attempt.timer);
       if (attempts.get(id) === attempt) attempts.delete(id);
+      restamped.delete(id);
+      if (stale && find(id) === stale) restamp(stale);
       const observed = find(id);
       if (
         !closed &&
@@ -552,6 +582,85 @@ export function createOutbox(
         for (const queued of snapshot)
           if (queued.delivery === "sending") void deliver(queued.event.id);
     }
+  }
+  function stamp(input: Pick<EventTemplate, "kind" | "content" | "tags">) {
+    // Rendered messages carry send order within their second; the optimistic
+    // row and the signed event share this exact ms and created_at.
+    const channelId = channelRowKind(input.kind)
+      ? input.tags.find(([name]) => name === "h")?.[1]
+      : undefined;
+    const ms = channelId ? clock.next(channelId) : Date.now();
+    let createdAt = Math.floor(ms / 1000);
+    if (input.kind === 40003) {
+      if (!hydrated)
+        throw new Error("Message history is still loading. Try again.");
+      const target = input.tags.find(([name]) => name === "e")?.[1];
+      const channel = input.tags.find(([name]) => name === "h")?.[1];
+      // Edits use second precision on every client. Preserve retained local
+      // submission order without changing the protocol's event-ID tie-break.
+      for (const { event } of visible) {
+        if (
+          target &&
+          channel &&
+          event.kind === 40003 &&
+          event.pubkey === viewer &&
+          event.tags.some(([name, id]) => name === "e" && id === target) &&
+          event.tags.some(([name, id]) => name === "h" && id === channel)
+        )
+          createdAt = Math.max(createdAt, event.created_at + 1);
+      }
+      // Stay well inside the signer's 15-minute clock-skew allowance.
+      if (createdAt > Math.floor(ms / 1000) + 60)
+        throw new Error(
+          "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
+        );
+    }
+    const template = {
+      ...input,
+      pubkey: viewer,
+      created_at: createdAt,
+      tags: [
+        ...input.tags.map((tag) => [...tag]),
+        ["client-id", crypto.randomUUID()],
+        ...(channelId ? [["ms", String(ms % 1000)]] : []),
+      ],
+    };
+    const event = Object.freeze({
+      ...template,
+      tags: Object.freeze(
+        template.tags.map((tag) => Object.freeze(tag)),
+      ) as unknown as string[][],
+      id: getEventHash(template),
+    });
+    return event;
+  }
+  /** Replace a never-delivered chat message with a freshly stamped copy in the
+   * same queue position, then deliver the copy. */
+  function restamp(item: OutgoingEvent) {
+    const event = stamp({
+      kind: item.event.kind,
+      content: item.event.content,
+      tags: item.event.tags.filter(
+        ([name]) => name !== "client-id" && name !== "ms",
+      ),
+    });
+    deliveryWork.delete(item.event.id);
+    restamped.add(event.id);
+    replaced.set(item.event.id, event.id);
+    captureSend(event);
+    snapshot = Object.freeze(
+      snapshot.map((old) =>
+        old.event.id === item.event.id
+          ? Object.freeze({ event, delivery: "sending" as const })
+          : old,
+      ),
+    );
+    notify();
+    // One save commits the copy and drops the stale original together.
+    const intent = persist(event.id);
+    void intent.catch(() => {});
+    schedule(event.id, intent);
+    return event.id;
   }
   const subscribe = (set: Set<() => void>, listener: () => void) => {
     set.add(listener);
@@ -657,54 +766,7 @@ export function createOutbox(
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
-      // Rendered messages carry send order within their second; the optimistic
-      // row and the signed event share this exact ms and created_at.
-      const channelId = channelRowKind(input.kind)
-        ? input.tags.find(([name]) => name === "h")?.[1]
-        : undefined;
-      const ms = channelId ? clock.next(channelId) : Date.now();
-      let createdAt = Math.floor(ms / 1000);
-      if (input.kind === 40003) {
-        if (!hydrated)
-          throw new Error("Message history is still loading. Try again.");
-        const target = input.tags.find(([name]) => name === "e")?.[1];
-        const channel = input.tags.find(([name]) => name === "h")?.[1];
-        // Edits use second precision on every client. Preserve retained local
-        // submission order without changing the protocol's event-ID tie-break.
-        for (const { event } of visible) {
-          if (
-            target &&
-            channel &&
-            event.kind === 40003 &&
-            event.pubkey === viewer &&
-            event.tags.some(([name, id]) => name === "e" && id === target) &&
-            event.tags.some(([name, id]) => name === "h" && id === channel)
-          )
-            createdAt = Math.max(createdAt, event.created_at + 1);
-        }
-        // Stay well inside the signer's 15-minute clock-skew allowance.
-        if (createdAt > Math.floor(ms / 1000) + 60)
-          throw new Error(
-            "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
-          );
-      }
-      const template = {
-        ...input,
-        pubkey: viewer,
-        created_at: createdAt,
-        tags: [
-          ...input.tags.map((tag) => [...tag]),
-          ["client-id", crypto.randomUUID()],
-          ...(channelId ? [["ms", String(ms % 1000)]] : []),
-        ],
-      };
-      const event = Object.freeze({
-        ...template,
-        tags: Object.freeze(
-          template.tags.map((tag) => Object.freeze(tag)),
-        ) as unknown as string[][],
-        id: getEventHash(template),
-      });
+      const event = stamp(input);
       if (active) admissionGates.set(event.id, active);
       captureSend(event);
       profiling.measure("send.local", event.id, () => {
@@ -727,7 +789,11 @@ export function createOutbox(
       schedule(event.id, intent);
       return event.id;
     },
-    retry(id: string, active?: () => boolean) {
+    retry(requested: string, active?: () => boolean) {
+      let id = requested;
+      // Callers may still hold the id of a message that was re-stamped.
+      for (let next = replaced.get(id); next; next = replaced.get(id))
+        id = next;
       const item = find(id);
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
         throw new DOMException("Channel addition cancelled", "AbortError");
@@ -744,6 +810,14 @@ export function createOutbox(
         // Promote that intent before scheduling so signing and publication honor
         // the renewed caller policy, including after the next hydration.
         if (active) admissionGates.set(id, active);
+        if (
+          item.delivery === "failed" &&
+          item.error?.includes(STALE_TIMESTAMP) &&
+          restampable(item)
+        ) {
+          restamp(item);
+          return;
+        }
         if (item.delivery === "failed" || item.delivery === "unknown")
           captureSend(item.event);
         replace({

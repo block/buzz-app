@@ -1,9 +1,9 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
-  isLinuxDesktop,
-  LinuxWindowControls,
-} from "../../app/shell/LinuxWindowControls";
+  hasIntegratedWindowControls,
+  WindowControls,
+} from "../../app/shell/WindowControls";
 import { macTitleBarDragHandlers } from "../../app/shell/title-bar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -20,17 +20,17 @@ export function IdentitySetup({
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
   const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
-  const linuxDesktop = isLinuxDesktop();
+  const integratedWindowControls = hasIntegratedWindowControls();
   if (state.status === "ready") return children;
   return (
     <main className="p-8" aria-labelledby="identity-setup-title">
-      {(macDesktop || linuxDesktop) && (
+      {(macDesktop || integratedWindowControls) && (
         <header
           className="-mx-8 -mt-8 mb-8 flex h-14 items-center justify-end px-3"
-          data-tauri-drag-region={linuxDesktop || undefined}
+          data-tauri-drag-region={integratedWindowControls || undefined}
           {...(macDesktop ? macTitleBarDragHandlers : {})}
         >
-          <LinuxWindowControls />
+          <WindowControls />
         </header>
       )}
       <h1 id="identity-setup-title" className="text-heading">

@@ -8,14 +8,14 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 
-export function isLinuxDesktop() {
-  return isTauri() && /Linux/i.test(navigator.platform);
+export function hasIntegratedWindowControls() {
+  return isTauri() && /^(Linux|Win)/i.test(navigator.platform);
 }
 
 /** App-owned chrome shared by the shell and pre-identity screen. */
-export function LinuxWindowControls() {
+export function WindowControls() {
   const [error, setError] = useState<string>();
-  if (!isLinuxDesktop()) return null;
+  if (!hasIntegratedWindowControls()) return null;
   const run = async (action: () => Promise<void>) => {
     setError(undefined);
     try {

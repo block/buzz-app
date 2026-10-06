@@ -134,7 +134,7 @@ export function SearchResults({
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
     lookupFailed?: boolean;
-    candidates: readonly { pubkey: string; profile: Profile }[];
+    remote: readonly EventData[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
   const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
@@ -237,9 +237,6 @@ export function SearchResults({
             // A partial directory still contains verified member profiles.
           }
         }
-        const memberProfiles = [...session.profiles.snapshot()].filter(
-          ([pubkey]) => members.includes(pubkey),
-        );
         let remote: readonly EventData[] = [];
         let lookupFailed = false;
         if (authorNeedle) {
@@ -265,61 +262,10 @@ export function SearchResults({
           }
         }
         controller.signal.throwIfAborted();
-        const inventory = session.agentChoices.snapshot();
-        const knownAgents = new Set(
-          inventory.identities.map(({ pubkey }) => pubkey),
-        );
-        const candidates = new Map([
-          ...memberProfiles,
-          ...inventory.selectable.map(
-            (agent) =>
-              [
-                agent.pubkey,
-                session.profiles.snapshot().get(agent.pubkey) ?? {
-                  name: agent.name,
-                  isAgent: true as const,
-                  ...(agent.avatar ? { picture: agent.avatar } : {}),
-                },
-              ] as const,
-          ),
-          ...foldProfiles(remote),
-        ]);
-        setAuthorSuggestions({
-          query,
-          lookupFailed,
-          candidates: [...candidates]
-            .filter(([, profile]) =>
-              profile.name.toLowerCase().startsWith(authorNeedle),
-            )
-            .filter(
-              ([pubkey]) =>
-                !archivedMention(session, pubkey) &&
-                (!knownAgents.has(pubkey) ||
-                  inventory.selectable.some(
-                    (agent) => agent.pubkey === pubkey,
-                  )),
-            )
-            // Exact names must survive the cap when the author resolver
-            // reports ambiguity; otherwise neither identity can be selected.
-            .sort(
-              ([left, leftProfile], [right, rightProfile]) =>
-                Number(
-                  rightProfile.name.trim().toLowerCase() === authorNeedle,
-                ) -
-                  Number(
-                    leftProfile.name.trim().toLowerCase() === authorNeedle,
-                  ) ||
-                Number(!!leftProfile.isAgent || knownAgents.has(left)) -
-                  Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
-                Number(members.includes(right)) -
-                  Number(members.includes(left)),
-            )
-            .slice(0, 12)
-            .map(([pubkey, profile]) => ({ pubkey, profile })),
-        });
+        setAuthorSuggestions({ query, lookupFailed, remote });
       })().catch(() => {
         if (!controller.signal.aborted)
-          setAuthorSuggestions({ query, candidates: [], lookupFailed: true });
+          setAuthorSuggestions({ query, remote: [], lookupFailed: true });
       });
     }, 180);
     return () => {
@@ -327,18 +273,54 @@ export function SearchResults({
       controller.abort();
     };
   }, [session, effectiveChannelId, query, authorNeedle, showAuthorPicker]);
+  const members = effectiveChannelId
+    ? (session.channels.get?.(effectiveChannelId)?.members ?? [])
+    : [];
+  const knownAgents = new Set(agents.identities.map(({ pubkey }) => pubkey));
   const selectableAgents = new Map(
     agents.selectable.map((agent) => [agent.pubkey, agent]),
   );
+  const candidates = new Map([
+    ...[...profiles].filter(([pubkey]) => members.includes(pubkey)),
+    ...agents.selectable.map(
+      (agent) =>
+        [
+          agent.pubkey,
+          profiles.get(agent.pubkey) ?? {
+            name: agent.name,
+            isAgent: true as const,
+            ...(agent.avatar ? { picture: agent.avatar } : {}),
+          },
+        ] as const,
+    ),
+    ...foldProfiles(
+      authorSuggestions?.query === query ? authorSuggestions.remote : [],
+    ),
+  ]);
   const authorChoices =
     authorToken && showAuthorPicker && authorSuggestions?.query === query
-      ? authorSuggestions.candidates
-          .filter(
-            ({ pubkey }) =>
-              !archivedMention(session, pubkey) &&
-              (selectableAgents.has(pubkey) ||
-                !agents.identities.some((agent) => agent.pubkey === pubkey)),
+      ? [...candidates]
+          .filter(([, profile]) =>
+            profile.name.toLowerCase().startsWith(authorNeedle),
           )
+          .filter(
+            ([pubkey]) =>
+              !archivedMention(session, pubkey) &&
+              (!knownAgents.has(pubkey) || selectableAgents.has(pubkey)),
+          )
+          // Exact names survive the cap when the resolver reports ambiguity.
+          .sort(
+            ([left, leftProfile], [right, rightProfile]) =>
+              Number(rightProfile.name.trim().toLowerCase() === authorNeedle) -
+                Number(
+                  leftProfile.name.trim().toLowerCase() === authorNeedle,
+                ) ||
+              Number(!!leftProfile.isAgent || knownAgents.has(left)) -
+                Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
+              Number(members.includes(right)) - Number(members.includes(left)),
+          )
+          .slice(0, 12)
+          .map(([pubkey, profile]) => ({ pubkey, profile }))
           .map(({ pubkey, profile }) => {
             const agent = selectableAgents.get(pubkey);
             const isAgent = !!agent || !!profile.isAgent;
@@ -362,8 +344,21 @@ export function SearchResults({
               },
               isAgent,
               run: () => {
-                const prefix = `${query.slice(0, authorToken.index)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}`;
-                const nextQuery = `${prefix}from:${pubkey}${query.slice(authorToken.index + authorToken[0].length) || " "}`;
+                // A chip owns exactly one signed author operand. Strip that
+                // span before replacing the visible prompt, preserving all
+                // other text and operators in their original order.
+                const oldStart = showAuthorChip ? selectedIndex : -1;
+                const oldEnd = oldStart + authorOperand.length;
+                const withoutChip = showAuthorChip
+                  ? `${query.slice(0, oldStart)}${query.slice(oldEnd).replace(/^\s/, "")}`
+                  : query;
+                const promptIndex =
+                  authorToken.index -
+                  (showAuthorChip && oldStart < authorToken.index
+                    ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
+                    : 0);
+                const prefix = `${withoutChip.slice(0, promptIndex)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}`;
+                const nextQuery = `${prefix}from:${pubkey}${withoutChip.slice(promptIndex + authorToken[0].length) || " "}`;
                 setSelectedAuthor({
                   query: nextQuery,
                   pubkey,

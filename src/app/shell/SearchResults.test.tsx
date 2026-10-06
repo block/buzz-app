@@ -1744,6 +1744,162 @@ it.each([
   },
 );
 
+it("adds a late shared agent without another keystroke or prefix read", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query() {
+      return [];
+    },
+  });
+  const reads = vi.fn(async () => []);
+  const source = owner.session.agentChoices;
+  const listeners = new Set<() => void>();
+  let choices = source.snapshot();
+  const session = {
+    ...owner.session,
+    read: reads,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="from:late"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
+    act(() => {
+      choices = {
+        ...choices,
+        identities: [
+          { pubkey: agent.pubkey, name: "Late Agent", managed: false },
+        ],
+        selectable: [
+          { pubkey: agent.pubkey, name: "Late Agent", managed: false },
+        ],
+      };
+      for (const listener of listeners) listener();
+    });
+    expect(
+      within(screen.getByRole("group", { name: "Agents" })).getByRole(
+        "option",
+        { name: /Late Agent/ },
+      ),
+    ).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(reads).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("replaces an author chip without leaking or restoring the previous filter", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair(),
+    bob = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(alice, { display_name: "Alice" }),
+          profile(bob, { display_name: "Bob" }),
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve(
+        [
+          metadata(relay, "crew", "crew"),
+          roster(relay, "crew", [viewer.pubkey]),
+        ].filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  function Search() {
+    const [query, setQuery] = useState(
+      "deploy in:crew after:2026-10-01 from:alice",
+    );
+    return (
+      <SearchResults
+        session={owner.session}
+        query={query}
+        onQueryChange={setQuery}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />
+    );
+  }
+  try {
+    render(<Search />);
+    fireEvent.click(
+      await within(screen.getByRole("group", { name: "People" })).findByRole(
+        "option",
+        { name: /Alice/ },
+      ),
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(
+      screen.getByRole("button", { name: "Remove author Alice" }),
+    ).toBeVisible();
+    fireEvent.change(input, {
+      target: { value: "deploy in:crew after:2026-10-01 from:bob" },
+    });
+    fireEvent.click(
+      await within(screen.getByRole("group", { name: "People" })).findByRole(
+        "option",
+        { name: /Bob/ },
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove author Alice" }),
+    ).toBeNull();
+    expect(input).toHaveValue("deploy in:crew after:2026-10-01 ");
+    expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({ authors: [bob.pubkey] }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove author Bob" }));
+    expect(input).toHaveValue("deploy in:crew after:2026-10-01 ");
+    expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
+    expect((input as HTMLInputElement).value).not.toContain(bob.pubkey);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).not.toHaveProperty("authors"),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("renders from:<author chip> without exposing the signed operand in the input", async () => {
   const relay = keypair(),
     viewer = keypair(),

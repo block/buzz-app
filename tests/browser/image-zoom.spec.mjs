@@ -1,14 +1,35 @@
 import { test, expect } from "@playwright/test";
 import react from "@vitejs/plugin-react";
+import { crc32, deflateSync } from "node:zlib";
 import { createServer } from "./vite-server.mjs";
 
-const picture = (name, width, height) => ({
-  name,
-  mimeType: "image/svg+xml",
-  buffer: Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#d9e7e3"/><circle cx="50%" cy="50%" r="20%" fill="#cda97c"/></svg>`,
-  ),
-});
+// Solid raster PNGs: native builds download SVG attachments instead of
+// rendering them, so the viewer must be exercised with a supported format.
+const chunk = (type, data) => {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+};
+const picture = (name, width, height) => {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x9e)]);
+  return {
+    name,
+    mimeType: "image/png",
+    buffer: Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", header),
+      chunk("IDAT", deflateSync(Buffer.concat(Array(height).fill(row)))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
+  };
+};
 
 // Reads the rendered zoom geometry the way the viewer computes it.
 const geometry = (image) =>
@@ -63,8 +84,8 @@ test("clicking a gallery image zooms in and out without closing or navigating", 
     await form
       .getByLabel("Choose attachments")
       .setInputFiles([
-        picture("panorama.svg", 6000, 600),
-        picture("portrait.svg", 240, 900),
+        picture("panorama.png", 6000, 600),
+        picture("portrait.png", 240, 900),
       ]);
     await expect(form.getByText(/Queued$/)).toHaveCount(2);
     await form

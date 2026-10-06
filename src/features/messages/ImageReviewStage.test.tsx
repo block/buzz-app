@@ -720,3 +720,52 @@ it("describes click zoom and resets it when the gallery changes image", () => {
     screen.getByRole("img", { name: "Attachment preview" }),
   ).toHaveAccessibleDescription("Click the image to zoom.");
 });
+
+it("does not zoom the next gallery image with a press held across navigation", () => {
+  gallery();
+  const image = screen.getByRole("img", { name: "Attachment preview" });
+  const stage = image.parentElement;
+  if (!stage) throw new Error("Missing stage");
+  fireEvent.pointerDown(image, { pointerId: 1, button: 0 });
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("2 / 3")).toBeVisible();
+  fireEvent.pointerUp(stage, { pointerId: 1 });
+  expect(percent()).toBe("100%");
+  press(screen.getByRole("img", { name: "Attachment preview" }), {
+    x: 0,
+    y: 0,
+  });
+  expect(percent()).toBe("200%");
+});
+
+it.each([
+  ["second", [2, 1]],
+  ["first", [1, 2]],
+])(
+  "treats overlapping contacts as a gesture when the %s contact lifts first",
+  (_, order) => {
+    const { stage, image } = setup();
+    for (const pointerId of [1, 2])
+      fireEvent.pointerDown(image, { pointerId, button: 0, clientX: 250 });
+    for (const pointerId of order)
+      fireEvent.pointerUp(stage, { pointerId, clientX: 250 });
+    expect(percent()).toBe("100%");
+    press(image, { x: 250, y: 200 });
+    expect(percent()).toBe("200%");
+  },
+);
+
+it.each(["pointerCancel", "lostPointerCapture"] as const)(
+  "ends only the owning press on %s",
+  (type) => {
+    const { stage, image } = setup();
+    fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 250 });
+    fireEvent[type](stage, { pointerId: 2 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
+    expect(percent()).toBe("200%");
+    fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 250 });
+    fireEvent[type](stage, { pointerId: 1 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
+    expect(percent()).toBe("200%");
+  },
+);

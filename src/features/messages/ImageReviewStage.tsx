@@ -54,9 +54,10 @@ export function ImageReviewStage({
         pointer: number;
         origin: Point;
         offset: Point;
-        onImage: boolean;
+        source: string | undefined;
         panning: boolean;
-        moved: boolean;
+        // Cleared by pointer travel, a second contact, or pressing off the image.
+        click: boolean;
       }
     | undefined
   >(undefined);
@@ -223,13 +224,18 @@ export function ImageReviewStage({
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
+        if (press.current) {
+          // Multi-touch is not a click; the first contact keeps the pan.
+          press.current.click = false;
+          return;
+        }
         press.current = {
           pointer: event.pointerId,
           origin: { x: event.clientX, y: event.clientY },
           offset,
-          onImage: event.target === image.current,
+          source,
           panning: pannable,
-          moved: false,
+          click: event.target === image.current,
         };
         // Capture so the release always ends this press, even off the stage.
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -240,7 +246,7 @@ export function ImageReviewStage({
         if (!active || active.pointer !== event.pointerId) return;
         const dx = event.clientX - active.origin.x;
         const dy = event.clientY - active.origin.y;
-        if (Math.hypot(dx, dy) > CLICK_SLOP) active.moved = true;
+        if (Math.hypot(dx, dy) > CLICK_SLOP) active.click = false;
         if (active.panning)
           panTo({ x: active.offset.x + dx, y: active.offset.y + dy });
       }}
@@ -250,14 +256,17 @@ export function ImageReviewStage({
         press.current = undefined;
         setDragging(false);
         event.currentTarget.releasePointerCapture(event.pointerId);
-        if (active.onImage && !active.moved)
+        // A press that outlived its image must not zoom the replacement.
+        if (active.click && active.source === source)
           toggleZoomAt(event.clientX, event.clientY);
       }}
-      onLostPointerCapture={() => {
+      onLostPointerCapture={(event) => {
+        if (press.current?.pointer !== event.pointerId) return;
         press.current = undefined;
         setDragging(false);
       }}
-      onPointerCancel={() => {
+      onPointerCancel={(event) => {
+        if (press.current?.pointer !== event.pointerId) return;
         press.current = undefined;
         setDragging(false);
       }}

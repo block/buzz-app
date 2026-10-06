@@ -779,6 +779,29 @@ download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
 
+### Bundled CLI skill
+
+Before restoring local agents, the native host installs the embedded `buzz-cli`
+skill at `~/.buzz/.agents/skills/buzz-cli/SKILL.md`, including on a fresh machine.
+Development builds also use `~/.buzz`, so a desktop dev run writes to this real
+workspace and may migrate a legacy Claude-only skill there.
+On macOS/Linux, Claude, Codex and Goose discover it through relative directory
+symlinks under `.claude/skills`, `.codex/skills` and `.goose/skills` in that workspace.
+Windows receives the canonical file, matching the old desktop's Unix-only links.
+Existing real provider directories and valid links are preserved; dangling links
+are repaired. A redirected provider directory is reported and skipped without
+blocking the canonical file or the other providers' links. The old Claude-only
+layout moves to the canonical location, preserving edited content and supporting files.
+
+`crates/agent-controller/src/buzz_cli_skill.md` is copied from the old desktop at
+the revision in `runtime/agent-runtime.json`. Its installer uses the old desktop's
+`.skill-version` marker: current or newer installations stay untouched, while
+missing content is repaired and older templates are refreshed atomically.
+Update `CLI_SKILL_VERSION` in `skills.rs` when adopting a newer template, keeping
+it aligned with the upstream template version. No skill download or old-app
+installation is required. Custom agent workspaces are not modified. Installation
+errors are logged without preventing the app from opening.
+
 ### Updating the agent runtime
 
 Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
@@ -786,6 +809,12 @@ Update the library pin in `src-tauri/Cargo.toml` and the bundle pin in
 dependency upgrades. The runtime integration test checks that both pins name the
 same repository and immutable revision; the native synthetic manifest reads the
 runtime spec rather than carrying another copy of the pin.
+
+When changing the Buzz revision, re-copy
+`desktop/src-tauri/src/managed_agents/nest_skill.md` from that revision into
+`crates/agent-controller/src/buzz_cli_skill.md`. Set `CLI_SKILL_VERSION` in
+`skills.rs` to upstream's `NEST_SKILL_VERSION`, preserving its shared version
+policy with the old desktop. Check the new file against the pinned CLI behavior.
 
 Goose upgrades change only the `goose` source/build settings in the runtime spec;
 they do not require changing the Buzz library or tool revision. Logical

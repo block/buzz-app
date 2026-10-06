@@ -111,6 +111,17 @@ pub(crate) fn seed(dir: &std::path::Path) -> String {
     id
 }
 #[test]
+fn native_host_provisions_cli_skill_before_agent_controls_are_used() {
+    let (dir, _host, _app, _view) = fixture();
+    let skill = dir
+        .path()
+        .join("workspace/.agents/skills/buzz-cli/SKILL.md");
+    assert!(std::fs::read_to_string(skill)
+        .unwrap()
+        .contains("name: buzz-cli"));
+}
+
+#[test]
 fn production_acl_allows_delete_to_reach_native_credentials() {
     let (dir, _host, _app, view) = fixture();
     let id = seed(dir.path());

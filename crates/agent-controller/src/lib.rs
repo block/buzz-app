@@ -20,6 +20,7 @@ mod restart;
 mod runtime;
 mod secret;
 pub mod security;
+mod skills;
 mod store;
 mod supervisor;
 #[cfg(test)]
@@ -42,5 +43,6 @@ pub use runtime::{
     ModelContext,
 };
 pub use secret::{Credentials, Secret};
+pub use skills::ensure_buzz_cli_skill;
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

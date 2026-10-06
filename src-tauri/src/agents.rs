@@ -434,6 +434,10 @@ impl Host {
         bundle: Result<RuntimeBundle, String>,
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
+        // Provision before restoring agents; failures remain nonfatal, as in old Buzz.
+        if let Err(error) = buzz_agent_controller::ensure_buzz_cli_skill(&workspace) {
+            eprintln!("buzz: failed to install CLI skill: {error}");
+        }
         let app_data = root
             .parent()
             .ok_or("Invalid local agent storage")?

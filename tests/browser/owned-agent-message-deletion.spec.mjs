@@ -1,6 +1,20 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+const opened = async (menu) => {
+  await expect(menu).toBeVisible();
+  await menu.evaluate((node) =>
+    Promise.all(
+      node
+        .getAnimations({ subtree: true })
+        .filter(
+          (animation) =>
+            animation.effect?.getComputedTiming().endTime !== Infinity,
+        )
+        .map((animation) => animation.finished),
+    ),
+  );
+};
 test.use({
   productionBroker: true,
   readState: true,
@@ -27,6 +41,8 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
     exact: true,
   });
   await expect(action).toBeVisible();
+  const actionMenu = page.getByRole("menu");
+  await opened(actionMenu);
   await page.screenshot({
     path: testInfo.outputPath("owned-agent-delete-menu.png"),
   });

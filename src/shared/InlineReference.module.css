@@ -33,7 +33,9 @@ html[data-keyboard-navigation] .link:focus-visible {
   width: 1em;
   height: 1em;
   margin-right: calc(var(--space-half) * 1.5);
-  vertical-align: -0.125em;
+  /* Centre on the label's x-height, as inline emoji do, instead of riding the
+     baseline with the glyph poking above the capitals. */
+  vertical-align: middle;
 }
 
 .lead {

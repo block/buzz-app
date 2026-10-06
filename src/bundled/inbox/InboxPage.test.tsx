@@ -602,6 +602,30 @@ async function chooseFilter(label: string, control = "Activity type") {
     ),
   );
 }
+it("restores Inbox filters after leaving and reopening the page", async () => {
+  const h = fixture({ withSenders: true });
+  const { unmount } = render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  await chooseFilter("Agents", "Sender");
+  await chooseFilter("Unresponded only", "Filters");
+
+  unmount();
+  render(h.view);
+
+  await waitFor(() => {
+    expect(
+      screen.getByRole("combobox", { name: "Activity type" }),
+    ).toHaveTextContent("Mentions");
+    expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+      "Agents",
+    );
+    expect(screen.getByRole("combobox", { name: "Filters" })).toHaveTextContent(
+      "Unresponded only",
+    );
+  });
+});
+
 it("Mentions uses the mentioned message and excludes ordinary unread thread progress", async () => {
   const h = fixture();
   render(h.view);

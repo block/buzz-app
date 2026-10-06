@@ -186,7 +186,7 @@ describe("serializeNode", () => {
   });
 
   it.each(["", "\n", "\n\n\n"])(
-    "preserves paragraph spacing with DOM separator %j",
+    "drops renderer whitespace between paragraphs with DOM separator %j",
     (spacing) => {
       const body = mount(row(`<p>First</p>${spacing}<p>Second</p>`));
       const { selection } = select(
@@ -195,9 +195,7 @@ describe("serializeNode", () => {
         lastText(query("p:last-child", body)),
         3,
       );
-      expect(serializeSelection(selection, "text")).toBe(
-        `irst${spacing.length > 2 ? spacing : "\n\n"}Sec`,
-      );
+      expect(serializeSelection(selection, "text")).toBe("irst\n\nSec");
       const html = document.createElement("div");
       html.dataset.buzzCopy = "timeline";
       html.innerHTML = serializeSelection(selection, "html");
@@ -232,7 +230,7 @@ describe("serializeNode", () => {
       1,
     );
     expect(serializeSelection(selection, "text")).toBe(
-      "First\nSecond @Morgan\na\t\tc",
+      "First\nSecond @Morgan\n\na\t\tc",
     );
     expect(serializeSelection(selection, "markdown")).toBe(
       `First\nSecond [@Morgan](${target})\na\t\tc`,
@@ -275,7 +273,7 @@ describe("serializeNode", () => {
       ),
     );
     expect(each(query("[data-message-id]", body))).toEqual({
-      text: "bold it gone ls\nnext\necho hi\nls",
+      text: "bold it gone ls\nnext\n\necho hi\nls",
       markdown: "**bold** _it_ ~~gone~~ `ls`\nnext\n\n```sh\necho hi\nls\n```",
       html: '<p><strong>bold</strong> <em>it</em> <s>gone</s> <code>ls</code><br>next</p><pre><code class="language-sh">echo hi\nls</code></pre>',
     });
@@ -326,7 +324,7 @@ describe("serializeNode", () => {
       ),
     );
     expect(each(query("[data-message-id]", body))).toEqual({
-      text: "one\ntwo b\nfirst\nsub\nquoted\ndeep\nls",
+      text: "one\ntwo b\n\nfirst\n\nsub\n\nquoted\n\ndeep\n\nls",
       markdown:
         "- one\n- two **b**\n\n3. first\n   \n   - sub\n\n> quoted\n>\n> > deep\n\n```sh\nls\n```",
       html: '<ul><li>one</li><li>two <strong>b</strong></li></ul><ol start="3"><li><p>first</p><ul><li>sub</li></ul></li></ol><blockquote><p>quoted</p><blockquote><p>deep</p></blockquote></blockquote><pre><code class="language-sh">ls</code></pre>',

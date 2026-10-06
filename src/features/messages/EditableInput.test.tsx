@@ -2618,6 +2618,7 @@ it("uses plain text when pasting rich content into an existing code block", asyn
 
 it.each([
   ["First\n\nSecond", "First\n\nSecond"],
+  ["First\nSecond", "First\nSecond"],
   ["> First\n>\n> Second", "First\n\nSecond"],
   ["- one\n- two", "one\ntwo"],
   ["3. first\n4. second", "first\nsecond"],
@@ -2625,9 +2626,10 @@ it.each([
   ["```sh\necho hi\n```", "echo hi\n"],
   ["```sh\necho hi\n\n```", "echo hi\n\n"],
   ["| a | b |\n| - | - |\n| 1 | 2 |", "a\tb\n1\t2"],
+  ["para\n\n```sh\necho hi\n```\n\nafter", "para\n\necho hi\n\nafter"],
   [
     "intro\n\n- one\n- two\n\n> quoted\n\nouter",
-    "intro\n\none\ntwo\n\n\nquoted\n\nouter",
+    "intro\n\none\ntwo\n\nquoted\n\nouter",
   ],
 ])(
   "copies real timeline structure through the composer: %s",

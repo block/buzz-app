@@ -239,12 +239,17 @@ function escapeHtml(value: string): string {
 }
 
 function clip(node: Text, range?: Range): string {
-  const value = node.data;
-  if (!range) return value;
-  return value.slice(
-    node === range.startContainer ? range.startOffset : 0,
-    node === range.endContainer ? range.endOffset : value.length,
+  const start = range && node === range.startContainer ? range.startOffset : 0;
+  const value = node.data.slice(
+    start,
+    range && node === range.endContainer ? range.endOffset : undefined,
   );
+  // The renderer writes a hard break as `<br>\n`; that newline is formatting.
+  return start === 0 &&
+    node.previousSibling?.nodeName === "BR" &&
+    value.startsWith("\n")
+    ? value.slice(1)
+    : value;
 }
 
 /** A chip keeps its identity only when all of its text is selected. */
@@ -266,11 +271,7 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
   let text = "";
   let previous: Node | undefined;
   for (const child of node.childNodes) {
-    if (
-      (range && !range.intersectsNode(child)) ||
-      (format === "html" && formatting(child))
-    )
-      continue;
+    if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
     const value = serialize(
       child,
       format,
@@ -294,7 +295,7 @@ function children(node: Node, format: CopyFormat, range?: Range): string {
     )
       text += separator;
     text += value;
-    if (!formatting(child)) previous = child;
+    previous = child;
   }
   return text;
 }
@@ -309,9 +310,14 @@ function siblingSeparator(previous: Node, current: Node) {
   const currentTag = current instanceof Element ? current.tagName : "";
   if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
     return "\t";
-  if (previousTag === "P" && currentTag === "P") return "\n\n";
+  // Markdown separates blocks with a blank line, as the composer's serializer
+  // does; list items, table rows and layout containers are single lines.
+  if (markdownBlock.test(previousTag) && markdownBlock.test(currentTag))
+    return "\n\n";
   return blockTag.test(previousTag) || blockTag.test(currentTag) ? "\n" : "";
 }
+
+const markdownBlock = /^(P|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE)$/;
 
 /** Whitespace between rendered blocks is formatting; blocks supply separators. */
 function formatting(node: Node): boolean {

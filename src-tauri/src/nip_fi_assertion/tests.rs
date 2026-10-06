@@ -269,11 +269,8 @@ async fn issue_raw(response: Vec<u8>, signed_at: u64) -> Result<Assertion> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = Url::parse(&format!(
-        "http://{}{ASSERTION_PATH}",
-        listener.local_addr().unwrap()
-    ))
-    .unwrap();
+    let service = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let endpoint = service.join(ASSERTION_PATH).unwrap();
     let server = tokio::spawn(async move {
         let (mut tcp, _) = listener.accept().await.unwrap();
         let mut request = [0; 16 * 1024];
@@ -281,6 +278,7 @@ async fn issue_raw(response: Vec<u8>, signed_at: u64) -> Result<Assertion> {
         tcp.write_all(&response).await.unwrap();
     });
 
+    let _environment = BuilderLabEnv::new(&service);
     let home = TempDir::new().unwrap();
     let owner = owner(&home);
     save(&owner, "raw-response", "fixture-cli-session").await;

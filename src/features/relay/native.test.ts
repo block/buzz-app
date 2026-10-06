@@ -159,13 +159,15 @@ it("routes operator-only filtered message reads over packaged native HTTP", asyn
   const transport = await connectNativeTransport(community);
   const hit = message(viewer, "channel", "recent", 1800000000);
   respond = () => ({ body: [hit] });
-  const filters = [{
-    kinds: [9, 40002, 40008],
-    authors: [viewer.pubkey],
-    "#h": ["channel"],
-    since: 1700000000,
-    limit: 20,
-  }];
+  const filters = [
+    {
+      kinds: [9, 40002, 40008],
+      authors: [viewer.pubkey],
+      "#h": ["channel"],
+      since: 1700000000,
+      limit: 20,
+    },
+  ];
   await expect(transport.query(filters)).resolves.toEqual([hit]);
   expect(requests.at(-1)).toMatchObject({
     community,

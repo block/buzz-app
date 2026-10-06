@@ -180,12 +180,18 @@ it("preserves one server ranking above 128 joined channels and opens a public ex
 });
 
 it("resolves public authority for operator-only global reads without widening visibility", async () => {
-  const viewer = keypair(), relay = keypair();
+  const viewer = keypair(),
+    relay = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const owner = createRelaySession(wire.transport);
-  const filters = [{
-    kinds: [9], authors: [viewer.pubkey], since: 1700000000, limit: 20,
-  }];
+  const filters = [
+    {
+      kinds: [9],
+      authors: [viewer.pubkey],
+      since: 1700000000,
+      limit: 20,
+    },
+  ];
   try {
     const read = owner.session.read(filters).catch((error: unknown) => error);
     await flush();

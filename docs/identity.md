@@ -72,6 +72,28 @@ transport acceptance remains unverified. Only the selected saved community opens
 space stays disconnected. Discovery failure leaves the community retryable.
 Native sessions do **not** fall through to the dev broker signer.
 
+### Shared BuilderLab session
+
+Native enterprise login reads and writes the same credential item that the
+BuilderLab CLI (`bl`) resolves for its configured profile and service. The item
+is shared across Buzz communities and CLI clients using that same profile and
+service; it is not scoped to a Nostr identity or Buzz debug/release build.
+Clearing enterprise sign-in removes this shared credential, so those CLI clients
+may need to sign in again.
+
+Storage follows the pinned BuilderLab CLI configuration: macOS defaults to the
+OS keychain, while its non-macOS default is `auth-sessions.json` under the
+BuilderLab home. The supported file backend can also be selected with
+`BL_AUTH_STORAGE=file` and an optional `BL_AUTH_STORAGE_FILE` path. In-memory
+storage is not shared with Buzz and is rejected.
+
+The CLI's `expiresAt` is optional. When present, Buzz compares it with the
+configured service's session response at whole Unix-second precision, so
+fractional timestamps in the same second are equivalent. Without a CLI expiry,
+Buzz relies on the validated expiry returned by the service. This extraction
+updates the native app owner only; the separate JavaScript path tracked by #581
+and broader loopback auth-server consolidation remain outside its scope.
+
 The native identity owner signs event templates and authenticates HTTP with
 NIP-98, including the exact request URL, method, a body hash on POST and a fresh nonce
 for each attempt. Native networking permits only discovery, join-policy, invite

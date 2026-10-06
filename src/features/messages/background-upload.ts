@@ -67,14 +67,21 @@ function queueFor(session: RelaySession) {
 
 function update(queue: Queue) {
   const files = queue.jobs.flatMap((job) => job.store.snapshot());
-  const total = files.reduce((sum, item) => sum + item.file.size, 0);
-  // Completed files alone would step through fake percentages; show measured
-  // bytes only once a transfer reports them.
-  const measured = files.some((item) => item.progress !== undefined);
+  // A queued or preparing file has no trustworthy transfer total. Completed
+  // files have a validated descriptor even when their host emitted no reports.
+  const known = files.every(
+    (item) => item.status === "ready" || item.transfer !== undefined,
+  );
+  const total = files.reduce(
+    (sum, item) => sum + (item.uploaded?.size ?? item.transfer?.total ?? 0),
+    0,
+  );
   const sent = files.reduce(
     (sum, item) =>
       sum +
-      item.file.size * (item.status === "ready" ? 1 : (item.progress ?? 0)),
+      (item.status === "ready"
+        ? (item.uploaded?.size ?? 0)
+        : (item.transfer?.sent ?? 0)),
     0,
   );
   queue.snapshot = Object.freeze({
@@ -84,7 +91,7 @@ function update(queue: Queue) {
       : files.every((item) => item.status === "ready")
         ? "Finishing"
         : "Preparing",
-    progress: measured && total ? sent / total : null,
+    progress: known && total ? sent / total : null,
     notices: queue.notices,
     host: queue.hosts[0],
   });

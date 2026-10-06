@@ -1076,8 +1076,8 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   // Without byte reports, a finished file does not step the bar to 33%.
   expect(bar).not.toHaveAttribute("aria-valuenow");
   act(() => h.uploadCalls[1]?.progress?.(4, 5));
-  // Measured bytes: one whole file plus 4 of the second's 5, of 15.
-  expect(bar).toHaveAttribute("aria-valuenow", "60");
+  // The third file is not prepared yet; its transfer total is unknown.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(screen.queryByText(/%|\d/)).toBeNull();
   await act(async () => {
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
@@ -1856,6 +1856,96 @@ it.each([
   expect(screen.getByText(/^Upload failed: /)).toBeVisible();
   expect(screen.queryByText(/^Uploading/)).toBeNull();
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("uses transferred sizes after image preparation and resets unknown totals on retry", async () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:photo"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const h = await mountUploadComposer();
+  // A GIF comment is metadata: preparation strips it before transfer.
+  const gif = new File(
+    [
+      new Uint8Array([
+        ...new TextEncoder().encode("GIF89a"),
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0x21,
+        0xfe,
+        4,
+        1,
+        2,
+        3,
+        4,
+        0,
+        0x3b,
+      ]),
+    ],
+    "photo.gif",
+    { type: "image/gif" },
+  );
+  attachByPaste(h.input(), gif);
+  attachByPaste(h.input(), attachmentFile("note.txt", "1234567890"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const first = h.uploadCalls[0];
+  expect(first?.file.size).toBeLessThan(gif.size);
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
+  act(() => first?.progress?.(first.file.size, first.file.size));
+  // The next file has not been prepared: its transfer size is still unknown.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  await act(async () =>
+    first?.result.resolve({
+      ...uploadDescriptor("photo.gif"),
+      size: first.file.size,
+    }),
+  );
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  act(() => h.uploadCalls[1]?.progress?.(5, 10));
+  const expected = Math.round(
+    (((first?.file.size ?? 0) + 5) / ((first?.file.size ?? 0) + 10)) * 100,
+  );
+  expect(bar).toHaveAttribute("aria-valuenow", String(expected));
+  expect(bar.firstElementChild).toHaveStyle({
+    transform: `scaleX(${((first?.file.size ?? 0) + 5) / ((first?.file.size ?? 0) + 10)})`,
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+  await act(async () =>
+    h.uploadCalls[1]?.result.reject(new Error("relay down")),
+  );
+  await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+  await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  const retryBar = screen.getByRole("progressbar", { name: "Uploading" });
+  expect(retryBar).not.toHaveAttribute("aria-valuenow");
+  act(() => first?.progress?.(1, first.file.size));
+  expect(retryBar).not.toHaveAttribute("aria-valuenow");
+  act(() => h.uploadCalls[2]?.progress?.(2, 20));
+  expect(retryBar).toHaveAttribute(
+    "aria-valuenow",
+    String(
+      Math.round(
+        (((first?.file.size ?? 0) + 2) / ((first?.file.size ?? 0) + 20)) * 100,
+      ),
+    ),
+  );
+  await act(async () =>
+    h.uploadCalls[2]?.result.resolve({
+      ...uploadDescriptor("note.txt"),
+      size: 10,
+    }),
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
 });
 
 it("fills the bar for a single-chunk upload while its response is held", async () => {

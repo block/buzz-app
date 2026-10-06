@@ -1100,11 +1100,8 @@ function ChannelWorkspace({
       return;
     drawer.close();
     panelTrigger.current = trigger;
-    const entry = panelTabs.find(
-      (entry) => entry.panel === canvasPanel && entry.channelContext,
-    );
     open(
-      entry ?? {
+      {
         panel: canvasPanel,
         target: drawerContext.channelId,
         channelId: drawerContext.channelId,

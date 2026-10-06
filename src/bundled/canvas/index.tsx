@@ -6,7 +6,7 @@ import type {
 } from "../../features/panels/service";
 import { FileTextIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ChannelCanvasDialog } from "../channels/ChannelCanvasDialog";
+import { CanvasEditor } from "../channels/CanvasEditor";
 
 export const inject = ["panels", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -44,17 +44,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     )
       return <p role="status">Connect to this channel to view canvas.</p>;
     return (
-      <ChannelCanvasDialog
+      <CanvasEditor
         key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
         canvas={state.session.canvas}
         profiles={state.session.profiles}
         scope={state.scope}
         channelId={channelContext.channelId}
-        open
-        presentation="panel"
-        onOpenChange={(open) => {
-          if (!open) close();
-        }}
+        onClose={close}
       />
     );
   }

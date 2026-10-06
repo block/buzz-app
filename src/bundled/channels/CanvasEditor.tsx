@@ -6,7 +6,7 @@ import { CanvasHistory } from "./CanvasHistory";
 import type { RelayEvent } from "../../features/relay/events";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTemplates.module.css";
 import panelStyles from "../canvas/Canvas.module.css";
@@ -16,24 +16,18 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons";
 
 type Draft = { content: string; base: string | null };
-export function ChannelCanvasDialog({
+export function CanvasEditor({
   canvas,
   profiles,
   scope,
   channelId,
-  open,
-  onOpenChange,
-  finalFocus,
-  presentation = "dialog",
+  onClose,
 }: {
-  presentation?: "dialog" | "panel";
   canvas: ChannelCanvas;
   profiles: ProfileQueries;
   scope: string;
   channelId: string;
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  finalFocus?: DialogProps["finalFocus"];
+  onClose(): void;
 }) {
   const tabbed = !!usePanelTabHost();
   const panelId = useId();
@@ -57,8 +51,8 @@ export function ChannelCanvasDialog({
   const operation = useRef(0);
   const editor = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (presentation === "panel" && loaded) editor.current?.focus();
-  }, [presentation, loaded]);
+    if (loaded) editor.current?.focus();
+  }, [loaded]);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
   useEffect(
@@ -97,8 +91,8 @@ export function ChannelCanvasDialog({
     [canvas, channelId, saved, loaded, scope, key, base],
   );
   useEffect(() => {
-    if (open && !loaded) void load();
-  }, [open, loaded, load]);
+    if (!loaded) void load();
+  }, [loaded, load]);
   const dirty = (head?.id ?? null) !== base || draft !== (head?.content ?? "");
   const restore = async (revision: RelayEvent) => {
     const generation = ++operation.current;
@@ -144,7 +138,7 @@ export function ChannelCanvasDialog({
         setHead(event);
         setBase(event.id);
         writeView(scope, key, null);
-        onOpenChange(false);
+        onClose();
       }
     } catch (reason) {
       if (generation === operation.current)
@@ -248,7 +242,7 @@ export function ChannelCanvasDialog({
         </div>
       </div>
       <Dialog
-        open={open && confirmReload}
+        open={confirmReload}
         onOpenChange={setConfirmReload}
         dismissOnOutsideClick
         initialFocus={cancelReload}
@@ -274,44 +268,29 @@ export function ChannelCanvasDialog({
       </Dialog>
     </>
   );
-  if (presentation === "panel")
-    return (
-      <section
-        className={panelStyles.panel}
-        aria-label="Channel Canvas"
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && busy) event.stopPropagation();
-        }}
-      >
-        {!tabbed && (
-          <PanelHeader
-            title="Canvas"
-            actions={
-              <IconButton
-                icon={<XIcon />}
-                aria-label="Close Canvas"
-                disabled={busy}
-                onClick={() => onOpenChange(false)}
-              />
-            }
-          />
-        )}
-        <div className={panelStyles.scroll}>{body}</div>
-        {actions && <footer className={panelStyles.footer}>{actions}</footer>}
-      </section>
-    );
   return (
-    <Dialog
-      dismissOnOutsideClick
-      open={open}
-      onOpenChange={onOpenChange}
-      finalFocus={finalFocus}
-      preventClose={busy}
-      title="Channel Canvas"
-      closeLabel="Close Canvas"
-      actions={actions}
+    <section
+      className={panelStyles.panel}
+      aria-label="Channel Canvas"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && busy) event.stopPropagation();
+      }}
     >
-      {body}
-    </Dialog>
+      {!tabbed && (
+        <PanelHeader
+          title="Canvas"
+          actions={
+            <IconButton
+              icon={<XIcon />}
+              aria-label="Close Canvas"
+              disabled={busy}
+              onClick={() => onClose()}
+            />
+          }
+        />
+      )}
+      <div className={panelStyles.scroll}>{body}</div>
+      {actions && <footer className={panelStyles.footer}>{actions}</footer>}
+    </section>
   );
 }

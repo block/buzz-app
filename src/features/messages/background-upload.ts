@@ -8,7 +8,7 @@ import {
   type DraftAttachment,
 } from "./attachment-draft";
 
-type Notice = Readonly<{ id: string; message: string }>;
+type Notice = Readonly<{ id: string; message: string; retry?: () => void }>;
 export type BackgroundUploads = Readonly<{
   uploading: boolean;
   phase: "Preparing" | "Uploading" | "Finishing";
@@ -94,7 +94,10 @@ export function sendInBackground(
   channelId: string,
   files: readonly DraftAttachment[],
   publish: (uploaded: readonly UploadedAttachment[]) => void,
-  recover: (files: readonly DraftAttachment[]) => void,
+  recover: (
+    files: readonly DraftAttachment[],
+    preparationError?: unknown,
+  ) => boolean,
 ) {
   const queue = queueFor(session);
   const key = `background:${crypto.randomUUID()}`;
@@ -108,6 +111,7 @@ export function sendInBackground(
   void (async () => {
     let uploaded: readonly UploadedAttachment[] | undefined;
     let notice: string | undefined;
+    let preparationError: unknown;
     try {
       uploaded = await store.prepareForSend(signal);
       signal.throwIfAborted();
@@ -115,16 +119,48 @@ export function sendInBackground(
       return;
     } catch (error) {
       // Session aborts (access change, cache clear, close) restore like failures.
-      if (!signal.aborted)
+      if (!signal.aborted) {
+        if (uploaded) preparationError = error;
         notice = uploaded
           ? `Message failed to send: ${reason(error)}`
           : `Upload failed: ${reason(error)}`;
+      }
     } finally {
-      if (notice !== undefined || signal.aborted) recover(store.snapshot());
+      if (notice !== undefined || signal.aborted) {
+        let recovered = false;
+        try {
+          recovered = recover(store.snapshot(), preparationError);
+        } catch {
+          /* Retain bytes for retry. */
+        }
+        if (!recovered) {
+          // Keep the session-owned bytes when storage cannot confirm restoration.
+          // An abandoned job cannot publish again; its files remain reachable here.
+          queue.notices = [
+            ...queue.notices,
+            {
+              id: key,
+              message:
+                "Could not restore the failed send. Retry recovery before leaving this session.",
+              retry: () => {
+                try {
+                  if (!recover(store.snapshot(), preparationError)) return;
+                } catch {
+                  return;
+                }
+                clearAttachmentDraft(session, key);
+                dismissBackgroundUploadNotice(session, key);
+              },
+            },
+          ];
+        } else clearAttachmentDraft(session, key);
+      } else clearAttachmentDraft(session, key);
       if (notice !== undefined)
-        queue.notices = [...queue.notices, { id: key, message: notice }];
+        queue.notices = [
+          ...queue.notices,
+          { id: `${key}:failure`, message: notice },
+        ];
       queue.jobs = queue.jobs.filter((candidate) => candidate !== job);
-      clearAttachmentDraft(session, key);
       stop();
       update(queue);
     }

@@ -265,6 +265,81 @@ test("a sent attachment keeps uploading after navigation and publishes to its or
   }
 });
 
+// Browser-only boundary: removing the focused Cancel button must hand focus to
+// the mounted editor in both engines; DOM emulators cannot model native focus loss.
+test.describe("background Cancel focus handoff", () => {
+  for (const outcome of ["cancel", "failure", "success", "typing elsewhere"]) {
+    test(`focus after ${outcome}`, async ({ page }) => {
+      let release;
+      const held = new Promise((resolve) => {
+        release = resolve;
+      });
+      const server = await createServer({
+        configFile: false,
+        envFile: false,
+        plugins: [
+          react(),
+          {
+            name: "held-focus-upload",
+            configureServer(server) {
+              server.middlewares.use((req, res, next) => {
+                if (req.url !== "/api/relay/upload" || req.method !== "POST")
+                  return next();
+                req.resume();
+                void held.then(() => {
+                  res.writeHead(outcome === "failure" ? 503 : 204, {
+                    "X-Content-Type-Options": "nosniff",
+                  });
+                  res.end();
+                });
+              });
+            },
+          },
+        ],
+        logLevel: "error",
+        server: { host: "127.0.0.1", port: 0 },
+      });
+      await server.listen();
+      try {
+        await page.goto(
+          `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests`,
+        );
+        const form = page.getByRole("form", {
+          name: "Send a message to General",
+          exact: true,
+        });
+        await form.getByLabel("Choose attachments").setInputFiles({
+          name: "focus.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("focus"),
+        });
+        await form.getByRole("textbox").fill("focused send");
+        await form.getByRole("textbox").press("Enter");
+        const cancel = form.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await expect(cancel).toBeVisible();
+        await cancel.focus();
+        await expect(cancel).toBeFocused();
+        if (outcome === "typing elsewhere") {
+          await form.getByRole("textbox").fill("later typing");
+          await expect(form.getByRole("textbox")).toBeFocused();
+        }
+        if (outcome === "cancel") await cancel.click();
+        else release();
+        await expect(cancel).toHaveCount(0);
+        await expect(form.getByRole("textbox")).toBeFocused();
+        if (outcome === "typing elsewhere")
+          await expect(form.getByRole("textbox")).toHaveText("later typing");
+      } finally {
+        release();
+        await server.close();
+      }
+    });
+  }
+});
+
 // Browser-only boundary: toolbar geometry and keyboard order with real contributed tools.
 test("paperclip follows mentions and recipients, before the remaining tools", async ({
   page,

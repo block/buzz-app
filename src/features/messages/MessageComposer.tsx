@@ -410,7 +410,7 @@ function Composer({
     disabled ||
     admitting ||
     sending ||
-    !!accepted ||
+    (!!accepted && !sendPending) ||
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
@@ -984,13 +984,40 @@ function Composer({
             const sent = publish(uploaded);
             if (live.current) onSend?.(sent);
           },
-          (files) => {
-            // Like Desktop, recover only into the untouched post-send draft.
+          (files, preparationError) => {
+            // Only the original saved draft or the untouched follow-up can be
+            // restored. A later edit belongs to its author, not this job.
+            const current = viewRevision(scope, draftKey);
+            if (live.current && dirty.current && valueRef.current !== next)
+              return false;
+            const capturedRevision = JSON.stringify(captured);
             if (
-              viewRevision(scope, draftKey) === followup &&
-              attachmentDraft(session, recoveryKey, channelId).adopt(files)
+              current !== savedRevision &&
+              current !== followup &&
+              current !== capturedRevision
             )
-              replaceView(scope, draftKey, followup, captured);
+              return false;
+            const target = attachmentDraft(session, recoveryKey, channelId);
+            if (target.snapshot().length) return false;
+            if (
+              current !== capturedRevision &&
+              replaceView(scope, draftKey, current, captured) !== "saved"
+            )
+              return false;
+            if (!target.adopt(files)) return false;
+            recoveryFor(session).delete(recoveryKey);
+            if (live.current) {
+              setAccepted(undefined);
+              loadSaved(JSON.stringify(captured));
+              setError(
+                preparationError instanceof Error
+                  ? preparationError.message
+                  : preparationError !== undefined
+                    ? String(preparationError)
+                    : undefined,
+              );
+            }
+            return true;
           },
         );
       } else id = publish([]);
@@ -1177,7 +1204,7 @@ function Composer({
             resolved={value}
           />
         )}
-        <BackgroundUploadStatus session={session} />
+        <BackgroundUploadStatus session={session} focusTarget={input} />
         {dragging && <p role="status">Drop files to attach</p>}
         {attachmentError && (
           <ToastNotice

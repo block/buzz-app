@@ -909,6 +909,7 @@ async function mountUploadComposer(
     threadRootId?: string;
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
+    emojiRead?: () => Promise<RelayEvent[]>;
   } = {},
 ) {
   vi.stubGlobal(
@@ -944,6 +945,11 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (
+          filters.some((filter) => filter.kinds?.includes(30030)) &&
+          options.emojiRead
+        )
+          return options.emojiRead();
         return filters.flatMap((filter) =>
           filter["#d"]?.includes("other")
             ? filter.kinds?.includes(39002)
@@ -1003,6 +1009,7 @@ async function mountUploadComposer(
     input,
     form,
     send,
+    scope,
     uploadCalls,
     sign,
     publish,
@@ -1091,6 +1098,141 @@ it("restores a failed background upload into the composer with Desktop's toast",
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
+});
+
+it.each(["cleanup", "restore"] as const)(
+  "retains a failed attachment send until %s storage recovers",
+  async (phase) => {
+    const h = await mountUploadComposer();
+    attachByPaste(h.input(), attachmentFile("retained.txt"));
+    await userEvent.type(h.input(), "recover this caption");
+    const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
+    const original = Storage.prototype.setItem;
+    let failWrites = phase === "cleanup";
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === key && failWrites) throw Error("storage full");
+        return original.call(this, name, value);
+      });
+    try {
+      fireEvent.click(h.send());
+      await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+      if (phase === "restore") {
+        expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+          text: "",
+        });
+        failWrites = true;
+      }
+      await act(async () =>
+        h.uploadCalls[0]?.result.reject(new Error("upload unavailable")),
+      );
+      if (phase === "restore") {
+        await screen.findByRole("button", {
+          name: "Retry failed send recovery",
+        });
+        expect(h.input()).toHaveValue("");
+        failWrites = false;
+        await userEvent.click(
+          screen.getByRole("button", { name: "Retry failed send recovery" }),
+        );
+      } else {
+        await waitFor(() =>
+          expect(h.input()).toHaveValue("recover this caption"),
+        );
+      }
+      await waitFor(() =>
+        expect(h.input()).toHaveValue("recover this caption"),
+      );
+      expect(within(h.form()).getByText("retained.txt")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).toBeNull();
+      expect(h.publish).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  },
+);
+
+it("offers emoji catalog refresh after an attachment publication fails preparation", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("emoji.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji.txt")),
+  );
+  await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry message preparation" }),
+  ).toBeVisible();
+  available = true;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry message preparation" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(h.input()).toHaveValue("caption :party:");
+  expect(within(h.form()).getByText("emoji.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("does not overwrite a later local edit when a background upload fails", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await userEvent.type(h.input(), "later work");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(h.input()).toHaveValue("later work");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "later work",
+  });
+  expect(
+    screen.getByRole("button", { name: "Retry failed send recovery" }),
+  ).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("restores a failed upload after the composer remounts in the same session", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("remount.txt"));
+  await userEvent.type(h.input(), "remount caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  await waitFor(() =>
+    expect(within(again.container).getByRole("textbox")).toHaveValue(
+      "remount caption",
+    ),
+  );
+  expect(within(again.container).getByText("remount.txt")).toBeVisible();
 });
 
 it("keeps a remaining upload failure banner when removing one of two failed files", async () => {

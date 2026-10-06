@@ -2617,6 +2617,86 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_claude_manual_setup_uses_runnable_launchers() {
+    if let Some(root) = std::env::var_os("BUZZ_DISCOVERY_FIXTURE") {
+        let root = PathBuf::from(root);
+        let app_data = root.join("app-data");
+        let setup = claude_setup(&app_data);
+        assert_eq!(setup.status, "ready");
+        assert!(!setup.install_supported);
+        assert_eq!(setup.cli, Some(root.join("claude.cmd")));
+        assert!(setup
+            .login_command
+            .unwrap()
+            .ends_with("claude.cmd' auth login"));
+        assert!(claude_setup(&app_data)
+            .login_command
+            .unwrap()
+            .starts_with("& '"));
+        // Do not activate Windows Pi paths that its preflight does not support.
+        assert_eq!(buzz_agent_controller::installed("node"), None);
+        assert!(
+            !harness_options(&app_data)
+                .iter()
+                .find(|h| h.label == "Pi")
+                .unwrap()
+                .available
+        );
+        // Native CLI wins within a directory; a later PATH entry did not outrank .cmd.
+        std::fs::write(root.join("claude.exe"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).cli, Some(root.join("claude.exe")));
+        std::fs::remove_file(root.join("claude-agent-acp.cmd")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "adapter-needed");
+        std::fs::write(root.join("claude-agent-acp.bat"), "fixture bytes").unwrap();
+        assert_eq!(claude_setup(&app_data).status, "ready");
+        std::fs::remove_file(root.join("node.exe")).unwrap();
+        assert_eq!(claude_setup(&app_data).status, "cli-needed");
+        return;
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("Buzz tools ")
+        .tempdir()
+        .unwrap();
+    let root = directory.path();
+    let later = root.join("later");
+    std::fs::create_dir(&later).unwrap();
+    for name in [
+        "claude",
+        "claude.cmd",
+        "node.exe",
+        "claude-agent-acp",
+        "claude-agent-acp.cmd",
+        "pi.cmd",
+        "buzz-pi-acp.cmd",
+    ] {
+        std::fs::write(root.join(name), "fixture bytes").unwrap();
+    }
+    std::fs::write(later.join("claude.exe"), "fixture bytes").unwrap();
+    // A subprocess isolates discovery from the developer and parallel native tests.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::windows_claude_manual_setup_uses_runnable_launchers",
+            "--nocapture",
+        ])
+        .env("BUZZ_DISCOVERY_FIXTURE", root)
+        .env("HOME", root.join("empty-home"))
+        .env(
+            "PATH",
+            std::env::join_paths([root, later.as_path()]).unwrap(),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[cfg(any(unix, windows))]
 #[tokio::test]
 async fn claude_auth_check_exposes_only_confirmed_status() {

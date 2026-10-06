@@ -340,6 +340,12 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn installed(name: &str) -> Option<PathBuf> {
+    installed_names(&[name.to_owned()])
+}
+
+/// Claude's setup supports Windows npm launchers; other harnesses retain their
+/// existing discovery until their launch contracts support those paths too.
+pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
     // npm also writes an extensionless POSIX shim on Windows. Prefer launchers
     // that Rust and the displayed PowerShell sign-in command can actually run.
     #[cfg(windows)]
@@ -352,6 +358,10 @@ pub fn installed(name: &str) -> Option<PathBuf> {
     };
     #[cfg(not(windows))]
     let names = [name.to_owned()];
+    installed_names(&names)
+}
+
+fn installed_names(names: &[String]) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/bin"));

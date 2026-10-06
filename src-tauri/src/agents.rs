@@ -91,14 +91,14 @@ struct ClaudeSetup {
 }
 
 fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
-    let cli = buzz_agent_controller::installed("claude");
+    let cli = buzz_agent_controller::installed_npm_tool("claude");
     let managed_cli = buzz_agent_controller::managed_tool(app_data, "claude");
     let managed_node = buzz_agent_controller::managed_tool(app_data, "node");
     let (_, status, managed) = npm_choice(
         NpmTools {
             cli: cli.clone(),
-            adapter: buzz_agent_controller::installed("claude-agent-acp"),
-            node: buzz_agent_controller::installed("node"),
+            adapter: buzz_agent_controller::installed_npm_tool("claude-agent-acp"),
+            node: buzz_agent_controller::installed_npm_tool("node"),
         },
         NpmTools {
             cli: managed_cli.clone(),

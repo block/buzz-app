@@ -275,8 +275,9 @@ Hermes also appears in the main list once its executable is detected:
 - **Hermes Agent** shows **Ready** or **CLI needed** in **Add harness**, with a
   manual setup guide and no Install/Update action. **Check again** updates the
   chooser and main list; removing its executable hides the main row again.
-  Discovery searches for `hermes-acp`, resolving `.exe`/`.cmd`/`.bat` launchers
-  on Windows and skipping npm's extensionless POSIX companion.
+  Discovery searches for the exact `hermes-acp` launcher name. Windows
+  `.exe`/`.cmd`/`.bat` launchers are a known discovery limitation in this slice;
+  saved absolute paths remain recognizable/editable.
 
 - **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
   **Sign-in needed** when its CLI reports signed out, and **Ready** once tools

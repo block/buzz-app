@@ -1345,7 +1345,7 @@ it.each(["from:ba", "from:@ba"])(
   },
 );
 
-it("requests a larger prefix page before declaring a short name absent", async () => {
+it("requests a bounded prefix page before declaring a short name absent", async () => {
   const relay = keypair(),
     viewer = keypair(),
     wes = keypair();
@@ -1373,8 +1373,91 @@ it("requests a larger prefix page before declaring a short name absent", async (
     );
     expect(await screen.findByRole("option", { name: /Wes/ })).toBeVisible();
     expect(reads).toContainEqual([
-      { kinds: [0], search: "we", search_mode: "prefix", limit: 500 },
+      { kinds: [0], search: "we", search_mode: "prefix", limit: 40 },
     ]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(["from:we", "from:@we"])(
+  "%s retains a confirmed channel member when global prefix lookup fails",
+  async (query) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      wes = keypair();
+    const channel = "crew";
+    const discovery = [
+      metadata(relay, channel, "crew"),
+      roster(relay, channel, [viewer.pubkey, wes.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query(filters) {
+        if (filters.some((filter) => filter.search === "we"))
+          return Promise.reject(new Error("prefix lookup unavailable"));
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return Promise.resolve([profile(wes, { display_name: "Wes" })]);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      },
+    });
+    const change = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={change}
+          scopedChannelId={channel}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      const choice = await within(
+        screen.getByRole("group", { name: "People" }),
+      ).findByRole("option", { name: /Wes/ });
+      fireEvent.click(choice);
+      expect(change).toHaveBeenCalledWith(`from:${wes.pubkey} `);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("distinguishes an unavailable global author lookup from no matching people", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.search === "we"))
+        return Promise.reject(new Error("prefix lookup unavailable"));
+      return Promise.resolve([]);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:@we"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "People search is unavailable. Try a longer name.",
+      ),
+    ).toBeVisible();
   } finally {
     cleanup();
     owner.dispose();

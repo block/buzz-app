@@ -1,6 +1,7 @@
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
+import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
@@ -86,6 +87,7 @@ export function SearchResults({
   );
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
+    lookupFailed?: boolean;
     candidates: readonly { pubkey: string; profile: Profile }[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
@@ -170,16 +172,28 @@ export function SearchResults({
         const members = scopedChannelId
           ? (session.channels.get?.(scopedChannelId)?.members ?? [])
           : [];
-        if (members.length)
-          await session.profiles.ensure(members, "foreground");
-        const remote = authorNeedle
-          ? await session.read(
+        if (members.length) {
+          try {
+            await session.profiles.ensure(members, "foreground");
+          } catch (error) {
+            if (controller.signal.aborted) throw error;
+            // A partial directory still contains verified member profiles.
+          }
+        }
+        const memberProfiles = [...session.profiles.snapshot()].filter(
+          ([pubkey]) => members.includes(pubkey),
+        );
+        let remote: readonly EventData[] = [];
+        let lookupFailed = false;
+        if (authorNeedle) {
+          try {
+            remote = await session.read(
               [
                 {
                   kinds: [0],
                   search: authorNeedle,
                   search_mode: "prefix",
-                  limit: 500,
+                  limit: 40,
                 },
               ],
               {
@@ -187,17 +201,19 @@ export function SearchResults({
                 priority: "foreground",
                 fresh: true,
               },
-            )
-          : [];
+            );
+          } catch (error) {
+            if (controller.signal.aborted) throw error;
+            lookupFailed = true;
+          }
+        }
         controller.signal.throwIfAborted();
         const inventory = session.agentChoices.snapshot();
         const knownAgents = new Set(
           inventory.identities.map(({ pubkey }) => pubkey),
         );
         const candidates = new Map([
-          ...[...session.profiles.snapshot()].filter(([pubkey]) =>
-            members.includes(pubkey),
-          ),
+          ...memberProfiles,
           ...inventory.selectable.map(
             (agent) =>
               [
@@ -213,6 +229,7 @@ export function SearchResults({
         ]);
         setAuthorSuggestions({
           query,
+          lookupFailed,
           candidates: [...candidates]
             .filter(([, profile]) =>
               profile.name.toLowerCase().startsWith(authorNeedle),
@@ -237,7 +254,7 @@ export function SearchResults({
         });
       })().catch(() => {
         if (!controller.signal.aborted)
-          setAuthorSuggestions({ query, candidates: [] });
+          setAuthorSuggestions({ query, candidates: [], lookupFailed: true });
       });
     }, 180);
     return () => {
@@ -473,9 +490,13 @@ export function SearchResults({
             destinations: authorChoices.filter((choice) => !choice.isAgent),
             empty: authorChoices.length
               ? undefined
-              : authorNeedle
-                ? "No matching people. Try a different name."
-                : "Type a name to search people.",
+              : authorSuggestions?.query !== query
+                ? "Searching people…"
+                : authorSuggestions.lookupFailed
+                  ? "People search is unavailable. Try a longer name."
+                  : authorNeedle
+                    ? "No matching people. Try a different name."
+                    : "Type a name to search people.",
           },
           {
             label: "Agents",

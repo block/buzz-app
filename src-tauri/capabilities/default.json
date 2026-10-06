@@ -97,6 +97,7 @@
     "allow-mesh-compute-start",
     "allow-mesh-compute-select",
     "allow-mesh-compute-release",
+    "allow-mesh-compute-disarm",
     "allow-browser-attach",
     "allow-browser-set-bounds",
     "allow-browser-detach",

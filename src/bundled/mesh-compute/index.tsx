@@ -82,7 +82,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return { selected, id: await selected };
     } catch (error) {
       if (!scope || selected !== lease) throw error;
-      const retry = select(scope);
+      // Recovery for an action must never restore (start) saved sharing first.
+      const retry = select(scope, false);
       lease = retry;
       return { selected: retry, id: await retry };
     }
@@ -263,7 +264,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       setBusy(true);
       setError(null);
       try {
-        const { selected, id } = await currentLease();
+        const turningOff = clearSaved || Boolean(status?.sharing);
+        let selected: Promise<string | undefined> | undefined;
+        let id: string | undefined;
+        try {
+          ({ selected, id } = await currentLease());
+        } catch (reason) {
+          // Without a lease (e.g. an unrecovered failed runtime blocks selection),
+          // Off still clears saved consent; it never starts or stops Mesh.
+          if (!turningOff || !scope) throw reason;
+          await invoke("mesh_compute_disarm", { community: scope });
+          const result = await invoke<MeshStatus>("mesh_compute_status");
+          if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
+          return;
+        }
         if (!id) throw new Error("Mesh native runtime is unavailable");
         if (disposed || selected !== lease)
           throw new Error("Community changed");

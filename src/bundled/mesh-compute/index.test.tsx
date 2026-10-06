@@ -883,34 +883,79 @@ it("a failed disarm write leaves sharing visibly enabled with the error", async 
   expect(toggle).toHaveAttribute("aria-checked", "true");
 });
 
-it("a rejected community selection is retried instead of stranding Share", async () => {
+it("a transient selection failure is retried without restoring sharing before Off", async () => {
   let selects = 0;
-  native.invoke.mockImplementation((command) => {
+  native.invoke.mockImplementation((command, args) => {
     if (command === "mesh_compute_select")
       return ++selects === 1
         ? Promise.reject("Previous Mesh runtime shutdown is not confirmed")
         : Promise.resolve("fresh-lease");
-    if (command === "mesh_compute_share") return Promise.resolve();
+    if (command === "mesh_compute_share") {
+      expect(args).toMatchObject({ lease: "fresh-lease", model: null });
+      return Promise.resolve();
+    }
     return Promise.resolve({
       available: true,
       lifecycle: { state: "stopped" },
       sharing: null,
-      savedSharing: { model: "m/Q4", enabled: false, auto: true },
+      savedSharing: { model: "m/Q4", enabled: true, auto: true },
     });
   });
   mountSharing();
   const toggle = await screen.findByRole("switch", {
     name: "Share this machine",
   });
-  await waitFor(() =>
-    expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
-  );
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   fireEvent.click(toggle);
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith(
       "mesh_compute_share",
-      expect.objectContaining({ lease: "fresh-lease" }),
+      expect.objectContaining({ lease: "fresh-lease", model: null }),
     ),
   );
-  expect(selects).toBe(2);
+  const selectCalls = native.invoke.mock.calls.filter(
+    ([c]) => c === "mesh_compute_select",
+  );
+  expect(selectCalls).toHaveLength(2);
+  // The recovery selection must not restore (start) the armed share.
+  expect(selectCalls[1]?.[1]).toMatchObject({ restoreSharing: false });
+  expect(
+    native.invoke.mock.calls.some(([c]) => c === "mesh_compute_start"),
+  ).toBe(false);
+});
+
+it("unsafe failed runtime with no lease: Off disarms consent without selection or shutdown", async () => {
+  let enabled = true;
+  native.invoke.mockImplementation((command, args) => {
+    // Native select must confirm shutdown first; a sticky failure always rejects.
+    if (command === "mesh_compute_select")
+      return Promise.reject("Mesh shutdown timed out; restart Buzz");
+    if (command === "mesh_compute_disarm") {
+      expect(args).toEqual({ community: "https://fixture.example" });
+      enabled = false;
+      return Promise.resolve();
+    }
+    if (command === "mesh_compute_share")
+      throw new Error("share must not be reached without a lease");
+    return Promise.resolve({
+      available: true,
+      lifecycle: { state: "failed", reason: "Mesh shutdown timed out" },
+      sharing: null,
+      savedSharing: { model: "m/Q4", enabled, auto: true },
+    });
+  });
+  mountSharing();
+  const toggle = await screen.findByRole("switch", {
+    name: "Share this machine",
+  });
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
+  expect(native.invoke).toHaveBeenCalledWith("mesh_compute_disarm", {
+    community: "https://fixture.example",
+  });
+  expect(
+    screen.getByText(/Shutdown could not be confirmed\. Restart Buzz/),
+  ).toBeInTheDocument();
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
 });

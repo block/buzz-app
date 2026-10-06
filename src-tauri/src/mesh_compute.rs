@@ -477,6 +477,32 @@ mod queue_tests {
     }
 }
 
+/// Turn off saved automatic sharing for this viewer and community without a lease
+/// or a confirmed runtime shutdown. Consent only: the runtime replacement fence,
+/// lease and live lifecycle are untouched, so this can never start or stop Mesh.
+#[cfg(feature = "mesh")]
+#[tauri::command]
+pub async fn mesh_compute_disarm(
+    host: tauri::State<'_, MeshHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+) -> Result<(), String> {
+    let community = agent::community_origin(&community)?;
+    let viewer = identity.viewer().await?;
+    let _guard = host.preparing.lock().await;
+    disarm_saved(&host, viewer, community)
+}
+
+#[cfg(feature = "mesh")]
+fn disarm_saved(host: &MeshHost, viewer: String, community: String) -> Result<(), String> {
+    let mut prefs = host
+        .preferences
+        .lock()
+        .map_err(|_| "Mesh settings unavailable")?;
+    prefs.select(viewer, community);
+    prefs.disarm()
+}
+
 /// Signed relay advertisements, not live node health. Does not start Mesh.
 #[tauri::command]
 pub async fn mesh_compute_inventory(
@@ -510,6 +536,44 @@ pub async fn mesh_compute_catalog() -> Result<buzz_mesh_compute::catalog::Catalo
 mod persistence_tests {
     use super::*;
     use tauri::Manager;
+
+    #[test]
+    fn disarm_without_a_lease_persists_only_for_that_viewer_and_community() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mesh-sharing.json");
+        let host = MeshHost::default();
+        host.initialize_preferences(Ok(path.clone()));
+        let community = "https://fixture.example";
+        {
+            let mut prefs = host.preferences.lock().unwrap();
+            prefs.select("viewer".into(), community.into());
+            let share = sharing::Share {
+                model: "fixture".into(),
+                max_vram_gb: None,
+            };
+            let mut config =
+                preferences::Config::pending("viewer".into(), community.into(), &share);
+            config.enabled = true;
+            prefs.checkpoint(config).unwrap();
+        }
+        // No lease exists (lost after a failed selection); the lifecycle is not consulted.
+        assert!(host.lease.current().unwrap().is_none());
+        let phase = host.lifecycle.phase();
+        disarm_saved(&host, "other-viewer".into(), community.into()).unwrap();
+        disarm_saved(&host, "viewer".into(), "https://other.example".into()).unwrap();
+        let mut reopened = preferences::Preferences::default();
+        reopened.initialize(Ok(path.clone()));
+        reopened.select("viewer".into(), community.into());
+        assert!(reopened.hint().unwrap().enabled);
+        disarm_saved(&host, "viewer".into(), community.into()).unwrap();
+        let mut reopened = preferences::Preferences::default();
+        reopened.initialize(Ok(path));
+        reopened.select("viewer".into(), community.into());
+        assert!(!reopened.hint().unwrap().enabled);
+        assert_eq!(reopened.hint().unwrap().model, "fixture");
+        assert_eq!(host.lifecycle.phase(), phase);
+        assert!(host.lease.current().unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn release_and_reopen_preserve_saved_sharing_but_expire_the_lease() {

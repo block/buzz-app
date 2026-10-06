@@ -134,6 +134,7 @@ fn main() {
             "mesh_compute_start",
             "mesh_compute_select",
             "mesh_compute_release",
+            "mesh_compute_disarm",
         ])),
     )
     .expect("Could not build Tauri resources")

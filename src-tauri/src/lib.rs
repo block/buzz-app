@@ -613,11 +613,11 @@ pub fn run() {
                 browser_status
             ];
             #[cfg(feature = "mesh")]
-            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release];
+            let mesh_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![mesh_compute::mesh_compute_catalog, mesh_compute::sharing::mesh_compute_share, mesh_compute::mesh_compute_start, mesh_compute::mesh_compute_select, mesh_compute::mesh_compute_release, mesh_compute::mesh_compute_disarm];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
                 #[cfg(feature = "mesh")]
-                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release") {
+                if matches!(request.message.command(), "mesh_compute_catalog" | "mesh_compute_share" | "mesh_compute_start" | "mesh_compute_select" | "mesh_compute_release" | "mesh_compute_disarm") {
                     return mesh_commands(request);
                 }
                 if request.message.command().starts_with("browser_") {

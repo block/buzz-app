@@ -1,10 +1,14 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.16,
+The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.18-buzz.3,
 and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
-are downloaded on first use. Desktop development still requires the
+are downloaded on first use. The temporary Lefthook package builds once from
+checksum-pinned upstream source plus our worktree-recovery patch using pinned
+Go 1.27.0; this first use needs network access for Go modules and takes longer.
+The small `bin/lefthook` launcher provisions Go before entering Hermit’s package
+unpack lock, then executes the pinned `bin/lefthook-runner`. Desktop development still requires the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 From the repository root:
@@ -273,6 +277,10 @@ lhm, install once per clone (linked worktrees share the installed hooks):
 just hooks # or bin/just hooks without Hermit activation
 ```
 
+Existing standalone clones must rerun `just hooks` once after pulling this change
+to replace old shims; their old stock runner cannot self-update past the version
+gate. Do this in every clone, not every linked worktree.
+
 This recipe runs the pinned `bin/lefthook install`; it never changes Git config.
 If installation refuses because of a global `core.hooksPath`, **do not follow
 Lefthook's suggested fixes**: `--reset-hooks-path` and
@@ -296,9 +304,24 @@ setting is unchanged, but its hooks no longer run in this clone. Do not use this
 override for lhm.
 
 The installed hooks fail rather than silently skip when they cannot find
-Lefthook; `bin/lefthook uninstall` removes them. Lefthook 2.1.16 or newer is
-required: `min_version` rejects older runners, including an older `lefthook` on
-`PATH` under lhm (`brew upgrade lefthook`).
+Lefthook; `bin/lefthook uninstall` removes them. The repository pins a temporary
+patched runner, `2.1.18-buzz.3`, to fix concurrent linked-worktree recovery.
+Standalone shims select `bin/lefthook`. **Under lhm, activate Hermit before
+committing or pushing** (`source bin/activate-hermit`), since lhm selects
+`lefthook` from `PATH` and does not read the repo's `lefthook:` setting. A
+nonactivated GUI/agent shell using stock 2.1.17 or older is rejected by
+`min_version` before any unstaged edits are hidden. **If no Lefthook exists on
+PATH, lhm 0.14.1 can silently skip hooks instead** (especially in linked worktrees);
+the repository config cannot prevent that fallback. Use Git from an activated
+shell, or a client that actually inherits that shell’s environment, and verify
+`command -v lefthook` resolves to this checkout’s `bin/lefthook`. Do not bypass
+hooks or change machine policy. Upgrading Homebrew's stock runner is not this fix.
+
+This version gate is temporary, not a capability check: future stock 2.1.18+
+would pass it. Reassess the gate at the next upstream release and adopt only a
+release verified to preserve the recovery guarantees. Source, license,
+revalidation commands, and removal criteria are in
+[`bin/packages/lefthook-recovery.md`](../bin/packages/lefthook-recovery.md).
 
 Pre-commit runs these jobs in order and stops at the first failure: refuse staged
 names containing `*`, `?`, `[` or `\`, which Git would expand as globs when
@@ -314,7 +337,15 @@ Both reject remaining Biome warnings.
 
 Lefthook owns partial staging: it hides the unstaged hunks of partially staged
 files while the jobs run, restages the formatted files, then restores the hunks,
-so unstaged hunks never enter the commit. When a formatter changes the same lines
+so unstaged hunks never enter the commit. The patched runner isolates patches
+per worktree and uses owned `refs/lefthook/backup/<hash>` recovery refs instead
+of modifying the shared stash list. A failed restore retains the backup:
+`git for-each-ref refs/lefthook/backup/` lists them; preserve current edits, then
+use `git stash apply --index <ref>` in a clean worktree at the original base.
+After verifying recovery, delete only that ref with
+`git update-ref -d <ref> <hash>`. Legacy stashes remain untouched; recovery refs
+are not automatically expired and can be included by `git push --mirror`.
+When a formatter changes the same lines
 as an unstaged hunk, the commit is blocked with "conflict while merging unstaged
 changes" and the index, the files and unrelated edits are left as they were;
 format the file first (`just iterate` or the editor), then reselect your hunks.

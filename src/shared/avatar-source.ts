@@ -1,7 +1,28 @@
-/** Display-only avatars. No file URLs, SVG data, executable schemes or credentials. */
+const MAX_INLINE_AVATAR_SVG_LENGTH = 2048;
+const EMOJI_AVATAR_SVG =
+  /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="(112|256)" fill="(#[0-9a-fA-F]{6})"\/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">((?:[^<>&]|&(?:amp|lt|gt);){1,128})<\/text><\/svg>$/;
+
+/** Display-only avatars. No file URLs, executable schemes or credentials. */
 export function avatarSource(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const source = value.trim();
+  if (source.startsWith("data:image/svg+xml,")) {
+    if (source.length > MAX_INLINE_AVATAR_SVG_LENGTH) return undefined;
+    try {
+      // Rebuild Buzz emoji avatars from their fixed template rather than trusting
+      // arbitrary SVG from profile metadata (scripts, foreignObject, remote loads).
+      const svg = decodeURIComponent(
+        source.slice("data:image/svg+xml,".length),
+      );
+      const match = EMOJI_AVATAR_SVG.exec(svg);
+      if (!match) return undefined;
+      const [, radius, color, text] = match;
+      const safeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="${radius}" fill="${color}"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">${text}</text></svg>`;
+      return `data:image/svg+xml,${encodeURIComponent(safeSvg)}`;
+    } catch {
+      return undefined;
+    }
+  }
   if (
     /^data:image\/(?:png|jpeg|webp|gif);base64,[a-zA-Z0-9+/]+=*$/.test(source)
   )

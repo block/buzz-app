@@ -212,3 +212,24 @@ it("retains safe inline profile pictures through parsing and media routing", asy
       expect(mediaUrl(parsed.picture, undefined, undefined)).toBe(picture);
   }
 });
+
+it("retains only Buzz emoji avatar SVGs in profile picture media", async () => {
+  const { mediaUrl } = await import("./transport");
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#2ED3A2"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🚀</text></svg>';
+  const picture = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  const parsed = foldProfiles([profile(user, { name: "Rocket", picture })]).get(
+    user.pubkey,
+  );
+  expect(parsed?.picture).toBe(picture);
+  expect(mediaUrl(parsed?.picture ?? "", undefined, undefined)).toBe(picture);
+
+  const unsafe = `data:image/svg+xml,${encodeURIComponent(
+    svg.replace("🚀", "<script>alert(1)</script>"),
+  )}`;
+  expect(
+    foldProfiles([profile(user, { name: "Rocket", picture: unsafe })]).get(
+      user.pubkey,
+    )?.picture,
+  ).toBeUndefined();
+});

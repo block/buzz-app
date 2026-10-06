@@ -9,15 +9,47 @@ use nostr::key::PublicKey;
 pub(super) async fn read(
     host: &IdentityHost,
     community: &str,
-) -> Result<(Vec<String>, Vec<String>), String> {
+) -> Result<(Vec<String>, Vec<String>, Vec<nostr::event::Event>), String> {
     let events = member_events(host, community).await?;
     let owners = owner_ids_from_events(&events);
-    let targets = availability_from_events(events)
+    let targets = availability_from_events(events.clone())
         .serve_targets
         .into_iter()
         .map(|target| target.endpoint_addr)
         .collect();
-    Ok((owners, targets))
+    Ok((owners, targets, events))
+}
+
+/// Read authoritative membership independently of optional model advertisements.
+pub(super) async fn read_membership(
+    host: &IdentityHost,
+    community: &str,
+) -> Result<Vec<nostr::event::Event>, String> {
+    let viewer = host.viewer().await?;
+    let info = relay::mesh_read(host, community, None).await?;
+    let authority = info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Relay did not advertise its identity")?;
+    let authority = PublicKey::from_hex(authority).map_err(|_| "Invalid relay identity")?;
+    let data = relay::mesh_read(
+        host,
+        community,
+        Some(buzz_mesh_compute::discovery::authoritative_membership_filter(&authority)),
+    )
+    .await?;
+    let values = data.as_array().ok_or("Invalid Mesh membership response")?;
+    let events = values
+        .iter()
+        .cloned()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect();
+    let events = buzz_mesh_compute::discovery::verify_evidence(events, &authority)
+        .map_err(|error| error.to_string())?;
+    if host.viewer().await? != viewer {
+        return Err("Identity changed during Mesh membership read".into());
+    }
+    Ok(events)
 }
 
 pub(super) async fn read_events(
@@ -54,7 +86,7 @@ pub(super) async fn inventory(
 ) -> Result<buzz_mesh_compute::inventory::Inventory, String> {
     let events = member_events(host, community).await?;
     Ok(buzz_mesh_compute::inventory::project(
-        availability_from_events(events),
+        availability_from_events(events.clone()),
     ))
 }
 

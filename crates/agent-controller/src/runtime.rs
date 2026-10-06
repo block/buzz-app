@@ -377,6 +377,7 @@ struct Running {
     /// Native-only: holds environment values and is never serialized.
     spawned: serde_json::Value,
     databricks_host: Option<String>,
+    mesh_consumer: bool,
     #[cfg(all(test, unix))]
     temporary: Option<PathBuf>,
 }
@@ -1063,6 +1064,7 @@ impl Controller {
                 revision: agent.revision,
                 spawned: crate::restart::spawn_config(&agent),
                 databricks_host: settings.map(|s| s.host),
+                mesh_consumer: mesh.is_some(),
                 #[cfg(all(test, unix))]
                 temporary: Some(temporary),
             },
@@ -1102,6 +1104,20 @@ impl Controller {
         }
         let cache = crate::connection::oauth_root(self.store.root())?;
         crate::connection::disconnect(&cache, &workspace)
+    }
+    /// Stop exact running Mesh consumers using captured launch evidence, not edited settings.
+    /// A failed process teardown retains ownership and prevents endpoint replacement.
+    pub fn stop_mesh_consumers(&mut self) -> Result<()> {
+        let ids: Vec<_> = self
+            .running
+            .iter()
+            .filter(|(_, run)| run.mesh_consumer)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            self.stop(&id)?;
+        }
+        Ok(())
     }
     pub fn shutdown(&mut self) -> Result<()> {
         let ids: Vec<_> = self.running.keys().cloned().collect();

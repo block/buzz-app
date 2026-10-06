@@ -3462,3 +3462,48 @@ fn mesh_defaults_preserve_explicit_agent_choices_and_do_not_mutate_saved_config(
         assert_eq!(runtime.environment["BUZZ_AGENT_MAX_OUTPUT_TOKENS"], "8192");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn mesh_replacement_stops_captured_consumer_without_changing_saved_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.provider = "relay-mesh".into();
+    saved.start_on_app_launch = Some(true);
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let grant = crate::MeshLaunch::new(
+        saved.id.clone(),
+        saved.revision,
+        saved.relay_url.clone(),
+        "mesh".into(),
+        (19337, 32768),
+    )
+    .unwrap();
+    controller
+        .action_with_mesh(
+            &saved.id,
+            Action::Start,
+            saved.revision,
+            &Secret::parse(KEY, PUB).unwrap(),
+            None,
+            (&crate::pi::LaunchPreflight::new(None), grant),
+        )
+        .unwrap();
+    assert!(controller.running.contains_key(&saved.id));
+    // Persisted edits must not hide an already-running consumer of the old endpoint.
+    controller.store.agents().unwrap();
+    controller.stop_mesh_consumers().unwrap();
+    assert!(!controller.running.contains_key(&saved.id));
+    assert!(controller.launch_ids().unwrap().contains(&saved.id));
+    let snapshot = controller.snapshot().unwrap();
+    assert!(snapshot.agents[0].enabled);
+    assert!(snapshot.agents[0].start_on_app_launch);
+}

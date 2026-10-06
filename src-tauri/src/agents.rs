@@ -667,6 +667,33 @@ impl AgentHost {
             let _ = start(self.clone(), id, Action::Start, true, None, None).await;
         }
     }
+    #[cfg(feature = "mesh")]
+    pub(crate) async fn stop_mesh_consumers(&self) -> Result<(), String> {
+        run(self.clone(), |host| {
+            // Cancel preparation tickets/restore queue as well as captured running consumers.
+            let ids: Vec<_> = host
+                .controller
+                .snapshot()?
+                .agents
+                .into_iter()
+                .filter(|agent| {
+                    host.controller
+                        .mesh_request(&agent.id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                })
+                .map(|agent| agent.id)
+                .collect();
+            for id in ids {
+                host.starts.remove(&id);
+                host.queued.remove(&id);
+                host.acted.insert(id);
+            }
+            host.controller.stop_mesh_consumers()
+        })
+        .await
+    }
     pub(crate) async fn ensure_open(&self) -> Result<(), String> {
         run(self.clone(), |_| Ok(())).await
     }

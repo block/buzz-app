@@ -939,3 +939,37 @@ The Mesh SDK is pinned to v0.78.1. Local catalog probing verifies hardware-based
 selection, and synthetic native/browser checks cover legacy settings, restore
 admission and the creation shortcut. These do not establish packaged live
 community → sharing → agent reply → quit/relaunch acceptance.
+
+### Mesh community lifetime and failure recovery
+
+Foreground navigation does not move a selected Mesh binding. The Shared compute
+page discloses the bound origin while viewing another community and hides its
+share/reset controls there. **Use compute in this community instead** requires a
+second confirmation: pending Mesh launches are cancelled and captured running
+Mesh consumers must exit before the node's loopback endpoint can be reused.
+Agent enabled/start-on-launch settings are not rewritten. An agent whose community
+differs from the bound community cannot prepare a launch, including restore.
+Plugin disable/disposal stops processes; ordinary page navigation does not.
+
+Authoritative membership is read independently of optional advertisements. Older
+rosters cannot revoke newer admitted membership. Confirmed removal rebuilds from
+retained, signed owner bindings without requiring a successful status read; no
+new owner is admitted on that partial evidence. Viewer removal stops consumers
+and compute. Peer join failure keeps the healthy node running. Mesh v0.78.1 still
+serializes Shutdown behind an in-flight Join: status remains available, queued
+joins are discarded on stop, and the UI reports finishing the peer connection.
+The shutdown budget is 120 seconds for that outstanding join plus the usual
+12 seconds; uncertain shutdown still refuses replacement.
+
+Native initialization and embedded startup use the same explicit isolated
+configuration. Only a failure proven to precede node creation is retryable without
+process restart; unknown SDK startup/teardown failures remain fenced.
+
+Native artifact trust is **checksum-only**, inherited from the Mesh SDK, not
+signature verification. The Rust tag pin does not independently pin downloaded
+native artifact bytes. Plugin enable currently publishes the selected community's
+member/device-owner binding even before serving; stopping leaves a non-serving
+binding. Enrollment consent/withdrawal and signed packaged artifact/update policy
+remain shipping decisions, not established by these fixes. Optional failed
+old-community retirement is best-effort; routing advertisements expire after
+120 seconds. No live packaged acceptance is claimed by fixture tests.

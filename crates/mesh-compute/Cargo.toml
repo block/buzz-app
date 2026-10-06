@@ -9,6 +9,7 @@ default = []
 mesh = ["dep:nostr", "dep:sha2", "dep:hex", "dep:ed25519-dalek", "dep:tokio", "dep:mesh-llm-sdk", "dep:mesh-llm-host-runtime", "dep:mesh-llm-events", "dep:mesh-llm-system", "dep:iroh", "dep:anyhow", "dep:base64", "dep:url", "dep:serde_json"]
 
 [dependencies]
+tempfile = "3"
 serde = { version = "1", features = ["derive"] }
 mesh-llm-sdk = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.78.1", default-features = false, features = ["client", "serving"], optional = true }
 

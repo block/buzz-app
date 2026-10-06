@@ -48,19 +48,22 @@ async fn publish(
     let identity = app.state::<crate::identity::IdentityHost>();
     let selection = host.lease.current()?;
     let viewer = identity.viewer().await?;
-    // Clear the old coordinate when leaving a community, using its captured signer.
-    // If identity changed, never sign an old member's stopped note as the new member.
-    if let Some((community, member)) = previous.as_ref() {
-        if needs_stop_note(
-            &(community.clone(), member.clone()),
+    let retired = previous.clone().filter(|old| {
+        needs_stop_note(
+            old,
             selection.as_ref().map(|(_, current)| current.as_str()),
             &viewer,
-        ) {
-            send(&identity, community, member, false, None).await?;
-            *previous = None;
-        }
-    }
+        )
+    });
     let Some((lease, community)) = selection else {
+        *previous = None;
+        if let Some((community, member)) = retired {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                send(&identity, &community, &member, false, None),
+            )
+            .await;
+        }
         return Ok(());
     };
     let status = if host.lifecycle.phase() == Phase::Ready {
@@ -75,6 +78,15 @@ async fn publish(
     let serving = host.lifecycle.is_serving();
     send(&identity, &community, &viewer, serving, status.as_ref()).await?;
     *previous = Some((community, viewer));
+    // Active-community publication takes priority; retirement cannot starve it.
+    // Failed retirement is not retried: routing ignores advertisements after 120s.
+    if let Some((community, member)) = retired {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            send(&identity, &community, &member, false, None),
+        )
+        .await;
+    }
     Ok(())
 }
 

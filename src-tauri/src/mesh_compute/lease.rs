@@ -72,6 +72,13 @@ impl Lease {
             Ok(false)
         }
     }
+    pub fn restore(&self, previous: Option<(String, String)>) -> Result<(), String> {
+        let mut current = self.0.lock().map_err(|_| "Mesh selection unavailable")?;
+        if current.is_none() {
+            *current = previous;
+        }
+        Ok(())
+    }
     pub fn clear(&self) {
         if let Ok(mut current) = self.0.lock() {
             *current = None;
@@ -86,6 +93,21 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    #[test]
+    fn failed_replacement_restores_owner_but_never_overwrites_newer_selection() {
+        let lease = Lease::default();
+        let old = lease.select("https://a.example".into()).unwrap();
+        let prior = lease.current().unwrap();
+        lease.clear();
+        lease.restore(prior.clone()).unwrap();
+        assert_eq!(lease.for_community("https://a.example").unwrap(), old);
+        lease.clear();
+        let new = lease.select("https://b.example".into()).unwrap();
+        lease.restore(prior).unwrap();
+        assert_eq!(lease.for_community("https://b.example").unwrap(), new);
+        assert!(lease.for_community("https://a.example").is_err());
+    }
+
     #[tokio::test]
     async fn revoked_discovery_cannot_commit_a_start() {
         let lease = Arc::new(Lease::default());

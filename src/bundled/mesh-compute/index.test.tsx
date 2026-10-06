@@ -679,3 +679,126 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
   );
   expect(screen.queryByText(/Saved model:/)).not.toBeInTheDocument();
 });
+
+it("foreground A to B to A preserves compute and requires explicit replacement", async () => {
+  let bound = "https://a.example";
+  native.invoke.mockImplementation((command, args) => {
+    if (command === "mesh_compute_select") {
+      if (args.replaceExisting) bound = args.community;
+      return Promise.resolve("bound-lease");
+    }
+    return Promise.resolve({
+      available: true,
+      boundCommunity: bound,
+      modelReady: true,
+      sharing: "fixture-model",
+      lifecycle: { state: "ready" },
+    });
+  });
+  let snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://a.example:viewer",
+  };
+  const listeners = new Set<() => void>();
+  let Component!: React.ComponentType;
+  const ctx = {
+    relay: {
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  await screen.findByText("Sharing fixture-model");
+  const navigate = async (scope: string) =>
+    act(async () => {
+      snapshot = { ...snapshot, scope };
+      for (const listener of listeners) listener();
+    });
+  await navigate("https://b.example:viewer");
+  await screen.findByText(/Sharing in https:\/\/a.example/);
+  expect(
+    screen.queryByRole("button", { name: "Reset to Auto" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Stop sharing" }),
+  ).not.toBeInTheDocument();
+  await navigate("https://a.example:viewer");
+  await screen.findByText("Sharing fixture-model");
+  expect(
+    native.invoke.mock.calls.filter(([name]) => name === "mesh_compute_select"),
+  ).toHaveLength(1);
+  expect(
+    native.invoke.mock.calls.filter(
+      ([name]) => name === "mesh_compute_release",
+    ),
+  ).toHaveLength(0);
+  await navigate("https://b.example:viewer");
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Use compute in this community instead",
+    }),
+  );
+  expect(
+    native.invoke.mock.calls.filter(([name]) => name === "mesh_compute_select"),
+  ).toHaveLength(1);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Stop agents and switch compute" }),
+  );
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
+      community: "https://b.example",
+      restoreSharing: false,
+      replaceExisting: true,
+    }),
+  );
+});
+
+it("unsupported native builds report unavailable without invoking missing select", async () => {
+  native.invoke.mockImplementation((command) => {
+    if (command !== "mesh_compute_status")
+      throw new Error("Unknown native command");
+    return Promise.resolve({
+      available: false,
+      reason: "Mesh native runtime is not included in this build",
+    });
+  });
+  let Component!: React.ComponentType;
+  apply({
+    relay: {
+      snapshot: () => ({
+        status: "ready",
+        viewer: "viewer",
+        scope: "https://fixture.example:viewer",
+      }),
+      subscribe: () => () => {},
+    },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  // Use a stable snapshot for React subscription reads.
+  // Activation itself must never call the absent command.
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(
+    native.invoke.mock.calls.every(
+      ([command]) => command === "mesh_compute_status",
+    ),
+  ).toBe(true);
+  expect(Component).toBeDefined();
+});

@@ -12,6 +12,8 @@ import { ConsumerComputeView } from "./ConsumerComputeView";
 type MeshStatus = {
   available: boolean;
   modelReady?: boolean;
+  finishingJoin?: boolean;
+  boundCommunity?: string | null;
   // Configured intent, not proof of serving; lifecycle supplies the actual phase.
   sharing?: string | null;
   savedSharing?: { model: string; enabled: boolean; auto?: boolean } | null;
@@ -39,23 +41,35 @@ const phaseLabels = {
 
 export const inject = ["relay", "settingsCards", "agentControl"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  let lease: Promise<string> | undefined;
+  let lease: Promise<string | undefined> | undefined;
   let scope: string | undefined;
   let viewer: string | undefined;
   let disposed = false;
   let selectionQueue: Promise<unknown> = Promise.resolve();
-  const select = (community: string, restoreSharing = true) => {
+  const select = (
+    community: string,
+    restoreSharing = true,
+    replaceExisting = false,
+  ) => {
     const selected = selectionQueue
       .catch(() => {})
-      .then(() =>
-        invoke<string>("mesh_compute_select", { community, restoreSharing }),
-      );
+      .then(async () => {
+        const support = await invoke<MeshStatus>("mesh_compute_status");
+        if (!support.available) return undefined;
+        return invoke<string>("mesh_compute_select", {
+          community,
+          restoreSharing,
+          ...(replaceExisting ? { replaceExisting: true } : {}),
+        });
+      });
     selectionQueue = selected;
     return selected;
   };
-  const release = (old: Promise<string> | undefined) => {
+  const release = (old: Promise<string | undefined> | undefined) => {
     void old
-      ?.then((lease) => invoke("mesh_compute_release", { lease }))
+      ?.then((lease) =>
+        lease ? invoke("mesh_compute_release", { lease }) : undefined,
+      )
       .catch(() => {});
   };
   const sync = () => {
@@ -74,6 +88,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot.scope?.endsWith(`:${snapshot.viewer}`)
         ? snapshot.scope.slice(0, -(snapshot.viewer.length + 1))
         : undefined;
+    // Foreground navigation is not permission to move the app-owned compute.
+    if (scope && next && !identityChanged) return;
     if (next === scope) return;
     scope = next;
     const old = lease;
@@ -125,6 +141,35 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
+    const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+    const viewedCommunity =
+      snapshot.status === "ready" && snapshot.viewer && snapshot.scope
+        ? snapshot.scope.slice(0, -(snapshot.viewer.length + 1))
+        : undefined;
+    const boundCommunity = status?.boundCommunity ?? scope;
+    const otherCommunity = Boolean(
+      viewedCommunity && boundCommunity && viewedCommunity !== boundCommunity,
+    );
+    const replace = async () => {
+      if (!viewedCommunity || busy) return;
+      setBusy(true);
+      setError(null);
+      const previousLease = lease;
+      try {
+        lease = select(viewedCommunity, false, true);
+        await lease;
+        scope = viewedCommunity;
+        if (!disposed && snapshot === ctx.relay.snapshot()) {
+          setStatus(await invoke<MeshStatus>("mesh_compute_status"));
+          setReplaceConfirmed(false);
+        }
+      } catch (error) {
+        lease = previousLease;
+        setError(String(error));
+      } finally {
+        setBusy(false);
+      }
+    };
     const [model, setModel] = useState("");
     const [auto, setAuto] = useState(true);
     const [recommended, setRecommended] = useState<string | null>(null);
@@ -147,6 +192,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       try {
         if (!selected) throw new Error("Connect to a community first");
         const id = await selected;
+        if (!id) throw new Error("Mesh native runtime is unavailable");
         if (disposed || selected !== lease)
           throw new Error("Community changed");
         await invoke("mesh_compute_share", {
@@ -175,6 +221,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       try {
         if (!selected) throw new Error("Connect to a community first");
         const id = await selected;
+        if (!id) throw new Error("Mesh native runtime is unavailable");
         if (disposed || selected !== lease)
           throw new Error("Community changed");
         await invoke("mesh_compute_share", {
@@ -212,12 +259,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (action === "start") {
           if (!selected) throw new Error("Connect to a community first");
           const id = await selected;
+          if (!id) throw new Error("Mesh native runtime is unavailable");
           if (disposed || selected !== lease)
             throw new Error("Community changed");
           await invoke("mesh_compute_start", { lease: id });
         } else if (action === "stop") {
           if (!selected) throw new Error("No Mesh selection");
           const id = await selected;
+          if (!id) throw new Error("Mesh native runtime is unavailable");
           if (disposed || selected !== lease)
             throw new Error("Community changed");
           await invoke("mesh_compute_release", { lease: id });
@@ -273,7 +322,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return (
       <ConsumerComputeView
         communityName={community?.name}
-        active={enabled}
+        active={enabled && !otherCommunity}
         starting={phase === "starting"}
         disabled={
           busy ||
@@ -289,7 +338,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : phase
               ? phase === "ready" && status?.sharing && !status.modelReady
                 ? "Preparing to share"
-                : phaseLabels[phase]
+                : status?.finishingJoin
+                  ? "Stopping, finishing a peer connection…"
+                  : phaseLabels[phase]
               : status?.available === false
                 ? "Unavailable"
                 : "Checking status…"
@@ -304,7 +355,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
         connect={() => void run(enabled ? "stop" : "start")}
         refresh={() => void run("status")}
       >
-        {isTauri() && status?.available && (
+        {otherCommunity && (
+          <section aria-label="Bound compute community">
+            <p>
+              {status?.sharing ? "Sharing" : "Compute connected"} in{" "}
+              {boundCommunity}. Navigation does not move it.
+            </p>
+            {replaceConfirmed ? (
+              <>
+                <p>
+                  Stop that community’s local Mesh agents and compute before
+                  switching to {viewedCommunity}?
+                </p>
+                <Button disabled={busy} onClick={() => void replace()}>
+                  Stop agents and switch compute
+                </Button>
+                <Button
+                  disabled={busy}
+                  onClick={() => setReplaceConfirmed(false)}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button disabled={busy} onClick={() => setReplaceConfirmed(true)}>
+                Use compute in this community instead
+              </Button>
+            )}
+          </section>
+        )}
+        {isTauri() && status?.available && !otherCommunity && (
           <section aria-label="Share compute">
             <h2 className="text-body">Share your compute</h2>
             <p className="text-body-sm text-secondary">
@@ -396,14 +476,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
             </Button>
           </section>
         )}
-        {community && snapshot.viewer && ctx.agentControl && (
-          <CommunityAgent
-            key={`${community.id}:${snapshot.viewer}`}
-            control={ctx.agentControl}
-            destination={community.id}
-            owner={snapshot.viewer}
-          />
-        )}
+        {community &&
+          snapshot.viewer &&
+          ctx.agentControl &&
+          status?.available &&
+          !otherCommunity && (
+            <CommunityAgent
+              key={`${community.id}:${snapshot.viewer}`}
+              control={ctx.agentControl}
+              destination={community.id}
+              owner={snapshot.viewer}
+            />
+          )}
         {community && (
           <CommunityMesh
             key={community.id}

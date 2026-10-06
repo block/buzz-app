@@ -27,6 +27,9 @@ mod preferences;
 #[cfg(feature = "mesh")]
 mod publisher;
 
+#[cfg(feature = "mesh")]
+type Admission = (String, String, Vec<String>, Vec<nostr::event::Event>);
+
 #[derive(Default)]
 pub struct MeshHost {
     #[cfg(feature = "mesh")]
@@ -44,7 +47,7 @@ pub struct MeshHost {
     #[cfg(feature = "mesh")]
     coordinator: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     #[cfg(feature = "mesh")]
-    admission: std::sync::Mutex<Option<(String, String, Vec<String>)>>,
+    admission: std::sync::Mutex<Option<Admission>>,
 }
 
 impl MeshHost {
@@ -101,6 +104,8 @@ pub async fn mesh_compute_status(
         Ok(serde_json::json!({
             "available": true,
             "modelReady": model_ready,
+            "finishingJoin": host.lifecycle.finishing_join(),
+            "boundCommunity": host.lease.current()?.map(|(_, community)| community),
             "savedSharing": saved,
             "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),
@@ -193,12 +198,26 @@ async fn start_prepared(
         return Err("Previous Mesh runtime shutdown is not confirmed".into());
     }
     let community = host.lease.community(lease)?;
-    let (mut owners, targets) = tokio::time::timeout(
+    let (owners, targets, evidence) = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         discovery::read(identity, &community),
     )
     .await
     .map_err(|_| "Community discovery timed out")??;
+    start_with_evidence(app, host, identity, lease, owners, targets, evidence).await
+}
+
+#[cfg(feature = "mesh")]
+async fn start_with_evidence(
+    app: &tauri::AppHandle,
+    host: &MeshHost,
+    identity: &crate::identity::IdentityHost,
+    lease: &str,
+    mut owners: Vec<String>,
+    targets: Vec<String>,
+    evidence: Vec<nostr::event::Event>,
+) -> Result<(), String> {
+    let community = host.lease.community(lease)?;
     let viewer = identity.viewer().await?;
     let sharing = host
         .sharing
@@ -219,6 +238,7 @@ async fn start_prepared(
             uuid::Uuid::new_v4().to_string(),
             owner.clone(),
             owners.clone(),
+            evidence,
         );
         let mut targets = targets.into_iter();
         let node = buzz_mesh_compute::config::ClientConfig {
@@ -287,6 +307,7 @@ pub async fn mesh_compute_select(
     identity: tauri::State<'_, crate::identity::IdentityHost>,
     community: String,
     restore_sharing: Option<bool>,
+    replace_existing: Option<bool>,
 ) -> Result<String, String> {
     let community = agent::community_origin(&community)?;
     let viewer = identity.viewer().await?;
@@ -296,6 +317,36 @@ pub async fn mesh_compute_select(
         .lock()
         .map_err(|_| "Mesh settings unavailable")?
         .viewer_changed(&viewer);
+    if !viewer_changed && !replace_existing.unwrap_or(false) {
+        if let Some((lease, _)) = host.lease.current()? {
+            // Ordinary selection describes the view, not a replacement request.
+            return Ok(lease);
+        }
+    }
+    let changing = host
+        .lease
+        .current()?
+        .map_or(true, |(_, current)| current != community)
+        || viewer_changed;
+    if changing {
+        // Retire pending launches first; running agents must exit before port reuse.
+        let previous = host.lease.current()?;
+        host.lease.clear();
+        let stopped = async {
+            app.state::<crate::agents::AgentHost>()
+                .stop_mesh_consumers()
+                .await?;
+            host.lifecycle
+                .stop_and_wait()
+                .await
+                .map_err(|error| error.to_string())
+        }
+        .await;
+        if let Err(error) = stopped {
+            host.lease.restore(previous)?;
+            return Err(error);
+        }
+    }
     let lease = host
         .lease
         .try_select_with(community.clone(), viewer_changed, || {
@@ -369,7 +420,8 @@ pub async fn mesh_compute_select(
 }
 #[cfg(feature = "mesh")]
 #[tauri::command]
-pub async fn mesh_compute_release(
+pub async fn mesh_compute_release<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     host: tauri::State<'_, MeshHost>,
     lease: String,
 ) -> Result<(), String> {
@@ -385,6 +437,9 @@ pub async fn mesh_compute_release(
             Ok(())
         })?;
         host.lease.revoke(&lease)?;
+        app.state::<crate::agents::AgentHost>()
+            .stop_mesh_consumers()
+            .await?;
         *host
             .admission
             .lock()
@@ -475,11 +530,13 @@ mod persistence_tests {
             prefs.checkpoint(config).unwrap();
         }
         *host.sharing.lock().unwrap() = Some(share);
+        let (_agents_dir, agents, _agents_app, _agents_view) = crate::agents::tests::fixture();
         let app = tauri::test::mock_builder()
+            .manage(agents)
             .manage(host)
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
-        mesh_compute_release(app.state(), lease.clone())
+        mesh_compute_release(app.handle().clone(), app.state(), lease.clone())
             .await
             .unwrap();
         let host = app.state::<MeshHost>();
@@ -494,7 +551,9 @@ mod persistence_tests {
         assert_eq!(reopened.hint().unwrap().model, "fixture");
         // A late disposal of the old lease cannot release a new selection.
         let next = host.lease.select(community.into()).unwrap();
-        mesh_compute_release(app.state(), lease).await.unwrap();
+        mesh_compute_release(app.handle().clone(), app.state(), lease)
+            .await
+            .unwrap();
         assert!(host.lease.community(&next).is_ok());
     }
 }

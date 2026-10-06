@@ -478,6 +478,33 @@ async fn optional_cli_expiry_and_fractional_expiry_survive_session_validation() 
 }
 
 #[tokio::test]
+async fn expiry_mismatch_invalidates_the_current_session() {
+    let server = FixtureServer::spawn(Reply::Valid {
+        expiry: FUTURE_EXPIRY.into(),
+    })
+    .await;
+    let _environment = BuilderLabEnv::new(&server.base);
+    let home = TempDir::new().unwrap();
+    let owner = make_owner(&home);
+    save(
+        &owner,
+        "mismatched-session",
+        "mismatched-session-token",
+        Some("2031-01-01T00:00:00Z"),
+    )
+    .await;
+
+    assert!(get(&owner).await.unwrap().is_none());
+    assert!(owner.session_snapshot().await.unwrap().is_none());
+    let records = session_records(&server);
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].authorization.as_deref(),
+        Some("Bearer mismatched-session-token")
+    );
+}
+
+#[tokio::test]
 async fn expired_saved_session_is_cleared_without_network_access() {
     let server = FixtureServer::spawn(Reply::Valid {
         expiry: FUTURE_EXPIRY.into(),

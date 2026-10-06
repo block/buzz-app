@@ -33,6 +33,7 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import type { ReactNode } from "react";
 import { AgentDefaultsCard } from "./AgentDefaultsCard";
+import { ClaudeHarnessSetup } from "./ClaudeHarnessSetup";
 import styles from "./AgentSettings.module.css";
 
 const acpHint =
@@ -103,7 +104,10 @@ export function AgentSettings({
   );
   const presetLabel = selected?.label ?? setup?.label ?? "Harness";
   const checkDisabled =
-    state.status === "unavailable" || state.busy || installingPi;
+    state.status === "unavailable" ||
+    state.busy ||
+    installingPi ||
+    state.claudeInstall?.installing;
   const checkAgain = () => {
     setChecking(true);
     void control.refresh().finally(() => setChecking(false));
@@ -211,6 +215,7 @@ export function AgentSettings({
                               disabled={
                                 state.status !== "ready" ||
                                 state.busy ||
+                                state.claudeInstall?.installing ||
                                 installingPi
                               }
                               onClick={() => {
@@ -362,6 +367,7 @@ export function AgentSettings({
                       )}
                   </li>
                 ))}
+                <ClaudeHarnessSetup control={control} state={state} />
               </ul>
               <Button
                 ref={addHarnessRef}

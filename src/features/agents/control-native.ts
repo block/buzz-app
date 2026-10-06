@@ -33,6 +33,7 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       });
     },
     installPi: () => invoke("pi_install"),
+    installClaude: () => invoke("claude_install"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
     saveDefaults: (edit) => invoke("agent_control_save_defaults", { edit }),

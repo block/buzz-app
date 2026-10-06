@@ -89,6 +89,7 @@ fn main() {
             "agent_control_log_challenge",
             "agent_control_read_log",
             "pi_install",
+            "claude_install",
             "agent_security",
             "agent_control_save",
             "agent_control_save_defaults",

@@ -128,12 +128,12 @@ fn production_acl_allows_delete_to_reach_native_credentials() {
 }
 #[test]
 fn harnesses_classify_cli_and_adapter_separately() {
-    assert_eq!(pi_status(false, false, false), "cli-needed");
-    assert_eq!(pi_status(false, true, true), "cli-needed");
-    assert_eq!(pi_status(true, false, false), "cli-needed");
-    assert_eq!(pi_status(true, true, false), "cli-needed");
-    assert_eq!(pi_status(true, false, true), "adapter-needed");
-    assert_eq!(pi_status(true, true, true), "ready");
+    assert_eq!(npm_status(false, false, false), "cli-needed");
+    assert_eq!(npm_status(false, true, true), "cli-needed");
+    assert_eq!(npm_status(true, false, false), "cli-needed");
+    assert_eq!(npm_status(true, true, false), "cli-needed");
+    assert_eq!(npm_status(true, false, true), "adapter-needed");
+    assert_eq!(npm_status(true, true, true), "ready");
 }
 
 #[test]
@@ -159,22 +159,22 @@ fn hermes_is_a_manual_preset_with_presence_based_availability() {
 #[test]
 fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_node() {
     let path = |name| Some(PathBuf::from(format!("/fixture/{name}")));
-    let empty = || PiTools {
+    let empty = || NpmTools {
         cli: None,
         adapter: None,
         node: None,
     };
-    let managed = || PiTools {
+    let managed = || NpmTools {
         cli: path("managed-pi"),
         adapter: path("managed-adapter"),
         node: path("managed-node"),
     };
-    let (command, status, managed_selected) = pi_choice(empty(), managed());
+    let (command, status, managed_selected) = npm_choice(empty(), managed());
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             adapter: path("user-adapter"),
             node: path("user-node"),
@@ -184,12 +184,12 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("user-adapter"));
     assert_eq!(status, "ready");
     assert!(!managed_selected);
-    let (command, status, managed_selected) = pi_choice(
-        PiTools {
+    let (command, status, managed_selected) = npm_choice(
+        NpmTools {
             cli: path("user-pi"),
             ..empty()
         },
-        PiTools {
+        NpmTools {
             cli: None,
             ..managed()
         },
@@ -197,9 +197,9 @@ fn managed_pi_detection_prefers_a_complete_user_install_and_requires_managed_nod
     assert_eq!(command, path("managed-adapter"));
     assert_eq!(status, "ready");
     assert!(managed_selected);
-    let (command, status, managed_selected) = pi_choice(
+    let (command, status, managed_selected) = npm_choice(
         empty(),
-        PiTools {
+        NpmTools {
             node: None,
             ..managed()
         },
@@ -471,7 +471,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["harnessOptions"][2]["providers"], json!([]));
     assert_eq!(
         before["harnessOptions"][2]["status"],
-        pi_status(
+        npm_status(
             buzz_agent_controller::installed("pi").is_some(),
             buzz_agent_controller::installed("buzz-pi-acp").is_some(),
             buzz_agent_controller::installed("node").is_some(),

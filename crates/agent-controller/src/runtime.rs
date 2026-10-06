@@ -323,6 +323,7 @@ fn tools_path() -> Result<std::ffi::OsString> {
 pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",

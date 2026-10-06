@@ -50,7 +50,7 @@ use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, Mo
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod managed_pi;
+mod managed_npm;
 mod pi_models;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
@@ -67,7 +67,7 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{pi_install, HarnessSetup};
+use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -453,6 +453,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_log_challenge,
         agent_control_read_log,
         pi_install,
+        claude_install,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,

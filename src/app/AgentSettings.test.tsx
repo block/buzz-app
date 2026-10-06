@@ -18,6 +18,8 @@ import {
 } from "../features/agents/control";
 import { controlFixture } from "../features/agents/control-testing";
 import { AgentSettings } from "./AgentSettings";
+import { AgentHarnessEditor } from "../bundled/agents/AgentHarnessEditor";
+import { agentDraft } from "../bundled/agents/agent-edit";
 import {
   rememberAgentsPreference,
   setRememberAgentsPreference,
@@ -91,10 +93,16 @@ function setupHarnesses(
     installSupported?: boolean;
     updateSupported?: boolean;
     installPi?: NonNullable<AgentControlHost["installPi"]>;
+    claude?: NonNullable<
+      ReturnType<typeof controlFixture>["data"]["claudeSetup"]
+    >;
+    installClaude?: NonNullable<AgentControlHost["installClaude"]>;
   } = {},
 ) {
   const fixture = controlFixture();
   if (pi.installPi) fixture.host.installPi = pi.installPi;
+  if (pi.installClaude) fixture.host.installClaude = pi.installClaude;
+  if (pi.claude) fixture.data.claudeSetup = pi.claude;
   fixture.data.harnessOptions = [
     {
       command: "buzz-agent",
@@ -556,4 +564,112 @@ it("keeps bundled Goose Ready during a Pi installation", async () => {
   expect(within(alert).getByText("Full diagnostic output")).not.toBeVisible();
   await user.click(log);
   expect(within(alert).getByText("Full diagnostic output")).toBeVisible();
+});
+
+it("installs Claude Code with durable progress, failed-step logs, retry and native re-detection", async () => {
+  const user = userEvent.setup();
+  let finish!: (report: HarnessInstallReport) => void;
+  const pending = new Promise<HarnessInstallReport>((resolve) => {
+    finish = resolve;
+  });
+  const failed: HarnessInstallReport = {
+    ready: false,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/claude-install.log",
+    output: "npm error EACCES",
+    error: "Installing Claude Code failed",
+  };
+  const install = vi
+    .fn()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValueOnce({ ...failed, ready: true, error: null });
+  const { control, fixture } = setupHarnesses("cli-needed", {
+    installSupported: true,
+    installPi: vi.fn(),
+    claude: {
+      status: "adapter-needed",
+      installSupported: true,
+      loginCommand: "'/fixture/claude' auth login",
+    },
+    installClaude: install,
+  });
+  const row = () =>
+    within(screen.getByRole("listitem", { name: "Claude Code harness" }));
+  await screen.findByRole("listitem", { name: "Claude Code harness" });
+  await user.click(row().getByRole("button", { name: "Install" }));
+  try {
+    expect(await row().findByRole("status")).toHaveTextContent(
+      "Installing Claude Code",
+    );
+    expect(screen.getByRole("button", { name: "Check again" })).toBeDisabled();
+    const piRow = screen.getByText("Pi", { exact: true }).closest("li");
+    if (!piRow) throw new Error("Missing Pi row");
+    expect(
+      within(piRow).getByRole("button", { name: "Install" }),
+    ).toBeDisabled();
+    cleanup();
+    render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+    expect(await row().findByRole("status")).toHaveTextContent(
+      "Installing Claude Code",
+    );
+  } finally {
+    finish(failed);
+  }
+  expect(await row().findByRole("alert")).toHaveTextContent(
+    "Installing Claude Code failed",
+  );
+  await user.click(row().getByText("Claude Code install log"));
+  expect(row().getByText("npm error EACCES")).toBeVisible();
+  expect(row().getByText("/fixture/claude-install.log")).toBeVisible();
+  if (!fixture.data.claudeSetup) throw new Error("Missing Claude fixture");
+  fixture.data.claudeSetup.status = "ready";
+  await user.click(row().getByRole("button", { name: "Install" }));
+  expect(await row().findByRole("status")).toHaveTextContent(
+    "Claude Code and its ACP adapter are installed.",
+  );
+  expect(row().queryByRole("alert")).toBeNull();
+  expect(row().queryByRole("button", { name: "Install" })).toBeNull();
+  await user.click(row().getByText("Sign in to Claude Code"));
+  expect(row().getByText("'/fixture/claude' auth login")).toBeVisible();
+  expect(row().getByText(/Ready means the tools are installed/)).toBeVisible();
+  expect(install).toHaveBeenCalledTimes(2);
+});
+
+it("offers manual Claude setup on unsupported devices without treating setup as an agent choice", async () => {
+  const user = userEvent.setup();
+  const { control, fixture } = setupHarnesses("ready", {
+    claude: {
+      status: "cli-needed",
+      installSupported: false,
+      loginCommand: null,
+    },
+    installClaude: vi.fn(),
+  });
+  const row = within(
+    await screen.findByRole("listitem", { name: "Claude Code harness" }),
+  );
+  expect(row.queryByRole("button", { name: "Install" })).toBeNull();
+  await user.click(row.getByText("Manual Claude Code setup"));
+  expect(
+    row.getByText(/npm install -g @anthropic-ai\/claude-code/),
+  ).toBeVisible();
+  expect(
+    row.getByText(/npm install -g @agentclientprotocol\/claude-agent-acp/),
+  ).toBeVisible();
+  // Exercise creation's real picker with the same native snapshot as Settings.
+  cleanup();
+  render(
+    <AgentHarnessEditor
+      draft={agentDraft(fixture.agent)}
+      options={control.snapshot().data?.harnessOptions ?? []}
+      onChange={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  expect(
+    await screen.findByRole("option", { name: "Buzz Agent" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("option", { name: /Claude/ })).toBeNull();
+  expect(control.snapshot().data?.claudeSetup?.status).toBe("cli-needed");
 });

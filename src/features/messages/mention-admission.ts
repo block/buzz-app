@@ -48,3 +48,35 @@ export function mentionAdmission(
     !archivedMention(session, pubkey) &&
     (outside || allowed.has(pubkey));
 }
+
+/**
+ * The recipient a pasted identity link adds, under its current name, or null.
+ * The pasted label is never the name: it could disguise the invitee. A key
+ * with no known name is accepted only if it is a member; otherwise the link
+ * stays display-only, as the chooser would not offer it.
+ */
+export function pastedMentionRecipient(
+  session: RelaySession,
+  channelId: string,
+  pubkey: string,
+  inviteAgents = false,
+  roster?: readonly MentionRecipient[],
+): MentionRecipient | null {
+  if (!mentionAdmission(session, channelId, inviteAgents, roster)(pubkey))
+    return null;
+  const listed = roster?.find((person) => person.pubkey === pubkey);
+  const name =
+    session.profiles.snapshot().get(pubkey)?.name ||
+    listed?.name ||
+    session.agentChoices
+      .snapshot()
+      .identities.find((agent) => agent.pubkey === pubkey)?.name;
+  if (name) return { pubkey, name };
+  const member = roster
+    ? !!listed
+    : !!session.channels
+        .list()
+        .channels.find((c) => c.id === channelId)
+        ?.members?.includes(pubkey);
+  return member ? { pubkey, name: pubkey.slice(0, 12) } : null;
+}

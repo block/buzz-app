@@ -40,6 +40,16 @@ enum Reply {
         release: Arc<Notify>,
         calls: Arc<AtomicUsize>,
     },
+    GatedThenValid {
+        expiry: String,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+        calls: Arc<AtomicUsize>,
+    },
+    StalledSession {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    },
     MalformedSession,
     OversizedSession,
     TruncatedSession,
@@ -150,6 +160,46 @@ async fn handle_request(
             } else {
                 Json(serde_json::json!({ "expires_at": expiry })).into_response()
             }
+        }
+        Reply::GatedThenValid {
+            ref expiry,
+            ref started,
+            ref release,
+            ref calls,
+        } if path.ends_with("/v1/session") => {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                started.notify_one();
+                release.notified().await;
+            }
+            Json(serde_json::json!({ "expires_at": expiry })).into_response()
+        }
+        Reply::StalledSession {
+            ref started,
+            ref release,
+        } if path.ends_with("/v1/session") => {
+            let body = futures_lite::stream::unfold(
+                (false, started.clone(), release.clone()),
+                |(sent_partial, started, release)| async move {
+                    if sent_partial {
+                        started.notify_one();
+                        release.notified().await;
+                        None
+                    } else {
+                        Some((
+                            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
+                                b"{\"expires_at\":\"",
+                            )),
+                            (true, started, release),
+                        ))
+                    }
+                },
+            );
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_LENGTH, 128)
+                .body(Body::from_stream(body))
+                .unwrap()
         }
         Reply::MalformedSession if path.ends_with("/v1/session") => Response::builder()
             .status(StatusCode::OK)
@@ -428,6 +478,28 @@ async fn optional_cli_expiry_and_fractional_expiry_survive_session_validation() 
 }
 
 #[tokio::test]
+async fn expired_saved_session_is_cleared_without_network_access() {
+    let server = FixtureServer::spawn(Reply::Valid {
+        expiry: FUTURE_EXPIRY.into(),
+    })
+    .await;
+    let _environment = BuilderLabEnv::new(&server.base);
+    let home = TempDir::new().unwrap();
+    let owner = make_owner(&home);
+    save(
+        &owner,
+        "expired-session",
+        "expired-session-token",
+        Some("2000-01-01T00:00:00Z"),
+    )
+    .await;
+
+    assert!(get(&owner).await.unwrap().is_none());
+    assert!(owner.session_snapshot().await.unwrap().is_none());
+    assert!(server.records().is_empty());
+}
+
+#[tokio::test]
 async fn invalid_session_is_invalidated_but_transient_failure_preserves_it() {
     let invalid = FixtureServer::spawn(Reply::Status(StatusCode::UNAUTHORIZED)).await;
     let _environment = BuilderLabEnv::new(&invalid.base);
@@ -512,6 +584,63 @@ async fn stale_unauthorized_response_cannot_invalidate_a_replacement_session() {
 }
 
 #[tokio::test]
+async fn expiry_mismatch_cannot_invalidate_a_replacement_session() {
+    const REPLACEMENT_EXPIRY: &str = "2031-01-01T00:00:00Z";
+
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let server = FixtureServer::spawn(Reply::GatedThenValid {
+        expiry: REPLACEMENT_EXPIRY.into(),
+        started: started.clone(),
+        release: release.clone(),
+        calls: Arc::new(AtomicUsize::new(0)),
+    })
+    .await;
+    let _environment = BuilderLabEnv::new(&server.base);
+    let home = TempDir::new().unwrap();
+    let owner = make_owner(&home);
+    save(
+        &owner,
+        "old-session",
+        "old-session-token",
+        Some(FUTURE_EXPIRY),
+    )
+    .await;
+
+    let request_started = started.notified();
+    let validating = {
+        let owner = owner.clone();
+        tokio::spawn(async move { get(&owner).await })
+    };
+    request_started.await;
+    save(
+        &owner,
+        "replacement-session",
+        "replacement-session-token",
+        Some(REPLACEMENT_EXPIRY),
+    )
+    .await;
+    release.notify_one();
+
+    let info = validating.await.unwrap().unwrap().unwrap();
+    assert_eq!(info.expires_at, REPLACEMENT_EXPIRY);
+    let current = owner.session_snapshot().await.unwrap().unwrap();
+    assert_eq!(current.credential(), "replacement-session-token");
+    assert_eq!(current.expires_at(), Some(REPLACEMENT_EXPIRY));
+
+    let records = session_records(&server);
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records[0].authorization.as_deref(),
+        Some("Bearer old-session-token")
+    );
+    assert_eq!(
+        records[1].authorization.as_deref(),
+        Some("Bearer replacement-session-token")
+    );
+}
+
+#[tokio::test]
 async fn malformed_or_oversized_session_responses_invalidate_the_saved_item() {
     for reply in [Reply::MalformedSession, Reply::OversizedSession] {
         let server = FixtureServer::spawn(reply).await;
@@ -544,6 +673,47 @@ async fn interrupted_session_response_preserves_the_saved_item() {
             .credential(),
         "interrupted-token"
     );
+}
+
+#[tokio::test]
+async fn stalled_session_response_timeout_preserves_the_saved_item() {
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let server = FixtureServer::spawn(Reply::StalledSession {
+        started: started.clone(),
+        release: release.clone(),
+    })
+    .await;
+    let _environment = BuilderLabEnv::new(&server.base);
+    let home = TempDir::new().unwrap();
+    let owner = make_owner(&home);
+    save(&owner, "stalled-session", "stalled-session-token", None).await;
+    let snapshot = owner.session_snapshot().await.unwrap().unwrap();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_millis(250))
+        .build()
+        .unwrap();
+
+    let response_started = started.notified();
+    let checking = {
+        let owner = owner.clone();
+        tokio::spawn(async move { check_saved_session(&owner, &snapshot, &http).await })
+    };
+    response_started.await;
+    let check = checking.await.unwrap();
+    release.notify_one();
+
+    assert!(matches!(check, SessionCheck::Transient(_)));
+    assert_eq!(
+        owner
+            .session_snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .credential(),
+        "stalled-session-token"
+    );
+    assert_eq!(session_records(&server).len(), 1);
 }
 
 #[tokio::test]

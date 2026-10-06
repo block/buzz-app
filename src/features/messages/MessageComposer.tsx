@@ -108,6 +108,39 @@ type AcceptedDraft = {
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
 const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
+const recoveryListeners = new WeakMap<
+  RelaySession,
+  Map<string, Set<(draft: MentionDraft) => void>>
+>();
+function notifyRecovered(
+  session: RelaySession,
+  key: string,
+  draft: MentionDraft,
+) {
+  for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
+    listener(draft);
+}
+function subscribeRecovery(
+  session: RelaySession,
+  key: string,
+  listener: (draft: MentionDraft) => void,
+) {
+  let byKey = recoveryListeners.get(session);
+  if (!byKey) {
+    byKey = new Map();
+    recoveryListeners.set(session, byKey);
+  }
+  let listeners = byKey.get(key);
+  if (!listeners) {
+    listeners = new Set();
+    byKey.set(key, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) byKey.delete(key);
+  };
+}
 function recoveryFor(session: RelaySession) {
   let recovery = acceptedDrafts.get(session);
   if (!recovery) {
@@ -491,7 +524,18 @@ function Composer({
     setStorageFailed(false);
   }
   const reconcileDraft = useEffectEvent(() => {
-    if (submission || editing.target || writing.current || accepted) return;
+    if (submission || editing.target || writing.current) return;
+    if (accepted) {
+      // The recovered revision can precede attachment adoption. The explicit
+      // recovery notification below reconciles the mounted owner afterward.
+      if (recoveryFor(session).get(recoveryKey) === accepted) return;
+      const current = viewRevision(scope, draftKey);
+      if (current !== undefined) {
+        setAccepted(undefined);
+        loadSaved(current);
+      }
+      return;
+    }
     const current = viewRevision(scope, draftKey);
     if (current === undefined || current === revision.current) return;
     if (dirty.current || sendAttempt.current) setConflict(true);
@@ -506,6 +550,18 @@ function Composer({
     reconcileDraft();
     return stop;
   }, [scope, submission, editingDraft]);
+  const reconcileRecovery = useEffectEvent((restored: MentionDraft) => {
+    if (!live.current) return;
+    const current = viewRevision(scope, draftKey);
+    if (current === JSON.stringify(restored)) {
+      setAccepted(undefined);
+      loadSaved(current);
+    }
+  });
+  useEffect(
+    () => subscribeRecovery(session, recoveryKey, reconcileRecovery),
+    [session, recoveryKey],
+  );
   function resolveDraft(keep: boolean) {
     const current = viewRevision(scope, draftKey);
     if (current === undefined) {
@@ -518,6 +574,10 @@ function Composer({
     } else loadSaved(current);
   }
   function finishDraft(pending: AcceptedDraft) {
+    if (recoveryFor(session).get(recoveryKey) !== pending) {
+      reconcileDraft();
+      return;
+    }
     const result = persist(pending.next, pending.revision);
     // No stale sent text needs cleanup if nothing was saved and absence is
     // still readable. Keep the normal save attempt for remembered-agent drafts.
@@ -989,8 +1049,22 @@ function Composer({
             // restored. A later edit belongs to its author, not this job.
             const current = viewRevision(scope, draftKey);
             const capturedRevision = JSON.stringify(captured);
+            const cleared = (raw: string | null | undefined) => {
+              if (!raw) return false;
+              try {
+                const draft = mentionDraft(JSON.parse(raw));
+                return (
+                  !draft.text.trim() &&
+                  !draft.recipients.length &&
+                  !composerMarkdown(draft).trim()
+                );
+              } catch {
+                return false;
+              }
+            };
             if (
               live.current &&
+              !cleared(JSON.stringify(valueRef.current)) &&
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients)) &&
@@ -1001,6 +1075,10 @@ function Composer({
               current !== savedRevision &&
               current !== followup &&
               current !== capturedRevision &&
+              !(
+                cleared(current) &&
+                (!live.current || cleared(JSON.stringify(valueRef.current)))
+              ) &&
               !(
                 live.current &&
                 current === JSON.stringify(valueRef.current) &&
@@ -1019,6 +1097,7 @@ function Composer({
               return false;
             if (!target.adopt(files)) return false;
             recoveryFor(session).delete(recoveryKey);
+            notifyRecovered(session, recoveryKey, captured);
             if (live.current) {
               setAccepted(undefined);
               loadSaved(JSON.stringify(captured));

@@ -1253,6 +1253,98 @@ it("restores a failed upload after the composer remounts in the same session", a
   expect(within(again.container).getByText("remount.txt")).toBeVisible();
 });
 
+it("reconciles failed-cleanup recovery after remount before stale cleanup can overwrite the caption", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("retained.txt"));
+  await userEvent.type(h.input(), "recover this caption");
+  const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
+  const original = Storage.prototype.setItem;
+  let failCleanup = true;
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === key && failCleanup) throw Error("storage full");
+      return original.call(this, name, value);
+    });
+  try {
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    expect(h.input()).toHaveAttribute("contenteditable", "false");
+    h.unmount();
+    const again = render(
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+      />,
+      { wrapper: ToastProvider },
+    );
+    const replacement = within(again.container).getByRole("textbox");
+    expect(replacement).toHaveAttribute("contenteditable", "false");
+    failCleanup = false;
+    await act(async () =>
+      h.uploadCalls[0]?.result.reject(new Error("offline")),
+    );
+    await waitFor(() =>
+      expect(replacement).toHaveValue("recover this caption"),
+    );
+    expect(replacement).toHaveAttribute("contenteditable", "true");
+    expect(within(again.container).getByText("retained.txt")).toBeVisible();
+    expect(
+      within(again.container).queryByRole("button", {
+        name: "Retry draft cleanup",
+      }),
+    ).toBeNull();
+    await userEvent.type(replacement, " again");
+    expect(replacement).toHaveValue(" againrecover this caption");
+    expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+      text: " againrecover this caption",
+    });
+    expect(h.publish).not.toHaveBeenCalled();
+  } finally {
+    write.mockRestore();
+  }
+});
+
+it("retains a remounted later edit conflict until clearing it and explicitly retrying recovery", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  const replacement = within(again.container).getByRole("textbox");
+  await userEvent.type(replacement, "later edit");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  const retry = screen.getByRole("button", {
+    name: "Retry failed send recovery",
+  });
+  expect(replacement).toHaveValue("later edit");
+  await userEvent.click(retry);
+  expect(replacement).toHaveValue("later edit");
+  expect(within(again.container).queryByText("original.txt")).toBeNull();
+  await userEvent.clear(replacement);
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({ text: "" });
+  await userEvent.click(retry);
+  await waitFor(() => expect(replacement).toHaveValue("original caption"));
+  expect(replacement).toHaveAttribute("contenteditable", "true");
+  expect(within(again.container).getByText("original.txt")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Retry failed send recovery" }),
+  ).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
 it("keeps a remaining upload failure banner when removing one of two failed files", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("one.txt"));

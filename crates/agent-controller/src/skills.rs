@@ -9,12 +9,20 @@ const CLI_SKILL: &str = include_str!("buzz_cli_skill.md");
 // Shares the old desktop's marker. Bump only with a newer template; never
 // downgrade an installation refreshed by a newer old desktop.
 const CLI_SKILL_VERSION: u32 = 6;
+// Owned here; old Buzz never installs it. Bump when changing the template.
+const MEMORY_SKILL: &str = include_str!("buzz_memory_skill.md");
+const MEMORY_SKILL_VERSION: u32 = 1;
+const SKILLS: &[(&str, &str, u32)] = &[
+    ("buzz-cli", CLI_SKILL, CLI_SKILL_VERSION),
+    ("buzz-memory", MEMORY_SKILL, MEMORY_SKILL_VERSION),
+];
 #[cfg(unix)]
 const PROVIDERS: &[&str] = &[".claude", ".codex", ".goose"];
 
-/// Install the bundled CLI guidance in the desktop's default workspace.
+/// Install the bundled Buzz skills in the desktop's default workspace.
 /// Like the old desktop, custom content survives until a template upgrade.
-pub fn ensure_buzz_cli_skill(workspace: &Path) -> Result<()> {
+/// One skill's failure does not block the others.
+pub fn ensure_buzz_skills(workspace: &Path) -> Result<()> {
     if !workspace.is_absolute() {
         return Err("Buzz skill workspace must be absolute".into());
     }
@@ -23,28 +31,54 @@ pub fn ensure_buzz_cli_skill(workspace: &Path) -> Result<()> {
     private_directory(&agents)?;
     let skills = agents.join("skills");
     private_directory(&skills)?;
-    let canonical = skills.join("buzz-cli");
+    let failures: Vec<String> = SKILLS
+        .iter()
+        .filter_map(|&(name, template, version)| {
+            ensure_skill(workspace, &skills, name, template, version)
+                .err()
+                .map(|error| format!("{name}: {error}"))
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn ensure_skill(
+    workspace: &Path,
+    skills: &Path,
+    name: &str,
+    template: &str,
+    current: u32,
+) -> Result<()> {
+    let canonical = skills.join(name);
+    // Only buzz-cli had the old Claude-only layout.
     #[cfg(unix)]
-    migrate_claude_skill(workspace, &canonical)?;
+    if name == "buzz-cli" {
+        migrate_claude_skill(workspace, &canonical)?;
+    }
     private_directory(&canonical)?;
     let skill = canonical.join("SKILL.md");
     let version = canonical.join(".skill-version");
     let skill_exists = regular_file(&skill)?;
     let installed_version = read_version(&version)?;
-    if !skill_exists || installed_version < CLI_SKILL_VERSION {
-        atomic_write(&skill, CLI_SKILL)?;
+    if !skill_exists || installed_version < current {
+        atomic_write(&skill, template)?;
     }
     // Publish the marker only after the content succeeds; interrupted installs
     // retry next startup. Missing content is repaired even with a newer marker.
-    if installed_version < CLI_SKILL_VERSION {
-        atomic_write(&version, &format!("{CLI_SKILL_VERSION}\n"))?;
+    if installed_version < current {
+        atomic_write(&version, &format!("{current}\n"))?;
     }
     #[cfg(unix)]
     for provider in PROVIDERS {
         let parent = workspace.join(provider);
-        if let Err(error) = link_provider(&parent) {
+        if let Err(error) = link_provider(&parent, name) {
             eprintln!(
-                "buzz: skipped CLI skill link at {}: {error}",
+                "buzz: skipped {name} skill link at {}: {error}",
                 parent.display()
             );
         }
@@ -53,11 +87,11 @@ pub fn ensure_buzz_cli_skill(workspace: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn link_provider(parent: &Path) -> Result<()> {
+fn link_provider(parent: &Path, name: &str) -> Result<()> {
     private_directory(parent)?;
     let skills = parent.join("skills");
     private_directory(&skills)?;
-    let link = skills.join("buzz-cli");
+    let link = skills.join(name);
     match fs::symlink_metadata(&link) {
         Ok(meta) if meta.file_type().is_symlink() && !link.exists() => {
             fs::remove_file(&link).map_err(|_| "Could not repair Buzz skill link")?;
@@ -66,7 +100,7 @@ fn link_provider(parent: &Path) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("Could not inspect Buzz skill link".into()),
     }
-    std::os::unix::fs::symlink("../../.agents/skills/buzz-cli", &link)
+    std::os::unix::fs::symlink(format!("../../.agents/skills/{name}"), &link)
         .map_err(|_| "Could not create Buzz skill link".into())
 }
 

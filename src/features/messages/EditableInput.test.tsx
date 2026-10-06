@@ -160,6 +160,89 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect(h.input).toHaveValue(":x");
 });
 
+it("preserves inline Markdown and the document while inserting a line break", async () => {
+  const h = mount("_abcd_");
+  act(() => {
+    h.input.setSelectionRange(0, 6);
+    h.input.toggleFormat("bold");
+    h.input.setSelectionRange(3, 3);
+  });
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+  expect(h.input).toHaveValue("_ab\ncd_");
+  expect(h.markdown()).toBe("**_ab\ncd_**");
+});
+
+it("preserves formatted pasted link source across a line break", async () => {
+  const h = mount();
+  const source = "[label](https://example.com)";
+  paste(h.input, source);
+  act(() => {
+    h.input.setSelectionRange(0, source.length);
+    h.input.toggleFormat("bold");
+    h.input.setSelectionRange(4, 4);
+  });
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+  expect(h.input).toHaveValue("[lab\nel](https://example.com) ");
+  expect(h.markdown()).toBe("**[lab\nel](https://example.com)** ");
+});
+
+it("accepts a line break when the unchanged Markdown fits the length limit", async () => {
+  const h = mount("abcd", { maxLength: 9 });
+  act(() => {
+    h.input.setSelectionRange(0, 4);
+    h.input.toggleFormat("bold");
+    h.input.setSelectionRange(2, 2);
+  });
+  expect(h.markdown()).toBe("**abcd**");
+  await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(h.input).toHaveValue("ab\ncd");
+  expect(h.markdown()).toBe("**ab\ncd**");
+});
+
+it("refreshes only an accepted collapsed Mac WebKit line-break caret", () => {
+  const platform = vi
+    .spyOn(navigator, "platform", "get")
+    .mockReturnValue("MacIntel");
+  const userAgent = vi
+    .spyOn(navigator, "userAgent", "get")
+    .mockReturnValue("Mozilla/5.0 AppleWebKit/605.1.15");
+  const clear = vi.spyOn(Selection.prototype, "removeAllRanges");
+  try {
+    const h = mount("ab");
+    act(() => h.input.setSelectionRange(1, 1));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input).toHaveValue("a\nb");
+    expect(h.input.selectionStart).toBe(2);
+    expect(h.input.selectionEnd).toBe(2);
+
+    act(() => h.input.setSelectionRange(0, h.input.value.length));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+
+    const limited = mount("ab", { maxLength: 2 });
+    act(() => limited.input.setSelectionRange(1, 1));
+    clear.mockClear();
+    act(() => expect(limited.input.insertLineBreak()).toBe(false));
+    expect(clear).not.toHaveBeenCalled();
+    expect(limited.input).toHaveValue("ab");
+
+    userAgent.mockReturnValue("Mozilla/5.0 AppleWebKit/605.1.15 Chrome/120.0");
+    const chromium = mount("ab");
+    clear.mockClear();
+    act(() => expect(chromium.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+  } finally {
+    clear.mockRestore();
+    userAgent.mockRestore();
+    platform.mockRestore();
+  }
+});
+
 /** Exercise ProseMirror's actual MutationObserver/readDOMChange seam, including
  * marksAcross on deletion. This is not a claim about native WebKit keystrokes. */
 async function deleteCodeTail(input: ComposerInputElement, count = 1) {

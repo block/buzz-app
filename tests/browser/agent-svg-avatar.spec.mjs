@@ -3,7 +3,7 @@ import { test, expect } from "./source-fixture.mjs";
 test("renders the bounded Buzz emoji avatar as an agent picture", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setViewportSize({ width: 400, height: 310 });
   await page.goto("/tests/fixtures/agent-avatar.html");
   const group = page.getByRole("region", { name: "40px avatars" });
   const avatar = group.getByRole("img", { name: /^Rocket agent/ });

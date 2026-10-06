@@ -5,7 +5,7 @@ import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
-import { prepareSidebarMute } from "./sidebar-mutes.mjs";
+import { prepareSidebarMute } from "./sidebar-toggle.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 

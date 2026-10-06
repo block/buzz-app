@@ -1,31 +1,22 @@
-import { editSidebarSort } from "../src/features/relay/sidebar-edits.ts";
+import {
+  editSidebarSort,
+  validSidebarSort,
+} from "../src/features/relay/sidebar-edits.ts";
 import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { projectSidebarPreferences } from "../src/features/relay/sidebar-preferences.ts";
 import { SIDEBAR_REQUEST_BYTES } from "./sidebar-preferences.mjs";
 
 const SORT_COORDINATE = "channel-sort";
-const SORT_KEYS = new Set(["starred", "channels", "forums", "dms"]);
-function validSortGroup(group, sectionIds) {
-  return (
-    SORT_KEYS.has(group) ||
-    (group.startsWith("section:") && sectionIds.includes(group.slice(8)))
-  );
-}
 export function assertSidebarSortIntent(intent) {
   if (
     !intent ||
     typeof intent !== "object" ||
     Array.isArray(intent) ||
     typeof intent.group !== "string" ||
-    intent.group.length > 264 ||
-    !["alpha", "recent"].includes(intent.mode) ||
     !Array.isArray(intent.sectionIds) ||
-    intent.sectionIds.length > 100 ||
-    intent.sectionIds.some(
-      (id) => typeof id !== "string" || !id.trim() || id.length > 256,
-    ) ||
-    !validSortGroup(intent.group, intent.sectionIds) ||
+    intent.sectionIds.some((id) => typeof id !== "string") ||
+    !validSidebarSort(intent.group, intent.mode, intent.sectionIds) ||
     Object.keys(intent).some(
       (key) => !["group", "mode", "sectionIds"].includes(key),
     )

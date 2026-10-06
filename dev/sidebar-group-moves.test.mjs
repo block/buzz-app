@@ -11,7 +11,7 @@ import {
   decodeSidebarPreferences,
   mutateSidebarAssignment,
 } from "./sidebar-preferences.mjs";
-import { mutateSidebarStar } from "./sidebar-stars.mjs";
+import { mutateSidebarStar } from "./sidebar-toggle.mjs";
 
 async function setup({ cachedAssignment = true } = {}) {
   const secret = generateSecretKey();

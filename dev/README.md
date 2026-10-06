@@ -9,6 +9,7 @@ for the runtime/identity matrix, ownership rules and cross-host test expectation
 Keep platform-neutral feature policy under its existing `src/features/*` owner;
 retain host custody and boundary enforcement here. Existing tests are discovered
 by Vitest. [Broker setup](../README.md#relay-channels) requires an explicit public
-identity pin; never put a private key in environment configuration. The broker is
-being shrunk and does not receive new feature support. Use the native path for
-manual acceptance; see the [broker reduction sequence](../docs/contributing.md#broker-reduction-sequence).
+identity pin; never put a private key in environment configuration. Preserve
+supported browser capabilities while consolidating duplicate implementations.
+Use the native path for native acceptance and browser workflows to validate
+browser support; see the [consolidation guidance](../docs/contributing.md#broker-consolidation-and-completion).

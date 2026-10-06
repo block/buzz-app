@@ -332,11 +332,15 @@ export function MessageManagementItems({
       {!dm && (
         <MenuItem
           onClick={() => {
+            management.report(undefined);
             try {
               session.unread.follow(row.channelId, threadRootId, !following);
-            } catch {
-              // Like the reference, an unsaved choice leaves the thread, and
-              // this label, as they were.
+            } catch (cause) {
+              management.report(
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not save thread follow. Try again.",
+              );
             }
           }}
         >

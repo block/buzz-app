@@ -562,10 +562,20 @@ it("keeps showing Follow thread when the choice cannot be saved", async () => {
   }
   expect(h.owner.session.unread.following("room", h.original.id)).toBe(false);
   expect(savedFollows()).toEqual([]);
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not save thread follow. Try again.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
-  expect(
+  fireEvent.click(
     await screen.findByRole("menuitem", { name: "Follow thread" }),
-  ).toBeVisible();
+  );
+  await waitFor(() =>
+    expect(h.owner.session.unread.following("room", h.original.id)).toBe(true),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(savedFollows()).toEqual([
+    JSON.stringify([[`room:${h.original.id}`, true]]),
+  ]);
 });
 
 it("offers the follow choice only once a restored roster is confirmed", async () => {

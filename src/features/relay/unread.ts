@@ -326,6 +326,7 @@ export function createUnread({
       parentId: string;
       rootId: string | undefined;
       ids: Set<string>;
+      structuralOnly: boolean;
     }
   >();
   // The viewer's own deleted messages, so neither a stored lookup result nor
@@ -1134,11 +1135,15 @@ export function createUnread({
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
-    const key = conversationKey(channelId, parentId);
+    const structuralRecovery =
+      threadRootId !== undefined && chosen(entry) === true && !entry.rootId;
+    const key = structuralRecovery
+      ? `${conversationKey(channelId, threadRootId)}:structure`
+      : conversationKey(channelId, parentId);
     if (
       lookups.has(key) ||
-      !undecided(entry, dm) ||
-      !afterFrontier(entry, reads.state(), dm)
+      (!structuralRecovery &&
+        (!undecided(entry, dm) || !afterFrontier(entry, reads.state(), dm)))
     )
       return;
     lookups.set(key, {
@@ -1152,9 +1157,17 @@ export function createUnread({
     // written it) and its replies are asked for (the viewer may have replied
     // on another branch).
     const rootId = threadRootId === parentId ? undefined : threadRootId;
-    const ids = new Set([parentId]);
+    const ids = new Set(
+      structuralRecovery ? [threadRootId ?? parentId] : [parentId],
+    );
     if (rootId && !structural(rootId)) ids.add(rootId);
-    queued.set(key, { channelId, parentId, rootId, ids });
+    queued.set(key, {
+      channelId,
+      parentId: structuralRecovery ? (threadRootId ?? parentId) : parentId,
+      rootId,
+      ids,
+      structuralOnly: structuralRecovery,
+    });
     if (scheduled || retry) return;
     scheduled = true;
     queueMicrotask(() => {
@@ -1304,7 +1317,13 @@ export function createUnread({
                   { signal, priority: "background" },
                 )
               : Promise.resolve([]),
-            viewerReplies(channelId, parents, signal),
+            parents.some((parent) => !parent.structuralOnly)
+              ? viewerReplies(
+                  channelId,
+                  parents.filter((parent) => !parent.structuralOnly),
+                  signal,
+                )
+              : Promise.resolve([]),
           ]);
         } catch {
           if (closed) return;
@@ -1342,6 +1361,18 @@ export function createUnread({
           (event) => event.pubkey === viewer && live(event),
         );
         for (const target of parents) {
+          if (target.structuralOnly) {
+            remember(
+              `${conversationKey(channelId, target.parentId)}:structure`,
+              {
+                channelId,
+                done: true,
+                evidence: undefined,
+                more: false,
+              },
+            );
+            continue;
+          }
           const found = mine.filter((event) => decides(event, target));
           // The viewer's own parent or root, live and in this channel.
           const authored = [target.parentId, target.rootId].flatMap((id) => {
@@ -1674,13 +1705,15 @@ export function createUnread({
       const next = new Map(choices());
       next.delete(key);
       next.set(key, following);
+      const changed = new Set([channelId]);
       for (const [oldest] of next) {
         if (next.size <= THREAD_FOLLOW_LIMIT) break;
         next.delete(oldest);
+        changed.add(oldest.slice(0, oldest.indexOf(":")));
       }
       follows.write(next);
       saved = next;
-      followsChanged(new Set([channelId]));
+      followsChanged(changed);
     },
     reading(channelId) {
       if (closed || !allowed(channelId) || handles.size >= 64)

@@ -3,8 +3,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import { createReadState } from "./read-state";
-import { readJournal, type ReadJournal } from "./read-state-storage";
 import {
+  newReadJournal,
+  readJournal,
+  type ReadJournal,
+} from "./read-state-storage";
+import {
+  THREAD_FOLLOW_LIMIT,
   memoryThreadFollows,
   type ThreadFollowStorage,
 } from "./thread-follows";
@@ -51,8 +56,11 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-async function setup(follows: ThreadFollowStorage = memoryThreadFollows()) {
-  let journal: ReadJournal | undefined;
+async function setup(
+  follows: ThreadFollowStorage = memoryThreadFollows(),
+  initial?: ReadJournal,
+) {
+  let journal: ReadJournal | undefined = initial;
   // Nothing beyond the retained window: every parent lookup answers "not yours".
   const reader = {
     read: vi.fn(
@@ -108,7 +116,7 @@ async function setup(follows: ThreadFollowStorage = memoryThreadFollows()) {
         ).toBeUndefined();
     });
   };
-  return { owner, unread, reader, settled };
+  return { owner, unread, reader, settled, journal: () => journal };
 }
 
 it("follows a thread without replying, including nested replies under its root", async () => {
@@ -464,5 +472,78 @@ it("applies another window's saved choice", async () => {
   expect(unread.following("c0", root.id)).toBe(true);
   expect(listener).toHaveBeenCalled();
   expect(unread.attention("c0", answer.id).category).toBe("thread");
+  stop();
+});
+
+it("recovers the same-channel root of a saved follow after restart without membership reads", async () => {
+  const follows = memoryThreadFollows();
+  const first = await setup(follows);
+  const root = event(peer, 10, []);
+  const parent = reply(peer, 11, root);
+  const readBeforeRestart = reply(peer, 20, root, parent);
+  const recent = reply(peer, 30, root, parent);
+  first.unread.follow("c0", root.id, true);
+  first.owner.dispose();
+  const prior = first.journal() ?? newReadJournal();
+  const second = await setup(follows, {
+    ...prior,
+    state: {
+      ...prior.state,
+      frontiers: {
+        [`thread:${root.id}`]: 25,
+        [`thread-activity:${root.id}`]: 25,
+      },
+    },
+  });
+  second.reader.read.mockImplementation(relayOf(root, parent));
+  second.owner.accept([readBeforeRestart, recent]);
+  const thread = { kind: "thread", channelId: "c0", rootId: root.id } as const;
+  const channel = { kind: "channel", channelId: "c0" } as const;
+  const stop = second.unread.subscribe(channel, () => {});
+  const stopActivity = second.unread.subscribeActivity("c0", () => {});
+  await vi.waitFor(() =>
+    expect(second.unread.activity("c0").items).toEqual([
+      expect.objectContaining({ rootId: root.id, unreadCount: 1 }),
+    ]),
+  );
+  expect(second.unread.snapshot(thread).observedCount).toBe(1);
+  expect(second.unread.snapshot(channel).attentionCount).toBe(1);
+  expect(second.reader.read).toHaveBeenCalled();
+  expect(
+    second.reader.read.mock.calls.every(([filters]) => !!filters[0]?.ids),
+  ).toBe(true);
+  expect(second.unread.attention("c0", readBeforeRestart.id).unread).toBe(
+    false,
+  );
+  expect(second.unread.attention("c0", recent.id).unread).toBe(true);
+  stopActivity();
+  stop();
+});
+
+it("invalidates the evicted channel and Activity at the shared choice limit", async () => {
+  const follows = memoryThreadFollows();
+  const { owner, unread } = await setup(follows);
+  const root = event(peer, 10, []);
+  const answer = reply(peer, 20, root);
+  owner.accept([root, answer]);
+  unread.follow("c0", root.id, true);
+  const channel = { kind: "channel", channelId: "c0" } as const;
+  const notified = vi.fn();
+  const activityNotified = vi.fn();
+  const stop = unread.subscribe(channel, notified);
+  const stopActivity = unread.subscribeActivity("c0", activityNotified);
+  expect(unread.snapshot(channel).attentionCount).toBe(1);
+  expect(unread.activity("c0").items).toHaveLength(1);
+  for (let i = 0; i < THREAD_FOLLOW_LIMIT - 1; i++)
+    unread.follow("c1", (10000 + i).toString(16).padStart(64, "0"), true);
+  notified.mockClear();
+  activityNotified.mockClear();
+  unread.follow("c1", "f".repeat(64), true);
+  expect(follows.read().has(`c0:${root.id}`)).toBe(false);
+  expect(unread.snapshot(channel).attentionCount).toBe(0);
+  expect(unread.activity("c0").items).toEqual([]);
+  expect(notified).toHaveBeenCalled();
+  expect(activityNotified).toHaveBeenCalled();
+  stopActivity();
   stop();
 });

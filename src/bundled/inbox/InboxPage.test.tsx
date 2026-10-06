@@ -1533,7 +1533,7 @@ it.each([true, false])(
   },
 );
 
-it("shows three accessible filters without removed options, bulk action or coverage boilerplate", async () => {
+it("shows three accessible filters without project options, bulk actions or coverage boilerplate", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");

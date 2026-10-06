@@ -342,7 +342,6 @@ pub(crate) async fn run_output(
 mod tests {
     use super::{effective_path, run as run_with_path};
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -360,8 +359,7 @@ mod tests {
     fn executable(script: &str) -> (tempfile::TempDir, PathBuf) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tool");
-        fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&path, format!("#!/bin/sh\n{script}\n"));
         (directory, path)
     }
 
@@ -418,11 +416,12 @@ mod tests {
     async fn env_shebang_uses_the_path_that_resolved_the_command() {
         let directory = tempfile::tempdir().unwrap();
         let interpreter = directory.path().join("fixture-runtime");
-        fs::write(&interpreter, "#!/bin/sh\nexec /bin/sh \"$@\"\n").unwrap();
-        fs::set_permissions(&interpreter, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&interpreter, "#!/bin/sh\nexec /bin/sh \"$@\"\n");
         let tool = directory.path().join("tool");
-        fs::write(&tool, "#!/usr/bin/env fixture-runtime\nprintf 'ready\\n'\n").unwrap();
-        fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(
+            &tool,
+            "#!/usr/bin/env fixture-runtime\nprintf 'ready\\n'\n",
+        );
         let path =
             std::env::join_paths([Path::new("/usr/bin"), Path::new("/bin"), directory.path()])
                 .unwrap();

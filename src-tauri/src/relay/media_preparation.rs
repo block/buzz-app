@@ -615,13 +615,11 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn old_ffmpeg_is_rejected_before_image_conversion() {
-        use std::os::unix::fs::PermissionsExt;
         let _guard = CONVERSIONS.lock().await;
         let directory = tempfile::tempdir().unwrap();
         let program = directory.path().join("ffmpeg");
         // Any invocation beyond the version probe is a test failure.
-        std::fs::write(&program, "#!/bin/sh\nif [ \"$1\" = -version ]; then printf 'ffmpeg version 7.1.4 Copyright'; else exit 99; fi\n").unwrap();
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&program, "#!/bin/sh\nif [ \"$1\" = -version ]; then printf 'ffmpeg version 7.1.4 Copyright'; else exit 99; fi\n");
         let (_sender, mut cancelled) = oneshot::channel();
         let bytes = include_bytes!("../../../tests/fixtures/media/tiled.heic").to_vec();
         assert_eq!(

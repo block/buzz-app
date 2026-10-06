@@ -334,10 +334,8 @@ fn create_draft_model_browsing_inherits_native_provider_and_environment() {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let goose = dir.path().join("goose");
-        std::fs::write(&goose, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&goose, "#!/bin/sh\n");
         host.with(|host| {
             host.controller
                 .save_defaults(
@@ -655,7 +653,6 @@ struct PiProbeGate(PathBuf);
 #[cfg(unix)]
 impl PiProbeGate {
     fn new(root: &std::path::Path) -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let tools = root.join("pi-tools");
         std::fs::create_dir(&tools).unwrap();
         let fifo =
@@ -671,8 +668,7 @@ impl PiProbeGate {
                 "#!/bin/sh\nexit 0\n".into()
             };
             let file = tools.join(name);
-            std::fs::write(&file, script).unwrap();
-            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_executable::write_executable(&file, script);
         }
         Self(tools)
     }
@@ -794,7 +790,6 @@ mod overlap {
     // Verified manifest over inert scripts. Credential refusal precedes any spawn.
     fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
         use sha2::{Digest, Sha256};
-        use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(directory).unwrap();
         let source: Value =
             serde_json::from_str(include_str!("../../../runtime/agent-runtime.json")).unwrap();
@@ -802,8 +797,7 @@ mod overlap {
         for tool in source["tools"].as_array().unwrap() {
             let name = tool.as_str().unwrap();
             let path = directory.join(name);
-            std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_executable::write_executable(&path, "#!/bin/sh\nexit 1\n");
             let digest = Sha256::digest(std::fs::read(&path).unwrap());
             files.insert(name.to_owned(), format!("{digest:x}"));
         }
@@ -2195,14 +2189,12 @@ fn log_ipc_requires_fresh_exact_owner_proof_and_consumes_challenge() {
 #[cfg(unix)]
 #[test]
 fn pi_model_lookup_waits_out_brief_host_contention() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, host, _app, view) = fixture();
     let tools = dir.path().join("tools");
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n").unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&file, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; exit 0; fi\nread request\nprintf '%s\\n' '{\"id\":\"catalog\",\"type\":\"response\",\"command\":\"get_available_models\",\"success\":true,\"data\":{\"models\":[{\"provider\":\"databricks\",\"id\":\"model-a\"}]}}'\n");
     }
     // Another native operation (for example a snapshot refresh) briefly holds
     // the host while the lookup reads its settings.
@@ -2239,13 +2231,12 @@ fn pi_model_lookup_waits_out_brief_host_contention() {
 #[cfg(unix)]
 #[test]
 fn pi_connection_test_prompts_the_draft_selection() {
-    use std::os::unix::fs::PermissionsExt;
     let (dir, _host, _app, view) = fixture();
     let tools = dir.path().join("tools");
     std::fs::create_dir(&tools).unwrap();
     for tool in ["pi", "node", "buzz-pi-acp"] {
         let file = tools.join(tool);
-        std::fs::write(
+        crate::test_executable::write_executable(
             &file,
             r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '0.99.1\n'; exit 0; fi
@@ -2268,8 +2259,7 @@ read request
 case "$request" in *prompt*) ;; *) exit 1;; esac
 printf '{"type":"message_end","message":{"role":"assistant","provider":"%s","model":"%s","content":[{"type":"text","text":"OK"}],"stopReason":"%s","errorMessage":"%s"}}\n' "$provider" "$model" "$stop" "$error"
 "#,
-        ).unwrap();
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
     }
     let test = |provider: &str, model: &str| {
         let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
@@ -2565,12 +2555,7 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let executable = dir.path().join("launcher");
-    std::fs::write(&executable, "synthetic launcher bytes").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    crate::test_executable::write_executable(&executable, "synthetic launcher bytes");
     let mut registration = std::pin::pin!(run(host.clone(), move |h| {
         counted.fetch_add(1, Ordering::SeqCst);
         h.controller.security(Request::Register {
@@ -2700,8 +2685,6 @@ fn windows_claude_manual_setup_uses_runnable_launchers() {
 #[cfg(any(unix, windows))]
 #[tokio::test]
 async fn claude_auth_check_exposes_only_confirmed_status() {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::Builder::new()
         .prefix("Claude tools ")
         .tempdir()
@@ -2727,8 +2710,7 @@ async fn claude_auth_check_exposes_only_confirmed_status() {
     ] {
         #[cfg(unix)]
         {
-            std::fs::write(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n")).unwrap();
-            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+            crate::test_executable::write_executable(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n"));
         }
         #[cfg(windows)]
         std::fs::write(&cli, format!("@echo off\r\nif not \"%~1\"==\"auth\" exit /b 3\r\nif not \"%~2\"==\"status\" exit /b 3\r\necho {output}\r\nexit /b {exit}\r\n")).unwrap();

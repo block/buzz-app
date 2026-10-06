@@ -108,12 +108,14 @@ export function createChannelLifecycle({
     id: string,
     signal: AbortSignal,
     member = false,
+    strong = false,
   ) {
     if (!reader)
       throw new Error("Channel actions are unavailable on this connection");
     const events = await reader.read(
       kinds.map((kind) => ({
         kinds: [kind],
+        ...(strong ? { consistency: "strong" as const } : {}),
         authors: [relayAuthor],
         "#d": [id],
         limit: 1,
@@ -187,8 +189,14 @@ export function createChannelLifecycle({
       return Object.freeze({ ...settings, deleteUnavailable: true });
     }
   }
-  async function readVisibility(signal: AbortSignal) {
-    const events = await read([DM_VISIBILITY_KIND], viewer, signal, true);
+  async function readVisibility(signal: AbortSignal, strong = false) {
+    const events = await read(
+      [DM_VISIBILITY_KIND],
+      viewer,
+      signal,
+      true,
+      strong,
+    );
     const record = lifecycleRecord(
       events,
       DM_VISIBILITY_KIND,
@@ -315,10 +323,16 @@ export function createChannelLifecycle({
                 signal.addEventListener("abort", abort, { once: true });
               });
             if (action === "hide") {
-              if ((await readVisibility(signal)).includes(id)) return;
+              if ((await readVisibility(signal, true)).includes(id)) return;
             } else {
               const kind = action === "leave" ? 39002 : 39000;
-              const events = await read([kind], id, signal, action === "leave");
+              const events = await read(
+                [kind],
+                id,
+                signal,
+                action === "leave",
+                true,
+              );
               const record = lifecycleRecord(events, kind, id, relayAuthor);
               if (action === "archive" || action === "unarchive") {
                 const archived =

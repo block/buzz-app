@@ -935,7 +935,7 @@ to resume sharing for the current viewer. A later explicit Share writes the
 viewer/community-bound `mesh-sharing-viewer.json` checkpoint instead. A corrupt
 bound sidecar remains a visible storage failure; it is not silently overwritten.
 
-The Mesh SDK is pinned to v0.78.0. Local catalog probing verifies hardware-based
+The Mesh SDK is pinned to v0.78.1. Local catalog probing verifies hardware-based
 selection, and synthetic native/browser checks cover legacy settings, restore
 admission and the creation shortcut. These do not establish packaged live
 community → sharing → agent reply → quit/relaunch acceptance.

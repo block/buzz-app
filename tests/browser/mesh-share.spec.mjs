@@ -21,7 +21,7 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mesh-share.html`,
     );
     await expect(
-      page.getByText("Qwen 27B — automatically selected for this device."),
+      page.getByText("Auto — Qwen 27B (Q4_K_M) for this device"),
     ).toBeVisible();
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
     await expect(

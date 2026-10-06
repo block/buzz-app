@@ -501,13 +501,30 @@ test.describe("local receipt reserve", () => {
     app,
   }) => {
     await open(page, app);
-    await composer(page).focus();
     const ids = await visible(page);
     expect(ids.length).toBeGreaterThan(0);
     const key = `msg:${ids[0]}`;
+    // Read one visible row without a dwell at the bottom: a catch-up mark
+    // would cover it and leave no message mark for pressure to evict.
+    await page.evaluate(
+      async ({ alphaId, id }) => {
+        const reading = window.fixtureRelay
+          .snapshot()
+          .session.unread.reading(alphaId);
+        try {
+          await reading.observe([id]);
+        } finally {
+          reading.dispose();
+        }
+      },
+      { alphaId, id: ids[0] },
+    );
     await expect
       .poll(async () => (await journal(page)).state.frontiers[key])
       .toBeDefined();
+    expect(
+      (await journal(page)).state.frontiers[`activity:${alphaId}`],
+    ).toBeUndefined();
     await park(page);
     await holdReadingFocus(page); // Applied on reload, so it cannot silently reread Alpha.
     await page.evaluate(() =>

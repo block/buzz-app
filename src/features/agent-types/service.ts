@@ -64,7 +64,7 @@ export type AgentDelivery<Config> = Readonly<{
   agent: AgentIdentity;
   config: Config;
   /** Aborts when the run ends: when `run` settles, on timeout, when the agent is
-   * stopped, edited or deleted, when its plugin is disabled or replaced, and when the
+   * edited or deleted, when its plugin is disabled or replaced, and when the
    * owner's connection is replaced. */
   signal: AbortSignal;
 }>;
@@ -133,7 +133,7 @@ const SEEN_LIMIT = 512;
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const CONCURRENCY_LIMIT = 16;
-/** Matches native's longest run lease. */
+/** The longest deadline a type may ask for one run. */
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 /** The names native accepts for a saved value. */
 const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -176,7 +176,7 @@ type Binding = {
   close(): void;
 };
 type Job = { event: RelayEvent; channelId?: string };
-/** One enabled agent of an active type, on the current connection. */
+/** One agent of an active type, on the current connection. */
 type Instance = {
   agent: AgentView;
   type: RegisteredAgentType;
@@ -340,7 +340,7 @@ export class AgentTypesService extends Service implements AgentTypes {
       void this.control.refresh();
   }
 
-  // The listening set: enabled agents in this community whose type is active. An
+  // The listening set: every agent in this community whose type is active. An
   // agent whose record, type revision or connection changed is rebuilt, which
   // aborts its in-flight run and recomputes its subscription from the saved config.
   private reconcile() {
@@ -356,10 +356,7 @@ export class AgentTypesService extends Service implements AgentTypes {
           binding.scope,
         )
       : []) {
-      const type =
-        agent.plugin && agent.enabled
-          ? types.get(agent.plugin.type)
-          : undefined;
+      const type = agent.plugin && types.get(agent.plugin.type);
       if (!type) continue;
       const prior = this.instances.get(agent.id);
       if (
@@ -390,7 +387,7 @@ export class AgentTypesService extends Service implements AgentTypes {
     for (const [id, instance] of this.instances) {
       if (next.get(id) === instance) continue;
       instance.controller.abort();
-      // Stopped, deleted, or its type went away: no subscription is in force.
+      // Deleted, or its type went away: no subscription is in force.
       if (!next.has(id) && counters[id]?.subscription) {
         const { subscription: _, ...kept } = counters[id];
         counters = { ...counters, [id]: Object.freeze(kept) };
@@ -492,13 +489,8 @@ export class AgentTypesService extends Service implements AgentTypes {
 
   // A run's hold on its agent. It is made for one run and rejects once that run has
   // ended, so a function that outlives its deadline can neither publish nor read a
-  // secret while the next run is in progress. Native enforces the same boundary
-  // with the run's lease, including for a call already in flight when it ends.
-  private identity(
-    instance: Instance,
-    signal: AbortSignal,
-    lease: Promise<number> | undefined,
-  ): AgentIdentity {
+  // secret while the next run is in progress.
+  private identity(instance: Instance, signal: AbortSignal): AgentIdentity {
     const { agent, type, binding } = instance;
     const running = () => {
       if (signal.aborted || binding.signal.aborted)
@@ -513,8 +505,7 @@ export class AgentTypesService extends Service implements AgentTypes {
         running();
         if (!this.control.publishAs)
           throw new Error("Agents can publish only from the desktop app");
-        if (!lease) throw new Error("This run has no native lease");
-        return this.control.publishAs(agent.id, await lease, {
+        return this.control.publishAs(agent.id, {
           kind: event.kind,
           content: event.content,
           tags: event.tags ?? [],
@@ -528,8 +519,7 @@ export class AgentTypesService extends Service implements AgentTypes {
           throw new Error(
             "Agent secrets are available only in the desktop app",
           );
-        if (!lease) throw new Error("This run has no native lease");
-        return this.control.secret(agent.id, await lease, name);
+        return this.control.secret(agent.id, name);
       },
     });
   }
@@ -537,15 +527,11 @@ export class AgentTypesService extends Service implements AgentTypes {
   private async execute(instance: Instance, job: Job) {
     const id = instance.agent.id;
     const ended = new AbortController();
-    const timeoutMs = instance.type.timeoutMs ?? 30_000;
     const signal = AbortSignal.any([
       instance.controller.signal,
-      AbortSignal.timeout(timeoutMs),
+      AbortSignal.timeout(instance.type.timeoutMs ?? 30_000),
       ended.signal,
     ]);
-    const lease = this.control.runBegin?.(id, timeoutMs);
-    // A refused lease surfaces from publish or secret; it never rejects unheard.
-    lease?.catch(() => {});
     this.count(id, (now) => ({
       ...now,
       fired: now.fired + 1,
@@ -559,7 +545,7 @@ export class AgentTypesService extends Service implements AgentTypes {
             Object.freeze({
               event: job.event,
               ...(job.channelId ? { channelId: job.channelId } : {}),
-              agent: this.identity(instance, signal, lease),
+              agent: this.identity(instance, signal),
               config: instance.agent.plugin?.config,
               signal,
             }),
@@ -572,7 +558,7 @@ export class AgentTypesService extends Service implements AgentTypes {
         }),
       ]);
     } catch (error) {
-      // Cancellation by stop, edit, disable or session swap is not an agent fault.
+      // Cancellation by edit, delete, disable or session swap is not an agent fault.
       if (instance.controller.signal.aborted) return;
       console.error(`Agent run failed: ${instance.agent.name}`, error);
       this.count(id, (now) => ({
@@ -582,11 +568,6 @@ export class AgentTypesService extends Service implements AgentTypes {
       }));
     } finally {
       ended.abort();
-      const end = this.control.runEnd;
-      if (lease && end)
-        void lease.then(end).catch(() => {
-          // The lease is already gone, or native will expire it at its deadline.
-        });
     }
   }
 }

@@ -3311,7 +3311,7 @@ while :; do /bin/sleep 0.1; done
 }
 
 #[test]
-fn plugin_secrets_are_saved_write_only_and_read_only_while_the_agent_is_on() {
+fn plugin_agents_always_listen_and_their_secrets_are_saved_write_only() {
     let dir = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
     saved.workspace = String::new();
@@ -3341,9 +3341,11 @@ fn plugin_secrets_are_saved_write_only_and_read_only_while_the_agent_is_on() {
     let view = controller.snapshot().unwrap().agents.remove(0);
     assert_eq!(view.harness.environment_keys, ["apiKey"]);
     assert!(!serde_json::to_string(&view).unwrap().contains("sk-test"));
-    // Off: the type's function is not running, so nothing may read the value.
-    assert!(controller.plugin_secret(&saved.id, "apiKey").is_err());
-    controller.action(&saved.id, Action::Start).unwrap();
+    // No on/off state: it listens while it exists, and Start, Stop and Restart refuse.
+    assert!(matches!(view.status, ProcessStatus::Running));
+    for action in [Action::Start, Action::Stop, Action::Restart] {
+        assert!(controller.action(&saved.id, action).is_err());
+    }
     assert_eq!(
         controller.plugin_secret(&saved.id, "apiKey").unwrap(),
         "sk-test"

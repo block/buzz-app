@@ -225,19 +225,13 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
-  /** Opens a native run lease for an enabled plugin agent. Publishing and secret
-   * reads need an open lease; it closes at its deadline, on `runEnd`, or when the
-   * agent is stopped, started, saved or deleted. */
-  runBegin?(id: string, timeoutMs: number): Promise<number>;
-  runEnd?(run: number): Promise<void>;
   /** Native signs with the agent's key and posts it; resolves to the signed event. */
   publishAs?(
     id: string,
-    run: number,
     event: AgentEventTemplate,
   ): Promise<PublishedAgentEvent>;
-  /** One saved value of an enabled plugin agent, by the name its type declared. */
-  secret?(id: string, run: number, name: string): Promise<string>;
+  /** One saved value of a plugin agent, by the name its type declared. */
+  secret?(id: string, name: string): Promise<string>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -296,11 +290,9 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
-  /** Enabled plugin agents only. Independent of the control snapshot and its busy state. */
-  runBegin?: AgentControlHost["runBegin"];
-  runEnd?: AgentControlHost["runEnd"];
+  /** Plugin agents only. Independent of the control snapshot and its busy state. */
   publishAs?: AgentControlHost["publishAs"];
-  /** Enabled plugin agents only. The agent-types service checks the name against
+  /** Plugin agents only. The agent-types service checks the name against
    * the agent's type before asking. */
   secret?: AgentControlHost["secret"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
@@ -636,18 +628,11 @@ export function createAgentControl(
         }
       : {}),
     // Not a control mutation: it changes no snapshot, so it never takes `busy`.
-    ...(host?.runBegin && host.runEnd
-      ? { runBegin: host.runBegin, runEnd: host.runEnd }
-      : {}),
     ...(host?.publishAs
       ? {
-          publishAs: async (
-            id: string,
-            run: number,
-            event: AgentEventTemplate,
-          ) => {
+          publishAs: async (id: string, event: AgentEventTemplate) => {
             try {
-              return await (host.publishAs as PublishAs)(id, run, event);
+              return await (host.publishAs as PublishAs)(id, event);
             } catch (problem) {
               // Native rejects with a sanitized reason; the agent's function reads it.
               throw new Error(
@@ -661,9 +646,9 @@ export function createAgentControl(
       : {}),
     ...(host?.secret
       ? {
-          secret: async (id: string, run: number, name: string) => {
+          secret: async (id: string, name: string) => {
             try {
-              return await (host.secret as Secret)(id, run, name);
+              return await (host.secret as Secret)(id, name);
             } catch (problem) {
               throw new Error(
                 typeof problem === "string"
@@ -752,7 +737,7 @@ export function createAgentControl(
             (agent) =>
               agent.configured !== false &&
               // Waking exists to launch a process on demand. A plugin agent
-              // that was turned off stays off.
+              // has no process: it is already listening.
               !agent.plugin &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),

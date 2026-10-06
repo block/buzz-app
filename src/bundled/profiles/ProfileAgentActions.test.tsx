@@ -96,6 +96,18 @@ it("dispatches Stop, Start and Restart to the exact local native ID, never a nam
   ]);
 });
 
+it("offers no Start, Stop or Restart for a plugin agent, which always listens", async () => {
+  const h = setup();
+  h.agent.plugin = { type: "example/assistant", config: {} };
+  render(h.panel());
+  expect(
+    await screen.findByRole("region", { name: "Local agent actions" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^(Start|Stop|Restart)$/ }),
+  ).not.toBeInTheDocument();
+});
+
 it.each([
   "public identity",
   "other relay",

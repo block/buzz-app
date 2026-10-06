@@ -301,15 +301,6 @@ struct MentionReplay {
     floor: u64,
 }
 
-/// One run of a plugin agent's function. It ends at its deadline, when the
-/// WebView ends it, or when the agent is stopped, started, saved or deleted.
-struct PluginRun {
-    id: String,
-    revision: u64,
-    deadline: std::time::Instant,
-}
-/// Longest run a plugin agent type may ask for.
-const PLUGIN_RUN_MAX: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 struct Host {
     inventory_warnings: Vec<String>,
     controller: Controller,
@@ -322,9 +313,6 @@ struct Host {
     starts: BTreeMap<String, PendingStart>,
     queued: BTreeMap<String, Option<MentionReplay>>,
     next_start: u64,
-    /// Live plugin-agent runs. Publishing and secrets need one that is still open.
-    plugin_runs: BTreeMap<u64, PluginRun>,
-    next_run: u64,
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
     acted: BTreeSet<String>,
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
@@ -380,8 +368,6 @@ impl Host {
             starts: BTreeMap::new(),
             queued,
             next_start: 0,
-            plugin_runs: BTreeMap::new(),
-            next_run: 0,
             acted: BTreeSet::new(),
             profiles: BTreeMap::new(),
             log_challenges: BTreeMap::new(),
@@ -413,35 +399,8 @@ impl Host {
         self.starts.remove(id);
         self.queued.remove(id);
         self.acted.insert(id.to_owned());
-        self.end_plugin_runs(id);
-        // A deliberate Start is the only path that may reopen a refused unlock
-        // for a plugin agent; its automated publishes never do.
-        if !matches!(action, Action::Stop) && self.controller.is_plugin(id).unwrap_or(false) {
-            self.credentials.retry();
-        }
         self.controller.action(id, action)?;
         self.snapshot()
-    }
-    fn end_plugin_runs(&mut self, id: &str) {
-        self.plugin_runs.retain(|_, run| run.id != id);
-    }
-    /// The identity a run may act as, if that run is still open and the agent is
-    /// still enabled with the settings the run started under.
-    fn plugin_run(
-        &self,
-        id: &str,
-        run: u64,
-    ) -> Result<buzz_agent_controller::PluginIdentity, String> {
-        let lease = self
-            .plugin_runs
-            .get(&run)
-            .filter(|lease| lease.id == id && std::time::Instant::now() < lease.deadline)
-            .ok_or("This run has ended")?;
-        let identity = self.controller.plugin_identity(id)?;
-        if identity.revision != lease.revision {
-            return Err("This run has ended".into());
-        }
-        Ok(identity)
     }
     fn take_start(&mut self, id: &str, ticket: u64) -> Result<PendingStart, String> {
         if self.starts.get(id).map(|pending| pending.ticket) != Some(ticket) {
@@ -965,7 +924,6 @@ pub(crate) async fn agent_control_delete(
         host.starts.remove(&id);
         host.queued.remove(&id);
         host.acted.insert(id.clone());
-        host.end_plugin_runs(&id);
         host.controller.delete(&id, expected_revision)?;
         host.snapshot()
     })
@@ -993,7 +951,8 @@ pub(crate) async fn agent_control_action(
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     let target = id.clone();
-    // A plugin agent has no process: Start only enables it, with no key or runtime.
+    // A plugin agent has no process; the controller refuses every action for it
+    // before any key is read.
     let in_app = run(owner.clone(), move |host| {
         host.controller.is_plugin(&target)
     })
@@ -1436,66 +1395,26 @@ pub(crate) struct PluginEvent {
     #[serde(default)]
     tags: Vec<Vec<String>>,
 }
-/// Opens a run for an enabled plugin agent. Its publishes and secret reads are
-/// refused once the run ends, so a function that outlives it cannot act.
-#[tauri::command]
-pub(crate) async fn agent_identity_run_begin(
-    state: tauri::State<'_, AgentHost>,
-    id: String,
-    timeout_ms: u64,
-) -> Result<u64, String> {
-    run(state.inner().clone(), move |host| {
-        let identity = host.controller.plugin_identity(&id)?;
-        let timeout = std::time::Duration::from_millis(timeout_ms).min(PLUGIN_RUN_MAX);
-        host.next_run += 1;
-        let lease = host.next_run;
-        host.plugin_runs.insert(
-            lease,
-            PluginRun {
-                id,
-                revision: identity.revision,
-                deadline: std::time::Instant::now() + timeout,
-            },
-        );
-        Ok(lease)
-    })
-    .await
-}
-#[tauri::command]
-pub(crate) async fn agent_identity_run_end(
-    state: tauri::State<'_, AgentHost>,
-    run_id: u64,
-) -> Result<(), String> {
-    run(state.inner().clone(), move |host| {
-        host.plugin_runs.remove(&run_id);
-        Ok(())
-    })
-    .await
-}
-/// Signs a plugin-supplied event as an enabled plugin agent and posts it to that
+/// Signs a plugin-supplied event as a plugin agent and posts it to that
 /// agent's community. The key stays native; the controller bounds what is signed.
 #[tauri::command]
 pub(crate) async fn agent_identity_publish(
     state: tauri::State<'_, AgentHost>,
     id: String,
-    run_id: u64,
     event: PluginEvent,
 ) -> Result<serde_json::Value, String> {
-    publish_as(state.inner().clone(), id, run_id, event).await
-}
-async fn publish_as(
-    owner: AgentHost,
-    id: String,
-    run_id: u64,
-    event: PluginEvent,
-) -> Result<serde_json::Value, String> {
+    let owner = state.inner().clone();
     let target = id.clone();
     let (identity, credentials) = run(owner.clone(), move |host| {
-        Ok((host.plugin_run(&target, run_id)?, host.credentials.clone()))
+        Ok((
+            host.controller.plugin_identity(&target)?,
+            host.credentials.clone(),
+        ))
     })
     .await?;
     // No retry here: an automated publish must not reopen an unlock the user
-    // refused. Stop and Start the agent to try again.
+    // refused. Relaunching the app, or a deliberate key read such as starting a
+    // harness agent or publishing a profile, asks again.
     let (identity, key) = tauri::async_runtime::spawn_blocking(move || {
         credentials
             .read(&identity.credential_id, &identity.pubkey)
@@ -1510,10 +1429,10 @@ async fn publish_as(
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|_| "Agent client unavailable")?;
-    // The run may have ended while the key was being read; that must win.
+    // Deleting the agent while the key was being read must win over this send.
     let pubkey = identity.pubkey.clone();
     run(owner, move |host| {
-        (host.plugin_run(&id, run_id)?.pubkey == pubkey)
+        (host.controller.plugin_identity(&id)?.pubkey == pubkey)
             .then_some(())
             .ok_or_else(|| "Agent identity changed".into())
     })
@@ -1528,11 +1447,9 @@ async fn publish_as(
 pub(crate) async fn agent_identity_secret(
     state: tauri::State<'_, AgentHost>,
     id: String,
-    run_id: u64,
     name: String,
 ) -> Result<String, String> {
     run(state.inner().clone(), move |host| {
-        host.plugin_run(&id, run_id)?;
         host.controller.plugin_secret(&id, &name)
     })
     .await

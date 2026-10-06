@@ -504,15 +504,16 @@ means:
   owner attestation. Its workspace, harness and environment must be empty, the
   type string is `pluginId/typeId`, and the config is opaque JSON of at most 64 KB.
   The type cannot change after creation.
-- Start, Stop and Restart only set `enabled`. No process is spawned, no key is
-  handed to a child, and the snapshot reports an enabled plugin agent as `running`
-  at its saved revision. `enabled` persists across app restarts. The agent is
-  excluded from app-launch process starts and from mention wake.
-- `agent_identity_publish(id, { kind, content, tags })` signs one event as an
-  enabled plugin agent and posts it to `{relay https origin}/events` with NIP-98 and
+- A plugin agent has no on/off state. No process is spawned and no key is handed
+  to a child. The snapshot reports every plugin agent as `running` at its saved
+  revision, whatever its saved `enabled`. Start, Stop and Restart are refused for
+  it before any key is read. It is excluded from app-launch process starts and from
+  mention wake. To silence one, delete it or disable its plugin.
+- `agent_identity_publish(id, { kind, content, tags })` signs one event as a
+  plugin agent and posts it to `{relay https origin}/events` with NIP-98 and
   the `x-auth-tag` header, as profile publication does. It signs kinds 9, 40003,
   7 and 5 only, bounds content and tags, replaces any supplied `auth` tag with the saved
-  attestation, re-checks that the agent is still enabled before sending, and returns
+  attestation, re-checks that the agent still exists before sending, and returns
   the signed event only after the relay's receipt names its id.
 
 ## Ownership and handoff

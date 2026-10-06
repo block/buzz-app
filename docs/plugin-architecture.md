@@ -995,8 +995,8 @@ saved on the agent record as `plugin: { type, config }`, where `type` is the
 contribution key `pluginId/typeId`. A type that changes its config shape versions it
 inside the config.
 
-**What the host owns.** Identity, the owner attestation, the agent record, Start and
-Stop, and publishing.
+**What the host owns.** Identity, the owner attestation, the agent record, and
+publishing.
 
 - *Create.* The Agents page's Create agent dialog lists active types beside
   "Harness". Choosing a type replaces the harness fields with a name and the type's
@@ -1006,10 +1006,10 @@ Stop, and publishing.
 - *Edit.* The agent's screen shows the same `Configure` with the saved config and
   `agent` set. Save writes a new revision; the service recomputes the subscription
   and the next event runs with the new config.
-- *Start and Stop.* A plugin agent has no process. Start and Stop only set
-  `enabled`; an enabled plugin agent reports `running`. `enabled` is saved, so a
-  started agent resumes when the app next opens. A mention does not wake a stopped
-  one.
+- *No Start or Stop.* A plugin agent has no process and no on/off state: while it
+  exists and its plugin is active, it listens. The host shows no Start, Stop or
+  Restart for it and native refuses them. To silence one, delete it or disable its
+  plugin.
 
 **Dispatch.** `subscription` returns one filter or a list. It must be plain data
 (`ids`, `authors`, `kinds`, `since`, `until`, `#tag` lists); `limit`, relay
@@ -1020,7 +1020,7 @@ top of `run`.
 
 Registering a type or creating an agent opens no relay subscription. The service
 listens to `session.subscribeLive` on the selected community's ready session and
-matches each event locally, for every enabled agent of an active type whose
+matches each event locally, for every agent of an active type whose
 community is the selected one. An agent therefore sees what its owner's connection
 already streams: the channel kinds in `features/relay/live.ts` for the channels the
 owner has joined, plus the global routes. Replayed history, finite reads and local
@@ -1047,26 +1047,24 @@ or UI object.
   arrival order), queues at most 32, and runs at most 60 times per minute. Excess
   matches are counted as skipped. Agents never wait on each other.
 - A run has 30 seconds (`timeoutMs` on the type overrides). It ends when `run`
-  settles, on timeout, Stop, save, delete, plugin disable or replacement, and when
+  settles, on timeout, save, delete, plugin disable or replacement, and when
   the session is replaced. `signal` aborts at that moment.
 - `agent` is made for one run. `agent.publish` and `agent.secret` reject once that
   run has ended, so a function that ignores `signal` and outlives its deadline cannot
-  act while the next run is in progress. Native enforces the same boundary: each run
-  opens a lease (`agent_identity_run_begin`) bound to the saved revision and the
-  run's deadline. Publish and secret reads check it before and after reading the
-  key, and Stop, Start, save and delete end it, so a call already waiting on the
-  credential store when its run ends is never sent.
+  act while the next run is in progress. A publish that started before the run
+  ended still completes; native only refuses to send if the agent was deleted while
+  its key was being read.
 - A thrown error or rejection is logged and counted; it does not stop the agent or
   affect others. The agent's screen shows run, failure and skip counts, the last
   failure, and the subscription in force.
 
 **Publishing.** `agent.publish({ kind, content, tags })` calls the native command
-`agent_identity_publish`. Native checks the agent is an enabled plugin agent, reads
+`agent_identity_publish`. Native checks the agent is a plugin agent, reads
 its key from the credential store, signs the event with the owner's `auth` tag
 attached, and posts it to the community's `/events` endpoint with NIP-98, the same
 route agent profiles use. Only kinds 9 (message), 40003 (edit), 7 (reaction) and 5
-(deletion) are signed. A publish never reopens an unlock the user refused; Stop and
-Start the agent to ask again. It resolves to the accepted event's `id` and `created_at`.
+(deletion) are signed. A publish never reopens an unlock the user refused;
+relaunching the app asks again. It resolves to the accepted event's `id` and `created_at`.
 The key never enters the WebView. The owner's socket is not used, because the relay
 accepts an event only from the identity that authenticated the connection.
 

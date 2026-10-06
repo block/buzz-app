@@ -56,8 +56,6 @@
     "allow-agent-control-create-commit",
     "allow-agent-control-creation-profile",
     "allow-agent-identity-publish",
-    "allow-agent-identity-run-begin",
-    "allow-agent-identity-run-end",
     "allow-agent-identity-secret",
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",

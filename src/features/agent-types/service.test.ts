@@ -91,12 +91,7 @@ function fakeControl(agents: AgentView[], status = "ready") {
   let state = { status, data: { agents }, busy: false };
   const refresh = vi.fn(async () => {});
   const publishAs = vi.fn(async () => ({ id: "f".repeat(64), created_at: 2 }));
-  const secret = vi.fn(
-    async (_id: string, _run: number, name: string) => `value of ${name}`,
-  );
-  let runs = 0;
-  const runBegin = vi.fn(async () => ++runs);
-  const runEnd = vi.fn(async (_run: number) => {});
+  const secret = vi.fn(async (_id: string, name: string) => `value of ${name}`);
   const control = {
     snapshot: () => state as unknown as AgentControlState,
     subscribe(listener: () => void) {
@@ -104,15 +99,11 @@ function fakeControl(agents: AgentView[], status = "ready") {
       return () => listeners.delete(listener);
     },
     refresh,
-    runBegin,
-    runEnd,
     publishAs,
     secret,
   } as unknown as AgentControl;
   return {
     control,
-    runBegin,
-    runEnd,
     publishAs,
     secret,
     refresh,
@@ -162,12 +153,16 @@ it("reads the device's agents only once a type is registered", async () => {
   await ctx.fiber.dispose();
 });
 
-it("runs each enabled agent of a type as its own identity, from its own config", async () => {
+it("runs every agent of a type as its own identity, from its own config", async () => {
   const quiet = agent(
     { channel: "elsewhere", word: "x" },
     { id: "bot-2", pubkey: "d".repeat(64) },
   );
-  const off = agent({ word: "x" }, { id: "bot-3", enabled: false });
+  // There is no on/off state: an agent saved as disabled still listens.
+  const off = agent(
+    { channel: "elsewhere", word: "x" },
+    { id: "bot-3", pubkey: "e".repeat(64), enabled: false, status: "stopped" },
+  );
   const foreign = agent(
     { word: "x" },
     { id: "bot-4", relayUrl: "wss://other.example.test" },
@@ -182,7 +177,14 @@ it("runs each enabled agent of a type as its own identity, from its own config",
   expect(service.activity()["bot-1"]?.subscription).toEqual([
     { kinds: [9], "#h": ["c1"] },
   ]);
-  expect(Object.keys(service.activity()).sort()).toEqual(["bot-1", "bot-2"]);
+  expect(Object.keys(service.activity()).sort()).toEqual([
+    "bot-1",
+    "bot-2",
+    "bot-3",
+  ]);
+  expect(service.activity()["bot-3"]?.subscription).toEqual([
+    { kinds: [9], "#h": ["elsewhere"] },
+  ]);
   const message = event("m1");
   // A run publishes while it is in progress.
   run.mockImplementation(async ({ agent }) => {
@@ -211,7 +213,7 @@ it("runs each enabled agent of a type as its own identity, from its own config",
     "publish",
     "secret",
   ]);
-  expect(native.publishAs).toHaveBeenCalledWith("bot-1", expect.any(Number), {
+  expect(native.publishAs).toHaveBeenCalledWith("bot-1", {
     kind: 9,
     content: "pong",
     tags: [],
@@ -255,7 +257,7 @@ it("recomputes the subscription on save and cuts off the replaced instance", asy
   await ctx.fiber.dispose();
 });
 
-it("stops on Stop and session replacement, and rebinds to the new session", async () => {
+it("stops on delete and session replacement, and rebinds to the new session", async () => {
   const { ctx, fake, native, run, register } = setup([agent({ word: "x" })]);
   register();
   const signals: AbortSignal[] = [];
@@ -270,7 +272,7 @@ it("stops on Stop and session replacement, and rebinds to the new session", asyn
   expect(fake.sessions[0]?.live.size).toBe(0);
   fake.emit({ events: [event("r2")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  native.set([agent({ word: "x" }, { enabled: false, status: "stopped" })]);
+  native.set([]);
   expect(signals[1]?.aborted).toBe(true);
   fake.emit({ events: [event("r3")] });
   await Promise.resolve();
@@ -354,13 +356,6 @@ it("ends a run's hold on its agent when the run ends", async () => {
   }
   expect(native.publishAs).not.toHaveBeenCalled();
   expect(native.secret).not.toHaveBeenCalled();
-  // Each run opened its own native lease and closed it when it ended.
-  expect(native.runBegin).toHaveBeenCalledTimes(2);
-  expect(native.runBegin).toHaveBeenCalledWith("bot-1", 20);
-  await vi.waitFor(() => expect(native.runEnd).toHaveBeenCalledTimes(2));
-  expect(native.runEnd.mock.calls.map(([lease]) => lease).sort()).toEqual([
-    1, 2,
-  ]);
   await ctx.fiber.dispose();
 });
 
@@ -395,11 +390,11 @@ it("hands a run only the secrets its type declares", async () => {
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const identity = run.mock.calls[0]?.[0].agent;
   await expect(identity?.secret("apiKey")).resolves.toBe("value of apiKey");
-  expect(native.secret).toHaveBeenCalledWith("bot-1", 1, "apiKey");
+  expect(native.secret).toHaveBeenCalledWith("bot-1", "apiKey");
   await expect(identity?.secret("PATH")).rejects.toThrow("no secret named");
   expect(native.secret).toHaveBeenCalledTimes(1);
-  // Stopped: the function is no longer the agent.
-  native.set([agent({ word: "x" }, { enabled: false, status: "stopped" })]);
+  // Deleted: the function is no longer the agent.
+  native.set([]);
   await expect(identity?.secret("apiKey")).rejects.toThrow();
   expect(native.secret).toHaveBeenCalledTimes(1);
   await ctx.fiber.dispose();

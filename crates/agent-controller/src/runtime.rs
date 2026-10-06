@@ -453,8 +453,9 @@ impl Controller {
             default_settings: defaults.view(),
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
-            // The app runs a plugin agent in-process; enabled is its whole state.
-            if saved.plugin.is_some() && saved.enabled {
+            // The app runs a plugin agent in-process. It has no process and no
+            // on/off state: while it exists, it listens.
+            if saved.plugin.is_some() {
                 agent.status = ProcessStatus::Running;
                 agent.running_revision = Some(saved.revision);
             }
@@ -798,6 +799,10 @@ impl Controller {
         if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {
             return Err("Agent no longer exists".into());
         }
+        // Stop must still reach an owned process when the store is unreadable.
+        if self.is_plugin(id).unwrap_or(false) {
+            return Err("A plugin agent always listens. Delete it to stop it.".into());
+        }
         let mut disable_failed = false;
         let result = match action {
             Action::Stop => {
@@ -940,7 +945,7 @@ impl Controller {
             .iter()
             .any(|a| a.id == id && a.plugin.is_some()))
     }
-    /// What signing as an enabled plugin agent needs. Never crosses IPC.
+    /// What signing as a plugin agent needs. Never crosses IPC.
     pub fn plugin_identity(&self, id: &str) -> Result<crate::create::PluginIdentity> {
         let agent = self
             .store
@@ -948,13 +953,12 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
-        if agent.plugin.is_none() || !agent.enabled {
-            return Err("Agent is not a running plugin agent".into());
+        if agent.plugin.is_none() {
+            return Err("Agent is not a plugin agent".into());
         }
         let auth = agent.auth_tag.ok_or("Missing owner authorization")?;
         crate::secret::validate_attestation(&auth, &agent.pubkey)?;
         Ok(crate::create::PluginIdentity {
-            revision: agent.revision,
             credential_id: agent.credential_id,
             pubkey: agent.pubkey,
             url: format!(
@@ -964,7 +968,7 @@ impl Controller {
             auth,
         })
     }
-    /// One saved secret of an enabled plugin agent, for its type's function.
+    /// One saved secret of a plugin agent, for its type's function.
     ///
     /// This is the smaller of two designs: the value crosses IPC into the WebView for
     /// the length of a run, and is stored like a harness agent's environment, readable
@@ -979,8 +983,8 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
-        if agent.plugin.is_none() || !agent.enabled {
-            return Err("Agent is not a running plugin agent".into());
+        if agent.plugin.is_none() {
+            return Err("Agent is not a plugin agent".into());
         }
         agent
             .environment
@@ -1017,7 +1021,7 @@ impl Controller {
             return Err("Agent is disabled".into());
         }
         if agent.plugin.is_some() {
-            return Ok(());
+            return Err("A plugin agent has no process to start".into());
         }
         // Blank fields inherit agent defaults at each start; never saved back.
         let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);

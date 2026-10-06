@@ -60,36 +60,39 @@ export function ProfileAgentActions({
     <section aria-label="Local agent actions" className="flex flex-col gap-2">
       {agent && (
         <>
-          <div className="flex flex-wrap gap-2">
-            {(agent.status === "stopped" || agent.status === "failed") && (
+          {/* A plugin agent listens while it exists: no Start or Stop. */}
+          {!agent.plugin && (
+            <div className="flex flex-wrap gap-2">
+              {(agent.status === "stopped" || agent.status === "failed") && (
+                <Button
+                  size="compact"
+                  ref={startRef}
+                  focusableWhenDisabled
+                  disabled={!!startBlock}
+                  onClick={() => act("start")}
+                >
+                  {agent.status === "failed" ? "Retry start" : "Start"}
+                </Button>
+              )}
+              <Button
+                ref={stopButton}
+                size="compact"
+                focusableWhenDisabled
+                disabled={!canStopAgent(state, agent.id)}
+                onClick={() => act("stop")}
+              >
+                Stop
+              </Button>
               <Button
                 size="compact"
-                ref={startRef}
                 focusableWhenDisabled
                 disabled={!!startBlock}
-                onClick={() => act("start")}
+                onClick={() => act("restart")}
               >
-                {agent.status === "failed" ? "Retry start" : "Start"}
+                Restart
               </Button>
-            )}
-            <Button
-              ref={stopButton}
-              size="compact"
-              focusableWhenDisabled
-              disabled={!canStopAgent(state, agent.id)}
-              onClick={() => act("stop")}
-            >
-              Stop
-            </Button>
-            <Button
-              size="compact"
-              focusableWhenDisabled
-              disabled={!!startBlock}
-              onClick={() => act("restart")}
-            >
-              Restart
-            </Button>
-          </div>
+            </div>
+          )}
           {startBlock && (
             <p className="text-body-sm text-secondary">{startBlock}</p>
           )}

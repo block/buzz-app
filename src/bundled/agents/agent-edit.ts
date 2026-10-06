@@ -131,10 +131,7 @@ export function agentEdit(
   };
 }
 export function agentProcessLabel(agent: AgentView): string {
-  if (agent.plugin)
-    return agent.status === "running"
-      ? "On · runs in this app while it is open"
-      : "Off";
+  if (agent.plugin) return "Runs in this app while it is open";
   switch (agent.status) {
     case "running":
       return "Process running · relay readiness unverified";

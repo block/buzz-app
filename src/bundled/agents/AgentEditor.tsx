@@ -256,12 +256,10 @@ export function AgentEditor({
                             </p>
                             <p className="text-body-sm text-subtle">
                               {agent.plugin
-                                ? agent.status !== "running"
-                                  ? "Start it to listen for events again"
-                                  : activity?.subscription
-                                    ? "Listening for matching events your connection receives in this community"
-                                    : (activity?.lastError ??
-                                      "Not listening · open its community, and check that its plugin is enabled")
+                                ? activity?.subscription
+                                  ? "Listening for matching events your connection receives in this community"
+                                  : (activity?.lastError ??
+                                    "Not listening · open its community, and check that its plugin is enabled")
                                 : agent.configured === false
                                   ? "Imported · close the editor and choose Use here before starting"
                                   : agent.enabled
@@ -275,35 +273,36 @@ export function AgentEditor({
                                       : "Manual start · a later sent mention can start this agent"}
                             </p>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            {(agent.status === "stopped" ||
-                              agent.status === "failed") && (
+                          {/* A plugin agent listens while it exists: no Start or Stop. */}
+                          {!agent.plugin && (
+                            <div className="flex flex-wrap gap-2">
+                              {(agent.status === "stopped" ||
+                                agent.status === "failed") && (
+                                <Button
+                                  disabled={launchBlocked}
+                                  onClick={() => act("start")}
+                                >
+                                  {agent.status === "failed"
+                                    ? "Retry start"
+                                    : "Start"}
+                                </Button>
+                              )}
                               <Button
-                                disabled={launchBlocked}
-                                onClick={() => act("start")}
+                                disabled={
+                                  disabled || !canStopAgent(state, agent.id)
+                                }
+                                onClick={() => act("stop")}
                               >
-                                {agent.status === "failed"
-                                  ? "Retry start"
-                                  : "Start"}
+                                Stop
                               </Button>
-                            )}
-                            <Button
-                              disabled={
-                                disabled || !canStopAgent(state, agent.id)
-                              }
-                              onClick={() => act("stop")}
-                            >
-                              Stop
-                            </Button>
-                            {!agent.plugin && (
                               <Button
                                 disabled={launchBlocked}
                                 onClick={() => act("restart")}
                               >
                                 {unapplied ? "Restart to apply" : "Restart"}
                               </Button>
-                            )}
-                          </div>
+                            </div>
+                          )}
                           {agent.plugin ? (
                             <p className="text-body-sm text-subtle">
                               Since this app opened: ran {activity?.fired ?? 0}{" "}

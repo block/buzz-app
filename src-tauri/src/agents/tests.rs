@@ -948,7 +948,7 @@ mod overlap {
             .unwrap()
     }
 
-    // One enabled plugin agent whose key the Gated credential store can return.
+    // One plugin agent. It has no on/off state, so its saved `enabled` is ignored.
     fn seed_plugin(dir: &std::path::Path) -> String {
         let pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
         let id =
@@ -958,7 +958,7 @@ mod overlap {
             "name":"Plugin", "systemPrompt":"", "workspace":"",
             "harness":{"command":"","args":[],"model":"","provider":""},
             "plugin":{"type":"example/assistant","config":{}},
-            "environment":{}, "revision":1, "enabled":true, "startOnAppLaunch":false,
+            "environment":{}, "revision":1, "enabled":false, "startOnAppLaunch":false,
             "credentialId":"cred-plugin", "authTag":auth, "imported":{}});
         std::fs::write(
             dir.join("store/agents.json"),
@@ -966,76 +966,6 @@ mod overlap {
         )
         .unwrap();
         id
-    }
-
-    #[tokio::test]
-    async fn a_run_ended_during_the_key_read_never_publishes() {
-        let (dir, host, _app, view) = fixture();
-        let id = seed_plugin(dir.path());
-        let gate = Gate::install(&host, dir.path(), &["cred-plugin"]);
-        // Stop then Start while the key is being read: the agent is enabled again
-        // at the same revision, but the run that asked has ended.
-        let lease = invoke(
-            &view,
-            "agent_identity_run_begin",
-            json!({"id":id,"timeoutMs":60_000}),
-        )
-        .unwrap();
-        let publish = {
-            let (owner, id, run_id) = (host.clone(), id.clone(), lease.as_u64().unwrap());
-            tokio::spawn(async move {
-                let event = PluginEvent {
-                    kind: 9,
-                    content: "late".into(),
-                    tags: vec![vec!["h".into(), "c1".into()]],
-                };
-                publish_as(owner, id, run_id, event).await
-            })
-        };
-        assert_eq!(gate.entered().await, "cred-plugin");
-        invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":"stop"}),
-        )
-        .unwrap();
-        invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":"start"}),
-        )
-        .unwrap();
-        gate.release["cred-plugin"].send(()).unwrap();
-        let refused = within(publish).await.unwrap_err();
-        assert_eq!(refused, "This run has ended");
-        // The ended lease reads no secret either, and a fresh run may proceed.
-        assert_eq!(
-            invoke(
-                &view,
-                "agent_identity_secret",
-                json!({"id":id,"runId":lease,"name":"apiKey"})
-            )
-            .unwrap_err(),
-            json!("This run has ended")
-        );
-        let fresh = invoke(
-            &view,
-            "agent_identity_run_begin",
-            json!({"id":id,"timeoutMs":60_000}),
-        )
-        .unwrap();
-        assert_ne!(fresh, lease);
-        invoke(&view, "agent_identity_run_end", json!({"runId":fresh})).unwrap();
-        assert_eq!(
-            invoke(
-                &view,
-                "agent_identity_secret",
-                json!({"id":id,"runId":fresh,"name":"apiKey"})
-            )
-            .unwrap_err(),
-            json!("This run has ended")
-        );
-        assert!(gate.idle());
     }
 
     #[tokio::test]
@@ -1078,40 +1008,28 @@ mod overlap {
             Ok(())
         })
         .unwrap();
-        let lease = invoke(
-            &view,
-            "agent_identity_run_begin",
-            json!({"id":id,"timeoutMs":60_000}),
-        )
-        .unwrap();
         for _ in 0..3 {
             assert_eq!(
                 invoke(
                     &view,
                     "agent_identity_publish",
-                    json!({"id":id,"runId":lease,
+                    json!({"id":id,
                     "event":{"kind":9,"content":"hi","tags":[["h","c1"]]}})
                 )
                 .unwrap_err(),
                 json!(REFUSAL)
             );
         }
+        // A plugin agent has no Start or Stop to reopen it either.
+        for action in ["start", "stop", "restart"] {
+            assert!(invoke(
+                &view,
+                "agent_control_action",
+                json!({"id":id,"action":action}),
+            )
+            .is_err());
+        }
         assert_eq!(RETRIES.load(Ordering::SeqCst), 0);
-        // Only a deliberate Start may ask again.
-        invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":"stop"}),
-        )
-        .unwrap();
-        assert_eq!(RETRIES.load(Ordering::SeqCst), 0);
-        invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":"start"}),
-        )
-        .unwrap();
-        assert_eq!(RETRIES.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

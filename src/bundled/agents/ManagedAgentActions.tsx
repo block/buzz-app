@@ -151,25 +151,28 @@ export function ManagedAgentActions({
           </Button>
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
-        {(agent.status === "stopped" || agent.status === "failed") && (
+      {/* A plugin agent listens while it exists: no Start or Stop. */}
+      {!agent.plugin && (
+        <div className="flex flex-wrap gap-2">
+          {(agent.status === "stopped" || agent.status === "failed") && (
+            <Button
+              variant="primary"
+              size="compact"
+              disabled={!!startBlock || settingUp}
+              onClick={() => act("start")}
+            >
+              {agent.status === "failed" ? "Retry start" : "Start"}
+            </Button>
+          )}
           <Button
-            variant="primary"
             size="compact"
-            disabled={!!startBlock || settingUp}
-            onClick={() => act("start")}
+            disabled={!canStopAgent(state, agent.id)}
+            onClick={() => act("stop")}
           >
-            {agent.status === "failed" ? "Retry start" : "Start"}
+            Stop
           </Button>
-        )}
-        <Button
-          size="compact"
-          disabled={!canStopAgent(state, agent.id)}
-          onClick={() => act("stop")}
-        >
-          Stop
-        </Button>
-      </div>
+        </div>
+      )}
       {startBlock && agent.status !== "running" && (
         <p className="m-0 text-body-sm text-secondary">{startBlock}</p>
       )}

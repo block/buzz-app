@@ -107,6 +107,8 @@ it("shows exact declared access and changes before an enabled update", async () 
 it.each([
   { previous: undefined, next: 65536, changed: true },
   { previous: 65536, next: 131072, changed: true },
+  { previous: 4096, next: 1048576, changed: true },
+  { previous: 65536, next: 4096, changed: true },
   { previous: 65536, next: undefined, changed: true },
   { previous: undefined, next: 4096, changed: false },
   { previous: 4096, next: undefined, changed: false },

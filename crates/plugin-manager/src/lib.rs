@@ -12,6 +12,7 @@ pub mod imports;
 
 pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
+pub const DEFAULT_HOST_COMMAND_OUTPUT_BYTES: u64 = 4096;
 pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -563,7 +564,20 @@ impl Manager {
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
-        if manifest.host.clone().unwrap_or_default() != snapshot.3 {
+        // Compare effective access without changing the stored manifest representation.
+        let effective_grants = |mut grants: HostGrants| {
+            for command in &mut grants.commands {
+                command.max_output_bytes = Some(
+                    command
+                        .max_output_bytes
+                        .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES),
+                );
+            }
+            grants
+        };
+        if effective_grants(manifest.host.clone().unwrap_or_default())
+            != effective_grants(snapshot.3)
+        {
             return Err("Host access changed; use Load from folder to review it".into());
         }
         let revision = hash(&bytes);

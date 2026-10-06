@@ -1,5 +1,7 @@
 use crate::{with_manager, PluginManager};
-use buzzodz_plugins::{HostCommand, MAX_HOST_COMMAND_OUTPUT_BYTES};
+use buzzodz_plugins::{
+    HostCommand, DEFAULT_HOST_COMMAND_OUTPUT_BYTES, MAX_HOST_COMMAND_OUTPUT_BYTES,
+};
 use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
@@ -147,7 +149,6 @@ pub(crate) mod windows_job {
     }
 }
 
-const MAX_OUTPUT_BYTES: u64 = 4096;
 const DEADLINE: Duration = Duration::from_secs(5);
 
 // Tokio kills only the direct child on future cancellation; the group also owns descendants.
@@ -243,7 +244,9 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
 
 async fn run_command(command: &HostCommand, deadline: Duration) -> Option<String> {
     let path = effective_path();
-    let max_output_bytes = command.max_output_bytes.unwrap_or(MAX_OUTPUT_BYTES);
+    let max_output_bytes = command
+        .max_output_bytes
+        .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES);
     if !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&max_output_bytes) {
         return None;
     }
@@ -341,7 +344,7 @@ mod tests {
             args,
             deadline,
             &effective_path(),
-            super::MAX_OUTPUT_BYTES,
+            super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
         )
         .await
     }
@@ -424,7 +427,7 @@ mod tests {
                 &[],
                 Duration::from_secs(5),
                 &path,
-                super::MAX_OUTPUT_BYTES
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES
             )
             .await,
             Some("ready\n".into())
@@ -658,7 +661,7 @@ mod windows_tests {
                 ],
                 Duration::from_secs(10),
                 &effective_path(),
-                super::MAX_OUTPUT_BYTES,
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
             )
             .await
         });
@@ -685,7 +688,7 @@ mod windows_tests {
                 ],
                 Duration::from_secs(5),
                 &effective_path(),
-                super::MAX_OUTPUT_BYTES,
+                super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
             )
             .await
         });

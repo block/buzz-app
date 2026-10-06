@@ -449,8 +449,8 @@ test.describe("owned-agent message deletion", () => {
       exact: true,
     });
     await expect(action).toBeVisible();
-    await action.screenshot({
-      path: testInfo.outputPath("owned-agent-delete-action.png"),
+    await page.screenshot({
+      path: testInfo.outputPath("owned-agent-delete-menu.png"),
     });
     await action.click();
 

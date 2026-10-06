@@ -44,7 +44,9 @@ export function useSearchMessages(
     parsed.in !== null ||
     parsed.since !== null ||
     parsed.until !== null;
-  const canSearch = !!parsed.text || hasFilters;
+  // An unfinished author token is an identity prompt, not free-text search.
+  const canSearch =
+    !/(?:^|\s)from:@?$/i.test(query) && (!!parsed.text || hasFilters);
   const owner = useMemo(
     () => ({ session, query, channelId, unresolvedChannel, attempt }),
     [session, query, channelId, unresolvedChannel, attempt],

@@ -62,7 +62,8 @@ export function SearchResults({
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
-  const authorPickerRequested = /(?:^|\s)from:(?:@|\*)[^\s]*$/i.test(query);
+  const authorPickerRequested =
+    /(?:^|\s)from:@?$/i.test(query) || /(?:^|\s)from:@[^\s]*$/i.test(query);
   const agents = useAgentChoices(session, authorPickerRequested);
   useMentionArchives(session, authorPickerRequested);
   const profiles = useSyncExternalStore(
@@ -86,11 +87,12 @@ export function SearchResults({
     query: string;
     candidates: readonly { pubkey: string; profile: Profile }[];
   }>();
-  // Completing from:@ uses signed profiles and confirmed channel membership.
+  // Completing from: and from:@ uses signed profiles and confirmed channel membership.
   // A selected identity is stored as its exact key, never as an ambiguous name.
-  const authorPrompt = /(?:^|\s)from:([@*]?)([^\s]*)$/i.exec(query);
+  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
   const authorNeedle = authorPrompt?.[2]?.toLowerCase();
-  const pickerPrompt = authorPrompt?.[1] === "@" || authorPrompt?.[1] === "*";
+  const pickerPrompt =
+    !!authorPrompt && (authorPrompt[1] === "@" || !authorPrompt[2]);
   const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
   const showDateChoices =
     !!datePrompt && !/^\d{4}-\d{2}-\d{2}$/.test(datePrompt[2] ?? "");

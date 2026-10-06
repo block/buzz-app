@@ -1426,7 +1426,7 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
     render(
       <SearchResults
         session={session}
-        query="from:*a"
+        query="from:@a"
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
@@ -1452,6 +1452,41 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
     ).toBeLessThan(
       [...document.querySelectorAll('[role="option"]')].indexOf(choice),
     );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("opens the identity picker for bare from: without an unfiltered message read", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    human = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([profile(human, { display_name: "Alice" })]);
+      return Promise.resolve([]);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(screen.getByRole("group", { name: "People" })).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Most relevant" })).toBeNull();
+    expect(reads).toHaveLength(0);
   } finally {
     cleanup();
     owner.dispose();

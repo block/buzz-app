@@ -243,7 +243,8 @@ mod tests {
 /// Effects of a Share Off after consent is cleared. Production drives the real
 /// lifecycle, publisher and host; tests substitute a recording fake.
 pub(super) trait OffEffects {
-    async fn stop(&self) -> Result<(), String>;
+    /// Stop only if the captured lease is still current; `Ok(false)` means retired.
+    async fn stop(&self) -> Result<bool, String>;
     fn community(&self) -> Option<String>;
     async fn has_consumers(&self) -> bool;
     async fn withdraw(&self, community: &str);
@@ -257,7 +258,10 @@ pub(super) trait OffEffects {
 /// retired lease withdraws nothing it no longer owns. Re-arm failure keeps the
 /// cleared consent but is reported on the existing settings-error surface.
 pub(super) async fn finish_off(fx: &impl OffEffects) -> Result<(), String> {
-    fx.stop().await?;
+    if !fx.stop().await? {
+        // A replacement owns the slot now: touch nothing of it.
+        return Ok(());
+    }
     let Some(community) = fx.community() else {
         return Ok(());
     };
@@ -272,6 +276,20 @@ pub(super) async fn finish_off(fx: &impl OffEffects) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate the captured lease inside the acquired `preparing` guard before the
+/// destructive stop, so a delayed Off can never stop a replacement's node.
+async fn stop_if_current(host: &super::MeshHost, lease: &str) -> Result<bool, String> {
+    let _guard = host.preparing.lock().await;
+    if host.lease.community(lease).is_err() {
+        return Ok(false);
+    }
+    host.lifecycle
+        .stop_and_wait()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 struct ProdOff<'a> {
     app: &'a tauri::AppHandle,
     host: &'a super::MeshHost,
@@ -281,13 +299,8 @@ struct ProdOff<'a> {
 }
 
 impl OffEffects for ProdOff<'_> {
-    async fn stop(&self) -> Result<(), String> {
-        let _guard = self.host.preparing.lock().await;
-        self.host
-            .lifecycle
-            .stop_and_wait()
-            .await
-            .map_err(|e| e.to_string())
+    async fn stop(&self) -> Result<bool, String> {
+        stop_if_current(self.host, self.lease).await
     }
     fn community(&self) -> Option<String> {
         self.host.lease.community(self.lease).ok()
@@ -306,9 +319,15 @@ impl OffEffects for ProdOff<'_> {
     }
     fn report(&self, error: String) {
         eprintln!("{error}");
-        if let Ok(mut prefs) = self.host.preferences.lock() {
-            prefs.set_error(error);
-        }
+        // Only the still-current selection's settings may carry this error.
+        let _ = self.host.lease.with_current(self.lease, |_| {
+            self.host
+                .preferences
+                .lock()
+                .map_err(|_| "Mesh settings unavailable")?
+                .set_error(error);
+            Ok(())
+        });
     }
 }
 
@@ -318,7 +337,7 @@ mod off_tests {
     use std::sync::Mutex;
 
     struct Fake {
-        stop: Result<(), String>,
+        stop: Result<bool, String>,
         lease: bool,
         consumers: bool,
         start: Result<(), String>,
@@ -326,7 +345,7 @@ mod off_tests {
     }
     impl Fake {
         fn new(
-            stop: Result<(), String>,
+            stop: Result<bool, String>,
             lease: bool,
             consumers: bool,
             start: Result<(), String>,
@@ -347,7 +366,7 @@ mod off_tests {
         }
     }
     impl OffEffects for Fake {
-        async fn stop(&self) -> Result<(), String> {
+        async fn stop(&self) -> Result<bool, String> {
             self.log("stop");
             self.stop.clone()
         }
@@ -371,7 +390,7 @@ mod off_tests {
 
     #[tokio::test]
     async fn confirmed_off_with_running_consumers_stops_withdraws_then_starts_one_client() {
-        let fx = Fake::new(Ok(()), true, true, Ok(()));
+        let fx = Fake::new(Ok(true), true, true, Ok(()));
         finish_off(&fx).await.unwrap();
         assert_eq!(
             fx.calls(),
@@ -381,7 +400,7 @@ mod off_tests {
 
     #[tokio::test]
     async fn no_consumers_withdraw_only_and_failed_stop_does_neither() {
-        let fx = Fake::new(Ok(()), true, false, Ok(()));
+        let fx = Fake::new(Ok(true), true, false, Ok(()));
         finish_off(&fx).await.unwrap();
         assert_eq!(fx.calls(), ["stop", "withdraw:https://a.example"]);
         let fx = Fake::new(Err("Mesh shutdown timed out".into()), true, true, Ok(()));
@@ -393,8 +412,24 @@ mod off_tests {
     }
 
     #[tokio::test]
+    async fn delayed_off_never_stops_a_replacement_node() {
+        let host = std::sync::Arc::new(super::super::MeshHost::default());
+        let old = host.lease.select("https://a.example".into()).unwrap();
+        // Off's stop is queued behind a replacement holding `preparing`.
+        let held = host.preparing.lock().await;
+        let (h, lease) = (host.clone(), old.clone());
+        let off = tokio::spawn(async move { stop_if_current(&h, &lease).await });
+        tokio::task::yield_now().await;
+        let replacement = host.lease.select("https://b.example".into()).unwrap();
+        drop(held);
+        assert_eq!(off.await.unwrap(), Ok(false), "retired Off must not stop");
+        assert!(host.lease.community(&replacement).is_ok());
+        assert_eq!(stop_if_current(&host, &replacement).await, Ok(true));
+    }
+
+    #[tokio::test]
     async fn retired_lease_withdraws_nothing_and_starts_no_replacement() {
-        let fx = Fake::new(Ok(()), false, true, Ok(()));
+        let fx = Fake::new(Ok(false), true, true, Ok(()));
         finish_off(&fx).await.unwrap();
         assert_eq!(fx.calls(), ["stop"]);
     }
@@ -403,7 +438,7 @@ mod off_tests {
     async fn rearm_failure_keeps_off_successful_but_reports_the_cause() {
         // e.g. discovery found no sharer: start returns before any lifecycle change.
         let fx = Fake::new(
-            Ok(()),
+            Ok(true),
             true,
             true,
             Err("No live community member is sharing compute".into()),

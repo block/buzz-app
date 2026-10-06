@@ -15,7 +15,8 @@ static LAST_CREATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// Replaceable events resolve by `created_at` (whole seconds), so two notes signed
 /// in the same second can tie. Under `PUBLISH`, wait (bounded by the caller's
 /// timeout) until the real clock passes the last stamp instead of future-dating,
-/// so a later process's real-time notes are never outranked.
+/// so a later process's real-time notes are never outranked by a future stamp.
+/// Ordering is strict within one process; a restart in the same second can tie.
 async fn next_created_at<C, S, F>(mut now: C, sleep: S, last: &std::sync::atomic::AtomicU64) -> u64
 where
     C: FnMut() -> u64,
@@ -259,6 +260,8 @@ mod tests {
             "never ahead of real time"
         );
         // A restarted process (fresh `last`) stamps real time, never a future value.
+        // This proves no future-dating, not strict cross-process ordering: a restart
+        // within the same second can still tie (a known limitation).
         let fresh = AtomicU64::new(0);
         assert_eq!(
             next_created_at(read(clock.clone()), |_| async {}, &fresh).await,

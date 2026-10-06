@@ -18,6 +18,7 @@ import {
   keypair,
   message,
   metadata,
+  profile,
   roster,
   scriptedTransport,
   signed,

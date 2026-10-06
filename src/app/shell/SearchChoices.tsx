@@ -312,7 +312,16 @@ export function SearchChoices({
               >
                 <NavigationSection label={label}>
                   {destinations.map(
-                    ({ key, label, detail, matches, icon, image, avatar, run }) => (
+                    ({
+                      key,
+                      label,
+                      detail,
+                      matches,
+                      icon,
+                      image,
+                      avatar,
+                      run,
+                    }) => (
                       <NavigationItem
                         key={key}
                         id={optionId(key)}

@@ -18,7 +18,12 @@ import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
-import { isChannelUuid, isHexPubkey, normalizeInChannel, parseSearchOperators } from "./parseSearchOperators";
+import {
+  isChannelUuid,
+  isHexPubkey,
+  normalizeInChannel,
+  parseSearchOperators,
+} from "./parseSearchOperators";
 
 function conversationName(
   channel: ChannelSummary,
@@ -352,7 +357,8 @@ export function SearchResults({
     new Set([
       ...channels
         .filter(
-          ({ id }) => parsed.text && matchRank(names.get(id) ?? "", needle) !== undefined,
+          ({ id }) =>
+            parsed.text && matchRank(names.get(id) ?? "", needle) !== undefined,
         )
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
@@ -383,7 +389,9 @@ export function SearchResults({
     );
   const matchingAll = byMatch(
     channels.filter(
-      (channel) => parsed.text && matchRank(names.get(channel.id) ?? "", needle) !== undefined,
+      (channel) =>
+        parsed.text &&
+        matchRank(names.get(channel.id) ?? "", needle) !== undefined,
     ),
     channelRank,
   );

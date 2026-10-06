@@ -1244,6 +1244,9 @@ button.mediaPreview {
   object-fit: contain;
   transform-origin: center;
 }
+.imageReviewStage:not(.imageReviewPannable) > img[data-review-media] {
+  cursor: zoom-in;
+}
 .imageReviewPannable {
   cursor: grab;
 }

@@ -1,6 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { foldMessages } from "./fold";
+import { deletionApplies, foldMessages } from "./fold";
 import {
   readJournal,
   newReadJournal,
@@ -96,6 +96,7 @@ function setup(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      archiveAuthority: relay.pubkey,
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
@@ -273,6 +274,86 @@ it("unread repair observes history without seeding the channel window or consumi
     before_id: rows[40]?.id,
     limit: 20,
   });
+});
+
+it("owner deletion reconciles agent message unread evidence but keeps agent reactions", async () => {
+  const h = setup();
+  h.grant("room");
+  const agent = keypair();
+  const attributed = signed(h.relay, {
+    kind: 9,
+    content: "Agent unread message",
+    created_at: 11,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "room"],
+    ],
+  });
+  const olderMessage = message(h.alice, "room", "Older message", 10);
+  const agentReaction = signed(h.relay, {
+    kind: 7,
+    content: "+",
+    created_at: 12,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "room"],
+      ["e", olderMessage.id],
+    ],
+  });
+  h.emit([olderMessage, attributed]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    latestMessage: { id: attributed.id, createdAt: 11 },
+  });
+
+  // The confirmed owner request carries a standard message-kind hint. Its
+  // verified target no longer contributes to unread count or latest evidence.
+  const ownerDeletion = signed(h.viewer, {
+    kind: 5,
+    content: "",
+    created_at: 13,
+    tags: [
+      ["h", "room"],
+      ["e", attributed.id],
+      ["k", "9"],
+    ],
+  });
+  h.emit([ownerDeletion]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 1,
+    latestMessage: { id: olderMessage.id, createdAt: 10 },
+  });
+
+  const laterMessage = message(h.alice, "room", "Later message", 14);
+  h.emit([agentReaction, laterMessage]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    latestMessage: { id: laterMessage.id, createdAt: 14 },
+  });
+
+  const reactionOwnerDelete = signed(h.viewer, {
+    kind: 5,
+    content: "",
+    created_at: 15,
+    tags: [
+      ["h", "room"],
+      ["e", agentReaction.id],
+      ["k", "7"],
+    ],
+  });
+  expect(
+    deletionApplies(reactionOwnerDelete, agentReaction, h.relay.pubkey),
+  ).toBe(false);
+  const rows = foldMessages(
+    "room",
+    h.relay.pubkey,
+    [olderMessage, agentReaction, reactionOwnerDelete],
+    { signingAuthority: h.relay.pubkey },
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.reactions[0]?.events.map(({ id }) => id)).toEqual([
+    agentReaction.id,
+  ]);
 });
 
 it.each([5, 9005])(

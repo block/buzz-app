@@ -837,6 +837,9 @@ export function createRelaySession(
     reader: requests.reader,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
+    ...(transport?.archiveAuthority
+      ? { signingAuthority: transport.archiveAuthority }
+      : {}),
     notify,
     follows: browserThreadFollows(readScope),
   });

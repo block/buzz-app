@@ -244,6 +244,69 @@ it("requires matching viewer and agent identities to remove agent messages", () 
   });
 });
 
+it("authorizes removal against the relay-attributed agent author, not the relay signer", () => {
+  const agent = keypair();
+  const attributed = signed(relay, {
+    kind: 9,
+    content: "Agent output",
+    created_at: 5,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "c"],
+    ],
+  });
+  const forged = signed(other, {
+    kind: 9,
+    content: "Forged actor",
+    created_at: 6,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "c"],
+    ],
+  });
+  const events = [attributed, forged];
+  const send = vi.fn(() => "operation");
+  const messages = createMessages(
+    {
+      ready: async () => {},
+      recover: async () => {},
+      acknowledge: async () => {},
+      supports: () => true,
+      send,
+      retry() {},
+      dismiss: async () => {},
+      snapshot: () => [],
+      subscribe: () => () => {},
+      observeSend: () => () => {},
+    },
+    viewer.pubkey,
+    (id) => events.find((item) => item.id === id),
+    () => [],
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    relay.pubkey,
+  );
+  const authorization = { agentId: agent.pubkey, ownerId: viewer.pubkey };
+
+  expect(() => messages.remove([forged.id], authorization)).toThrow(
+    /Only your own/,
+  );
+  expect(send).not.toHaveBeenCalled();
+
+  messages.remove([attributed.id], authorization);
+  expect(send).toHaveBeenCalledExactlyOnceWith({
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", "c"],
+      ["e", attributed.id],
+      ["k", "9"],
+    ],
+  });
+});
+
 it("real session retries the same signed deletion and keeps the reaction removed after confirmation", async () => {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;

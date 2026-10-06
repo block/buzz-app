@@ -274,8 +274,9 @@ export function createMessages(
         if (!event || ![7, 9, 40002].includes(event.kind))
           throw new Error("Load the message or reaction before removing it");
         const agentOwnerRemoval =
+          !!viewer &&
           event.kind !== 7 &&
-          event.pubkey === authorization?.agentId &&
+          messageAuthor(event, signingAuthority) === authorization?.agentId &&
           authorization.ownerId === viewer;
         if (
           event.kind === 7

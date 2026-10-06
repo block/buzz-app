@@ -1,6 +1,6 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
+The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.16,
 and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
@@ -173,8 +173,7 @@ without overwriting an existing target, then uses the new worktree's Hermit prox
 to run `bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
 repository. Keychain credentials and pnpm's package cache remain machine-shared;
 do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
-files. Install hooks separately as described below so existing custom hooks are
-never silently replaced.
+files. Git hooks need no per-worktree step; see [Git hooks](#git-hooks).
 
 ### Worktree Dock labels (macOS)
 
@@ -264,80 +263,74 @@ into an ever-growing full test suite.
 
 ### Pre-commit checks
 
-Install once **per worktree** after `pnpm install --frozen-lockfile`:
+`lefthook.yml` declares ordinary `pre-commit` and `pre-push` hooks. On a machine
+with [lhm](https://github.com/block/lhm) there is nothing to install: lhm's global
+hooks discover this file and merge it with the machine policy each time a hook
+runs; `lhm dry-run` from the repository root prints the merged result. Without
+lhm, install once per clone (linked worktrees share the installed hooks):
 
 ```sh
-bin/pnpm hooks:install
+bin/lefthook install
 ```
 
-The installer enables pre-commit and pre-push using Git's worktree-local
-`core.hooksPath`, leaves sibling worktrees
-alone, and supports standalone hooks or recognized lhm-generated wrappers.
-Unknown or modified custom hooks are refused rather than overwritten. Repeat
-installation is safe. Do not run `lefthook install`: the tracked Git hook calls a
-custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
+The installed hooks fail rather than silently skip when they cannot find
+Lefthook; `bin/lefthook uninstall` removes them. Lefthook 2.1.16 or newer is
+required: `min_version` rejects older runners, including an older `lefthook` on
+`PATH` under lhm (`brew upgrade lefthook`).
 
-Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
-JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. The staged
-icon check also rejects known alternate icon families, direct upstream imports
-outside the design-system gateway, and whole-catalog imports. Deletions and
-unsupported formats (including Markdown, HTML and YAML) are not formatted here.
-The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
-`just iterate` remains the optional whole-tree fix/build command; `just scan` is
-an opt-in broad diagnostic. Both reject remaining Biome warnings.
+Pre-commit runs these jobs in order and stops at the first failure: refuse staged
+names containing `*`, `?`, `[` or `\`, which Git would expand as globs when
+Lefthook restages them; the staged icon policy (known alternate icon families,
+direct upstream imports outside the design-system gateway, whole-catalog
+imports); pinned Biome formatting and safe lint fixes on staged JS/TS/JSON/CSS;
+and rustfmt on staged Rust files. Remaining warnings/errors block the commit; no
+unsafe lint fixes are applied. Deletions and unsupported formats (including
+Markdown, HTML and YAML) are not formatted here. The hook does **not** run types,
+tests, builds, Clippy, or a whole-tree formatter. `just iterate` remains the
+optional whole-tree fix/build command; `just scan` is an opt-in broad diagnostic.
+Both reject remaining Biome warnings.
 
-Before writing, the hook refuses partially staged supported files, non-regular
-files, and differing/untracked formatter configuration in their ancestor paths.
-Format and reselect partial hunks, or stage/restore configuration, then retry.
-Only checked paths are restaged after all checks succeed; a failed check can leave
-safe fixes visible for review but does not update the index. Unrelated changes and
-existing stashes are left alone. Do not edit/stage concurrently with a commit.
-This is a developer guardrail, not a security boundary or a substitute for CI
-and risk-appropriate behavior checks. Tool/config dependency changes require
+Lefthook owns partial staging: it hides the unstaged hunks of partially staged
+files while the jobs run, restages the formatted files, then restores the hunks,
+so unstaged hunks never enter the commit. When a formatter changes the same lines
+as an unstaged hunk, the commit is blocked with "conflict while merging unstaged
+changes" and the index, the files and unrelated edits are left as they were;
+format the file first (`just iterate` or the editor), then reselect your hunks.
+A failing read-only check leaves the index untouched; a failing formatter stages
+nothing of its own, while an earlier formatter's restage stands. rustfmt follows
+`mod` declarations into the working tree like `cargo fmt --all`; only staged
+files are restaged. Do not edit or stage concurrently with a commit. This is a
+developer guardrail, not a security boundary or a substitute for CI and
+risk-appropriate behavior checks. Tool/config dependency changes require
 relevant integration evidence, not an automatic local full scan.
 
-### Working with lhm
+### Machine policy under lhm
 
-When lhm is inherited (including underneath an existing Buzz `.githooks`
-override), installation creates executable dispatchers under this worktree's Git
-administration directory, in `buzz-hooks/dispatch-*`. Global configuration and
-upstream wrappers remain untouched. Buzz runs first on pre-commit so its partial
-staging guard sees the original working tree; lhm scans the resulting staged
-content afterward. If lhm fails, Buzz's completed formatting and restaging remain
-visible. On pre-push, lhm runs first and can reject the destination before Buzz's
-three serialized jobs. Both layers receive the complete push input. Other
-installed lhm events forward directly, with their arguments and stdin intact.
-Pinned `bin/lefthook` is on PATH for lhm; missing tools or hooks fail visibly.
+lhm runs the repository jobs first, then the machine's commands in the same hook:
+`sadscan` after the pre-commit jobs and `check-push-org` after the push lanes. A
+policy rejection still blocks the push, after the project checks have run. The
+machine policy skips pre-commit during merges and rebases; CI remains the gate.
 
-Verify installation with:
+Checkouts set up by the previous Buzz installer carry a worktree-local
+`core.hooksPath` that now points at deleted files, so Git either runs no hooks
+there or fails every commit. In each such worktree run
+`git config --worktree --unset core.hooksPath` and leave
+`extensions.worktreeConfig` set.
+
+Verify the wiring with:
 
 ```sh
-git config --show-origin --get core.hooksPath
-git rev-parse --git-path buzz-hooks
+git config --show-origin --get core.hooksPath # lhm's hooks directory, or unset
 bin/node --test tests/integration/hooks.test.mjs
 # Optional bounded probe, with isolated lhm system/user configuration:
 BUZZ_REAL_LHM="$(command -v lhm)" bin/node --test --test-name-pattern='real lhm' tests/integration/hooks.test.mjs
 ```
 
-Repeat installation after moving a checkout, changing the upstream hook inventory,
-or changing dispatcher generation code. Existing upstream wrappers are invoked
-at runtime, so their updates take effect immediately. Reinstall rejects edited
-Buzz-generated wrappers. Prior generations are retained for recovery; do not edit
-them or remove a generation still in use by a Git operation.
-
-Each generation's `owner.json` records `upstream` and the original worktree-local
-`previous` setting. To undo installation, restore that value with
-`git config --worktree core.hooksPath '<previous>'`; when `previous` is empty, use
-`git config --worktree --unset core.hooksPath` to resume inherited hooks. Leave
-`extensions.worktreeConfig` enabled because sibling worktrees may rely on it.
-Standalone installation can likewise be removed with the unset command.
-
-For human acceptance, use a disposable checkout with the documented setup:
-commit fully staged source and confirm Buzz formats it before lhm runs; partially
-stage source and confirm rejection without writes or new stashes; then confirm a
-failing job in either layer blocks the operation. Automated probes do not replace
-this human confirmation before PR readiness.
+For human acceptance, in a disposable checkout: commit a fully staged unformatted
+source file and confirm it lands formatted; stage half of a file and confirm only
+the staged hunks are committed with `git stash list` unchanged; introduce a Biome
+warning and confirm the commit is blocked with the index unchanged. Automated
+probes do not replace this confirmation before PR readiness.
 
 ### Fast pre-push feedback
 
@@ -354,9 +347,8 @@ types/unit tests. A separate **rust-clippy** job runs the pinned Clippy over the
 whole Cargo workspace with the same invocation as the `native` CI lane
 (`cargo clippy --workspace --locked --all-targets -- -D warnings`); Rust-only
 changes do not run the JS/test lane, and its first cold build can take minutes.
-The jobs are serialized because pinned Lefthook 2.1.12 shares
-a mutable stdin reader: parallel consumers can lose Git refs and silently skip
-checks. Source CSS/JS/TS, design viewer/guard files, shared
+The jobs are serialized because Lefthook shares a mutable stdin reader between
+jobs: parallel consumers can lose Git refs and silently skip checks. Source CSS/JS/TS, design viewer/guard files, shared
 configuration/dependencies and hook-runner changes select this job; a missing base
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. The Clippy lane is likewise

@@ -1,14 +1,32 @@
-# A custom group avoids Lefthook's implicit pre-commit stash/restage machinery.
-# .githooks/pre-commit invokes this group; the helper owns staged-file safety.
-min_version: 2.1.12
-no_auto_install: true
-check-staged:
+min_version: 2.1.16
+# Without lhm, `bin/lefthook install` writes shims that fail instead of silently
+# skipping when they cannot find Lefthook. lhm users install nothing: lhm merges
+# this file with the machine policy at hook time.
+assert_lefthook_installed: true
+pre-commit:
+  # Stop at the first failure. Lefthook restages every successful `stage_fixed`
+  # job even when another job fails, so the read-only checks run first and a
+  # failing one leaves the index untouched.
+  piped: true
   jobs:
-    - name: format-and-lint
-      run: bin/node scripts/check-staged.mjs
-check-push:
-  # Lefthook 2.1.12 shares a mutable cached stdin reader between jobs. Concurrent
-  # readers can receive truncated/empty refs and silently skip validation.
+    # Refuse names Git would expand as globs when Lefthook restages them.
+    - name: literal-names
+      glob: "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,json,jsonc,css,rs}"
+      run: bin/node scripts/check-staged-names.mjs {staged_files}
+    - name: icons
+      glob: "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,json}"
+      run: bin/node scripts/design-system/check-icons.mjs {staged_files}
+    - name: biome
+      glob: "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,json,jsonc,css}"
+      stage_fixed: true
+      run: bin/pnpm exec biome check --write --error-on-warnings --files-ignore-unknown=true --no-errors-on-unmatched -- {staged_files}
+    - name: rustfmt
+      glob: "*.rs"
+      stage_fixed: true
+      run: bin/rustfmt --edition 2021 -- {staged_files}
+pre-push:
+  # Lefthook shares one cached stdin reader between jobs; serialize so every
+  # lane receives the complete ref list.
   parallel: false
   jobs:
     - name: types-and-related-unit-tests

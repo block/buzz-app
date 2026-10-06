@@ -69,7 +69,7 @@ if (base.status === 0) {
   }
   if (design) {
     const input =
-      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$|\.githooks\/pre-push$)/s;
+      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$)/s;
     if (!files.some((file) => shared.test(file) || input.test(file))) {
       console.log(
         "No design-system inputs changed; remaining checks run in CI.",

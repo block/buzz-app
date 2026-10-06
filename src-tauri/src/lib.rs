@@ -513,6 +513,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_window("main") {
+                if let Err(error) = window_state::restore(&window) {
+                    eprintln!("Could not restore Buzz window: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());

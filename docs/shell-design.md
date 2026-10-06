@@ -118,9 +118,16 @@ directory (`.window-state.json`); missing or unreadable state falls back to the
 configured 1200×800 window. Visibility and decorations are not restored, so a
 macOS window hidden by Close reopens visibly after Quit/relaunch and platform
 chrome stays configuration-owned. Close/reopen without quitting on macOS still
-uses the existing window. When a saved position no longer intersects an attached
-monitor, the plugin leaves placement to the OS. Linux window placement remains
-subject to the window manager/compositor (notably Wayland).
+uses the existing window. Before restoring maximized/fullscreen mode, Buzz checks
+that the entire 48px header fits within a connected monitor's work area. An
+unreachable header falls back to the top of the primary work area (or the first
+available monitor), shrinking an oversized frame to fit. This covers partial
+overlap after removing a monitor, not just fully off-screen windows. Linux
+placement remains subject to the window manager/compositor (notably Wayland).
+The plugin stores physical pixels, so changing display scaling can change the
+window's apparent size. On macOS, quitting in fullscreen can preserve the
+fullscreen-sized frame instead of the earlier normal size; leaving fullscreen
+after relaunch may therefore produce a screen-sized window.
 
 The top-right group contains enabled plugin launchers, a page finder, and the local
 avatar. Search, sidebar and history controls use unfilled ghost icon buttons with

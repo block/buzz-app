@@ -1,4 +1,5 @@
-use tauri_plugin_window_state::{Builder, StateFlags};
+use tauri::{PhysicalPosition, PhysicalRect, PhysicalSize, Runtime, Window};
+use tauri_plugin_window_state::{Builder, StateFlags, WindowExt};
 
 pub(crate) fn builder() -> Builder {
     Builder::default()
@@ -11,6 +12,84 @@ pub(crate) fn builder() -> Builder {
                 | StateFlags::FULLSCREEN,
         )
         .with_filter(|label| label == "main")
+        // Restore geometry and validate reachability before entering a saved mode.
+        .skip_initial_state("main")
+}
+
+// Called from app setup, after the configured main window has been created.
+pub(crate) fn restore<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
+    window.restore_state(StateFlags::SIZE | StateFlags::POSITION)?;
+    let monitors = window.available_monitors()?;
+    let areas: Vec<_> = monitors
+        .iter()
+        .map(|monitor| *monitor.work_area())
+        .collect();
+    let fallback = window
+        .primary_monitor()?
+        .map(|monitor| *monitor.work_area())
+        .or_else(|| areas.first().copied());
+    if let Some(fallback) = fallback {
+        let frame = PhysicalRect {
+            position: window.outer_position()?,
+            size: window.outer_size()?,
+        };
+        // AppShell owns a 48 logical-pixel header on all desktop platforms.
+        let header_height = (48.0 * window.scale_factor()?).ceil() as u32;
+        if let Some(target) = reachable_frame(frame, header_height, &areas, fallback) {
+            if target.size != frame.size {
+                let inner = window.inner_size()?;
+                window.set_size(PhysicalSize::new(
+                    target
+                        .size
+                        .width
+                        .saturating_sub(frame.size.width.saturating_sub(inner.width)),
+                    target
+                        .size
+                        .height
+                        .saturating_sub(frame.size.height.saturating_sub(inner.height)),
+                ))?;
+            }
+            window.set_position(target.position)?;
+        }
+    }
+    window.restore_state(StateFlags::MAXIMIZED | StateFlags::FULLSCREEN)
+}
+
+fn reachable_frame(
+    frame: PhysicalRect<i32, u32>,
+    header_height: u32,
+    areas: &[PhysicalRect<i32, u32>],
+    fallback: PhysicalRect<i32, u32>,
+) -> Option<PhysicalRect<i32, u32>> {
+    let x = i64::from(frame.position.x);
+    let y = i64::from(frame.position.y);
+    let reachable = areas.iter().any(|area| {
+        x >= i64::from(area.position.x)
+            && y >= i64::from(area.position.y)
+            && x + i64::from(frame.size.width)
+                <= i64::from(area.position.x) + i64::from(area.size.width)
+            && y + i64::from(header_height)
+                <= i64::from(area.position.y) + i64::from(area.size.height)
+    });
+    if reachable {
+        return None;
+    }
+    // Unlike any-corner intersection, this keeps the drag strip and both sets
+    // of platform controls on-screen, including after removing an upper monitor.
+    let size = PhysicalSize::new(
+        frame.size.width.min(fallback.size.width),
+        frame.size.height.min(fallback.size.height),
+    );
+    Some(PhysicalRect {
+        position: PhysicalPosition::new(
+            fallback
+                .position
+                .x
+                .saturating_add(((fallback.size.width - size.width) / 2) as i32),
+            fallback.position.y,
+        ),
+        size,
+    })
 }
 
 #[cfg(test)]
@@ -22,6 +101,83 @@ mod tests {
         Manager,
     };
     use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> tauri::PhysicalRect<i32, u32> {
+        tauri::PhysicalRect {
+            position: tauri::PhysicalPosition::new(x, y),
+            size: tauri::PhysicalSize::new(width, height),
+        }
+    }
+
+    fn assert_frame(
+        actual: Option<tauri::PhysicalRect<i32, u32>>,
+        expected: Option<tauri::PhysicalRect<i32, u32>>,
+    ) {
+        assert_eq!(
+            actual.map(|r| (r.position, r.size)),
+            expected.map(|r| (r.position, r.size))
+        );
+    }
+
+    #[test]
+    fn partial_overlap_after_removing_upper_monitor_recovers_entire_header() {
+        let laptop = rect(0, 25, 1440, 875);
+        let saved = rect(100, -450, 960, 640);
+        assert_frame(
+            super::reachable_frame(saved, 48, &[laptop], laptop),
+            Some(rect(240, 25, 960, 640)),
+        );
+        let upper = rect(0, -900, 1440, 900);
+        assert_frame(
+            super::reachable_frame(saved, 48, &[laptop, upper], laptop),
+            None,
+        );
+    }
+
+    #[test]
+    fn reachable_geometry_is_unchanged_including_negative_coordinates() {
+        let primary = rect(0, 25, 1440, 875);
+        let left = rect(-1920, 0, 1920, 1080);
+        for saved in [rect(100, 120, 960, 640), rect(-1800, 80, 960, 640)] {
+            assert_frame(
+                super::reachable_frame(saved, 48, &[primary, left], primary),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn side_overlap_and_menu_bar_occlusion_recover_controls_not_just_a_corner() {
+        let area = rect(0, 25, 1440, 875);
+        for saved in [
+            rect(-600, 100, 960, 640),
+            rect(1300, 100, 960, 640),
+            rect(100, 0, 960, 640),
+            rect(100, 860, 960, 640),
+        ] {
+            assert_frame(
+                super::reachable_frame(saved, 48, &[area], area),
+                Some(rect(240, 25, 960, 640)),
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_window_fits_remaining_work_area_and_scaled_header_is_checked() {
+        let area = rect(0, 50, 1440, 850);
+        assert_frame(
+            super::reachable_frame(rect(0, 50, 2800, 1800), 96, &[area], area),
+            Some(area),
+        );
+        assert_frame(
+            super::reachable_frame(rect(100, 820, 960, 640), 48, &[area], area),
+            None,
+        );
+        assert_frame(
+            super::reachable_frame(rect(100, 820, 960, 640), 96, &[area], area),
+            Some(rect(240, 50, 960, 640)),
+        );
+    }
 
     fn fixture() -> (tempfile::TempDir, tauri::App<MockRuntime>) {
         let dir = tempfile::tempdir().unwrap();
@@ -41,7 +197,10 @@ mod tests {
         plugin.initialize(app.handle(), Value::Null).unwrap();
         for label in ["main", "other"] {
             let window = tauri::WindowBuilder::new(&app, label).build().unwrap();
-            plugin.window_created(window);
+            plugin.window_created(window.clone());
+            if label == "main" {
+                super::restore(&window).unwrap();
+            }
         }
         plugin.on_event(app.handle(), &tauri::RunEvent::Exit);
         let state: Value = serde_json::from_slice(
@@ -68,6 +227,7 @@ mod tests {
             .build()
             .unwrap();
         plugin.window_created(view.as_ref().window().clone());
+        super::restore(&view.as_ref().window()).unwrap();
         app.handle().save_window_state(StateFlags::empty()).unwrap();
         let loaded: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(loaded, saved);
@@ -99,7 +259,8 @@ mod tests {
             let mut plugin = super::builder().build();
             plugin.initialize(app.handle(), Value::Null).unwrap();
             let window = tauri::WindowBuilder::new(&app, "main").build().unwrap();
-            plugin.window_created(window);
+            plugin.window_created(window.clone());
+            super::restore(&window).unwrap();
             plugin.on_event(app.handle(), &tauri::RunEvent::Exit);
             let state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
             assert!(state.get("main").is_some());

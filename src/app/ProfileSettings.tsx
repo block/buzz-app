@@ -469,10 +469,11 @@ export function ProfileSettings({
               Enterprise access
             </h3>
             <p className="mt-2 mb-4 text-body-sm text-muted">
-              Clear the enterprise session saved on this device for the current
-              adapter, identity, and Buzz build. This does not revoke remote
-              access or remove your Nostr identity, memberships, or access at
-              the community.
+              Clear the shared BuilderLab session for its configured profile
+              and service. Removing it can require the CLI or other clients
+              using that same profile and service to sign in again. This does
+              not revoke remote access or remove your Nostr identity or
+              memberships.
             </p>
             <Button
               type="button"

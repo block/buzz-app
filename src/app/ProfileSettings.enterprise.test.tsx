@@ -42,7 +42,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("clears the local enterprise session without changing identity or memberships", async () => {
+it("clears the shared BuilderLab session without changing identity or memberships", async () => {
   const clearEnterpriseAuth = vi.fn(async () => {});
   const { service, state } = fixture(clearEnterpriseAuth);
   const before = structuredClone(state);
@@ -51,6 +51,11 @@ it("clears the local enterprise session without changing identity or memberships
     wrapper: ToastProvider,
   });
 
+  const clearCopy = screen.getByText(/shared BuilderLab session/);
+  expect(clearCopy).toHaveTextContent("configured profile and service");
+  expect(clearCopy).toHaveTextContent(
+    "CLI or other clients using that same profile and service to sign in again.",
+  );
   await user.click(
     screen.getByRole("button", { name: "Clear enterprise sign-in" }),
   );

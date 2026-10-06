@@ -119,9 +119,10 @@ it("keeps pill order from the first reaction when counts change", () => {
   ).toEqual(["❤️", "😂"]);
 });
 
-it("incremental channel projection applies delete-of-reaction and rolls back a failed deletion", () => {
+it("incremental channel projection applies delete-of-reaction and rejects an owner deletion of a reaction", () => {
   const mine = reaction(),
-    deletion = remove(mine);
+    deletion = remove(mine),
+    foreignDelete = remove(mine, other);
   const projection = new MessageProjection(
     "c",
     relay.pubkey,
@@ -130,6 +131,9 @@ it("incremental channel projection applies delete-of-reaction and rolls back a f
   expect(projection.reconcile([root, mine], [])[0]?.reactions).toHaveLength(1);
   expect(
     projection.reconcile([root, mine, remove(mine, other)], [])[0]?.reactions,
+  ).toHaveLength(1);
+  expect(
+    projection.reconcile([root, mine, foreignDelete], [])[0]?.reactions,
   ).toHaveLength(1);
   expect(
     projection.reconcile([root, mine, deletion], [])[0]?.reactions,

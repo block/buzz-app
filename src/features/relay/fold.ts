@@ -234,15 +234,22 @@ export function foldMessages(
       overlays.set(entry[1], list);
     }
   }
-  // The relay lets an attributed author edit and delete like the signer.
-  const byAuthor = (item: EventData, event: EventData) =>
-    item.pubkey === event.pubkey ||
-    item.pubkey === messageAuthor(event, signingAuthority);
+  // Relay-signed author attribution and NIP-09 owner deletion are both
+  // independently verified before these events enter the fold. Only the
+  // message target kinds gain the owner path; reactions remain author-only.
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)
       ?.some(
-        (item) => [5, 9005].includes(item.kind) && byAuthor(item, event),
+        (item) =>
+          ([5, 9005].includes(item.kind) &&
+            (item.pubkey === event.pubkey ||
+              item.pubkey === messageAuthor(event, signingAuthority))) ||
+          (item.kind === 5 &&
+            [9, 40002].includes(event.kind) &&
+            item.tags.some(
+              ([name, value]) => name === "k" && value === String(event.kind),
+            )),
       ) ?? false;
   const rows: ChannelMessage[] = [];
   for (const event of events) {

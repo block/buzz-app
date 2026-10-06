@@ -427,3 +427,69 @@ test("media comment deletion keeps keyboard focus in its confirmation", async ({
     row.getByRole("link", { name: "Open image attachment" }),
   ).toBeFocused();
 });
+
+test.describe("owned-agent message deletion", () => {
+  test.use({ agentMessageDeletion: true });
+
+  test("the verified owner confirms a NIP-09 delete for an agent message", async ({
+    page,
+    app,
+  }, testInfo) => {
+    await open(page, app);
+    const event = app.ownerAgentMessage;
+    expect(event).toBeTruthy();
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"]`,
+    );
+    await expect(row).toBeVisible();
+    await row.hover();
+    await row.getByRole("button", { name: "More message actions" }).click();
+    const action = page.getByRole("menuitem", {
+      name: "Delete message",
+      exact: true,
+    });
+    await expect(action).toBeVisible();
+    await action.screenshot({
+      path: testInfo.outputPath("owned-agent-delete-action.png"),
+    });
+    await action.click();
+
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Delete message?",
+    });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText(
+      "This requests removal of this message from Buzz’s relay.",
+    );
+    await expect(confirmation).toContainText("People may still have copies.");
+    await expect(
+      confirmation.getByRole("button", { name: "Cancel" }),
+    ).toBeFocused();
+    await expect
+      .poll(() =>
+        app.report.publications.filter(({ event: item }) => item.kind === 5),
+      )
+      .toHaveLength(0);
+    await confirmation.screenshot({
+      path: testInfo.outputPath("owned-agent-delete-confirmation.png"),
+    });
+
+    await confirmation
+      .getByRole("button", { name: "Delete", exact: true })
+      .click();
+    await expect(row).toHaveCount(0);
+    await expect(confirmation).toHaveCount(0);
+    const deletion = app.report.publications.find(
+      ({ event: item }) =>
+        item.kind === 5 &&
+        item.tags.some(([name, id]) => name === "e" && id === event.id),
+    ).event;
+    expect(deletion.pubkey).toBe(app.viewer);
+    expect(deletion.tags.filter(([name]) => name !== "client-id")).toEqual([
+      ["h", "alpha"],
+      ["e", event.id],
+      ["k", "9"],
+    ]);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});

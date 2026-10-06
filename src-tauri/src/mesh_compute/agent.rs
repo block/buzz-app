@@ -87,7 +87,15 @@ pub(crate) async fn prepare_agent(
                     }
                     Phase::Starting => {}
                     Phase::Ready => match probe(&client, port, &request.model).await {
-                        Ok(model) => return Ok(model),
+                        Ok(model) => {
+                            eprintln!(
+                                "mesh-startup stage=first_probe_ok elapsed_ms={}",
+                                (deadline - std::time::Duration::from_secs(120))
+                                    .elapsed()
+                                    .as_millis()
+                            );
+                            return Ok(model);
+                        }
                         Err(error) => last = error,
                     },
                 }

@@ -1105,6 +1105,10 @@ impl Controller {
         let cache = crate::connection::oauth_root(self.store.root())?;
         crate::connection::disconnect(&cache, &workspace)
     }
+    /// Whether any running agent was launched as a Mesh consumer.
+    pub fn has_mesh_consumers(&self) -> bool {
+        self.running.values().any(|run| run.mesh_consumer)
+    }
     /// Stop exact running Mesh consumers using captured launch evidence, not edited settings.
     /// A failed process teardown retains ownership and prevents endpoint replacement.
     pub fn stop_mesh_consumers(&mut self) -> Result<()> {

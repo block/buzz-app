@@ -70,10 +70,21 @@ export function CommunityMesh({
   const entries = inventory?.entries ?? [];
   const contributors = new Set(entries.map((entry) => entry.memberPubkey)).size;
   const modelCount = new Set(entries.map((entry) => entry.modelId)).size;
-  const reported = entries.filter((entry) => entry.vramGb != null);
-  const sharedGb = reported.length
-    ? reported.reduce((total, entry) => total + (entry.vramGb ?? 0), 0)
-    : null;
+  // One device may advertise several models: count each identified device once.
+  // Unknown device identity or capacity is not guessed into the total.
+  const devices = new Map<string, number>();
+  let unknownCapacity = false;
+  for (const entry of entries) {
+    if (entry.deviceId == null || entry.vramGb == null) {
+      unknownCapacity = true;
+      continue;
+    }
+    devices.set(`${entry.memberPubkey}\u0000${entry.deviceId}`, entry.vramGb);
+  }
+  const sharedGb =
+    devices.size && !unknownCapacity
+      ? [...devices.values()].reduce((total, gb) => total + gb, 0)
+      : null;
   return (
     <section aria-label="Community mesh">
       <h2 className="text-body">Community mesh</h2>

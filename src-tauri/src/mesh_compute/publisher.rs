@@ -4,6 +4,10 @@ use std::time::Duration;
 use tauri::Manager;
 
 const INTERVAL: Duration = Duration::from_secs(45);
+
+/// Serializes periodic publication and the immediate Share-Off withdrawal so an
+/// in-flight serving snapshot can never be signed after the stopped note.
+static PUBLISH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) fn ensure_started(app: tauri::AppHandle, host: &super::MeshHost) -> Result<(), String> {
@@ -55,6 +59,8 @@ async fn publish(
     app: &tauri::AppHandle,
     previous: &mut Option<(String, String)>,
 ) -> Result<(), String> {
+    // Read state and sign under the same lock as withdrawal.
+    let _serial = PUBLISH.lock().await;
     let host = app.state::<super::MeshHost>();
     let identity = app.state::<crate::identity::IdentityHost>();
     let selection = host.lease.current()?;
@@ -145,6 +151,7 @@ pub(super) async fn publish_stopped(
     community: &str,
     member: &str,
 ) {
+    let _serial = PUBLISH.lock().await;
     match tokio::time::timeout(
         Duration::from_secs(5),
         send(identity, community, member, false, None),

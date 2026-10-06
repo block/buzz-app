@@ -220,8 +220,15 @@ impl Lifecycle {
         let shared = self.slot.clone();
         drop(slot);
         // Detached from the caller's request lifetime, intentionally not abortable by IPC.
+        let launched = std::time::Instant::now();
         runtime.spawn(async move {
-            let node = match startup.await {
+            let started = startup.await;
+            eprintln!(
+                "mesh-startup stage=sdk_start_returned ok={} elapsed_ms={}",
+                started.is_ok(),
+                launched.elapsed().as_millis()
+            );
+            let node = match started {
                 Ok(node) => node,
                 Err(error) => {
                     let phase = Phase::Failed(format!("{error:#}"));

@@ -107,3 +107,47 @@ it("rejects a late previous-community response and resolves names from session p
   ).not.toBeInTheDocument();
   expect(screen.getByRole("listitem")).toHaveTextContent("Alice");
 });
+it("totals shared memory once per device and omits it when capacity is unknown", async () => {
+  const entry = (
+    member: string,
+    model: string,
+    deviceId: string | null,
+    vramGb: number | null,
+  ) => ({
+    memberPubkey: member.repeat(64),
+    modelId: model,
+    modelName: model,
+    deviceId,
+    deviceName: null,
+    vramGb,
+  });
+  native.invoke.mockResolvedValueOnce({
+    unavailable: null,
+    entries: [
+      entry("a", "m1", "dev-1", 32),
+      entry("a", "m2", "dev-1", 32),
+      entry("b", "m3", "dev-2", 16),
+    ],
+  });
+  const source = relay();
+  const view = render(
+    <CommunityMesh community="https://fixture.example" relay={source} />,
+  );
+  // Two models on one 32 GB device plus a 16 GB device: 48 GB, not 80 GB.
+  expect(await screen.findByText("48 GB")).toBeInTheDocument();
+  expect(
+    screen.getByText("2 people are contributing compute."),
+  ).toBeInTheDocument();
+  native.invoke.mockResolvedValueOnce({
+    unavailable: null,
+    entries: [entry("a", "m1", "dev-1", 32), entry("b", "m3", null, null)],
+  });
+  view.rerender(
+    <CommunityMesh
+      community="https://fixture.example"
+      relay={source}
+      refreshKey={1}
+    />,
+  );
+  expect(await screen.findByText("Not reported")).toBeInTheDocument();
+});

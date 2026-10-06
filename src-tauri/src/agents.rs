@@ -668,6 +668,14 @@ impl AgentHost {
         }
     }
     #[cfg(feature = "mesh")]
+    pub(crate) async fn has_mesh_consumers(&self) -> bool {
+        run(self.clone(), |host| {
+            Ok(host.controller.has_mesh_consumers())
+        })
+        .await
+        .unwrap_or(false)
+    }
+    #[cfg(feature = "mesh")]
     pub(crate) async fn stop_mesh_consumers(&self) -> Result<(), String> {
         run(self.clone(), |host| {
             // Cancel preparation tickets/restore queue as well as captured running consumers.

@@ -197,9 +197,22 @@ pub async fn mesh_compute_share(
     }
     // Reuses discovery and the same private SDK slot. Solo serving needs no target.
     if stopping {
+        // Reached only after stop_and_wait confirmed shutdown (errors return above).
         // Withdraw the serving advertisement now rather than at the next heartbeat.
         if let Ok(community) = host.lease.community(&lease) {
             super::publisher::publish_stopped(&identity, &community, &member).await;
+        }
+        // Legacy re-arms consumer use for running Mesh agents after the serving node
+        // goes away (classic coordinator → ensure_relay_mesh_for_record). Saved
+        // sharing stays Off; this starts the same single slot as a client.
+        if app
+            .state::<crate::agents::AgentHost>()
+            .has_mesh_consumers()
+            .await
+        {
+            if let Err(error) = super::start(&app, &host, &identity, &lease).await {
+                eprintln!("Mesh consumer re-arm after Share Off failed: {error}");
+            }
         }
         Ok(())
     } else {

@@ -176,8 +176,21 @@ async fn start(
     identity: &crate::identity::IdentityHost,
     lease: &str,
 ) -> Result<(), String> {
+    // Stage timing only: opaque attempt id, no prompts, keys, config or addresses.
+    let attempt = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let began = std::time::Instant::now();
     let _guard = host.preparing.lock().await;
-    start_prepared(app, host, identity, lease).await
+    eprintln!(
+        "mesh-startup attempt={attempt} stage=prepared elapsed_ms={}",
+        began.elapsed().as_millis()
+    );
+    let result = start_prepared(app, host, identity, lease).await;
+    eprintln!(
+        "mesh-startup attempt={attempt} stage=start_requested ok={} elapsed_ms={}",
+        result.is_ok(),
+        began.elapsed().as_millis()
+    );
+    result
 }
 
 #[cfg(feature = "mesh")]
@@ -198,12 +211,18 @@ async fn start_prepared(
         return Err("Previous Mesh runtime shutdown is not confirmed".into());
     }
     let community = host.lease.community(lease)?;
+    let discovery_began = std::time::Instant::now();
     let (owners, targets, evidence) = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         discovery::read(identity, &community),
     )
     .await
     .map_err(|_| "Community discovery timed out")??;
+    eprintln!(
+        "mesh-startup stage=discovery_read targets={} elapsed_ms={}",
+        targets.len(),
+        discovery_began.elapsed().as_millis()
+    );
     start_with_evidence(app, host, identity, lease, owners, targets, evidence).await
 }
 

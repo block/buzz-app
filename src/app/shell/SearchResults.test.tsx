@@ -1694,6 +1694,142 @@ it("opens the identity picker for bare from: without an unfiltered message read"
   }
 });
 
+it.each([
+  "from:baxen deploy",
+  "from:@baxen ",
+  "deploy from:baxen after:2024-01-15",
+])(
+  "resolves a completed ambiguous %s without losing surrounding query text",
+  async (query) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      first = keypair(),
+      second = keypair();
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return Promise.resolve([
+            profile(first, { display_name: "Baxen" }),
+            profile(second, { display_name: "Baxen" }),
+          ]);
+        return Promise.resolve([]);
+      },
+    });
+    const change = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={change}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      const people = within(
+        await screen.findByRole("group", { name: "People" }),
+      );
+      expect(await people.findAllByRole("option")).toHaveLength(2);
+      fireEvent.click(people.getAllByRole("option")[1] as HTMLElement);
+      expect(change).toHaveBeenCalledWith(
+        query.replace(/from:@?baxen/i, `from:${second.pubkey}`),
+      );
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("keeps a person visible when agent candidates exceed the picker cap", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    human = keypair();
+  const agents = Array.from({ length: 12 }, () => keypair());
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          ...agents.map((agent) =>
+            profile(agent, { display_name: "Agent", is_agent: true }),
+          ),
+          profile(human, { display_name: "Alice" }),
+        ]);
+      return Promise.resolve([]);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:a"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await within(screen.getByRole("group", { name: "People" })).findByRole(
+        "option",
+        { name: /Alice/ },
+      ),
+    ).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(12);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("retains a member of the in: channel when global author lookup fails", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    wes = keypair();
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey, wes.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.search === "we"))
+        return Promise.reject(new Error("prefix lookup unavailable"));
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([profile(wes, { display_name: "Wes" })]);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="in:#crew from:we"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    expect(
+      await within(screen.getByRole("group", { name: "People" })).findByRole(
+        "option",
+        { name: /Wes/ },
+      ),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("shows only the requested date suggestions and inserts local calendar dates", async () => {
   const relay = keypair(),
     viewer = keypair();

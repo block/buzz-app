@@ -68,11 +68,9 @@ export function SearchResults({
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
+  const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
   const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
-  const authorNeedle = authorPrompt?.[2]?.toLowerCase();
   const pickerPrompt = !!authorPrompt && !isHexPubkey(authorPrompt[2] ?? "");
-  const agents = useAgentChoices(session, pickerPrompt);
-  useMentionArchives(session, pickerPrompt);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -131,7 +129,6 @@ export function SearchResults({
           };
         })
       : [];
-  const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
   const names = new Map(
     channels.map((channel) => [
       channel.id,
@@ -168,14 +165,26 @@ export function SearchResults({
     operatorChannelId,
   );
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
+  // Ambiguity is known only after a completed token. Keep its original span so
+  // choosing a key does not discard free text or other operators after it.
+  const completedAuthor = showAmbiguousPicker
+    ? [...query.matchAll(/(?:^|\s)from:(@?)(\S+)/gi)].at(-1)
+    : undefined;
+  const authorToken = authorPrompt ?? completedAuthor;
+  const authorNeedle = (authorPrompt?.[2] ?? parsed.from ?? "")
+    .replace(/^@/, "")
+    .toLowerCase();
+  const showAuthorPicker = pickerPrompt || showAmbiguousPicker;
+  const agents = useAgentChoices(session, showAuthorPicker);
+  useMentionArchives(session, showAuthorPicker);
+  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   useEffect(() => {
-    if (authorNeedle === undefined || (!pickerPrompt && !showAmbiguousPicker))
-      return;
+    if (!showAuthorPicker) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       void (async () => {
-        const members = scopedChannelId
-          ? (session.channels.get?.(scopedChannelId)?.members ?? [])
+        const members = effectiveChannelId
+          ? (session.channels.get?.(effectiveChannelId)?.members ?? [])
           : [];
         if (members.length) {
           try {
@@ -249,8 +258,8 @@ export function SearchResults({
             )
             .sort(
               ([left, leftProfile], [right, rightProfile]) =>
-                Number(!!rightProfile.isAgent || knownAgents.has(right)) -
-                  Number(!!leftProfile.isAgent || knownAgents.has(left)) ||
+                Number(!!leftProfile.isAgent || knownAgents.has(left)) -
+                  Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
                 Number(members.includes(right)) -
                   Number(members.includes(left)),
             )
@@ -266,21 +275,12 @@ export function SearchResults({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [
-    session,
-    scopedChannelId,
-    query,
-    authorNeedle,
-    showAmbiguousPicker,
-    pickerPrompt,
-  ]);
+  }, [session, effectiveChannelId, query, authorNeedle, showAuthorPicker]);
   const selectableAgents = new Map(
     agents.selectable.map((agent) => [agent.pubkey, agent]),
   );
   const authorChoices =
-    authorPrompt &&
-    (pickerPrompt || showAmbiguousPicker) &&
-    authorSuggestions?.query === query
+    authorToken && showAuthorPicker && authorSuggestions?.query === query
       ? authorSuggestions.candidates
           .filter(
             ({ pubkey }) =>
@@ -296,8 +296,8 @@ export function SearchResults({
               label: resolveName(
                 pubkey,
                 profile.name,
-                scopedChannelId
-                  ? session.channels.get?.(scopedChannelId)?.members
+                effectiveChannelId
+                  ? session.channels.get?.(effectiveChannelId)?.members
                   : undefined,
               ),
               detail: pubkey.slice(0, 12),
@@ -312,7 +312,7 @@ export function SearchResults({
               isAgent,
               run: () =>
                 onQueryChange(
-                  `${query.slice(0, authorPrompt.index)} from:${pubkey} `.trimStart(),
+                  `${query.slice(0, authorToken.index)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}from:${pubkey}${query.slice(authorToken.index + authorToken[0].length) || " "}`,
                 ),
             };
           })

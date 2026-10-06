@@ -9,6 +9,7 @@ import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
+import styles from "./Compute.module.css";
 
 type MeshStatus = {
   available: boolean;
@@ -32,14 +33,6 @@ type MeshStatus = {
   };
   reason?: string;
 };
-const phaseLabels = {
-  stopped: "Off",
-  starting: "Starting…",
-  ready: "Running",
-  stopping: "Stopping…",
-  failed: "Needs attention",
-};
-
 export const inject = ["relay", "settingsCards", "agentControl"];
 
 // Settles when the most recent Share action has fully finished, so tests can
@@ -168,6 +161,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
+    // One page Refresh also rereads the community list (no second Refresh).
+    const [refreshCount, setRefreshCount] = useState(0);
     // Controls wait for this community's selection instead of rejecting clicks.
     const [leaseReady, setLeaseReady] = useState(false);
     // biome-ignore lint/correctness/useExhaustiveDependencies: lease follows the relay snapshot.
@@ -331,6 +326,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     };
     const refresh = async () => {
+      setRefreshCount((value) => value + 1);
       setBusy(true);
       setError(null);
       try {
@@ -383,22 +379,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         status={
           !isTauri()
             ? "Open Buzz desktop to use shared compute."
-            : phase
-              ? phase === "ready" && status?.sharing && !status.modelReady
-                ? "Preparing to share"
-                : status?.finishingJoin
-                  ? "Stopping, finishing a peer connection…"
-                  : phaseLabels[phase]
-              : status?.available === false
-                ? "Unavailable"
-                : "Checking status…"
+            : !status
+              ? "Checking shared compute…"
+              : status.available === false
+                ? "Shared compute isn’t available in this build."
+                : undefined
         }
-        error={
-          error ??
-          status?.lifecycle?.reason ??
-          status?.settingsError ??
-          status?.reason
-        }
+        error={error ?? status?.settingsError ?? status?.reason}
         refreshDisabled={busy || !isTauri()}
         refresh={() => void refresh()}
       >
@@ -432,7 +419,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           </section>
         )}
         {isTauri() && status?.available && !otherCommunity && (
-          <section aria-label="Share compute">
+          <section aria-label="Share compute" className={styles.sharing}>
             <h2 className="text-body">Share your compute</h2>
             <p className="text-body-sm text-secondary">
               Let {community?.name ?? "this community"} run prompts on this
@@ -456,7 +443,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 else void share(!status.sharing);
               }}
             />
-            <p aria-live="polite" className="text-body-sm">
+            <p role="status" className="text-body-sm">
               {leaseReady
                 ? shareStatus(status, phase, community?.name)
                 : "Checking shared compute…"}
@@ -501,6 +488,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             key={community.id}
             community={community.id}
             relay={ctx.relay}
+            refreshKey={refreshCount}
           />
         )}
       </ConsumerComputeView>
@@ -535,10 +523,16 @@ function shareStatus(
     return status.finishingJoin
       ? "Stopping, finishing a peer connection…"
       : "Stopping…";
-  if (!model)
-    return status.savedSharing?.enabled
-      ? "Sharing is enabled but not running. Turn it off and on to start it again."
-      : "Sharing is off.";
+  if (!model) {
+    if (status.savedSharing?.enabled)
+      return "Sharing is enabled but not running. Turn it off and on to start it again.";
+    // Consumer-only node (started for agents): Thomas's "connected" wording.
+    if (phase === "starting")
+      return "Sharing is off. Connecting to community compute…";
+    if (phase === "ready")
+      return "Sharing is off. Connected to community compute.";
+    return "Sharing is off.";
+  }
   if (phase === "starting") return `Starting ${model}…`;
   if (phase === "ready")
     return status.modelReady

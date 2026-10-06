@@ -64,7 +64,7 @@ it("revokes a pending selection on disposal and never starts it", async () => {
       restoreSharing: true,
     }),
   );
-  await screen.findByText("Checking status…");
+  await screen.findByText("Checking shared compute…");
   expect(
     screen.queryByRole("button", { name: "Connect to community compute" }),
   ).not.toBeInTheDocument();
@@ -120,7 +120,7 @@ it("preserves the running lease through reconnect and revokes on identity change
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await screen.findByText("Running");
+  await screen.findByText("Sharing is off. Connected to community compute.");
   await act(async () => {
     snapshot = { ...snapshot, status: "connecting" };
     for (const listener of listeners) listener();
@@ -173,7 +173,7 @@ it("renders Running without a Disconnect control and separates refresh errors", 
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
   render(<Component />);
-  await screen.findByText("Running");
+  await screen.findByText("Sharing is off. Connected to community compute.");
   expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   // Legacy Buzz and the donor design have one control: Share this machine.
   expect(
@@ -186,7 +186,9 @@ it("renders Running without a Disconnect control and separates refresh errors", 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Status unavailable",
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Running");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Connected to community compute.",
+  );
   expect(native.invoke).not.toHaveBeenCalledWith(
     "mesh_compute_release",
     expect.anything(),
@@ -226,16 +228,22 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     await act(async () => {
       render(<Component />);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Starting…");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connecting to community compute…",
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Starting…");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connecting to community compute…",
+    );
     state = "ready";
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Running");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connected to community compute.",
+    );
     const count = native.invoke.mock.calls.length;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -250,7 +258,7 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Off");
+    expect(screen.getByRole("status")).toHaveTextContent("Sharing is off.");
     state = "starting";
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -672,7 +680,7 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await screen.findByText("Native model startup failed: fixture cause");
+  await screen.findByText(/Native model startup failed: fixture cause/);
   expect(screen.getByText(/Mesh needs recovery\./)).toHaveTextContent(
     "Restart Buzz before starting Mesh again",
   );

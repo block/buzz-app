@@ -15,7 +15,7 @@ export function ConsumerComputeView({
 }: {
   communityName: string | undefined;
   children?: ReactNode;
-  status: string;
+  status?: string | undefined;
   error: string | undefined | null;
   refreshDisabled: boolean;
   refresh: () => void;
@@ -30,18 +30,11 @@ export function ConsumerComputeView({
               Shared compute for <strong>{communityName}</strong>
             </p>
           )}
-          <p className="text-body text-secondary">
-            Use models shared within the selected community, or share a model
-            from this device. When using another member’s compute, your prompts
-            run on their machine.
+          <p className="text-body-sm text-secondary">
+            Use compute from your community, and optionally share this machine.
           </p>
+          {status && <p role="status">{status}</p>}
           {children}
-          <p role="status">{status}</p>
-          {status === "Running" && (
-            <p className="text-body-sm text-secondary">
-              The local Mesh node is running. Start an agent to check inference.
-            </p>
-          )}
           <Button
             variant="ghost"
             size="sm"

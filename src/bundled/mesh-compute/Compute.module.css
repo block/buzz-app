@@ -7,3 +7,18 @@
   overflow-wrap: anywhere;
   gap: var(--space-control-inset);
 }
+
+/* Compact sharing card from feat/community-compute-plugin @ b4a910e. */
+.sharing {
+  display: grid;
+  gap: var(--space-row-gap);
+  padding: var(--space-control-inset);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-panel);
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-section-gap);
+}

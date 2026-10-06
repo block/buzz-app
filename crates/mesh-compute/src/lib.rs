@@ -45,6 +45,7 @@ pub mod discovery_types;
 
 #[cfg(feature = "mesh")]
 pub mod inventory;
+pub mod startup_log;
 
 #[cfg(feature = "mesh")]
 pub mod roster;

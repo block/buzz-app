@@ -8,6 +8,19 @@ const INTERVAL: Duration = Duration::from_secs(45);
 /// Serializes periodic publication and the immediate Share-Off withdrawal so an
 /// in-flight serving snapshot can never be signed after the stopped note.
 static PUBLISH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Last `created_at` signed for our replaceable status address.
+static LAST_CREATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Replaceable events resolve by `created_at` (whole seconds), so two notes signed
+/// in the same second can tie. Under `PUBLISH`, each note is strictly newer than
+/// the previous one, so a stopped note signed after a serving one always wins.
+fn next_created_at(now: u64, last: &std::sync::atomic::AtomicU64) -> u64 {
+    use std::sync::atomic::Ordering;
+    let stamp = now.max(last.load(Ordering::SeqCst) + 1);
+    last.store(stamp, Ordering::SeqCst);
+    stamp
+}
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) fn ensure_started(app: tauri::AppHandle, host: &super::MeshHost) -> Result<(), String> {
@@ -185,10 +198,13 @@ async fn send(
     let event = identity
         .sign(crate::identity::EventTemplate {
             kind: builder.kind.as_u16(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "System clock unavailable")?
-                .as_secs(),
+            created_at: next_created_at(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock unavailable")?
+                    .as_secs(),
+                &LAST_CREATED,
+            ),
             tags: builder
                 .tags
                 .iter()
@@ -206,6 +222,43 @@ async fn send(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_note_signed_in_the_same_second_still_supersedes_serving() {
+        let last = std::sync::atomic::AtomicU64::new(0);
+        let serving = next_created_at(1_000, &last);
+        // Off lands within the same wall-clock second as the held serving note.
+        let stopped = next_created_at(1_000, &last);
+        assert!(stopped > serving, "{stopped} must win over {serving}");
+        // Clock going backwards cannot reorder later notes either.
+        assert!(next_created_at(999, &last) > stopped);
+        assert_eq!(next_created_at(5_000, &last), 5_000);
+    }
+
+    #[tokio::test]
+    async fn withdrawal_waits_for_an_in_flight_serving_publication() {
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let last = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let held = PUBLISH.lock().await; // a periodic serving publication is in flight
+        let (o, l) = (order.clone(), last.clone());
+        let off = tokio::spawn(async move {
+            let _serial = PUBLISH.lock().await;
+            o.lock()
+                .unwrap()
+                .push(("stopped", next_created_at(1_000, &l)));
+        });
+        tokio::task::yield_now().await;
+        order
+            .lock()
+            .unwrap()
+            .push(("serving", next_created_at(1_000, &last)));
+        drop(held);
+        off.await.unwrap();
+        let order = order.lock().unwrap().clone();
+        assert_eq!(order[0].0, "serving");
+        assert_eq!(order[1].0, "stopped");
+        assert!(order[1].1 > order[0].1);
+    }
     #[test]
     fn enrollment_waits_for_first_use_then_sends_one_stopped_note() {
         let ran = ("https://a.example".to_owned(), "viewer".to_owned());

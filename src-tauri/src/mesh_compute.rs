@@ -176,20 +176,11 @@ async fn start(
     identity: &crate::identity::IdentityHost,
     lease: &str,
 ) -> Result<(), String> {
-    // Stage timing only: opaque attempt id, no prompts, keys, config or addresses.
-    let attempt = &uuid::Uuid::new_v4().simple().to_string()[..8];
-    let began = std::time::Instant::now();
+    use buzz_mesh_compute::startup_log;
     let _guard = host.preparing.lock().await;
-    eprintln!(
-        "mesh-startup attempt={attempt} stage=prepared elapsed_ms={}",
-        began.elapsed().as_millis()
-    );
+    startup_log::stage("prepared", "");
     let result = start_prepared(app, host, identity, lease).await;
-    eprintln!(
-        "mesh-startup attempt={attempt} stage=start_requested ok={} elapsed_ms={}",
-        result.is_ok(),
-        began.elapsed().as_millis()
-    );
+    startup_log::stage("start_requested", &format!("ok={}", result.is_ok()));
     result
 }
 
@@ -217,11 +208,17 @@ async fn start_prepared(
         discovery::read(identity, &community),
     )
     .await
-    .map_err(|_| "Community discovery timed out")??;
-    eprintln!(
-        "mesh-startup stage=discovery_read targets={} elapsed_ms={}",
-        targets.len(),
-        discovery_began.elapsed().as_millis()
+    .map_err(|_| {
+        buzz_mesh_compute::startup_log::stage("discovery_read", "ok=false timeout");
+        "Community discovery timed out"
+    })??;
+    buzz_mesh_compute::startup_log::stage(
+        "discovery_read",
+        &format!(
+            "targets={} read_ms={}",
+            targets.len(),
+            discovery_began.elapsed().as_millis()
+        ),
     );
     start_with_evidence(app, host, identity, lease, owners, targets, evidence).await
 }
@@ -401,6 +398,7 @@ pub async fn mesh_compute_select(
         None
     };
     if restore.is_some() {
+        buzz_mesh_compute::startup_log::begin("restore");
         // Selection may follow release while the old worker is still stopping.
         // Confirm shutdown before restoring; never hold a synchronous lock across await.
         if let Err(error) = host.lifecycle.stop_and_wait().await {

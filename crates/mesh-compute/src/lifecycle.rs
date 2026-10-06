@@ -223,10 +223,9 @@ impl Lifecycle {
         let launched = std::time::Instant::now();
         runtime.spawn(async move {
             let started = startup.await;
-            eprintln!(
-                "mesh-startup stage=sdk_start_returned ok={} elapsed_ms={}",
-                started.is_ok(),
-                launched.elapsed().as_millis()
+            crate::startup_log::stage(
+                "sdk_start_returned",
+                &format!("ok={} launch_ms={}", started.is_ok(), launched.elapsed().as_millis()),
             );
             let node = match started {
                 Ok(node) => node,

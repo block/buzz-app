@@ -67,6 +67,7 @@ pub(crate) async fn prepare_agent(
         let community = community_origin(&request.relay)?;
         let lease = host.lease.for_community(&community)?;
         if host.lifecycle.phase() == Phase::Stopped {
+            buzz_mesh_compute::startup_log::begin("agent");
             super::start(app, &host, &identity, &lease).await?;
         }
         let port = super::mesh_port("BUZZ_MESH_API_PORT", 19337)?;
@@ -88,12 +89,7 @@ pub(crate) async fn prepare_agent(
                     Phase::Starting => {}
                     Phase::Ready => match probe(&client, port, &request.model).await {
                         Ok(model) => {
-                            eprintln!(
-                                "mesh-startup stage=first_probe_ok elapsed_ms={}",
-                                (deadline - std::time::Duration::from_secs(120))
-                                    .elapsed()
-                                    .as_millis()
-                            );
+                            buzz_mesh_compute::startup_log::stage("first_probe_ok", "");
                             return Ok(model);
                         }
                         Err(error) => last = error,
@@ -104,7 +100,10 @@ pub(crate) async fn prepare_agent(
         };
         let model = tokio::time::timeout_at(deadline, ready)
             .await
-            .map_err(|_| format!("Shared compute inference did not become ready: {last}"))??;
+            .map_err(|_| {
+                buzz_mesh_compute::startup_log::stage("first_probe_ok", "ok=false timeout");
+                format!("Shared compute inference did not become ready: {last}")
+            })??;
         host.lease.community(&lease)?;
         let config = MeshLaunch::new(
             request.agent_id,

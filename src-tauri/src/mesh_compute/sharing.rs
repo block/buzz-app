@@ -198,24 +198,24 @@ pub async fn mesh_compute_share(
     // Reuses discovery and the same private SDK slot. Solo serving needs no target.
     if stopping {
         // Reached only after stop_and_wait confirmed shutdown (errors return above).
-        // Withdraw the serving advertisement now rather than at the next heartbeat.
-        if let Ok(community) = host.lease.community(&lease) {
-            super::publisher::publish_stopped(&identity, &community, &member).await;
-        }
-        // Legacy re-arms consumer use for running Mesh agents after the serving node
-        // goes away (classic coordinator → ensure_relay_mesh_for_record). Saved
-        // sharing stays Off; this starts the same single slot as a client.
-        if app
+        let community = host.lease.community(&lease).ok();
+        let consumers = app
             .state::<crate::agents::AgentHost>()
             .has_mesh_consumers()
-            .await
-        {
+            .await;
+        let plan = after_confirmed_off(community.is_some(), consumers);
+        if let (true, Some(community)) = (plan.withdraw, community) {
+            super::publisher::publish_stopped(&identity, &community, &member).await;
+        }
+        if plan.start_client {
+            // Failure leaves the lifecycle Failed/Stopped, which the status line reports.
             if let Err(error) = super::start(&app, &host, &identity, &lease).await {
                 eprintln!("Mesh consumer re-arm after Share Off failed: {error}");
             }
         }
         Ok(())
     } else {
+        buzz_mesh_compute::startup_log::begin("share");
         let result = super::start(&app, &host, &identity, &lease).await;
         if result.is_err() {
             let _ = host.lease.with_current(&lease, |_| {
@@ -242,6 +242,53 @@ mod tests {
             Share {
                 model: "model".into(),
                 max_vram_gb: Some(16),
+            }
+        );
+    }
+}
+
+/// What a confirmed Share Off does next. Legacy withdraws the serving advert and,
+/// when running Mesh agents still need it, re-arms one consumer client (classic
+/// coordinator → ensure_relay_mesh_for_record). A retired lease does neither.
+/// A failed stop never reaches this point.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct OffPlan {
+    pub withdraw: bool,
+    pub start_client: bool,
+}
+
+pub(super) fn after_confirmed_off(lease_current: bool, running_consumers: bool) -> OffPlan {
+    OffPlan {
+        withdraw: lease_current,
+        start_client: lease_current && running_consumers,
+    }
+}
+
+#[cfg(test)]
+mod off_tests {
+    use super::*;
+    #[test]
+    fn confirmed_off_withdraws_then_rearms_only_for_running_consumers() {
+        assert_eq!(
+            after_confirmed_off(true, true),
+            OffPlan {
+                withdraw: true,
+                start_client: true
+            }
+        );
+        assert_eq!(
+            after_confirmed_off(true, false),
+            OffPlan {
+                withdraw: true,
+                start_client: false
+            }
+        );
+        // Retired lease: no withdrawal for a community we no longer own, no replacement.
+        assert_eq!(
+            after_confirmed_off(false, true),
+            OffPlan {
+                withdraw: false,
+                start_client: false
             }
         );
     }

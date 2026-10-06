@@ -111,6 +111,17 @@ HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 
+The main desktop window uses Tauri's window-state plugin to save its size,
+position, maximized and fullscreen state on normal app exit and restore them on
+launch on macOS, Windows and Linux. State is local to the app's OS configuration
+directory (`.window-state.json`); missing or unreadable state falls back to the
+configured 1200×800 window. Visibility and decorations are not restored, so a
+macOS window hidden by Close reopens visibly after Quit/relaunch and platform
+chrome stays configuration-owned. Close/reopen without quitting on macOS still
+uses the existing window. When a saved position no longer intersects an attached
+monitor, the plugin leaves placement to the OS. Linux window placement remains
+subject to the window manager/compositor (notably Wayland).
+
 The top-right group contains enabled plugin launchers, a page finder, and the local
 avatar. Search, sidebar and history controls use unfilled ghost icon buttons with
 32px containers, 16px icons and 10px corners, matching content-toolbar actions.

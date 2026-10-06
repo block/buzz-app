@@ -465,12 +465,14 @@ it("prefills an invite but requires explicit discovery and claim before membersh
     throw new Error(`Unexpected request: ${url}`);
   });
   vi.stubGlobal("fetch", requests);
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
     joined: vi.fn(),
   } as unknown as Communities;
   render(
@@ -534,12 +536,14 @@ it("renews policy acceptance after an expired receipt instead of replaying it", 
     throw new Error(`Unexpected request: ${url}`);
   });
   vi.stubGlobal("fetch", requests);
+  const snapshot = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "", picture: "" },
+  } as const;
   const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
   } as unknown as Communities;
   render(
     <CommunityDialog

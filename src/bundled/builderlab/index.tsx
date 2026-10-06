@@ -9,7 +9,7 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 
-export const inject = ["host", "settingsCards"];
+export const inject = ["host", "settingsCards", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -24,7 +24,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     browserCredential(ctx.host, signal),
   );
   ctx.effect(() => () => session.dispose());
-  const agents = createAgentClient(ctx.host, session);
+  const agents = createAgentClient(ctx.host, session, () =>
+    ctx.communityReader.snapshot().selected?.replace(/^http/, "ws"),
+  );
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",

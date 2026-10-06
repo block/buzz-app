@@ -4,6 +4,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ClientSnapshot } from "../../features/communities/service";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import * as builderlab from "./index";
@@ -28,6 +29,11 @@ afterEach(() => {
 it("an unconfigured desktop build shows setup guidance and cannot start login", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
   const root = new Context();
+  root.provide("communityReader", {
+    snapshot: () =>
+      ({ selected: "https://community.example" }) as ClientSnapshot,
+    subscribe: () => () => {},
+  });
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
@@ -93,6 +99,11 @@ it("binds login, list and creation to the plugin host and clears the session on 
     throw new Error(`Unexpected command ${command}`);
   });
   const root = new Context();
+  root.provide("communityReader", {
+    snapshot: () =>
+      ({ selected: "https://community.example" }) as ClientSnapshot,
+    subscribe: () => () => {},
+  });
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
@@ -162,6 +173,9 @@ it("binds login, list and creation to the plugin host and clears the session on 
       )
       .map(([, input]) => input);
     expect(mutations).toHaveLength(2);
+    expect(JSON.parse(mutations[1].request.body).community_url).toBe(
+      "wss://community.example",
+    );
     expect(
       mutations.every(
         (input) =>

@@ -42,6 +42,7 @@ async function fixture() {
       prepareRemoteAgentAuthorization: authorize,
     },
     session,
+    () => undefined,
   );
   return { session, client, request, authorize };
 }

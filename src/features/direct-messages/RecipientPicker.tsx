@@ -1,7 +1,11 @@
 import { Popover } from "@base-ui/react/popover";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
+import { matchFolded } from "../search/match";
+import { MatchedLabel } from "../search/MatchedLabel";
+import { pickerText, readSearchUsage, recordChoice } from "../search/usage";
+import { useSearchHighlight } from "../search/use-search-highlight";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -12,8 +16,11 @@ import { usePeople, type Recipient } from "./usePeople";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 
+const personKey = (pubkey: string) => `person:${pubkey}`;
+
 export function RecipientPicker({
   session,
+  scope,
   selected,
   disabled,
   excludedPubkeys = [],
@@ -21,6 +28,8 @@ export function RecipientPicker({
   onChange,
 }: {
   session: RelaySession;
+  /** View-state partition whose DM visits and earlier choices rank people. */
+  scope: string;
   selected: Recipient[];
   disabled: boolean;
   excludedPubkeys?: readonly string[];
@@ -30,7 +39,6 @@ export function RecipientPicker({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(initiallyOpen);
-  const [highlight, setHighlight] = useState({ pubkey: "", keyboard: false });
   const input = useRef<HTMLInputElement>(null);
   const field = useRef<HTMLFieldSetElement>(null);
   const anchor = useRef<HTMLDivElement>(null);
@@ -49,6 +57,7 @@ export function RecipientPicker({
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
   const existing = new Set<string>();
+  const dms = new Map<string, string>();
   const interacted = new Set<string>();
   const shared = new Set<string>();
   for (const channel of session.channels.list().channels) {
@@ -57,26 +66,40 @@ export function RecipientPicker({
     for (const pubkey of channel.participants ?? []) interacted.add(pubkey);
     if (channel.participants?.length === 1) {
       const pubkey = channel.participants[0];
-      if (pubkey) existing.add(pubkey);
+      if (pubkey) {
+        existing.add(pubkey);
+        dms.set(pubkey, channel.id);
+      }
     }
   }
   const relationshipRank = (person: Recipient) =>
-    !query.trim()
+    existing.has(person.pubkey)
       ? 0
-      : existing.has(person.pubkey)
-        ? 0
-        : interacted.has(person.pubkey)
-          ? 1
-          : controlled.has(person.pubkey)
-            ? 2
-            : shared.has(person.pubkey)
-              ? 3
-              : 4;
+      : interacted.has(person.pubkey)
+        ? 1
+        : controlled.has(person.pubkey)
+          ? 2
+          : shared.has(person.pubkey)
+            ? 3
+            : 4;
+  const needle = query.trim().toLowerCase();
+  const typed = pickerText("dm", needle);
+  // The directory matches name prefixes on the relay, so fuzzy matches would
+  // depend on which people happen to be loaded. Underline only real substrings.
+  // Match without accents, as the directory does: "jose" is José exactly.
+  const matchOf = (person: Recipient) => {
+    const match = needle ? matchFolded(person.name, needle) : undefined;
+    return match && match.rank <= 3 ? match : undefined;
+  };
+  // Read again when the selection changes, so a person chosen earlier in this
+  // message counts. Rows already showing keep their order either way.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
+  const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
   // Remember eligible namesakes while search text and selection change.
   const known = useRef(new Map<string, Recipient>());
   // A managed agent also matches by its own name, as in mentions, even when
   // its profile name differs. The directory searches profile names only.
-  const listed = new Map(
+  const inDirectory = new Map(
     directory.people.map((person) => [person.pubkey, person]),
   );
   const byAgentName = query.trim()
@@ -84,7 +107,7 @@ export function RecipientPicker({
         if (
           !agent.managed ||
           !agent.name ||
-          listed.has(agent.pubkey) ||
+          inDirectory.has(agent.pubkey) ||
           matchPerson(agent.name, query) === undefined
         )
           return [];
@@ -108,6 +131,27 @@ export function RecipientPicker({
       (!person.isAgent || controlled.has(person.pubkey)) &&
       !selected.some((item) => item.pubkey === person.pubkey),
   );
+  const picked = usage.pick(
+    typed,
+    new Set(eligible.map((person) => personKey(person.pubkey))),
+  );
+  // Typed text puts an exact name first, then the person chosen before for
+  // this text, then relationship, then match quality lifted by how often you
+  // choose this person or visit your DM with them. The directory's own order
+  // breaks ties. Match ranks are whole numbers from 1 to 3 and the boost is
+  // below 2, so each relationship keeps its own band of ten.
+  const order = (person: Recipient) => {
+    if (!needle) return 0;
+    const rank = matchOf(person)?.rank ?? 3;
+    if (rank === 0) return -2;
+    if (personKey(person.pubkey) === picked) return -1;
+    const dm = dms.get(person.pubkey);
+    return (
+      relationshipRank(person) * 10 +
+      rank -
+      usage.boost(personKey(person.pubkey), ...(dm ? [`channel:${dm}`] : []))
+    );
+  };
   const ordered = useRef<{ query: string; pubkeys: string[] }>({
     query,
     pubkeys: [],
@@ -117,7 +161,7 @@ export function RecipientPicker({
   ordered.current.pubkeys.push(
     ...eligible
       .filter((person) => !knownOrder.has(person.pubkey))
-      .sort((left, right) => relationshipRank(left) - relationshipRank(right))
+      .sort((left, right) => order(left) - order(right))
       .map((person) => person.pubkey),
   );
   const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
@@ -142,9 +186,17 @@ export function RecipientPicker({
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
-  const active = candidates.find(
-    (person) => person.pubkey === highlight.pubkey,
-  );
+  const listed = open && !disabled && !atLimit;
+  const highlight = useSearchHighlight({
+    query,
+    keys: candidates.map((person) => person.pubkey),
+    onChoose: (pubkey) => {
+      const person = byPubkey.get(pubkey);
+      if (person) choose(person);
+    },
+    open: listed,
+    onOpen: () => setOpen(true),
+  });
   const loadingRows = useRef(10);
   useEffect(() => {
     if (!directory.loading && !directory.error)
@@ -157,12 +209,6 @@ export function RecipientPicker({
       input.current?.focus();
     }
   }, [disabled, initiallyOpen]);
-  useEffect(() => {
-    if (open && highlight.keyboard)
-      document
-        .getElementById(`${id}-${highlight.pubkey}`)
-        ?.scrollIntoView({ block: "nearest" });
-  }, [open, highlight, id]);
   function focus() {
     if (!disabled) {
       input.current?.focus();
@@ -179,10 +225,10 @@ export function RecipientPicker({
       selection.current.some((item) => item.pubkey === person.pubkey)
     )
       return;
+    recordChoice(scope, typed, personKey(person.pubkey));
     selection.current = [...selection.current, person];
     onChange(selection.current);
     setQuery("");
-    setHighlight({ pubkey: "", keyboard: false });
     focus();
   }
   function remove(pubkey: string, point?: { x: number; y: number }) {
@@ -298,15 +344,9 @@ export function RecipientPicker({
             aria-label="Message recipients"
             role="combobox"
             aria-expanded={open && !disabled}
-            aria-controls={
-              open && !disabled && !atLimit ? `${id}-list` : undefined
-            }
+            aria-controls={listed ? highlight.listId : undefined}
             aria-autocomplete="list"
-            aria-activedescendant={
-              open && !disabled && !atLimit && active
-                ? `${id}-${active.pubkey}`
-                : undefined
-            }
+            {...highlight.fieldProps}
             placeholder={
               selected.length
                 ? atLimit
@@ -325,10 +365,10 @@ export function RecipientPicker({
             onFocus={() => setOpen(true)}
             onChange={(event) => {
               setQuery(event.target.value);
-              setHighlight({ pubkey: "", keyboard: false });
               setOpen(true);
             }}
             onKeyDown={(event) => {
+              // The picker's own keys, Backspace and Escape, skip these too.
               if (
                 event.nativeEvent.isComposing ||
                 event.nativeEvent.keyCode === 229 ||
@@ -345,37 +385,14 @@ export function RecipientPicker({
                 event.preventDefault();
                 event.stopPropagation();
                 setOpen(false);
+              } else if (atLimit) {
+                if (event.key === "Enter" && open) event.preventDefault();
               } else if (
-                (event.key === "ArrowDown" || event.key === "ArrowUp") &&
-                candidates.length &&
-                !atLimit
+                !highlight.keyDown(event) &&
+                open &&
+                event.key === "Enter"
               ) {
                 event.preventDefault();
-                setOpen(true);
-                const index = open
-                  ? active
-                    ? candidates.indexOf(active)
-                    : -1
-                  : -1;
-                const next =
-                  index < 0
-                    ? event.key === "ArrowDown"
-                      ? 0
-                      : candidates.length - 1
-                    : Math.max(
-                        0,
-                        Math.min(
-                          candidates.length - 1,
-                          index + (event.key === "ArrowDown" ? 1 : -1),
-                        ),
-                      );
-                setHighlight({
-                  pubkey: candidates[next]?.pubkey ?? "",
-                  keyboard: true,
-                });
-              } else if (event.key === "Enter" && open) {
-                event.preventDefault();
-                if (active && !atLimit) choose(active);
               }
             }}
           />
@@ -401,9 +418,10 @@ export function RecipientPicker({
               ) : (
                 <div
                   className={styles.people}
-                  id={`${id}-list`}
+                  id={highlight.listId}
                   role="listbox"
                   aria-label="People"
+                  {...highlight.listProps}
                   onScroll={(event) => {
                     const list = event.currentTarget;
                     if (
@@ -418,15 +436,20 @@ export function RecipientPicker({
                   {candidates.map((person) => (
                     <NavigationItem
                       key={person.pubkey}
-                      id={`${id}-${person.pubkey}`}
+                      {...highlight.rowProps(person.pubkey)}
                       role="option"
                       aria-label={`${label(person)}${person.isAgent ? ", Agent" : ""}`}
                       tabIndex={-1}
-                      selected={person === active}
-                      aria-selected={person === active}
+                      selected={person.pubkey === highlight.active}
+                      aria-selected={person.pubkey === highlight.active}
                       aria-current={false}
                       icon={avatar(person)}
-                      label={person.name}
+                      label={
+                        <MatchedLabel
+                          label={person.name}
+                          positions={matchOf(person)?.positions}
+                        />
+                      }
                       trailing={
                         discriminator(person) || person.isAgent ? (
                           <span className={styles.agent}>
@@ -438,13 +461,6 @@ export function RecipientPicker({
                               .join(" · ")}
                           </span>
                         ) : undefined
-                      }
-                      onPointerMove={() =>
-                        setHighlight((current) =>
-                          current.pubkey === person.pubkey && !current.keyboard
-                            ? current
-                            : { pubkey: person.pubkey, keyboard: false },
-                        )
                       }
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => choose(person)}

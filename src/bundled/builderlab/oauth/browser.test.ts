@@ -37,7 +37,7 @@ function fixture() {
   };
   return { host, bridge, controller: new AbortController() };
 }
-it("acquires a verified credential through the code-only callback", async () => {
+it("acquires a verified credential through the native callback", async () => {
   const origin = "https://builderlab.example";
   const { host, bridge, controller } = fixture();
   expect(await browserCredential(host, controller.signal, bridge)).toEqual({
@@ -45,7 +45,6 @@ it("acquires a verified credential through the code-only callback", async () => 
     account: { subject: "user", email: "a@example.com" },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
-  expect(options).not.toHaveProperty("id");
   const login = new URL(options?.authorizationUrl ?? "");
   expect(login.origin).toBe(origin);
   expect(login.pathname).toBe("/api/goose/v1/auth/login");
@@ -53,7 +52,6 @@ it("acquires a verified credential through the code-only callback", async () => 
     type: "cli",
     product: "builderlab",
   });
-  expect(options).toMatchObject({ useState: true });
   expect(options?.callbackPath).toMatch(/^\/callback\/[0-9a-f-]{36}$/);
   expect(host.request).toHaveBeenNthCalledWith(
     1,

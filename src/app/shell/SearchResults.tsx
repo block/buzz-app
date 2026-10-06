@@ -344,21 +344,25 @@ export function SearchResults({
               },
               isAgent,
               run: () => {
-                // A chip owns exactly one signed author operand. Strip that
-                // span before replacing the visible prompt, preserving all
-                // other text and operators in their original order.
-                const oldStart = showAuthorChip ? selectedIndex : -1;
-                const oldEnd = oldStart + authorOperand.length;
-                const withoutChip = showAuthorChip
-                  ? `${query.slice(0, oldStart)}${query.slice(oldEnd).replace(/^\s/, "")}`
-                  : query;
-                const promptIndex =
-                  authorToken.index -
-                  (showAuthorChip && oldStart < authorToken.index
-                    ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
-                    : 0);
-                const prefix = `${withoutChip.slice(0, promptIndex)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}`;
-                const nextQuery = `${prefix}from:${pubkey}${withoutChip.slice(promptIndex + authorToken[0].length) || " "}`;
+                // The prompt's leading separator may be the one removed with
+                // the old chip. Map the token itself through that removal,
+                // rather than subtracting the separator from its start twice.
+                const visible = displayQuery ?? query;
+                const oldEnd = selectedIndex + authorOperand.length;
+                const removedLength = showAuthorChip
+                  ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
+                  : 0;
+                const tokenStart =
+                  authorToken.index +
+                  (authorToken[0].match(/^\s*/)?.[0].length ?? 0);
+                const promptStart =
+                  showAuthorChip && selectedIndex < tokenStart
+                    ? tokenStart - removedLength
+                    : tokenStart;
+                const promptEnd =
+                  promptStart + authorToken[0].trimStart().length;
+                const prefix = visible.slice(0, promptStart);
+                const nextQuery = `${prefix}from:${pubkey}${visible.slice(promptEnd) || " "}`;
                 setSelectedAuthor({
                   query: nextQuery,
                   pubkey,

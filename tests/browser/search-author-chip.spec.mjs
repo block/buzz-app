@@ -81,3 +81,32 @@ test("selected author remains a removable chip through typing and date completio
     )
     .toBe(true);
 });
+
+// The chip's trailing separator is also the next prompt's leading separator.
+// This ordering needs a rendered input: a stale hidden operand can survive
+// despite the replacement chip looking correct.
+test("replacing a standalone author chip leaves no hidden operand", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+  const person = dialog
+    .getByRole("group", { name: "People" })
+    .getByRole("option", { name: /Fixture Reader/ });
+  await input.fill("from:@fixture");
+  await person.click();
+  await expect(input).toHaveValue("");
+  await input.fill("from:fixture");
+  await person.click();
+  const chip = dialog.getByRole("button", {
+    name: "Remove author Fixture Reader",
+  });
+  await expect(chip).toHaveCount(1);
+  await expect(input).toHaveValue("");
+  await chip.click();
+  await expect(input).toHaveValue("");
+  await expect(chip).toHaveCount(0);
+});

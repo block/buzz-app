@@ -1817,88 +1817,105 @@ it("adds a late shared agent without another keystroke or prefix read", async ()
   }
 });
 
-it("replaces an author chip without leaking or restoring the previous filter", async () => {
-  const relay = keypair(),
-    viewer = keypair(),
-    alice = keypair(),
-    bob = keypair();
-  const reads: Filter[][] = [];
-  const owner = createRelaySession({
-    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
-    query(filters) {
-      if (filters.some((filter) => filter.kinds?.includes(0)))
-        return Promise.resolve([
-          profile(alice, { display_name: "Alice" }),
-          profile(bob, { display_name: "Bob" }),
-        ]);
-      if (filters.some((filter) => filter.kinds?.includes(9)))
-        reads.push(filters as Filter[]);
-      return Promise.resolve(
-        [
-          metadata(relay, "crew", "crew"),
-          roster(relay, "crew", [viewer.pubkey]),
-        ].filter((event) =>
-          filters.some((filter) => matchFilter(filter as Filter, event)),
+it.each([
+  ["from:alice", "from:bob", ""],
+  [
+    "deploy in:crew after:2026-10-01 from:alice",
+    "deploy in:crew after:2026-10-01 from:bob",
+    "deploy in:crew after:2026-10-01 ",
+  ],
+])(
+  "replaces author chip in %s without leaking or restoring its filter",
+  async (initial, typed, remaining) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair(),
+      bob = keypair();
+    const reads: Filter[][] = [];
+    const changes: string[] = [];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return Promise.resolve([
+            profile(alice, { display_name: "Alice" }),
+            profile(bob, { display_name: "Bob" }),
+          ]);
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          reads.push(filters as Filter[]);
+        return Promise.resolve(
+          [
+            metadata(relay, "crew", "crew"),
+            roster(relay, "crew", [viewer.pubkey]),
+          ].filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      },
+    });
+    function Search() {
+      const [query, setQuery] = useState(initial);
+      return (
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={(next) => {
+            changes.push(next);
+            setQuery(next);
+          }}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />
+      );
+    }
+    try {
+      render(<Search />);
+      fireEvent.click(
+        await within(screen.getByRole("group", { name: "People" })).findByRole(
+          "option",
+          { name: /Alice/ },
         ),
       );
-    },
-  });
-  function Search() {
-    const [query, setQuery] = useState(
-      "deploy in:crew after:2026-10-01 from:alice",
-    );
-    return (
-      <SearchResults
-        session={owner.session}
-        query={query}
-        onQueryChange={setQuery}
-        input={createRef()}
-        pages={[]}
-        openConversation={() => {}}
-      />
-    );
-  }
-  try {
-    render(<Search />);
-    fireEvent.click(
-      await within(screen.getByRole("group", { name: "People" })).findByRole(
-        "option",
-        { name: /Alice/ },
-      ),
-    );
-    const input = screen.getByRole("combobox", { name: "Search Buzz" });
-    expect(
-      screen.getByRole("button", { name: "Remove author Alice" }),
-    ).toBeVisible();
-    fireEvent.change(input, {
-      target: { value: "deploy in:crew after:2026-10-01 from:bob" },
-    });
-    fireEvent.click(
-      await within(screen.getByRole("group", { name: "People" })).findByRole(
-        "option",
-        { name: /Bob/ },
-      ),
-    );
-    expect(
-      screen.queryByRole("button", { name: "Remove author Alice" }),
-    ).toBeNull();
-    expect(input).toHaveValue("deploy in:crew after:2026-10-01 ");
-    expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
-    await waitFor(() =>
-      expect(reads.at(-1)?.[0]).toMatchObject({ authors: [bob.pubkey] }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Remove author Bob" }));
-    expect(input).toHaveValue("deploy in:crew after:2026-10-01 ");
-    expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
-    expect((input as HTMLInputElement).value).not.toContain(bob.pubkey);
-    await waitFor(() =>
-      expect(reads.at(-1)?.[0]).not.toHaveProperty("authors"),
-    );
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      expect(
+        screen.getByRole("button", { name: "Remove author Alice" }),
+      ).toBeVisible();
+      fireEvent.change(input, {
+        target: { value: typed },
+      });
+      fireEvent.click(
+        await within(screen.getByRole("group", { name: "People" })).findByRole(
+          "option",
+          { name: /Bob/ },
+        ),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Remove author Alice" }),
+      ).toBeNull();
+      expect(input).toHaveValue(remaining);
+      expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
+      await waitFor(() =>
+        expect(reads.at(-1)?.[0]).toMatchObject({ authors: [bob.pubkey] }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove author Bob" }),
+      );
+      expect(input).toHaveValue(remaining);
+      expect((input as HTMLInputElement).value).not.toContain(alice.pubkey);
+      expect((input as HTMLInputElement).value).not.toContain(bob.pubkey);
+      expect(changes.at(-1)).toBe(remaining);
+      if (remaining) {
+        await waitFor(() =>
+          expect(reads.at(-1)?.[0]).not.toHaveProperty("authors"),
+        );
+      }
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it("renders from:<author chip> without exposing the signed operand in the input", async () => {
   const relay = keypair(),

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../../shared/design-system/ui/NavigationSection";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
@@ -23,6 +24,9 @@ export type SearchDestination = {
   matches?: readonly number[];
   icon: typeof ChatCircleIcon;
   image?: string | undefined;
+  avatar?:
+    | { src?: string | undefined; shape: "circle" | "squircle" }
+    | undefined;
   run: () => void;
 };
 
@@ -308,7 +312,7 @@ export function SearchChoices({
               >
                 <NavigationSection label={label}>
                   {destinations.map(
-                    ({ key, label, detail, matches, icon, image, run }) => (
+                    ({ key, label, detail, matches, icon, image, avatar, run }) => (
                       <NavigationItem
                         key={key}
                         id={optionId(key)}
@@ -325,7 +329,17 @@ export function SearchChoices({
                         }
                         icon={
                           <span className="grid size-6 shrink-0 place-items-center">
-                            <PageIcon icon={icon} image={image} size={17} />
+                            {avatar ? (
+                              <Avatar
+                                alt=""
+                                fallback={label}
+                                src={avatar.src}
+                                size="small"
+                                shape={avatar.shape}
+                              />
+                            ) : (
+                              <PageIcon icon={icon} image={image} size={17} />
+                            )}
                           </span>
                         }
                         label={

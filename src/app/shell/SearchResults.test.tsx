@@ -1389,6 +1389,75 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
   }
 });
 
+it("prioritizes people, separates agents, shows profile avatars, and excludes archived identities", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    human = keypair(),
+    agent = keypair(),
+    archived = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(agent, {
+            display_name: "Agent",
+            is_agent: true,
+            picture: "https://example.com/agent.png",
+          }),
+          profile(archived, { display_name: "Archived", is_agent: true }),
+          profile(human, {
+            display_name: "Alice",
+            picture: "https://example.com/human.png",
+          }),
+        ]);
+      return Promise.resolve([]);
+    },
+  });
+  const session = {
+    ...owner.session,
+    archives: {
+      ...owner.session.archives,
+      state: (key: string) =>
+        key === archived.pubkey ? ("archived" as const) : ("active" as const),
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="from:*a"
+        onQueryChange={vi.fn()}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const people = within(screen.getByRole("group", { name: "People" }));
+    const person = await people.findByRole("option", { name: /Alice/ });
+    expect(person).toBeVisible();
+    expect(
+      person.querySelector('img[src="https://example.com/human.png"]'),
+    ).not.toBeNull();
+    const agents = within(screen.getByRole("group", { name: "Agents" }));
+    const choice = await agents.findByRole("option", { name: /Agent/ });
+    expect(choice).toBeVisible();
+    expect(
+      choice.querySelector('img[src="https://example.com/agent.png"]'),
+    ).not.toBeNull();
+    expect(agents.queryByRole("option", { name: /Archived/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Archived/ })).toBeNull();
+    expect(
+      [...document.querySelectorAll('[role="option"]')].indexOf(person),
+    ).toBeLessThan(
+      [...document.querySelectorAll('[role="option"]')].indexOf(choice),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("shows only the requested date suggestions and inserts local calendar dates", async () => {
   const relay = keypair(),
     viewer = keypair();

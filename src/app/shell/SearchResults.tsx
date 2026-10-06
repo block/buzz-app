@@ -3,8 +3,14 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
+import { useAgentChoices } from "../../features/agents/use-choices";
+import { useMentionArchives } from "../../features/messages/use-mention-archives";
+import { archivedMention } from "../../features/messages/mention-candidates";
 import { foldProfiles } from "../../features/relay/profiles";
-import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import {
+  CalendarIcon,
+  ChatCircleIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { matchName, matchRank, SearchChoices } from "./SearchChoices";
@@ -56,6 +62,9 @@ export function SearchResults({
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
+  const authorPickerRequested = /(?:^|\s)from:(?:@|\*)[^\s]*$/i.test(query);
+  const agents = useAgentChoices(session, authorPickerRequested);
+  useMentionArchives(session, authorPickerRequested);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -75,12 +84,13 @@ export function SearchResults({
   );
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
-    candidates: readonly { pubkey: string; name: string }[];
+    candidates: readonly { pubkey: string; profile: Profile }[];
   }>();
   // Completing from:@ uses signed profiles and confirmed channel membership.
   // A selected identity is stored as its exact key, never as an ambiguous name.
-  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
+  const authorPrompt = /(?:^|\s)from:([@*]?)([^\s]*)$/i.exec(query);
   const authorNeedle = authorPrompt?.[2]?.toLowerCase();
+  const pickerPrompt = authorPrompt?.[1] === "@" || authorPrompt?.[1] === "*";
   const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
   const showDateChoices =
     !!datePrompt && !/^\d{4}-\d{2}-\d{2}$/.test(datePrompt[2] ?? "");
@@ -108,7 +118,7 @@ export function SearchResults({
             key: `date:${kind}`,
             label,
             detail: date,
-            icon: ChatCircleIcon,
+            icon: CalendarIcon,
             run: () =>
               onQueryChange(
                 `${query.slice(0, datePrompt.index)} ${datePrompt[1]}:${date} `.trimStart(),
@@ -152,13 +162,9 @@ export function SearchResults({
     scopedChannelId,
     operatorChannelId,
   );
-  const showAmbiguousPicker =
-    !!search.ambiguousAuthor && authorPrompt?.[1] !== "@";
+  const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   useEffect(() => {
-    if (
-      authorNeedle === undefined ||
-      (authorPrompt?.[1] !== "@" && !showAmbiguousPicker)
-    )
+    if (authorNeedle === undefined || (!pickerPrompt && !showAmbiguousPicker))
       return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -186,11 +192,26 @@ export function SearchResults({
             )
           : [];
         controller.signal.throwIfAborted();
+        const inventory = session.agentChoices.snapshot();
+        const knownAgents = new Set(
+          inventory.identities.map(({ pubkey }) => pubkey),
+        );
         const candidates = new Map([
-          ...foldProfiles(remote),
           ...[...session.profiles.snapshot()].filter(([pubkey]) =>
             members.includes(pubkey),
           ),
+          ...inventory.selectable.map(
+            (agent) =>
+              [
+                agent.pubkey,
+                session.profiles.snapshot().get(agent.pubkey) ?? {
+                  name: agent.name,
+                  isAgent: true as const,
+                  ...(agent.avatar ? { picture: agent.avatar } : {}),
+                },
+              ] as const,
+          ),
+          ...foldProfiles(remote),
         ]);
         setAuthorSuggestions({
           query,
@@ -198,13 +219,23 @@ export function SearchResults({
             .filter(([, profile]) =>
               profile.name.toLowerCase().startsWith(authorNeedle),
             )
+            .filter(
+              ([pubkey]) =>
+                !archivedMention(session, pubkey) &&
+                (!knownAgents.has(pubkey) ||
+                  inventory.selectable.some(
+                    (agent) => agent.pubkey === pubkey,
+                  )),
+            )
             .sort(
-              ([left], [right]) =>
+              ([left, leftProfile], [right, rightProfile]) =>
+                Number(!!rightProfile.isAgent || knownAgents.has(right)) -
+                  Number(!!leftProfile.isAgent || knownAgents.has(left)) ||
                 Number(members.includes(right)) -
-                Number(members.includes(left)),
+                  Number(members.includes(left)),
             )
             .slice(0, 12)
-            .map(([pubkey, profile]) => ({ pubkey, name: profile.name })),
+            .map(([pubkey, profile]) => ({ pubkey, profile })),
         });
       })().catch(() => {
         if (!controller.signal.aborted)
@@ -221,28 +252,50 @@ export function SearchResults({
     query,
     authorNeedle,
     showAmbiguousPicker,
-    authorPrompt?.[1],
+    pickerPrompt,
   ]);
-  const authorChoices: SearchDestination[] =
+  const selectableAgents = new Map(
+    agents.selectable.map((agent) => [agent.pubkey, agent]),
+  );
+  const authorChoices =
     authorPrompt &&
-    (authorPrompt[1] === "@" || showAmbiguousPicker) &&
+    (pickerPrompt || showAmbiguousPicker) &&
     authorSuggestions?.query === query
-      ? authorSuggestions.candidates.map(({ pubkey, name }) => ({
-          key: `author:${pubkey}`,
-          label: resolveName(
-            pubkey,
-            name,
-            scopedChannelId
-              ? session.channels.get?.(scopedChannelId)?.members
-              : undefined,
-          ),
-          detail: pubkey.slice(0, 12),
-          icon: ChatCircleIcon,
-          run: () =>
-            onQueryChange(
-              `${query.slice(0, authorPrompt.index)} from:${pubkey} `.trimStart(),
-            ),
-        }))
+      ? authorSuggestions.candidates
+          .filter(
+            ({ pubkey }) =>
+              !archivedMention(session, pubkey) &&
+              (selectableAgents.has(pubkey) ||
+                !agents.identities.some((agent) => agent.pubkey === pubkey)),
+          )
+          .map(({ pubkey, profile }) => {
+            const agent = selectableAgents.get(pubkey);
+            const isAgent = !!agent || !!profile.isAgent;
+            return {
+              key: `author:${pubkey}`,
+              label: resolveName(
+                pubkey,
+                profile.name,
+                scopedChannelId
+                  ? session.channels.get?.(scopedChannelId)?.members
+                  : undefined,
+              ),
+              detail: pubkey.slice(0, 12),
+              icon: ChatCircleIcon,
+              avatar: {
+                src: session.media(
+                  profile.picture ?? agent?.avatar ?? "",
+                  "small",
+                ),
+                shape: isAgent ? ("squircle" as const) : ("circle" as const),
+              },
+              isAgent,
+              run: () =>
+                onQueryChange(
+                  `${query.slice(0, authorPrompt.index)} from:${pubkey} `.trimStart(),
+                ),
+            };
+          })
       : [];
   const publicChannels = usePublicChannelSearch(
     session,
@@ -415,14 +468,20 @@ export function SearchResults({
     retry();
   };
   const groups =
-    authorPrompt?.[1] === "@" || showAmbiguousPicker
+    pickerPrompt || showAmbiguousPicker
       ? [
           {
             label: "People",
-            destinations: authorChoices,
+            destinations: authorChoices.filter((choice) => !choice.isAgent),
             empty: authorChoices.length
               ? undefined
-              : "No matching people. Try a different name.",
+              : authorNeedle
+                ? "No matching people. Try a different name."
+                : "Type a name to search people.",
+          },
+          {
+            label: "Agents",
+            destinations: authorChoices.filter((choice) => choice.isAgent),
           },
         ]
       : showDateChoices

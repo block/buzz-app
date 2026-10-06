@@ -9,7 +9,7 @@ import {
 } from "nostr-tools";
 import { SIDEBAR_HEAD_BYTES } from "./sidebar-preferences.mjs";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
-import { prepareSidebarStar } from "./sidebar-stars.mjs";
+import { prepareSidebarStar } from "./sidebar-toggle.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 

@@ -288,7 +288,9 @@ participant-set policy, and sidebar intent rules with their existing
 `src/features/relay` owners. The broker still executes those checks host-side and
 retains its stricter untrusted-envelope checks; native Rust enforcement is
 unchanged. Status reads still validate raw text before trimming, while local edits
-trim first. This does not make broker and native signing policies identical.
+trim first. Star and mute commands share one broker implementation in
+`sidebar-toggle.mjs`; their distinct absent-unstar/unmute behavior stays in the
+shared edit owner. This does not make broker and native signing policies identical.
 
 The remaining sequence below requires retiring or replacing browser capabilities;
 it is not an automatic queue of follow-up cleanup PRs or authorization to delete current
@@ -301,7 +303,7 @@ retired or replaced; do not weaken a still-callable endpoint to reduce duplicati
 | --- | --- | --- |
 | 1 | `user-status.mjs` | Text/emoji policy is now shared with `src/features/relay/user-status-policy.ts`. Remove the remaining broker shape/time checks only when its status endpoint is retired; do not copy them into Rust incidentally. |
 | 2 | `channel-kit.mjs`, `session-commands.mjs`, `direct-messages.mjs`, signing branches in `relay-broker.mjs` | Retire browser write capabilities one feature at a time after native acceptance and replacement fixture coverage. Remove each Node validator/encryption helper with its last caller; keep native signing tests. |
-| 3 | `read-state.mjs`, `sidebar-{preferences,mutes,sort,stars}.mjs` | Retire encrypted-state broker routes and their Node copies once browser callers no longer need them. Shared frontend edit policy and native custody remain. |
+| 3 | `read-state.mjs`, `sidebar-{preferences,sort,toggle}.mjs` | Retire encrypted-state broker routes and their Node copies once browser callers no longer need them. Shared frontend edit policy and native custody remain. |
 | 4 | `agent-memory.mjs`, `agent-observer.mjs`, `archive.mjs`, `project-git.mjs`, `attachment-{file,upload}.mjs`, `media-preparation.mjs` | Remove feature-by-feature after archive/observer, repository and media browser uses are retired or replaced and native failure/recovery coverage is retained. Do not delete user data or migrate credentials as cleanup. |
 | 5 | `relay-broker.mjs` and its declaration | Remove residual routes and the custom stream bridge only after their consumers and broker-backed fixtures are retired or replaced. Any shared-transport replacement is a separate design decision, not an assumed prerequisite. |
 

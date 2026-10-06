@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { assertSidebarAssignmentIntent } from "./sidebar-preferences.mjs";
-import { assertSidebarStarIntent } from "./sidebar-stars.mjs";
-import { assertSidebarMuteIntent } from "./sidebar-mutes.mjs";
+import { assertSidebarStarIntent } from "./sidebar-toggle.mjs";
+import { assertSidebarMuteIntent } from "./sidebar-toggle.mjs";
 import { assertSidebarSortIntent } from "./sidebar-sort.mjs";
 
 it("keeps broker-only envelope checks before shared sidebar policy", () => {

@@ -23,9 +23,15 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
-- The library shows one tile per exact identity, grouped only by explicit profile
-  links. Each tile discloses its full public key. Profiles with no linked identity
-  appear separately; an archived identity does not become an empty profile.
+- The main individual-agent grid is reserved for native local agents; teams follow
+  it, with old/importable/relay inventory below. Browser-only hosts cannot establish
+  current local custody: their read-only library lives in a collapsed **Other
+  agents** section below teams, not in the individual-agent grid.
+- The compatibility library shows one compact row per exact identity. Identity
+  details are available from its overflow button, not an exposed Public key link.
+  Explicit profile links still supply artwork; names never join identities.
+  Profiles with no linked identity appear separately; an archived identity does
+  not become an empty profile.
 - Only distinct keys with the same displayed name need a short npub suffix. Names
   alone never create a profile group. Suffix collisions extend deterministically using
   the complete inventory, including identities hidden by archive filtering.
@@ -230,7 +236,12 @@ turning it back on does not restore old recipients. Session auto-recipient rules
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Saved teams from Templates & teams are available in both mention choosers. A team
+**Refresh teams** on Agents reloads the provider-owned catalog, including changes
+made in another window or device. After a save/delete revision conflict, close the
+dialog, refresh, and reopen the current team before retrying; stale drafts never
+silently overwrite a newer revision.
+
+Saved teams from the Agents page are available in both mention choosers. A team
 is a shortcut, not a group identity: explicit selection inserts its saved agent
 keys as individual mentions in one undoable edit. Names never resolve membership.
 Typing a team name or Space alone does not select it. Team names also prevent

@@ -150,7 +150,7 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 
 Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
-Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
+Settings → Plugins, then manage templates under Settings → Messages → Templates and saved teams on Agents. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
@@ -188,7 +188,8 @@ provider components must check `active()` before accepting delayed work or start
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
 
 Normal Create selects a saved template without a customization disclosure or raw
-setup dump. Templates & teams settings retain lineup/Canvas editing. Disabling
+setup dump. Templates settings retain recipe lineup/Canvas editing; saved-team
+lineups and instructions are edited on Agents. Disabling
 preserves saved group default references but does not apply them to new intent.
 Accepted drafts get a compact summary and Clear action only when the provider is
 unavailable or fails;

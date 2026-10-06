@@ -51,6 +51,7 @@ function fixture(
   entries: KitEntry[] = [entry],
   status: "ready" | "loading" = "ready",
   agentsReady = true,
+  section: "template" | "team" = "template",
 ) {
   const state = { status, entries };
   const save = vi.fn<ChannelKit["save"]>();
@@ -76,6 +77,7 @@ function fixture(
       />
     ) : (
       <TemplateLibrary
+        section={section}
         kit={kit}
         active={() => true}
         catalog={{
@@ -108,7 +110,7 @@ function fixture(
 }
 it("shows the library on the page and returns from editing without a library dialog", async () => {
   const user = userEvent.setup();
-  fixture();
+  fixture(false, [entry], "ready", true, "team");
   expect(
     screen.getByRole("article", { name: "Saved team" }),
   ).toBeInTheDocument();
@@ -117,8 +119,8 @@ it("shows the library on the page and returns from editing without a library dia
     name: "Actions for Saved team",
   });
   expect(
-    screen.queryByRole("button", { name: "Edit Saved team" }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Edit team Saved team" }),
+  ).toBeVisible();
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Edit team" }));
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
@@ -132,7 +134,7 @@ it("shows the library on the page and returns from editing without a library dia
 });
 it("delete cancellation leaves the page and saved data intact", async () => {
   const user = userEvent.setup();
-  const { save } = fixture();
+  const { save } = fixture(false, [entry], "ready", true, "team");
   const trigger = screen.getByRole("button", {
     name: "Actions for Saved team",
   });
@@ -177,7 +179,7 @@ it("delete cancellation leaves the page and saved data intact", async () => {
 });
 it("deletion preserves its revision, locks dismissal while pending and retains errors for retry", async () => {
   const user = userEvent.setup();
-  const { save } = fixture();
+  const { save } = fixture(false, [entry], "ready", true, "team");
   let reject!: (error: Error) => void;
   const pending = new Promise<never>((_, no) => {
     reject = no;
@@ -296,8 +298,10 @@ it.each(["template", "team"] as const)(
   "creates a new %s with no existing revision",
   async (type) => {
     const user = userEvent.setup();
-    const { save } = fixture();
-    const trigger = screen.getByRole("button", { name: `New ${type}` });
+    const { save } = fixture(false, [entry], "ready", true, type);
+    const trigger = screen.getByRole("button", {
+      name: type === "team" ? "Create team" : "New template",
+    });
     await user.click(trigger);
     expect(screen.getByRole("button", { name: `Save ${type}` })).toBeDisabled();
     await user.type(
@@ -321,7 +325,7 @@ it.each(["template", "team"] as const)(
   async (type) => {
     const user = userEvent.setup();
     const item = type === "team" ? entry : templateEntry;
-    const { save, setEntries } = fixture(false, [item]);
+    const { save, setEntries } = fixture(false, [item], "ready", true, type);
     save.mockImplementation(async () => {
       setEntries([]);
       return "deleted-head";
@@ -339,7 +343,11 @@ it.each(["template", "team"] as const)(
       expect(screen.queryByRole("article")).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: `New ${type}` })).toHaveFocus(),
+      expect(
+        screen.getByRole("button", {
+          name: type === "team" ? "Create team" : "New template",
+        }),
+      ).toHaveFocus(),
     );
   },
 );
@@ -354,14 +362,25 @@ it("names avatars without repeating the full public key in their accessible labe
 it("shows empty sections and disables creation while catalog or agents are loading", () => {
   const empty = fixture(false, []);
   expect(screen.getByText("Your next channel starts here")).toBeInTheDocument();
-  expect(screen.getByText("Bring your agents together")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Create team" }),
+  ).not.toBeInTheDocument();
   expect(empty.save).not.toHaveBeenCalled();
+  cleanup();
+  fixture(false, [], "ready", true, "team");
+  expect(screen.getByText("Bring your agents together")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "New template" }),
+  ).not.toBeInTheDocument();
+  cleanup();
+  fixture(false, [], "loading", true, "team");
+  expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
   cleanup();
   fixture(false, [], "loading");
   expect(screen.getByRole("button", { name: "New template" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "New team" })).toBeDisabled();
+
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Loading your templates and teams",
+    "Loading your templates",
   );
   cleanup();
   fixture(false, [], "ready", false);

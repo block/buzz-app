@@ -308,7 +308,8 @@ test("Buzz shared compute selects Auto or a community model and saves without cl
     await editor
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     expect(
       await page.evaluate(() => ({
         provider: window.agentControlFixture.agent.harness.provider,

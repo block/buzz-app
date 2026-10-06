@@ -965,11 +965,17 @@ Native initialization and embedded startup use the same explicit isolated
 configuration. Only a failure proven to precede node creation is retryable without
 process restart; unknown SDK startup/teardown failures remain fenced.
 
-Native artifact trust is **checksum-only**, inherited from the Mesh SDK, not
-signature verification. The Rust tag pin does not independently pin downloaded
-native artifact bytes. Plugin enable currently publishes the selected community's
-member/device-owner binding even before serving; stopping leaves a non-serving
-binding. Enrollment consent/withdrawal and signed packaged artifact/update policy
-remain shipping decisions, not established by these fixes. Optional failed
+Enrollment matches legacy Buzz: the member/device-owner binding is published
+only while Mesh actually runs on this device (Share, or a Mesh agent starting a
+node), never merely because the plugin is enabled. When a run ends, one
+non-serving note is published and publication then stops until Mesh runs again.
+Starting Share or a Mesh agent is the consent; there is no separate withdrawal.
+
+Native artifact trust is unchanged from legacy Buzz: both use the Mesh SDK's
+runtime installer, which downloads the native runtime and verifies its sha256
+against the release manifest (checksum-only; the SDK does not yet implement
+signature verification). The Rust tag pin does not independently pin downloaded
+native artifact bytes. Stronger artifact policy (pinned hashes, bundling or
+upstream signatures) is a separate follow-up, not part of this port. Optional failed
 old-community retirement is best-effort; routing advertisements expire after
 120 seconds. No live packaged acceptance is claimed by fixture tests.

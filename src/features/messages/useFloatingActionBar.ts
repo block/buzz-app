@@ -12,12 +12,25 @@ import {
 } from "../../shared/design-system/modalLayer";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
+// One MediaQueryList for every row: `matchMedia` allocates and evaluates the
+// query on each call, and these run in every row's first render and every
+// external-store snapshot read. The list itself tracks modality changes. Keyed
+// on the `matchMedia` function so a replaced implementation is re-queried.
+let floatingSource: typeof window.matchMedia | undefined;
+let floatingList: MediaQueryList | undefined;
+const floating = () => {
+  if (floatingSource !== window.matchMedia) {
+    floatingSource = window.matchMedia;
+    floatingList = floatingSource?.(floatingQuery);
+  }
+  return floatingList;
+};
 const subscribe = (notify: () => void) => {
-  const query = window.matchMedia?.(floatingQuery);
+  const query = floating();
   query?.addEventListener("change", notify);
   return () => query?.removeEventListener("change", notify);
 };
-const snapshot = () => window.matchMedia?.(floatingQuery).matches ?? false;
+const snapshot = () => floating()?.matches ?? false;
 
 const awaitingKeyboard = new Set<() => void>();
 const activateKeyboardActions = (event: KeyboardEvent) => {
@@ -43,7 +56,7 @@ export function useMessageActionBarReady(
     const row = rowRef?.current;
     if (ready || !row) return;
     const activate = () => setReady(true);
-    const query = window.matchMedia?.(floatingQuery);
+    const query = floating();
     const modalityChanged = () => {
       if (!query?.matches) activate();
     };

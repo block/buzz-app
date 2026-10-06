@@ -33,7 +33,7 @@ env.LEFTHOOK_BIN = path.join(root, "bin/lefthook");
 const recordPushInput = `import { readFileSync, writeFileSync } from "node:fs";
 writeFileSync((process.argv[2] ?? "unit") + "-input", readFileSync(0));
 `;
-function fixture(t) {
+function fixture(t, { install = true } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "buzz-hook-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const run = (cmd, args, overrides = {}) =>
@@ -71,6 +71,7 @@ function fixture(t) {
     "biome.json",
     "package.json",
     "lefthook.yml",
+    "justfile",
     "scripts",
     ...biomePlugins.map((plugin) => path.normalize(plugin)),
   ];
@@ -86,9 +87,11 @@ function fixture(t) {
   );
   git("add", ...configFiles);
   git("commit", "-qm", "hook configuration");
-  // Once per clone: Lefthook writes its shims into the shared `.git/hooks`.
-  const installed = run(path.join(root, "bin/lefthook"), ["install"]);
-  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  // Once per clone: the public recipe installs into the shared `.git/hooks`.
+  if (install) {
+    const installed = run(path.join(root, "bin/just"), ["hooks"]);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  }
   const commit = () => run("git", ["commit", "-qm", "probe"]);
   return { dir, run, git, write, read, commit };
 }
@@ -162,6 +165,80 @@ test("one installation serves every linked worktree", (t) => {
     "export const value = { a: 1 };\n",
   );
 });
+
+for (const linked of [false, true]) {
+  test(`non-lhm global hooks stay untouched when installing from ${linked ? "a linked worktree" : "the main checkout"}`, (t) => {
+    const f = fixture(t, { install: false });
+    const sibling = path.join(f.dir, "sibling");
+    f.git("worktree", "add", "-q", "--detach", sibling);
+    for (const link of ["bin", "node_modules"])
+      symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
+    const globalHooks = path.join(f.dir, "global hooks");
+    const sentinel = "#!/bin/sh\nexit 1\n";
+    f.write("global hooks/pre-commit", sentinel);
+    const config = `[core]\n hooksPath = "${globalHooks}"\n`;
+    f.write("global-config", config);
+    const isolated = {
+      GIT_CONFIG_GLOBAL: path.join(f.dir, "global-config"),
+    };
+    const cwd = linked ? sibling : f.dir;
+    const run = (cmd, args) =>
+      spawnSync(cmd, args, {
+        cwd,
+        env: { ...env, ...isolated },
+        encoding: "utf8",
+      });
+    const refused = run(path.join(root, "bin/just"), ["hooks"]);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stdout + refused.stderr, /core.hooksPath/);
+    assert.equal(f.read("global-config"), config);
+    assert.equal(f.read("global hooks/pre-commit"), sentinel);
+    assert.equal(existsSync(path.join(f.dir, ".git/hooks/pre-commit")), false);
+
+    // Exercise the documented opt-in override from both invocation contexts.
+    const common = run("git", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    assert.equal(common.status, 0, common.stdout + common.stderr);
+    const hooks = path.join(common.stdout.trim(), "hooks");
+    assert.equal(path.isAbsolute(hooks), true);
+    const configured = run("git", [
+      "config",
+      "--local",
+      "core.hooksPath",
+      hooks,
+    ]);
+    assert.equal(configured.status, 0, configured.stdout + configured.stderr);
+    const installed = run(path.join(root, "bin/lefthook"), [
+      "install",
+      "--force",
+    ]);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+    assert.equal(f.read("global-config"), config);
+    assert.equal(f.read("global hooks/pre-commit"), sentinel);
+    for (const checkout of [f.dir, sibling]) {
+      writeFileSync(
+        path.join(checkout, "probe.ts"),
+        "export const value={a:1}\n",
+      );
+      const git = (...args) =>
+        f.run("git", ["-C", checkout, ...args], isolated);
+      assert.equal(
+        git("config", "--get", "core.hooksPath").stdout.trim(),
+        hooks,
+      );
+      assert.equal(git("add", "probe.ts").status, 0);
+      const committed = git("commit", "-qm", "global path probe");
+      assert.equal(committed.status, 0, committed.stdout + committed.stderr);
+      assert.equal(
+        git("show", "HEAD:probe.ts").stdout,
+        "export const value = { a: 1 };\n",
+      );
+    }
+  });
+}
 
 test("non-conflicting partial staging commits only the staged hunks and restores the rest", (t) => {
   const f = fixture(t);
@@ -733,7 +810,11 @@ test("the design lane disables dependency auto-repair even when inherited as tru
 test("real lhm composes isolated system commands with the repository jobs", {
   skip: !process.env.BUZZ_REAL_LHM,
 }, (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { install: false });
+  const sibling = path.join(f.dir, "sibling");
+  f.git("worktree", "add", "-q", "--detach", sibling);
+  for (const link of ["bin", "node_modules"])
+    symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
   const upstream = path.join(f.dir, "upstream ' $ hooks");
   for (const name of ["pre-commit", "pre-push"]) {
     f.write(
@@ -765,16 +846,31 @@ pre-push:
     // lhm runs whichever `lefthook` is on PATH; use the pinned one.
     PATH: `${path.join(root, "bin")}${path.delimiter}${env.PATH}`,
   };
-  f.write("probe.ts", "export const value={a:1}\n");
-  f.git("add", "probe.ts");
-  const commit = f.run("git", ["commit", "-qm", "real lhm"], isolated);
-  assert.equal(commit.status, 0, commit.stdout + commit.stderr);
-  assert.equal(
-    f.git("show", "HEAD:probe.ts"),
-    "export const value = { a: 1 };\n",
-  );
-  // The machine's command ran after the repository jobs, in the same hook.
-  assert.equal(f.read("real-lhm-source"), "export const value={a:1}\n");
+  const before = f.read("global-config");
+  const refused = f.run(path.join(root, "bin/just"), ["hooks"], isolated);
+  assert.notEqual(refused.status, 0);
+  assert.equal(f.read("global-config"), before);
+  assert.equal(existsSync(path.join(f.dir, ".git/hooks/pre-commit")), false);
+  for (const checkout of [f.dir, sibling]) {
+    writeFileSync(
+      path.join(checkout, "probe.ts"),
+      "export const value={a:1}\n",
+    );
+    const git = (...args) => f.run("git", ["-C", checkout, ...args], isolated);
+    assert.equal(git("add", "probe.ts").status, 0);
+    const commit = git("commit", "-qm", "real lhm");
+    assert.equal(commit.status, 0, commit.stdout + commit.stderr);
+    assert.equal(
+      git("show", "HEAD:probe.ts").stdout,
+      "export const value = { a: 1 };\n",
+    );
+    // The machine's command ran after the jobs, before Lefthook restaged fixes.
+    assert.equal(
+      readFileSync(path.join(checkout, "real-lhm-source"), "utf8"),
+      "export const value={a:1}\n",
+    );
+  }
+  assert.equal(f.read("global-config"), before);
   f.write("scripts/check-push.mjs", recordPushInput);
   f.git("init", "--bare", "-q", "remote.git");
   const push = f.run(

@@ -45,7 +45,8 @@ Without live opt-in they run the shell without relay identity access.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
 those checks in cached, parallel jobs with sharded browser journeys.
 Staged-file pre-commit and related-test pre-push hooks run through lhm where it
-is installed; otherwise run `bin/lefthook install` once per clone. See
+is installed; otherwise run `just hooks` (or `bin/just hooks` without activation)
+once per clone. See
 [hook behavior and partial staging](docs/contributing.md#git-hooks).
 
 ### Design system

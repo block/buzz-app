@@ -270,8 +270,30 @@ runs; `lhm dry-run` from the repository root prints the merged result. Without
 lhm, install once per clone (linked worktrees share the installed hooks):
 
 ```sh
-bin/lefthook install
+just hooks # or bin/just hooks without Hermit activation
 ```
+
+This recipe runs the pinned `bin/lefthook install`; it never changes Git config.
+If installation refuses because of a global `core.hooksPath`, **do not follow
+Lefthook's suggested fixes**: `--reset-hooks-path` and
+`git config --unset-all --global core.hooksPath` can disable machine hooks in
+other repositories. Running `lefthook install --force` **without first setting a
+clone-local path** can replace hooks in the global directory, affecting every
+repository that uses it. Under lhm, install nothing.
+
+For a **non-lhm** global path, if you explicitly want this clone to use its own
+hooks instead, first remove any stale worktree-local overrides as described
+below. Then set the clone-local path before running `--force`, from either
+checkout:
+
+```sh
+git config --local core.hooksPath "$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
+bin/lefthook install --force
+```
+
+The absolute path works in the main checkout and linked worktrees; the global
+setting is unchanged, but its hooks no longer run in this clone. Do not use this
+override for lhm.
 
 The installed hooks fail rather than silently skip when they cannot find
 Lefthook; `bin/lefthook uninstall` removes them. Lefthook 2.1.16 or newer is

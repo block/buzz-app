@@ -123,6 +123,13 @@ identity, and does not offer native private-key controls. Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
 synchronize copies automatically; neither operation is in this scope.
 
+The shared async relay-signing delegate is only an event-signing seam; it does not
+make development or packaged sessions NIP-46 sessions. Development sidebar and
+read-state encryption still use the broker-local identity, while packaged NIP-44
+operations remain native-owned. A remote signer would require explicit matching
+encryption, raw-proof, custody and transport capabilities before either path could
+claim remote identity support.
+
 ## Try the UI without credentials
 
 Use the existing environment-free fixture Vite config:

@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { createLocalSigningDelegate } from "./signing-delegate.mjs";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -21,6 +22,7 @@ function harness() {
   const viewer = getPublicKey(secret);
   return {
     secret,
+    signer: createLocalSigningDelegate(secret),
     viewer,
     encrypt(channels, overrides = {}) {
       const key = nip44.v2.utils.getConversationKey(secret, viewer);
@@ -60,22 +62,24 @@ it("rejects invalid intent shapes before relay reads", async () => {
       "Invalid sidebar star intent",
     );
   const read = vi.fn();
-  await expect(mutateSidebarStar({}, h.secret, read, vi.fn())).rejects.toThrow(
-    "Invalid sidebar star intent",
-  );
+  await expect(
+    mutateSidebarStar({}, h.secret, h.signer, undefined, read, vi.fn()),
+  ).rejects.toThrow("Invalid sidebar star intent");
   expect(read).not.toHaveBeenCalled();
 });
-it("encrypts explicit Star/Unstar with monotonic timestamps and preserves unrelated tombstones", () => {
+it("encrypts explicit Star/Unstar with monotonic timestamps and preserves unrelated tombstones", async () => {
   const h = harness();
   const channels = {
     alpha: { starred: false, updatedAt: 60000 },
     beta: { starred: true, updatedAt: 2 },
     gone: { starred: false, updatedAt: 3 },
   };
-  const added = prepareSidebarStar(
+  const added = await prepareSidebarStar(
     [h.encrypt(channels)],
     { channelId: "alpha", starred: true },
     h.secret,
+    h.signer,
+    undefined,
     50000,
   );
   expect(verifyEvent(added.event)).toBe(true);
@@ -97,10 +101,12 @@ it("encrypts explicit Star/Unstar with monotonic timestamps and preserves unrela
     "alpha",
     "beta",
   ]);
-  const removed = prepareSidebarStar(
+  const removed = await prepareSidebarStar(
     [added.event],
     { channelId: "alpha", starred: false },
     h.secret,
+    h.signer,
+    undefined,
     50000,
   );
   expect(removed.stars.channels).toEqual({
@@ -111,22 +117,29 @@ it("encrypts explicit Star/Unstar with monotonic timestamps and preserves unrela
     "beta",
   ]);
   expect(
-    prepareSidebarStar(
-      [removed.event],
-      { channelId: "alpha", starred: false },
-      h.secret,
+    (
+      await prepareSidebarStar(
+        [removed.event],
+        { channelId: "alpha", starred: false },
+        h.secret,
+        h.signer,
+      )
     ).event,
   ).toBeUndefined();
   expect(
-    prepareSidebarStar(
-      [],
-      { channelId: "new", starred: false },
-      h.secret,
-      50000,
+    (
+      await prepareSidebarStar(
+        [],
+        { channelId: "new", starred: false },
+        h.secret,
+        h.signer,
+        undefined,
+        50000,
+      )
     ).stars.channels,
   ).toEqual({});
 });
-it("refuses untrusted, ambiguous, malformed and over-budget heads rather than seeding", () => {
+it("refuses untrusted, ambiguous, malformed and over-budget heads rather than seeding", async () => {
   const h = harness(),
     other = harness();
   const intent = { channelId: "alpha", starred: true };
@@ -151,16 +164,18 @@ it("refuses untrusted, ambiguous, malformed and over-budget heads rather than se
     [h.encrypt({ alpha: { starred: true, updatedAt: -1 } })],
     [h.encrypt({}, { content: "x".repeat(SIDEBAR_REQUEST_BYTES) })],
   ])
-    expect(() => prepareSidebarStar(events, intent, h.secret)).toThrow();
+    await expect(
+      prepareSidebarStar(events, intent, h.secret, h.signer),
+    ).rejects.toThrow();
   const full = Object.fromEntries(
     Array.from({ length: 500 }, (_, i) => [
       `id-${i}`,
       { starred: false, updatedAt: 1 },
     ]),
   );
-  expect(() => prepareSidebarStar([h.encrypt(full)], intent, h.secret)).toThrow(
-    "budget exceeded",
-  );
+  await expect(
+    prepareSidebarStar([h.encrypt(full)], intent, h.secret, h.signer),
+  ).rejects.toThrow("budget exceeded");
 });
 it("confirms fresh retained state, including newer unrelated entries, and does not publish no-ops", async () => {
   const h = harness();
@@ -176,11 +191,20 @@ it("confirms fresh retained state, including newer unrelated entries, and does n
   });
   const intent = { channelId: "alpha", starred: true };
   expect(
-    (await mutateSidebarStar(intent, h.secret, read, publish)).channels,
+    (
+      await mutateSidebarStar(
+        intent,
+        h.secret,
+        h.signer,
+        undefined,
+        read,
+        publish,
+      )
+    ).channels,
   ).toHaveProperty("beta");
   expect(read).toHaveBeenCalledTimes(2);
   expect(publish).toHaveBeenCalledOnce();
-  await mutateSidebarStar(intent, h.secret, read, publish);
+  await mutateSidebarStar(intent, h.secret, h.signer, undefined, read, publish);
   expect(publish).toHaveBeenCalledOnce();
 });
 it("does not report success on read/publish failures or conflicting confirmation", async () => {
@@ -191,6 +215,8 @@ it("does not report success on read/publish failures or conflicting confirmation
     mutateSidebarStar(
       intent,
       h.secret,
+      h.signer,
+      undefined,
       async () => {
         throw new Error("read failed");
       },
@@ -200,12 +226,12 @@ it("does not report success on read/publish failures or conflicting confirmation
   expect(publish).not.toHaveBeenCalled();
   const read = vi.fn(async () => []);
   await expect(
-    mutateSidebarStar(intent, h.secret, read, async () => {
+    mutateSidebarStar(intent, h.secret, h.signer, undefined, read, async () => {
       throw new Error("publish failed");
     }),
   ).rejects.toThrow("publish failed");
   expect(read).toHaveBeenCalledOnce();
   await expect(
-    mutateSidebarStar(intent, h.secret, read, publish),
+    mutateSidebarStar(intent, h.secret, h.signer, undefined, read, publish),
   ).rejects.toThrow("changed on another device");
 });

@@ -1,9 +1,42 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { connectBrokerTransport, connectSignedTransport } from "./transport";
+import {
+  bindSigningDelegate,
+  connectBrokerTransport,
+  connectSignedTransport,
+} from "./transport";
 import { PublishRejected } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
+it("binds a selected signer to its relay and captured identity", async () => {
+  const other = keypair();
+  const delegate = bindSigningDelegate(
+    {
+      getPublicKey: async () => other.pubkey,
+      signEvent: async (template) => signed(other, template),
+    },
+    { relay: "https://relay.test", identity: key.pubkey },
+  );
+  expect(await delegate.getPublicKey()).toBe(key.pubkey);
+  await expect(
+    delegate.signEvent({ kind: 9, content: "", created_at: 0, tags: [] }),
+  ).rejects.toThrow("identity mismatch");
+});
+it("fences optional native requests to the bound relay", async () => {
+  const request = vi.fn(async () => Response.json({}));
+  const delegate = bindSigningDelegate(
+    {
+      getPublicKey: async () => key.pubkey,
+      signEvent: async (template) => signed(key, template),
+      request,
+    },
+    { relay: "https://relay.test", identity: key.pubkey },
+  );
+  expect(() => delegate.request?.("https://other.test/query", "{}")).toThrow(
+    "relay mismatch",
+  );
+  expect(request).not.toHaveBeenCalled();
+});
 it("publishes the unchanged signed event bytes through the host's /events request", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   // The host mints NIP-98 for these exact bytes at dispatch; see the native
@@ -24,6 +57,25 @@ it("publishes the unchanged signed event bytes through the host's /events reques
     JSON.stringify(event),
     controller.signal,
   );
+});
+it("does not fall back to JavaScript fetch without a host request", async () => {
+  const getPublicKey = vi.fn(async () => key.pubkey);
+  const signEvent = vi.fn(
+    async (template: import("nostr-tools").EventTemplate) =>
+      signed(key, template),
+  );
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  await expect(
+    connectSignedTransport(
+      { getPublicKey, signEvent },
+      "https://relay.test",
+      "relay",
+    ),
+  ).rejects.toThrow("host request capability");
+  expect(getPublicKey).not.toHaveBeenCalled();
+  expect(signEvent).not.toHaveBeenCalled();
+  expect(fetcher).not.toHaveBeenCalled();
 });
 it("distinguishes explicit rejection from invalid or missing delivery receipts", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });

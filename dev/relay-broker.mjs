@@ -40,7 +40,7 @@ import {
   leaveRequestTemplate,
 } from "../src/features/communities/leave-protocol.ts";
 import {
-  directMessageEvent,
+  directMessageTemplate,
   directMessageReceipt,
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
@@ -73,7 +73,16 @@ import {
 import { readRelayLibrary } from "../src/features/agents/relay-library.ts";
 import { eventDto } from "../src/features/relay/events.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
-import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
+import {
+  BUILDERLAB_ORIGIN,
+  builderlabResponseStatus,
+  createBuilderlab,
+} from "./builderlab.mjs";
+import {
+  createLocalSigningCapabilities,
+  createLocalSigningDelegate,
+} from "./signing-delegate.mjs";
+import { selectSigningDelegate as selectBoundSigningDelegate } from "../src/features/relay/signing-delegate.ts";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
@@ -122,9 +131,8 @@ import {
   UPLOAD_TIMEOUT_MS,
 } from "../src/features/relay/attachment-limits.ts";
 import dc from "node:diagnostics_channel";
-import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
+import { getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
-import { schnorr } from "@noble/curves/secp256k1.js";
 
 function validProfilePicture(value) {
   if (!value) return true;
@@ -688,12 +696,62 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
+/** Sign and dispatch one broker HTTP request only after its admission slot opens. */
+function signedBrokerRequest({
+  lane,
+  delegate,
+  relay,
+  path,
+  body,
+  signal,
+  fetchUpstream,
+  priority = "foreground",
+  refusal,
+}) {
+  return admittedApiRequest(
+    lane,
+    async () => {
+      signal.throwIfAborted();
+      const value = JSON.stringify(body);
+      const auth = await delegate.signEvent(
+        {
+          kind: 27235,
+          created_at: Math.floor(Date.now() / 1000),
+          content: "",
+          tags: [
+            ["u", `${relay}${path}`],
+            ["method", "POST"],
+            ["payload", createHash("sha256").update(value).digest("hex")],
+            ["nonce", randomBytes(16).toString("hex")],
+          ],
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      return fetchUpstream(`${relay}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
+        },
+        body: value,
+        redirect: "error",
+        signal,
+      });
+    },
+    signal,
+    priority,
+    refusal,
+  );
+}
+
 /** @returns {import('vite').Plugin} */
 export function relayBrokerPlugin({
   authorizedViewer,
   relayUrl,
   communityAliases,
   identity = () => loadIdentity(authorizedViewer),
+  selectSigningDelegate,
   authority = relayAuthority,
   upstreamFetch,
   socketFactory,
@@ -726,6 +784,13 @@ export function relayBrokerPlugin({
           ...(settings.metrics ? [44200] : []),
         ]);
       };
+      const localDelegate = createLocalSigningDelegate(key);
+      const localCapabilities = createLocalSigningCapabilities(key);
+      const delegateFor = (relay) =>
+        selectBoundSigningDelegate(selectSigningDelegate, localDelegate, {
+          relay,
+          identity: viewer,
+        });
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -800,7 +865,7 @@ export function relayBrokerPlugin({
       const streams = new Map();
       const admissions = createHostAdmission();
       const builderlab = createBuilderlab({
-        key: () => key,
+        signer: () => delegateFor(BUILDERLAB_ORIGIN),
         ...builderlabOptions,
       });
       server.httpServer?.once("close", () => {
@@ -943,15 +1008,12 @@ export function relayBrokerPlugin({
               if (agentPubkey === viewer)
                 throw new Error("Owner and agent pubkeys must differ");
               cancel.signal.throwIfAborted();
-              const digest = createHash("sha256")
-                .update(`nostr:agent-auth:${agentPubkey}:`)
-                .digest();
-              return json(res, 200, [
-                "auth",
-                viewer,
-                "",
-                Buffer.from(schnorr.sign(digest, key)).toString("hex"),
-              ]);
+              const signature = await localCapabilities.authorizeAgent(
+                agentPubkey,
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
+              return json(res, 200, ["auth", viewer, "", signature]);
             } catch (error) {
               return json(res, 400, {
                 error:
@@ -979,6 +1041,7 @@ export function relayBrokerPlugin({
                 : "Select a community or configure BUZZ_RELAY_URL for unscoped requests",
             });
           const route = scoped ? `/api/relay/${parts[3]}` : url.pathname;
+          const delegate = delegateFor(relay);
           if (route === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
           if (route === "/api/relay/gif-info" && req.method === "GET") {
@@ -1175,45 +1238,15 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  admittedApiRequest(
+                  signedBrokerRequest({
                     lane,
-                    () => {
-                      requestSignal.throwIfAborted();
-                      const value = JSON.stringify(body);
-                      const auth = finalizeEvent(
-                        {
-                          kind: 27235,
-                          created_at: Math.floor(Date.now() / 1000),
-                          content: "",
-                          tags: [
-                            ["u", `${relay}${path}`],
-                            ["method", "POST"],
-                            [
-                              "payload",
-                              createHash("sha256").update(value).digest("hex"),
-                            ],
-                            ["nonce", randomBytes(16).toString("hex")],
-                          ],
-                        },
-                        key,
-                      );
-                      return fetchUpstream(`${relay}${path}`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization:
-                            "Nostr " +
-                            Buffer.from(JSON.stringify(auth)).toString(
-                              "base64",
-                            ),
-                        },
-                        body: value,
-                        redirect: "error",
-                        signal: requestSignal,
-                      });
-                    },
-                    requestSignal,
-                  );
+                    delegate,
+                    relay,
+                    path,
+                    body,
+                    signal: requestSignal,
+                    fetchUpstream,
+                  });
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
                   if (!response.ok)
@@ -1245,6 +1278,8 @@ export function relayBrokerPlugin({
                 const result = await mutate(
                   intent,
                   key,
+                  delegate,
+                  requestSignal,
                   readHead,
                   publishEvent,
                 );
@@ -1618,7 +1653,7 @@ export function relayBrokerPlugin({
             };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),
-              async (event) => finalizeEvent(event, key),
+              (event) => delegate.signEvent(event, cancel.signal),
               viewer,
               {
                 receive: (events, provenance) => {
@@ -1704,6 +1739,7 @@ export function relayBrokerPlugin({
             const close = () => {
               if (closed) return;
               closed = true;
+              cancel.abort();
               principal.streams--;
               pendingState = undefined;
               res.off("drain", flushState);
@@ -1753,7 +1789,7 @@ export function relayBrokerPlugin({
               const result = await uploadAttachment(
                 req,
                 relay,
-                key,
+                delegate,
                 fetchUpstream,
                 cancel.signal,
               );
@@ -1780,7 +1816,7 @@ export function relayBrokerPlugin({
             )
               return json(res, 403, { error: "Media target rejected" });
             const now = Math.floor(Date.now() / 1000);
-            const auth = finalizeEvent(
+            const auth = await delegate.signEvent(
               {
                 kind: 24242,
                 created_at: now,
@@ -1794,8 +1830,9 @@ export function relayBrokerPlugin({
                   ["server", new URL(relay).host],
                 ],
               },
-              key,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
             const range = req.headers.range;
             if (
               range !== undefined &&
@@ -1986,7 +2023,7 @@ export function relayBrokerPlugin({
                   readProjectGit({
                     input,
                     relay,
-                    key,
+                    signer: delegate,
                     signal: AbortSignal.any([
                       cancel.signal,
                       AbortSignal.timeout(12000),
@@ -2066,10 +2103,14 @@ export function relayBrokerPlugin({
                 error: "Invalid harness log authorization",
               });
             cancel.signal.throwIfAborted();
-            const message = `buzz-app:harness-log:v1:${filters.id}:${filters.pubkey}:${wssRelay}:${filters.nonce}`;
-            const signature = Buffer.from(
-              schnorr.sign(createHash("sha256").update(message).digest(), key),
-            ).toString("hex");
+            const signature = await localCapabilities.signHarnessLogProof(
+              filters.id,
+              filters.pubkey,
+              wssRelay,
+              filters.nonce,
+              cancel.signal,
+            );
+            cancel.signal.throwIfAborted();
             return json(res, 200, { signature });
           }
           if (
@@ -2102,16 +2143,17 @@ export function relayBrokerPlugin({
             if (!inspecting) {
               cancel.signal.throwIfAborted();
               const relayUrl = relay.replace(/^https:/, "wss:");
-              const digest = createHash("sha256")
-                .update(`nostr:agent-community:${filters.pubkey}:${relayUrl}`)
-                .digest();
+              const signature = await localCapabilities.authorizeAgentCommunity(
+                filters.pubkey,
+                relayUrl,
+                cancel.signal,
+              );
+              cancel.signal.throwIfAborted();
               return json(res, 200, {
                 pubkey: filters.pubkey,
                 relayUrl,
                 owner: viewer,
-                signature: Buffer.from(schnorr.sign(digest, key)).toString(
-                  "hex",
-                ),
+                signature,
               });
             }
             // Discovery is independent of setup and local credential import.
@@ -2122,7 +2164,7 @@ export function relayBrokerPlugin({
                   read: async (filters, { signal }) => {
                     const body = JSON.stringify(filters);
                     const url = `${relay}/query`;
-                    const auth = finalizeEvent(
+                    const auth = await delegate.signEvent(
                       {
                         kind: 27235,
                         created_at: Math.floor(Date.now() / 1000),
@@ -2137,8 +2179,9 @@ export function relayBrokerPlugin({
                           ["nonce", randomBytes(16).toString("hex")],
                         ],
                       },
-                      key,
+                      signal,
                     );
+                    signal.throwIfAborted();
                     const response = await fetchUpstream(url, {
                       method: "POST",
                       body,
@@ -2184,12 +2227,11 @@ export function relayBrokerPlugin({
                 error: "Invalid agent owner authorization",
               });
             cancel.signal.throwIfAborted();
-            const digest = createHash("sha256")
-              .update(`nostr:agent-auth:${filters.pubkey}:`)
-              .digest();
-            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
-              "hex",
+            const signature = await localCapabilities.authorizeAgent(
+              filters.pubkey,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
             return json(res, 200, { auth: ["auth", viewer, "", signature] });
           }
           if (presence && !presenceFilter(filters))
@@ -2212,13 +2254,15 @@ export function relayBrokerPlugin({
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
             try {
-              filters = directMessageEvent(filters, viewer, key);
+              filters = directMessageTemplate(filters, viewer);
             } catch {
               return json(res, 400, {
                 error: "Choose between one and eight other people.",
                 sent: false,
               });
             }
+            filters = await delegate.signEvent(filters, cancel.signal);
+            cancel.signal.throwIfAborted();
           }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
@@ -2239,17 +2283,21 @@ export function relayBrokerPlugin({
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
               return json(res, 400, { error: "Select a community first" });
+            let command;
             try {
               // The viewer's own leave request has one shape; the body carries nothing.
-              filters = invite
+              command = invite
                 ? inviteRequest(filters)
-                : finalizeEvent(
-                    leave ? leaveRequestTemplate() : memberCommand(filters),
-                    key,
-                  );
+                : leave
+                  ? leaveRequestTemplate()
+                  : memberCommand(filters);
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
+            filters = invite
+              ? command
+              : await delegate.signEvent(command, cancel.signal);
+            cancel.signal.throwIfAborted();
           }
           if (gifs) {
             if (
@@ -2293,15 +2341,16 @@ export function relayBrokerPlugin({
             };
             if (Buffer.byteLength(JSON.stringify(content)) > 16000)
               return json(res, 400, { error: "Profile too large" });
-            filters = finalizeEvent(
+            filters = await delegate.signEvent(
               {
                 kind: 0,
                 content: JSON.stringify(content),
                 tags: [],
                 created_at: Math.floor(Date.now() / 1000),
               },
-              key,
+              cancel.signal,
             );
+            cancel.signal.throwIfAborted();
           }
           if (claim || policy) {
             if (
@@ -2323,7 +2372,11 @@ export function relayBrokerPlugin({
           if (readSigning || readPublishing) {
             try {
               if (readSigning)
-                return json(res, 200, signReadState(filters, key));
+                return json(
+                  res,
+                  200,
+                  await signReadState(filters, key, delegate, cancel.signal),
+                );
               // A valid own signature alone is not permission to publish arbitrary kind-30078 data.
               // Receive-only compatibility must not widen publication admission.
               decodeReadState([filters], key, READ_STATE_EVENT_BYTES);
@@ -2509,15 +2562,16 @@ export function relayBrokerPlugin({
             cancel.signal.throwIfAborted();
             if (signing) {
               const started = performance.now();
-              const event = finalizeEvent(
+              const event = await delegate.signEvent(
                 {
                   kind: filters.kind,
                   content: filters.content,
                   created_at: filters.created_at,
                   tags: filters.tags,
                 },
-                key,
+                cancel.signal,
               );
+              cancel.signal.throwIfAborted();
               res.setHeader(
                 "Server-Timing",
                 `sign;dur=${(performance.now() - started).toFixed(2)}`,
@@ -2543,10 +2597,10 @@ export function relayBrokerPlugin({
           )
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {
-            const stream = streams.get(req.headers["x-buzz-live-id"]);
             // This route has already validated the signed event. Do not log its
             // content, tags, signature, or the browser's private stream handle.
             const publication = `publication id=${filters.id} kind=${filters.kind}`;
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
             if (!stream || stream.relay !== relay) {
               log.warn(
                 `${publication} stage=${stream ? "owner-mismatch" : "owner-missing"} sent=false`,
@@ -2639,14 +2693,13 @@ export function relayBrokerPlugin({
                 presence || memory ? 10000 : UPSTREAM_TIMEOUT_MS,
               ),
             ]);
-            const request = () => {
-              // Auth freshness and network timings begin at dispatch, not queue entry.
+            const request = async () => {
               requestSignal.throwIfAborted();
               timings.push(
                 `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
               );
               const authStart = performance.now();
-              const auth = finalizeEvent(
+              const auth = await delegate.signEvent(
                 {
                   kind: 27235,
                   created_at: Math.floor(Date.now() / 1000),
@@ -2665,8 +2718,9 @@ export function relayBrokerPlugin({
                     ["nonce", randomBytes(16).toString("hex")],
                   ],
                 },
-                key,
+                requestSignal,
               );
+              requestSignal.throwIfAborted();
               timings.push(
                 `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
               );

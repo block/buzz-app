@@ -26,6 +26,7 @@ import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
 import { feedbackEvent } from "../src/features/relay/product-feedback.ts";
 import { archiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
+import { ApiCapacity } from "../src/features/relay/http-admission.ts";
 
 // Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
@@ -41,6 +42,7 @@ async function harness(
   capabilities = {},
   relayUrl = fixtureRelayUrl,
   builderlab = {},
+  selectSigningDelegate,
 ) {
   const key = new Uint8Array(32);
   key[31] = 7;
@@ -63,6 +65,7 @@ async function harness(
     builderlab,
     communityAliases: fixtureAliases,
     identity: () => key,
+    selectSigningDelegate,
     socketFactory: socket.factory,
     authority: async () => ({ relayAuthor: viewer, ...capabilities }),
     upstreamFetch: async (url, init) => {
@@ -1332,6 +1335,31 @@ test("both real sign and publish routes admit direct and nested replies but reje
       }
     }
     expect(h.publications).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test("sidebar maps an unsent API capacity error to its original 502 response", async () => {
+  const h = await harness(success, {}, fixtureRelayUrl, {}, ({ identity }) => ({
+    async getPublicKey() {
+      return identity;
+    },
+    async signEvent() {
+      throw new ApiCapacity();
+    },
+  }));
+  try {
+    const response = await h.post("sidebar-sort", {
+      group: "channels",
+      mode: "recent",
+      sectionIds: [],
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "Relay API queue capacity reached",
+    });
+    expect(h.calls).toEqual([]);
   } finally {
     await h.close();
   }

@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
+import { getPublicKey, nip44 } from "nostr-tools";
 import { eventDto } from "../src/features/relay/events.ts";
 import {
   parseReadBlob,
@@ -57,9 +57,11 @@ export function decodeReadState(
     key.fill(0);
   }
 }
-export function signReadState(
+export async function signReadState(
   raw,
   secret,
+  signer,
+  signal,
   now = Math.floor(Date.now() / 1000),
 ) {
   if (
@@ -75,7 +77,7 @@ export function signReadState(
     throw new Error("Read-state publication capacity exceeded");
   const key = nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
   try {
-    const event = finalizeEvent(
+    const event = await signer.signEvent(
       {
         kind: 30078,
         created_at: raw.createdAt,
@@ -85,8 +87,9 @@ export function signReadState(
         ],
         content: nip44.v2.encrypt(plaintext, key),
       },
-      secret,
+      signal,
     );
+    signal?.throwIfAborted();
     return validReadStateEvent(event, secret);
   } finally {
     key.fill(0);

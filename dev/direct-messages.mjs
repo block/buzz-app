@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { finalizeEvent } from "nostr-tools";
 
-/** Idempotent participant-set command. Keys stay in the broker. */
-export function directMessageEvent(input, viewer, key) {
+/** Validate and shape an idempotent participant-set command. */
+export function directMessageTemplate(input, viewer) {
   if (
     !input ||
     !Array.isArray(input.pubkeys) ||
@@ -17,18 +16,15 @@ export function directMessageEvent(input, viewer, key) {
     new Set(input.pubkeys).size !== input.pubkeys.length
   )
     throw new Error("Choose between one and eight other people.");
-  return finalizeEvent(
-    {
-      kind: 41010,
-      content: "",
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ...input.pubkeys.map((pubkey) => ["p", pubkey]),
-        ["client", randomUUID()],
-      ],
-    },
-    key,
-  );
+  return {
+    kind: 41010,
+    content: "",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ...input.pubkeys.map((pubkey) => ["p", pubkey]),
+      ["client", randomUUID()],
+    ],
+  };
 }
 
 export function directMessageReceipt(text, eventId) {

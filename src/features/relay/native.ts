@@ -57,6 +57,8 @@ import {
   admittedSignedWorkflowRead,
   type ReadTransport,
   type Signer,
+  selectSigningDelegate,
+  type SigningDelegateFactory,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
 import { readApiFailure } from "./http-admission";
@@ -241,7 +243,7 @@ export function nativeRelaySigner(community: string): Signer {
         throw new Error("Set up your identity first");
       return viewer;
     },
-    async signEvent(event: EventTemplate) {
+    async signEvent(event: EventTemplate, _signal?: AbortSignal) {
       const { kind, created_at, tags, content } = event;
       return eventDto(
         await invoke(kind === 30078 ? "relay_kit_sign" : "relay_sign", {
@@ -278,6 +280,7 @@ export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
 export async function connectNativeTransport(
   community: string,
   signal?: AbortSignal,
+  signingDelegateFactory?: SigningDelegateFactory,
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
   const info = await nativeRelayInfo(origin, signal);
@@ -286,8 +289,14 @@ export async function connectNativeTransport(
     throw new Error("Relay did not advertise its identity");
   const creation =
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
+  const nativeSigner = nativeRelaySigner(origin);
+  const identity = await nativeSigner.getPublicKey();
+  signal?.throwIfAborted();
   const transport = await connectSignedTransport(
-    nativeRelaySigner(origin),
+    selectSigningDelegate(signingDelegateFactory, nativeSigner, {
+      relay: origin,
+      identity,
+    }),
     origin,
     author,
   );

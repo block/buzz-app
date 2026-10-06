@@ -32,6 +32,8 @@ import {
 } from "../../features/relay/read-state-storage";
 // @ts-expect-error Node host codec, with disposable test identities only.
 import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+// @ts-expect-error Node-only signing adapter for this disposable identity.
+import { createLocalSigningDelegate } from "../../../dev/signing-delegate.mjs";
 
 composerDOMFixture();
 const scrollDescriptor = Object.getOwnPropertyDescriptor(
@@ -164,7 +166,13 @@ async function fixture() {
       media: (url) => url,
       readState: {
         decode: async (records) => decodeReadState(records, viewer.secret),
-        sign: async (intent) => signReadState(intent, viewer.secret),
+        sign: async (intent, signal) =>
+          signReadState(
+            intent,
+            viewer.secret,
+            createLocalSigningDelegate(viewer.secret),
+            signal,
+          ),
         publish: async (event) => {
           events.push(event);
         },

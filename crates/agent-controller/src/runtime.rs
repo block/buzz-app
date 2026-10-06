@@ -139,7 +139,15 @@ impl RuntimeBundle {
             .transpose()?;
         let pi = crate::pi::verify_launch(pi, preflight)?;
         let claude = (crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
-            .then(|| claude_tools(&worker))
+            .then(|| {
+                claude_tools(
+                    &worker,
+                    agent
+                        .environment
+                        .get("CLAUDE_CODE_EXECUTABLE")
+                        .map(String::as_str),
+                )
+            })
             .transpose()?;
         let (args, environment, tools_path) = if let Some(pi) = &pi {
             (
@@ -333,7 +341,10 @@ fn tools_path() -> Result<std::ffi::OsString> {
 }
 /// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
 /// An app-owned adapter keeps using its pinned Node, independently of global tools.
-fn claude_tools(adapter: &Path) -> Result<(std::ffi::OsString, Option<PathBuf>)> {
+fn claude_tools(
+    adapter: &Path,
+    cli_override: Option<&str>,
+) -> Result<(std::ffi::OsString, Option<PathBuf>)> {
     let bin = adapter.parent().ok_or("Invalid Claude ACP adapter path")?;
     let managed_data = bin
         .file_name()
@@ -356,18 +367,24 @@ fn claude_tools(adapter: &Path) -> Result<(std::ffi::OsString, Option<PathBuf>)>
         }
     }
     .ok_or("Install Node.js for Claude Code in Settings → Agents → Harnesses")?;
-    let cli = if let Some(app_data) = managed_data {
-        managed_tool(app_data, "claude").or_else(|| installed_npm_tool("claude"))
+    let cli = if cli_override.is_some() {
+        // Advanced owns this value; do not require an unrelated discoverable CLI.
+        None
     } else {
-        installed_npm_tool("claude")
-    }
-    .ok_or("Install Claude Code in Settings → Agents → Harnesses")?;
-    // Rust can run Windows batch launchers; the adapter's JavaScript SDK cannot.
-    // In that case leave native binary resolution to the SDK itself.
-    let batch = cfg!(windows)
-        && cli
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"));
+        let cli = if let Some(app_data) = managed_data {
+            managed_tool(app_data, "claude").or_else(|| installed_npm_tool("claude"))
+        } else {
+            installed_npm_tool("claude")
+        }
+        .ok_or("Install Claude Code in Settings → Agents → Harnesses")?;
+        // Rust can run Windows batch launchers; the adapter's JavaScript SDK cannot.
+        // In that case leave native binary resolution to the SDK itself.
+        let batch = cfg!(windows)
+            && cli.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+            });
+        (!batch).then_some(cli)
+    };
     let path = std::env::join_paths(
         [node.parent().ok_or("Invalid Node.js path")?, bin]
             .into_iter()
@@ -375,7 +392,7 @@ fn claude_tools(adapter: &Path) -> Result<(std::ffi::OsString, Option<PathBuf>)>
             .chain(std::env::split_paths(&tools_path()?)),
     )
     .map_err(|_| "Invalid Claude tools path")?;
-    Ok((path, (!batch).then_some(cli)))
+    Ok((path, cli))
 }
 /// App-owned npm shims and the pinned Node binary are separate from user-global tools.
 /// `app_data` is Tauri's resolved app-data directory, never browser input.

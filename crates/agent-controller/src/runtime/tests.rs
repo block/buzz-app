@@ -1302,6 +1302,20 @@ fn external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides()
             Some(cli.as_os_str())
         );
     }
+    fs::remove_file(&cli).unwrap();
+    if cfg!(windows) {
+        fs::remove_file(bin.join("claude.exe")).unwrap();
+    }
+    let custom_cli = root.join(format!("custom-claude{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(&fixture, &custom_cli).unwrap();
+    saved.environment.insert(
+        "CLAUDE_CODE_EXECUTABLE".into(),
+        custom_cli.to_string_lossy().into_owned(),
+    );
+    let command = runtime.command(&saved, &key).unwrap();
+    assert!(command.get_envs().any(|(name, value)| {
+        name == "CLAUDE_CODE_EXECUTABLE" && value == Some(custom_cli.as_os_str())
+    }));
 }
 
 #[test]

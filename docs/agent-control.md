@@ -326,7 +326,8 @@ Hermes also appears in the main list once its executable is detected:
   controlled tools PATH, after bundled Buzz tools. Shell provider credentials
   are not inherited. Explicit Advanced environment values remain write-only.
   Buzz points `CLAUDE_CODE_EXECUTABLE` at the selected runnable CLI unless Advanced
-  environment explicitly overrides it. This avoids relying on the SDK's optional
+  environment explicitly overrides it. An explicit override skips CLI discovery;
+  Node is still required. This avoids relying on the SDK's optional
   native-binary download. Windows `.cmd`/`.bat` login launchers cannot be used by
   the JavaScript SDK, so those installations use the SDK's bundled native runtime
   and must include its platform optional dependency.

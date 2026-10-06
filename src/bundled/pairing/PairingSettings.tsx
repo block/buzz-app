@@ -75,9 +75,13 @@ export function PairingSettings({
       void pairing.cancel(true);
     };
   }, [client.viewer, client.selected, pairing]);
-  const busy = ["connecting", "qr", "code", "transferring"].includes(
-    state.phase,
-  );
+  const busy = [
+    "connecting",
+    "qr",
+    "code",
+    "transferring",
+    "cancelling",
+  ].includes(state.phase);
   async function prepare() {
     const attempt = lifetime.current;
     setError(undefined);
@@ -272,20 +276,39 @@ export function PairingSettings({
                           {state.code.slice(0, 3)} {state.code.slice(3)}
                         </span>
                       </fieldset>
-                      {legacy ? (
+                      <div className="flex flex-col gap-2">
+                        {legacy ? (
+                          <Button
+                            variant="prominent"
+                            onClick={() => void pairing.confirm()}
+                          >
+                            Codes match
+                          </Button>
+                        ) : (
+                          <p className="m-0 text-body-sm text-muted">
+                            Pairing continues when you enter all six digits on
+                            your phone.
+                          </p>
+                        )}
                         <Button
-                          variant="prominent"
-                          onClick={() => void pairing.confirm()}
+                          onClick={() =>
+                            void (legacy ? pairing.deny() : pairing.cancel())
+                          }
                         >
-                          Codes match
+                          Cancel
                         </Button>
-                      ) : (
-                        <p className="m-0 text-body-sm text-muted">
-                          Pairing continues when you enter all six digits on
-                          your phone.
-                        </p>
-                      )}
+                      </div>
                     </div>
+                  )}
+                  {state.phase === "cancelling" && (
+                    <p role="status" className="text-body-sm text-muted">
+                      Cancelling pairing…
+                    </p>
+                  )}
+                  {state.phase === "cancelled" && (
+                    <p role="status" className="text-body-sm text-muted">
+                      Pairing was canceled.
+                    </p>
                   )}
                   {state.phase === "transferring" && (
                     <div

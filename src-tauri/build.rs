@@ -37,6 +37,7 @@ fn main() {
             "pairing_start",
             "pairing_status",
             "pairing_confirm",
+            "pairing_deny",
             "pairing_cancel",
             "identity_restore",
             "identity_import",

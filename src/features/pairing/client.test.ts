@@ -12,6 +12,7 @@ function native() {
       async (): Promise<PairingStatus> => ({ phase: "qr", svg: "fixture" }),
     ),
     confirm: vi.fn(async () => {}),
+    deny: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
   } satisfies PairingNative;
 }
@@ -131,4 +132,55 @@ it("resets client-controlled cleanup without treating native cancellation as idl
   await client.start("viewer", "https://relay.test");
   await client.cancel(true);
   expect(client.snapshot().phase).toBe("error");
+});
+
+it("denies only a live legacy comparison", async () => {
+  const api = native();
+  const client = createPairingClient(api);
+  api.status.mockResolvedValue({
+    phase: "code",
+    code: "123456",
+    codeEntry: true,
+  });
+  await client.start("viewer", "https://relay.test");
+  await client.deny();
+  expect(api.deny).not.toHaveBeenCalled();
+  api.status.mockResolvedValue({
+    phase: "code",
+    code: "123456",
+    codeEntry: false,
+  });
+  await client.start("viewer", "https://relay.test");
+  await client.deny();
+  expect(api.deny).toHaveBeenCalledTimes(1);
+  expect(client.snapshot().phase).toBe("cancelling");
+  await client.cancel();
+});
+
+it("does not revive a decision while native denial is pending after IPC returns", async () => {
+  vi.useFakeTimers();
+  const api = native();
+  let status: PairingStatus = {
+    phase: "code",
+    code: "123456",
+    codeEntry: false,
+  };
+  api.status.mockImplementation(async () => status);
+  const client = createPairingClient(api);
+  await client.start("viewer", "https://relay.test");
+  try {
+    await client.deny(); // Native enqueues Deny immediately; abort delivery is still pending.
+    expect(api.deny).toHaveBeenCalledTimes(1);
+    expect(client.snapshot().phase).toBe("cancelling");
+    await vi.advanceTimersByTimeAsync(800);
+    expect(api.status).toHaveBeenCalledTimes(3);
+    expect(client.snapshot().phase).toBe("cancelling");
+    await client.confirm();
+    expect(api.confirm).not.toHaveBeenCalled();
+    status = { phase: "error", message: "Pairing was canceled." };
+    await vi.advanceTimersByTimeAsync(400);
+    expect(client.snapshot()).toEqual(status);
+  } finally {
+    await client.cancel();
+  }
 });

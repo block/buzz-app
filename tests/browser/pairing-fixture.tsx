@@ -33,6 +33,10 @@ const native: PairingNative = {
     fixture.calls.push({ action: "confirm", id });
     fixture.status = { phase: "transferring" };
   },
+  async deny(id) {
+    fixture.calls.push({ action: "deny", id });
+    fixture.status = { phase: "cancelled" };
+  },
   async cancel(id) {
     fixture.calls.push({ action: "cancel", id });
     fixture.status = { phase: "cancelled" };

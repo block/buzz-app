@@ -7,6 +7,7 @@ export type PairingStatus =
         | "idle"
         | "connecting"
         | "transferring"
+        | "cancelling"
         | "complete"
         | "cancelled";
     }
@@ -18,6 +19,7 @@ export type PairingNative = {
   start(id: string, viewer: string, community: string): Promise<void>;
   status(id: string): Promise<PairingStatus>;
   confirm(id: string): Promise<void>;
+  deny(id: string): Promise<void>;
   cancel(id: string): Promise<void>;
 };
 export const nativePairing: PairingNative = {
@@ -26,6 +28,7 @@ export const nativePairing: PairingNative = {
     invoke("pairing_start", { id, viewer, community }),
   status: (id) => invoke("pairing_status", { id }),
   confirm: (id) => invoke("pairing_confirm", { id }),
+  deny: (id) => invoke("pairing_deny", { id }),
   cancel: (id) => invoke("pairing_cancel", { id }),
 };
 export const pairingAvailable = isTauri;
@@ -38,7 +41,7 @@ export function createPairingClient(native: PairingNative = nativePairing) {
     | {
         id: string;
         started: Promise<void>;
-        confirming?: boolean;
+        deciding?: boolean;
         timer?: ReturnType<typeof setTimeout>;
       }
     | undefined;
@@ -85,7 +88,14 @@ export function createPairingClient(native: PairingNative = nativePairing) {
           try {
             const status = await native.status(id);
             if (active !== session || attempt !== generation) return;
-            if (!(session.confirming && status.phase === "code"))
+            if (
+              !(
+                (session.deciding ||
+                  state.phase === "transferring" ||
+                  state.phase === "cancelling") &&
+                (status.phase === "code" || status.phase === "transferring")
+              )
+            )
               update(status);
             if (
               ["connecting", "qr", "code", "transferring"].includes(
@@ -111,18 +121,32 @@ export function createPairingClient(native: PairingNative = nativePairing) {
           update({ phase: "error", message: String(error) });
       }
     },
-    async confirm() {
+    async decide(kind: "confirm" | "deny") {
       const session = active;
-      if (!session || state.phase !== "code" || state.codeEntry) return;
-      if (session.confirming) return;
-      session.confirming = true;
-      update({ phase: "transferring" });
+      if (
+        !session ||
+        state.phase !== "code" ||
+        state.codeEntry ||
+        session.deciding
+      )
+        return;
+      session.deciding = true;
+      // Do not invent a new pairing operation while an abort is pending.
+      update({ phase: kind === "confirm" ? "transferring" : "cancelling" });
       try {
-        await native.confirm(session.id);
+        await native[kind](session.id);
       } catch (error) {
         if (active === session)
           update({ phase: "error", message: String(error) });
+      } finally {
+        session.deciding = false;
       }
+    },
+    async confirm() {
+      return this.decide("confirm");
+    },
+    async deny() {
+      return this.decide("deny");
     },
     async cancel(reset = false) {
       const attempt = ++generation;

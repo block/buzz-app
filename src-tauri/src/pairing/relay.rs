@@ -103,6 +103,25 @@ pub(super) async fn discover(origin: &Url) -> Result<Url, String> {
         serde_json::from_slice(&bytes).map_err(|_| "Couldn’t read community pairing details.")?;
     advertised(origin, &json)
 }
+pub(super) async fn connect(relay: &Url, limit: Duration) -> Result<Socket, String> {
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(256 * 1024))
+        .max_frame_size(Some(256 * 1024));
+    tokio::time::timeout(
+        limit,
+        tokio_tungstenite::connect_async_tls_with_config(
+            relay.as_str(),
+            Some(config),
+            false,
+            Some(tls_connector()?),
+        ),
+    )
+    .await
+    .map_err(|_| "Pairing connection timed out. Check your connection and try again.")?
+    .map(|(socket, _)| socket)
+    .map_err(|_| "Couldn’t connect for pairing. Check your connection and try again.".into())
+}
+
 pub(super) async fn send(socket: &mut Socket, event: &Event) -> Result<(), String> {
     socket
         .send(Message::Text(
@@ -208,8 +227,8 @@ pub(super) async fn subscribe(
     session: &PairingSession,
     relay: &Url,
 ) -> Result<(Vec<Event>, Authentication), String> {
-    request(socket, session).await?;
     tokio::time::timeout(Duration::from_secs(15), async {
+        request(socket, session).await?;
         let mut pending = Vec::new();
         let mut auth = Authentication::default();
         loop {

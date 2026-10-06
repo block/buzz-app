@@ -403,6 +403,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_start,
         pairing::pairing_status,
         pairing::pairing_confirm,
+        pairing::pairing_deny,
         pairing::pairing_cancel,
         identity_restore,
         identity_import,

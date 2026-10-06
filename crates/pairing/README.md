@@ -13,6 +13,14 @@ export are owned by `src-tauri/src/pairing`. Its tests include the exact source
 protocol vectors and code-entry proof regressions. Run `bin/cargo test -p
 buzz-pairing` for unit tests and doctests.
 
+The source QR lifetime differs from upstream: `start_source_lifetime()` resets
+its two-minute clock after desktop transport setup and immediately before the
+visible QR is published. The desktop uses that same deadline for expiry. The
+upstream reference starts the clock at session construction and expires the QR
+at that original deadline; retaining that behavior here would shorten the
+visible-QR contract after slow discovery or subscription. Keep this divergence
+when syncing upstream.
+
 The desktop-code port also fails closed when an oversized rejection cannot be
 serialized: exhausting the guess budget clears the code and aborts before the
 fallible reply construction. A regression covers that boundary.

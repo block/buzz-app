@@ -1,6 +1,6 @@
 use super::*;
 use buzz_pairing::{crypto, PairingMessage};
-use nostr_pairing::{EventBuilder, Keys, Kind, Tag};
+use nostr_pairing::{EventBuilder, JsonUtil, Keys, Kind, Tag};
 
 fn message(keys: &Keys, source: &PairingSession, value: PairingMessage) -> Event {
     let content = nostr_pairing::nips::nip44::encrypt(
@@ -111,6 +111,7 @@ fn timeout_preserves_possible_import_only_after_payload_publication() {
     *manager.0.lock().unwrap() = Some(Active {
         id: "live".into(),
         cancel: CancellationToken::new(),
+        finished: CancellationToken::new(),
         confirm: tx,
         status: Status::Transferring,
         payload_sent: false,
@@ -223,39 +224,49 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
         Some(Status::Complete)
     );
 }
-#[test]
-fn old_session_cleanup_cannot_cancel_or_overwrite_replacement() {
+#[tokio::test]
+async fn old_session_cleanup_cannot_cancel_or_overwrite_replacement() {
     let manager = Pairing::default();
     let (tx, _) = mpsc::channel(1);
     let cancel = CancellationToken::new();
     *manager.0.lock().unwrap() = Some(Active {
         id: "new".into(),
         cancel: cancel.clone(),
+        finished: CancellationToken::new(),
         confirm: tx,
         status: Status::Connecting,
         payload_sent: false,
     });
-    manager.cancel("old").unwrap();
+    manager.cancel("old").await.unwrap();
     manager.update("old", Status::Complete);
     assert!(!cancel.is_cancelled());
     assert_eq!(
         manager.0.lock().unwrap().as_ref().unwrap().status,
         Status::Connecting
     );
-    manager.cancel("new").unwrap();
+    manager
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .finished
+        .cancel();
+    manager.cancel("new").await.unwrap();
     assert!(cancel.is_cancelled());
     manager.update("new", Status::Complete);
     assert!(manager.0.lock().unwrap().is_none());
 }
 
-#[test]
-fn window_reload_or_destruction_cancels_the_live_attempt() {
+#[tokio::test]
+async fn window_reload_or_destruction_cancels_the_live_attempt() {
     let manager = Pairing::default();
     let (tx, _) = mpsc::channel(1);
     let cancel = CancellationToken::new();
     *manager.0.lock().unwrap() = Some(Active {
         id: "live".into(),
         cancel: cancel.clone(),
+        finished: CancellationToken::new(),
         confirm: tx,
         status: Status::Connecting,
         payload_sent: false,
@@ -284,6 +295,7 @@ fn transport_failure_is_uncertain_after_publication_but_phone_rejection_is_defin
     *manager.0.lock().unwrap() = Some(Active {
         id: "live".into(),
         cancel: CancellationToken::new(),
+        finished: CancellationToken::new(),
         confirm: tx,
         status: Status::Transferring,
         payload_sent: false,
@@ -303,4 +315,240 @@ fn transport_failure_is_uncertain_after_publication_but_phone_rejection_is_defin
     );
     manager.fail("live", error.clone(), false);
     assert_eq!(manager.0.lock().unwrap().as_ref().unwrap().status, error);
+}
+
+#[test]
+fn mismatched_legacy_code_sends_user_denied_without_exporting() {
+    let (session, qr) = PairingSession::new_source("wss://relay.test".into());
+    let (mut phone, offer) = PairingSession::new_target(&qr).unwrap();
+    let mut exchange = Exchange {
+        session,
+        payload: Some(Zeroizing::new("fixture".into())),
+        code_entry: false,
+    };
+    exchange.receive(&offer).unwrap();
+    let event = exchange
+        .session
+        .abort(AbortReason::UserDenied)
+        .unwrap()
+        .expect("legacy peer is known");
+    assert_eq!(phone.handle_abort(&event).unwrap(), AbortReason::UserDenied);
+    assert_eq!(exchange.session.state(), SessionState::Aborted);
+    assert!(
+        exchange.payload.is_some(),
+        "denial must not release the identity"
+    );
+    assert!(exchange.confirm().is_err());
+    let (mut code_entry, _, _, _) = entry();
+    assert!(code_entry
+        .session
+        .abort(AbortReason::UserDenied)
+        .unwrap()
+        .is_some());
+    assert_eq!(code_entry.session.state(), SessionState::Aborted);
+    assert!(code_entry.payload.is_some());
+}
+
+// Exercise the actual post-setup owner, not just PairingSession::abort.
+async fn local_sockets() -> (
+    relay::Socket,
+    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        tokio_tungstenite::accept_async(listener.accept().await.unwrap().0)
+            .await
+            .unwrap()
+    });
+    let (client, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
+        .await
+        .unwrap();
+    (client, server.await.unwrap())
+}
+
+#[tokio::test]
+async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardown() {
+    use futures_util::StreamExt;
+    let (exchange, target, _, _) = entry();
+    let (mut socket, mut server) = local_sockets().await;
+    let (tx, mut rx) = mpsc::channel(1);
+    let manager = Pairing::default();
+    let cancel = CancellationToken::new();
+    let finished = CancellationToken::new();
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: cancel.clone(),
+        finished: finished.clone(),
+        confirm: tx,
+        status: Status::Code {
+            code: "000000".into(),
+            code_entry: true,
+        },
+        payload_sent: false,
+    });
+    let owner = manager.clone();
+    let task = tokio::spawn(async move {
+        let mut exchange = exchange;
+        let mut auth = relay::Authentication::default();
+        let result = exchange_until_deadline(
+            &owner,
+            "live",
+            &mut exchange,
+            &mut socket,
+            &url::Url::parse("wss://relay.test").unwrap(),
+            vec![],
+            &mut auth,
+            &mut rx,
+            &cancel,
+            tokio::time::Instant::now() + Duration::from_secs(120),
+        )
+        .await;
+        finished.cancel();
+        result
+    });
+    manager.cancel("live").await.unwrap();
+    assert!(task.is_finished(), "cancel returned before owner teardown");
+    assert!(task.await.unwrap().is_ok());
+    let frame = tokio::time::timeout(Duration::from_secs(2), server.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+    assert_eq!(json[0], "EVENT");
+    let event = Event::from_json(json[1].to_string()).unwrap();
+    let plaintext =
+        nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
+            .unwrap();
+    assert!(matches!(
+        serde_json::from_str::<PairingMessage>(&plaintext).unwrap(),
+        PairingMessage::Abort {
+            reason: AbortReason::UserDenied
+        }
+    ));
+}
+
+#[tokio::test]
+async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone() {
+    use futures_util::{SinkExt, StreamExt};
+    let (exchange, target, _, code) = entry();
+    let request = submission(&exchange, &target, &code, 1);
+    let (socket, mut server) = local_sockets().await;
+    let (_tx, mut rx) = mpsc::channel(1);
+    let cancel = CancellationToken::new();
+    let owner_cancel = cancel.clone();
+    let task = tokio::spawn(async move {
+        let mut exchange = exchange;
+        let mut socket = socket;
+        let mut auth = relay::Authentication::default();
+        exchange_until_deadline(
+            &Pairing::default(),
+            "live",
+            &mut exchange,
+            &mut socket,
+            &url::Url::parse("wss://relay.test").unwrap(),
+            vec![],
+            &mut auth,
+            &mut rx,
+            &owner_cancel,
+            tokio::time::Instant::now() + Duration::from_secs(120),
+        )
+        .await
+    });
+    server
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!(["EVENT", "pair", request])
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let mut messages = vec![];
+    for _ in 0..2 {
+        let frame = tokio::time::timeout(Duration::from_secs(2), server.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        assert_eq!(json[0], "EVENT");
+        let event = Event::from_json(json[1].to_string()).unwrap();
+        let plaintext =
+            nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
+                .unwrap();
+        messages.push(serde_json::from_str::<PairingMessage>(&plaintext).unwrap());
+    }
+    assert!(matches!(messages[1], PairingMessage::Payload { .. }));
+    cancel.cancel();
+    assert!(task.await.unwrap().is_ok());
+    assert!(
+        !matches!(
+            server.next().await,
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(_)))
+        ),
+        "post-publication abort was sent"
+    );
+}
+
+#[tokio::test]
+async fn native_deadline_expires_without_a_peer_or_an_abort() {
+    use futures_util::StreamExt;
+    let (mut exchange, _, _, _) = entry();
+    let (mut socket, mut server) = local_sockets().await;
+    let (_tx, mut rx) = mpsc::channel(1);
+    let mut auth = relay::Authentication::default();
+    let result = exchange_until_deadline(
+        &Pairing::default(),
+        "live",
+        &mut exchange,
+        &mut socket,
+        &url::Url::parse("wss://relay.test").unwrap(),
+        vec![],
+        &mut auth,
+        &mut rx,
+        &CancellationToken::new(),
+        tokio::time::Instant::now(),
+    )
+    .await;
+    assert!(matches!(result, Err(Failure::Expired)));
+    drop(socket);
+    assert!(!matches!(
+        server.next().await,
+        Some(Ok(tokio_tungstenite::tungstenite::Message::Text(_)))
+    ));
+}
+
+#[test]
+fn denial_keeps_native_code_until_abort_has_finished() {
+    let manager = Pairing::default();
+    let (tx, mut rx) = mpsc::channel(1);
+    *manager.0.lock().unwrap() = Some(Active {
+        id: "live".into(),
+        cancel: CancellationToken::new(),
+        finished: CancellationToken::new(),
+        confirm: tx,
+        status: Status::Code {
+            code: "123456".into(),
+            code_entry: false,
+        },
+        payload_sent: false,
+    });
+    decide(&manager, "live", Decision::Deny).unwrap();
+    assert!(matches!(rx.try_recv(), Ok(Decision::Deny)));
+    assert!(matches!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Code { .. }
+    ));
+    manager.fail(
+        "live",
+        Status::Error {
+            message: "Pairing was canceled.".into(),
+        },
+        false,
+    );
+    assert!(matches!(
+        manager.0.lock().unwrap().as_ref().unwrap().status,
+        Status::Error { .. }
+    ));
 }

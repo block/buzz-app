@@ -2,7 +2,7 @@ mod identity;
 mod qr;
 mod relay;
 
-use buzz_pairing::{PairingSession, PayloadType, SessionState};
+use buzz_pairing::{AbortReason, PairingSession, PayloadType, SessionState};
 use futures_util::FutureExt;
 use nostr_pairing::Event;
 use serde::Serialize;
@@ -35,10 +35,16 @@ pub enum Status {
     },
     Cancelled,
 }
+#[derive(Clone, Copy)]
+enum Decision {
+    Confirm,
+    Deny,
+}
 struct Active {
     id: String,
     cancel: CancellationToken,
-    confirm: mpsc::Sender<()>,
+    confirm: mpsc::Sender<Decision>,
+    finished: CancellationToken,
     status: Status,
     payload_sent: bool,
 }
@@ -87,15 +93,25 @@ impl Pairing {
         }
     }
 
-    fn cancel(&self, id: &str) -> Result<(), String> {
-        let mut active = self
-            .0
-            .lock()
-            .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
-        if active.as_ref().is_some_and(|a| a.id == id) {
-            if let Some(old) = active.take() {
-                old.cancel.cancel();
+    async fn cancel(&self, id: &str) -> Result<(), String> {
+        let finished = {
+            let mut active = self
+                .0
+                .lock()
+                .map_err(|_| "Pairing is unavailable. Restart Buzz.")?;
+            if active.as_ref().is_some_and(|a| a.id == id) {
+                active.take().map(|old| {
+                    old.cancel.cancel();
+                    old.finished
+                })
+            } else {
+                None
             }
+        };
+        if let Some(finished) = finished {
+            tokio::time::timeout(Duration::from_secs(3), finished.cancelled())
+                .await
+                .map_err(|_| "Couldn’t cancel pairing. Close this window before trying again.")?;
         }
         Ok(())
     }
@@ -120,11 +136,10 @@ pub fn pairing_status(pairing: tauri::State<'_, Pairing>, id: String) -> Result<
         .unwrap_or(Status::Cancelled))
 }
 #[tauri::command]
-pub fn pairing_cancel(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
-    pairing.cancel(&id)
+pub async fn pairing_cancel(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
+    pairing.cancel(&id).await
 }
-#[tauri::command]
-pub fn pairing_confirm(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
+fn decide(pairing: &Pairing, id: &str, decision: Decision) -> Result<(), String> {
     let mut active = pairing
         .0
         .lock()
@@ -141,13 +156,25 @@ pub fn pairing_confirm(pairing: tauri::State<'_, Pairing>, id: String) -> Result
                     }
                 )
         })
-        .ok_or("This confirmation is no longer available.")?;
+        .ok_or("This comparison is no longer available.")?;
     active
         .confirm
-        .try_send(())
-        .map_err(|_| "Confirmation is already in progress.")?;
-    active.status = Status::Transferring;
+        .try_send(decision)
+        .map_err(|_| "A pairing decision is already in progress.")?;
+    // Keep Code visible to the native owner until the bounded denial finishes.
+    // The client holds its own "cancelling" display state while polling for the result.
+    if matches!(decision, Decision::Confirm) {
+        active.status = Status::Transferring;
+    }
     Ok(())
+}
+#[tauri::command]
+pub fn pairing_confirm(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
+    decide(&pairing, &id, Decision::Confirm)
+}
+#[tauri::command]
+pub fn pairing_deny(pairing: tauri::State<'_, Pairing>, id: String) -> Result<(), String> {
+    decide(&pairing, &id, Decision::Deny)
 }
 #[tauri::command]
 pub fn pairing_start(
@@ -166,6 +193,7 @@ pub fn pairing_start(
     let origin = relay::community(&community)?;
     let (tx, rx) = mpsc::channel(1);
     let cancel = CancellationToken::new();
+    let finished = CancellationToken::new();
     {
         let mut active = pairing
             .0
@@ -177,6 +205,7 @@ pub fn pairing_start(
         *active = Some(Active {
             id: id.clone(),
             cancel: cancel.clone(),
+            finished: finished.clone(),
             confirm: tx,
             status: Status::Connecting,
             payload_sent: false,
@@ -185,26 +214,26 @@ pub fn pairing_start(
     let host = host.inner().clone();
     let pairing = pairing.inner().clone();
     tauri::async_runtime::spawn(async move {
-        let result = tokio::select! {
-            biased;
-            _=cancel.cancelled()=>return,
-            result=tokio::time::timeout(Duration::from_secs(120), guard(run(&pairing,&host,&id,viewer,origin,rx)))=>result,
-        };
+        let result = guard(run(&pairing, &host, &id, viewer, origin, rx, &cancel)).await;
         match result {
-            Ok(Ok(())) => pairing.update(&id, Status::Complete),
-            Ok(Err(failure)) => {
+            Ok(()) => pairing.update(&id, Status::Complete),
+            Err(Failure::Expired) => pairing.expire(&id),
+            Err(failure) => {
                 let ambiguous = matches!(failure, Failure::Transport(_));
-                let (Failure::Transport(message) | Failure::Rejected(message)) = failure;
+                let (Failure::Transport(message) | Failure::Rejected(message)) = failure else {
+                    unreachable!()
+                };
                 pairing.fail(&id, Status::Error { message }, ambiguous);
             }
-            Err(_) => pairing.expire(&id),
         }
+        finished.cancel();
     });
     Ok(())
 }
 
 #[derive(Debug)]
 enum Failure {
+    Expired,
     Transport(String),
     Rejected(String),
 }
@@ -236,44 +265,130 @@ async fn run(
     id: &str,
     viewer: String,
     origin: url::Url,
-    mut confirm: mpsc::Receiver<()>,
+    mut confirm: mpsc::Receiver<Decision>,
+    cancel: &CancellationToken,
 ) -> Result<(), Failure> {
     let origin_string = origin.as_str().trim_end_matches('/').to_string();
-    let payload = identity::prepare(host, viewer, origin_string).await?;
-    let relay_url = relay::discover(&origin).await?;
-    let (session, qr) = PairingSession::new_source(relay_url.to_string());
-    let mut exchange = Exchange {
-        session,
-        payload: Some(payload),
-        code_entry: false,
+    let payload = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Ok(()),
+        result = identity::prepare(host, viewer, origin_string) => result?,
     };
-    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(256 * 1024))
-        .max_frame_size(Some(256 * 1024));
-    let (mut socket, _) = tokio_tungstenite::connect_async_tls_with_config(
-        relay_url.as_str(),
-        Some(config),
-        false,
-        Some(relay::tls_connector()?),
+    let setup = async {
+        let relay_url = relay::discover(&origin).await?;
+        let (session, qr) = PairingSession::new_source(relay_url.to_string());
+        let mut socket = relay::connect(&relay_url, Duration::from_secs(10)).await?;
+        let (pending, auth) = relay::subscribe(&mut socket, &session, &relay_url).await?;
+        let uri = Zeroizing::new(buzz_pairing::qr::encode_qr(&qr));
+        let svg = qr::render(&uri)?;
+        Ok::<_, Failure>((
+            Exchange {
+                session,
+                payload: Some(payload),
+                code_entry: false,
+            },
+            socket,
+            relay_url,
+            pending,
+            auth,
+            svg,
+        ))
+    };
+    let (mut exchange, mut socket, relay_url, pending, mut auth, svg) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Ok(()),
+        result = tokio::time::timeout(Duration::from_secs(35), setup) =>
+            result.map_err(|_| Failure::Transport("Pairing setup timed out. Check your connection and try again.".into()))??,
+    };
+    // The protocol clock and visible QR start together, after setup has finished.
+    exchange.session.start_source_lifetime();
+    let deadline = tokio::time::Instant::from_std(exchange.session.deadline());
+    pairing.update(id, Status::Qr { svg });
+    exchange_until_deadline(
+        pairing,
+        id,
+        &mut exchange,
+        &mut socket,
+        &relay_url,
+        pending,
+        &mut auth,
+        &mut confirm,
+        cancel,
+        deadline,
     )
     .await
-    .map_err(|_| "Couldn’t connect for pairing. Check your connection and try again.")?;
-    let (pending, mut auth) = relay::subscribe(&mut socket, &exchange.session, &relay_url).await?;
-    let uri = Zeroizing::new(buzz_pairing::qr::encode_qr(&qr));
-    let svg = qr::render(&uri)?;
-    pairing.update(id, Status::Qr { svg });
+}
+
+async fn exchange_until_deadline(
+    pairing: &Pairing,
+    id: &str,
+    exchange: &mut Exchange,
+    socket: &mut relay::Socket,
+    relay_url: &url::Url,
+    pending: Vec<Event>,
+    auth: &mut relay::Authentication,
+    confirm: &mut mpsc::Receiver<Decision>,
+    cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
+) -> Result<(), Failure> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // Once transfer construction has consumed the payload, publication may
+            // already have reached the phone. An abort would interrupt its import.
+            if exchange.payload.is_some() {
+                abort(exchange, socket).await;
+            }
+            Ok(())
+        }
+        _ = tokio::time::sleep_until(deadline) => Err(Failure::Expired),
+        result = exchange_loop(pairing, id, exchange, socket, relay_url, pending, auth, confirm) => result,
+    }
+}
+
+// The same bounded best-effort notification serves explicit rejection and teardown.
+async fn abort(exchange: &mut Exchange, socket: &mut relay::Socket) {
+    if let Ok(Some(event)) = exchange.session.abort(AbortReason::UserDenied) {
+        let _ = tokio::time::timeout(Duration::from_secs(2), relay::send(socket, &event)).await;
+    }
+}
+
+async fn exchange_loop(
+    pairing: &Pairing,
+    id: &str,
+    exchange: &mut Exchange,
+    socket: &mut relay::Socket,
+    relay_url: &url::Url,
+    pending: Vec<Event>,
+    auth: &mut relay::Authentication,
+    confirm: &mut mpsc::Receiver<Decision>,
+) -> Result<(), Failure> {
     let mut pending = std::collections::VecDeque::from(pending);
     loop {
         let output = if let Some(event) = pending.pop_front() {
             exchange.receive(&event).map_err(Failure::Rejected)?
         } else {
-            tokio::select! {
-                Some(())=confirm.recv()=>exchange.confirm().map_err(Failure::Rejected)?,
-                message=relay::next(&mut socket)=>{
-                    let message=message?;
-                    if auth.handle(&mut socket, &exchange.session, &relay_url, &message).await? {continue;}
-                    if let Some(event)=relay::event(&message) {exchange.receive(&event).map_err(Failure::Rejected)?} else {continue;}
-                }
+            loop {
+                let output = tokio::select! {
+                    Some(decision) = confirm.recv() => match decision {
+                        Decision::Confirm => exchange.confirm().map_err(Failure::Rejected)?,
+                        Decision::Deny => {
+                            if exchange.code_entry || exchange.session.state() != SessionState::Confirming {
+                                return Err(Failure::Rejected("This comparison is no longer available.".into()));
+                            }
+                            abort(exchange, socket).await;
+                            return Err(Failure::Rejected("Pairing was canceled.".into()));
+                        }
+                    },
+                    message = relay::next(socket) => {
+                        let message = message?;
+                        if auth.handle(socket, &exchange.session, relay_url, &message).await? { continue; }
+                        if let Some(event) = relay::event(&message) {
+                            exchange.receive(&event).map_err(Failure::Rejected)?
+                        } else { continue; }
+                    }
+                };
+                break output;
             }
         };
         let payload_index = output.events.len().checked_sub(1);
@@ -283,7 +398,7 @@ async fn run(
                 // that the phone did not receive and import this payload.
                 pairing.mark_payload_sent(id);
             }
-            relay::send(&mut socket, &event).await?;
+            relay::send(socket, &event).await?;
             auth.unacknowledged.push(event);
         }
         if let Some(status) = output.status {
@@ -297,6 +412,7 @@ async fn run(
         }
     }
 }
+
 struct Exchange {
     session: PairingSession,
     payload: Option<Zeroizing<String>>,

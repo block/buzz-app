@@ -47,7 +47,7 @@ use super::qr::{self, QrPayload};
 use super::types::{AbortReason, PairingMessage, PayloadType};
 use super::PairingError;
 
-/// Default session timeout: 120 seconds from creation.
+/// Default session timeout: 120 seconds from QR display for sources.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// NIP-AB event kind (from the kind registry).
@@ -548,6 +548,15 @@ impl PairingSession {
             }
             other => Err(unexpected("abort", &other)),
         }
+    }
+
+    /// Start the source lifetime only when its QR is ready to be shown. The
+    /// transport may spend time connecting and subscribing before this point.
+    /// Buffered offers have not been processed yet, so the session is still waiting.
+    pub fn start_source_lifetime(&mut self) {
+        assert_eq!(self.role, Role::Source);
+        assert_eq!(self.state, SessionState::Waiting);
+        self.created_at = Instant::now();
     }
 
     /// Absolute protocol deadline. Transports must use this same deadline for
@@ -1474,3 +1483,20 @@ mod code_entry_tests;
 
 #[path = "session_desktop_code.rs"]
 mod desktop_code;
+
+#[cfg(test)]
+mod display_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn source_expiry_begins_at_display_even_after_setup_delay() {
+        let (mut source, _) = PairingSession::new_source("wss://relay.test".into());
+        source.created_at -= Duration::from_secs(35);
+        assert!(source.deadline() <= Instant::now() + Duration::from_secs(85));
+        source.start_source_lifetime();
+        let remaining = source.deadline().duration_since(Instant::now());
+        assert!(remaining <= DEFAULT_TIMEOUT);
+        assert!(remaining > DEFAULT_TIMEOUT - Duration::from_secs(1));
+        assert!(!source.is_expired());
+    }
+}

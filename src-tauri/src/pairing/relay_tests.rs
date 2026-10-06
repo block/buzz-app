@@ -110,3 +110,17 @@ async fn late_auth_uses_ephemeral_key_and_retries_only_unacknowledged_events() {
     .unwrap();
     assert!(auth.unacknowledged.is_empty());
 }
+
+#[tokio::test]
+async fn stalled_connection_has_a_retryable_transport_timeout() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_socket, _) = listener.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let relay = Url::parse(&format!("ws://{address}")).unwrap();
+    let result = connect(&relay, std::time::Duration::from_millis(50)).await;
+    assert!(result.unwrap_err().contains("connection timed out"));
+    server.abort();
+}

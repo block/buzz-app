@@ -20,20 +20,27 @@ new plugin security sandbox. The frontend CSP is unchanged.
    from the current app identity. The user supplies a community address.
 2. Opening Pair mobile automatically verifies the public identity against the
    saved native account, opens a dedicated pairing socket, and waits for subscription
-   readiness before showing the QR. Each attempt expires after two minutes and
-   automatically renews while the section remains open. Connection failures show
+   readiness before showing the QR. Each visible QR expires two minutes after
+   display and automatically renews while the section remains open. Connection failures show
    **Try again** instead of retrying indefinitely.
 3. A compatible phone advertises encrypted `desktop-code-v1` support. Desktop
    generates a separate random six-digit code that is never sent in the QR or
    challenge. The phone submits the entered code; desktop verifies it with a
    five-attempt budget before sending the encrypted account payload.
-4. Older phones retain explicit **Codes match** confirmation. Desktop never uses
-   that action to bypass a code-entry phone's proof.
+4. Older phones retain explicit **Codes match** confirmation and a **Cancel**
+   action; Cancel sends `user_denied` before disposing the session. Code-entry
+   phones also have Cancel, but no desktop
+   confirmation action.
 5. **Phone paired** requires the phone's successful import acknowledgement.
+   Older phone versions acknowledge before import; update the phone to rely on
+   this guarantee.
    If a sent transfer times out or loses its connection awaiting acknowledgement, **Check your phone**
    preserves the uncertain outcome and requires a deliberate new attempt.
    Closing or reloading the window, leaving the Settings section, switching accounts/communities, disabling the
-   plugin disposes the attempt. Native cancellation remains terminal until an explicit retry
+   plugin disposes the attempt, with a bounded best-effort `user_denied` notice
+   only before transfer publication. After publication, closing the socket cannot
+   retract the account or interrupt the phone's import; the outcome remains
+   uncertain. Native cancellation remains terminal until an explicit retry
    or reopening the pairing section. Retries use a fresh native session.
 
 Pairing uses the current native app identity through a purpose-bound

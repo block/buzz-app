@@ -7,6 +7,7 @@
     "allow-pairing-start",
     "allow-pairing-status",
     "allow-pairing-confirm",
+    "allow-pairing-deny",
     "allow-pairing-cancel",
     "allow-identity-restore",
     "allow-identity-import",

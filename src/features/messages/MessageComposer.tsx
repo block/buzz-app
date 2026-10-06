@@ -523,7 +523,7 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
-  const reconcileDraft = useEffectEvent(() => {
+  const reconcileDraft = useEffectEvent((restored?: MentionDraft) => {
     if (submission || editing.target || writing.current) return;
     if (accepted) {
       // The recovered revision can precede attachment adoption. The explicit
@@ -538,7 +538,19 @@ function Composer({
     }
     const current = viewRevision(scope, draftKey);
     if (current === undefined || current === revision.current) return;
-    if (dirty.current || sendAttempt.current) setConflict(true);
+    // An explicit successful recovery may replace only the cleared follow-up,
+    // never a meaningful unsaved edit. Ordinary external revisions keep their
+    // conflict behavior.
+    if (
+      restored &&
+      current === JSON.stringify(restored) &&
+      !valueRef.current.text.trim() &&
+      !valueRef.current.recipients.length &&
+      !composerMarkdown(valueRef.current).trim() &&
+      !sendAttempt.current
+    )
+      loadSaved(current);
+    else if (dirty.current || sendAttempt.current) setConflict(true);
     else loadSaved(current);
   });
   const editingDraft = !!editing.target;
@@ -550,16 +562,11 @@ function Composer({
     reconcileDraft();
     return stop;
   }, [scope, submission, editingDraft]);
-  const reconcileRecovery = useEffectEvent((restored: MentionDraft) => {
-    if (!live.current) return;
-    const current = viewRevision(scope, draftKey);
-    if (current === JSON.stringify(restored)) {
-      setAccepted(undefined);
-      loadSaved(current);
-    }
-  });
   useEffect(
-    () => subscribeRecovery(session, recoveryKey, reconcileRecovery),
+    () =>
+      subscribeRecovery(session, recoveryKey, (restored) =>
+        reconcileDraft(restored),
+      ),
     [session, recoveryKey],
   );
   function resolveDraft(keep: boolean) {

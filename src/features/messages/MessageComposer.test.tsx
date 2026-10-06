@@ -910,6 +910,7 @@ async function mountUploadComposer(
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
+    editable?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -962,7 +963,7 @@ async function mountUploadComposer(
                 : [],
         );
       },
-      writer: { kinds: [9], sign, publish },
+      writer: { kinds: options.editable ? [9, 40003, 5] : [9], sign, publish },
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
@@ -1342,6 +1343,44 @@ it("retains a remounted later edit conflict until clearing it and explicitly ret
   expect(
     screen.queryByRole("button", { name: "Retry failed send recovery" }),
   ).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("does not replace an active message edit when a remounted upload recovers", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const replacement = within(again.container).getByRole("textbox");
+  fireEvent.keyDown(replacement, { key: "ArrowUp" });
+  expect(replacement).toHaveAccessibleName("Edit message");
+  expect(replacement).toHaveValue("Original message");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(replacement).toHaveAccessibleName("Edit message");
+  expect(replacement).toHaveValue("Original message");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "original caption",
+  });
+  fireEvent.click(
+    within(again.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  await waitFor(() => expect(replacement).toHaveValue("original caption"));
+  expect(within(again.container).getByText("original.txt")).toBeVisible();
   expect(h.publish).not.toHaveBeenCalled();
 });
 

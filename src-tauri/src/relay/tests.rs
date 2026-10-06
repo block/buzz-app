@@ -170,6 +170,7 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
     let body = r#"[{"kinds":[0],"limit":5}]"#;
     let result = send(
         &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
         url.clone(),
         "POST",
         Some(body.into()),
@@ -221,6 +222,7 @@ async fn memory_response_limit_rejects_before_generic_transport_budget() {
     let (url, task) = fixture_server(response);
     let result = send(
         &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
         url,
         "POST",
         Some("[]".into()),
@@ -392,6 +394,7 @@ fn isolated_agent_ipc_probe() {
     use tauri::Manager;
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
         .manage(Uploads::default())
         .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
@@ -689,6 +692,7 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -824,6 +828,7 @@ async fn workflow_get_is_authenticated_without_payload_and_never_redirects() {
     url.set_query(Some("limit=20"));
     let response = send(
         &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
         url.clone(),
         "GET",
         None,
@@ -934,6 +939,7 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -993,6 +999,7 @@ fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1050,6 +1057,7 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(crate::nip_fi_assertion::RelayAssertions::without_discovery())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1819,6 +1827,7 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
     let response = fetch_media(
         &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
         url.clone(),
         Some("bytes=0-3".into()),
     )
@@ -1846,9 +1855,14 @@ async fn media_proxy_passes_relay_denials_through_without_a_body() {
     );
     let url = base.join(&format!("/media/{}", "b".repeat(64))).unwrap();
     assert_eq!(
-        fetch_media(&IdentityHost::fixture(), url, None)
-            .await
-            .unwrap_err(),
+        fetch_media(
+            &IdentityHost::fixture(),
+            &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
+            url,
+            None
+        )
+        .await
+        .unwrap_err(),
         401
     );
     task.join().unwrap();
@@ -1865,6 +1879,7 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     let hash = format!("{:x}", Sha256::digest(&body));
     let result = upload(
         &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
         url.clone(),
         Some("image/png"),
         body.clone(),
@@ -1885,9 +1900,15 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
     assert_strict(&event, "upload", server);
     assert_eq!(tag(&event, "x"), [hash.as_str()]);
-    assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
-        .await
-        .is_err());
+    assert!(upload(
+        &IdentityHost::fixture(),
+        &crate::nip_fi_assertion::RelayAssertions::without_discovery(),
+        url,
+        None,
+        Vec::new()
+    )
+    .await
+    .is_err());
 }
 
 #[test]

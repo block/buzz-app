@@ -1,4 +1,9 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke as tauriInvoke } from "@tauri-apps/api/core";
+import {
+  enterpriseLoginMark,
+  noteEnterpriseDenial,
+} from "./enterprise-sign-in";
+import { nativeRelaySocket } from "./native-socket";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import {
@@ -60,6 +65,17 @@ import {
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
 import { readApiFailure } from "./http-admission";
+
+/** Every native relay command; a lost enterprise session returns the person to sign-in. */
+async function invoke<T>(...args: Parameters<typeof tauriInvoke>) {
+  const mark = enterpriseLoginMark();
+  try {
+    return await tauriInvoke<T>(...args);
+  } catch (error) {
+    noteEnterpriseDenial(error, mark);
+    throw error;
+  }
+}
 
 async function nativeReadInvoke<T>(
   command: string,
@@ -290,6 +306,7 @@ export async function connectNativeTransport(
     nativeRelaySigner(origin),
     origin,
     author,
+    nativeRelaySocket,
   );
   signal?.throwIfAborted();
   const writer = transport.writer;

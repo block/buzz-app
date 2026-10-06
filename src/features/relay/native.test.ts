@@ -19,6 +19,7 @@ import { createRelaySession } from "./session";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: class {},
   isTauri: () => true,
   convertFileSrc: (path: string, protocol: string) =>
     `${protocol}://localhost/${encodeURIComponent(path)}`,
@@ -71,6 +72,8 @@ beforeEach(() => {
   uploadResponse = () => ({ status: 500, body: "" });
   vi.mocked(invoke).mockImplementation(async (command, args, options) => {
     if (command === "identity_restore") return viewer.pubkey;
+    // Ordinary relays carry no badge and keep the webview socket.
+    if (command === "relay_socket_connect") return null;
     if (command === "relay_sign") {
       expect(
         Object.keys((args as { event: EventTemplate }).event).sort(),
@@ -410,11 +413,18 @@ it("authenticates live traffic with the native signer and verifies incoming chan
   const sockets: Socket[] = [];
   class Socket {
     readyState = 1;
+    opened = false;
+    onopen?: () => void;
     onmessage?: (event: { data: string }) => Promise<void>;
     onclose?: () => void;
     sent: unknown[][] = [];
     constructor(readonly url: string) {
       sockets.push(this);
+      // Native sockets wait for the relay badge lookup before opening.
+      queueMicrotask(() => {
+        this.onopen?.();
+        this.opened = true;
+      });
     }
     send(raw: string) {
       this.sent.push(JSON.parse(raw));
@@ -439,6 +449,7 @@ it("authenticates live traffic with the native signer and verifies incoming chan
   assert.exists(traffic);
   try {
     traffic.update(["channel"]);
+    await vi.waitFor(() => expect(sockets[0]?.opened).toBe(true));
     const socket = sockets[0];
     assert.exists(socket);
     expect(socket.url).toBe("wss://packaged.test");
@@ -1087,11 +1098,18 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
   const sockets: Socket[] = [];
   class Socket {
     readyState = 1;
+    opened = false;
+    onopen?: () => void;
     onmessage?: (event: { data: string }) => Promise<void>;
     onclose?: () => void;
     sent: unknown[][] = [];
     constructor() {
       sockets.push(this);
+      // Native sockets wait for the relay badge lookup before opening.
+      queueMicrotask(() => {
+        this.onopen?.();
+        this.opened = true;
+      });
     }
     send(raw: string) {
       this.sent.push(JSON.parse(raw));
@@ -1141,6 +1159,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
       await socket.receive(["OK", proof.id, true]);
     };
     traffic.observe?.(1);
+    await vi.waitFor(() => expect(sockets[0]?.opened).toBe(true));
     const old = sockets[0];
     assert.exists(old);
     await authenticate(old);
@@ -1165,7 +1184,7 @@ it("discards a pending observer decode after disconnect and reconnect", async ()
     ).toBe(true);
     old.onclose?.();
     vi.useRealTimers();
-    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    await vi.waitFor(() => expect(sockets[1]?.opened).toBe(true));
     const current = sockets[1];
     assert.exists(current);
     await authenticate(current);
@@ -1209,6 +1228,7 @@ it.each([
     const sockets: Socket[] = [];
     class Socket {
       readyState = 1;
+      onopen?: (event: Event) => void;
       onmessage?: (event: { data: string }) => Promise<void>;
       onclose?: () => void;
       sent: unknown[][] = [];
@@ -1221,6 +1241,9 @@ it.each([
       close() {
         this.readyState = 3;
         this.onclose?.();
+      }
+      open() {
+        this.onopen?.(new Event("open"));
       }
       async receive(value: unknown) {
         await this.onmessage?.({ data: JSON.stringify(value) });
@@ -1263,6 +1286,7 @@ it.each([
       );
       const socket = sockets[0];
       assert.exists(socket);
+      socket.open();
       await socket.receive(["AUTH", "nonce"]);
       const proof = socket.sent.find(
         ([kind]) => kind === "AUTH",

@@ -39,6 +39,7 @@ export function AgentControlPanel({
   onCloseTarget,
   onOpenHarnesses,
   headerActions,
+  editorDetails,
 }: {
   headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
@@ -49,6 +50,7 @@ export function AgentControlPanel({
   editTarget?: string | null;
   editRequest?: PageNavigation;
   onCloseTarget?: () => void;
+  editorDetails?: (agent: AgentView) => ReactNode;
   children?: (
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
@@ -463,6 +465,7 @@ export function AgentControlPanel({
           state={state}
           avatar={editTarget ? undefined : selected?.avatar}
           onOpenHarnesses={onOpenHarnesses}
+          details={editorDetails?.(editing)}
           onClose={
             editTarget ? (onCloseTarget ?? (() => {})) : () => setSelected(null)
           }

@@ -41,6 +41,7 @@ import {
 } from "./ManagedAgentActions";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { AgentSessionSettings } from "./AgentSessionSettings";
 
 const noTemplates = {
   subscribe: () => () => {},
@@ -281,6 +282,17 @@ export function AgentsPage({
                   <AgentControlPanel
                     control={control}
                     headerActions={headerActions}
+                    editorDetails={(agent) =>
+                      connection.status === "ready" &&
+                      agent.harness.integration === "codex" &&
+                      sameCommunityAgents([agent], connection.scope ?? "")
+                        .length === 1 ? (
+                        <AgentSessionSettings
+                          agent={agent}
+                          activity={connection.session.agentActivity}
+                        />
+                      ) : undefined
+                    }
                     editTarget={editTarget}
                     onOpenHarnesses={
                       open

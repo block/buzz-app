@@ -442,3 +442,59 @@ it("refilling a full budget with covered marks scans each mark a bounded number 
     activity.filter((key) => kept.state.frontiers[key] !== undefined).length,
   ).toBeGreaterThan(1000);
 });
+it("covered marks hold their share until pruning, so recent message reads keep their space", () => {
+  // Wes's shape at the real publication limit: covered catch-up marks rank
+  // first in their scope, and recent message reads compete for the rest.
+  const hex = (prefix: string, n: number) =>
+    `${prefix}${n.toString(16).padStart(64, "0")}`;
+  const channels = [0, 1, 2].map(
+    (n) => `0000000${n}-0000-4000-8000-000000000000`,
+  );
+  const threads = Array.from({ length: 500 }, (_, n) =>
+    hex("thread-activity:", n),
+  );
+  const messages = Array.from({ length: 500 }, (_, n) => hex("msg:", n));
+  const state = {
+    frontiers: {
+      ...Object.fromEntries(channels.map((key) => [key, 1000])),
+      ...Object.fromEntries(channels.map((key) => [`activity:${key}`, 100])),
+      ...Object.fromEntries(threads.map((key) => [key, 200])),
+      ...Object.fromEntries(messages.map((key) => [key, 100])),
+    },
+    overrides: {},
+  };
+  const recent = {
+    ...Object.fromEntries(channels.map((key) => [`activity:${key}`, 9000])),
+    ...Object.fromEntries(threads.map((key, n) => [key, 1000 + n])),
+    ...Object.fromEntries(messages.map((key, n) => [key, 5000 + n])),
+  };
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) => {
+    const channel = key.startsWith("activity:") ? key.slice(9) : undefined;
+    return channel !== undefined &&
+      (frontier(channel) ?? -1) >= (frontier(key) ?? 0)
+      ? channel
+      : undefined;
+  };
+  const kept = retainRead(
+    [state],
+    recent,
+    "c".repeat(36),
+    READ_STATE_PLAINTEXT_BYTES,
+    covered,
+  );
+  const frontiers = kept.state.frontiers;
+  for (const key of channels) {
+    expect(frontiers[key]).toBe(1000);
+    expect(frontiers[`activity:${key}`]).toBeUndefined();
+    // The dropped catch-up mark gives its recency to its channel.
+    expect(kept.recent[key]).toBe(9000);
+  }
+  // The most recent reads are the ones kept.
+  const keptThreads = threads.filter((key) => frontiers[key] !== undefined);
+  const keptMessages = messages.filter((key) => frontiers[key] !== undefined);
+  expect(keptThreads).toEqual(threads.slice(-348));
+  expect(keptMessages).toEqual(messages.slice(-139));
+});

@@ -119,41 +119,59 @@ export function retainRead(
     (a, b) => scope(a[0]) - scope(b[0]) || byUse(a, b),
   );
   const byRecent = [...frontiers].sort(byUse);
-  // A dropped mark and the kept mark that covered it when it was dropped.
-  const dropped = new Map<string, string>();
-  const keptCover = (key: string, value: number) => {
-    const cover = coveredBy?.(key, (other) =>
-      other === key ? value : retained.get(other),
-    );
-    return cover !== undefined && cover !== key && retained.has(cover)
-      ? cover
-      : undefined;
-  };
-  // A mark that a kept mark already covers is dropped as it comes up, without
-  // taking space, so refilling never admits and then frees the same slot.
-  const admit = (key: string, value: number, share = 1) => {
-    const cover = keptCover(key, value);
-    if (cover !== undefined) {
-      dropped.set(key, cover);
-      return true;
-    }
-    if (!take(frontierKey(key), value, share)) return false;
+  const dropped = new Set<string>();
+  // Each kept mark's coverage answer, and the kept marks that answer read.
+  // A pure `covered` can only answer differently once one of those marks
+  // enters or leaves the kept set, so each round asks again only about
+  // those marks. The rounds and their results stay exactly the same.
+  const coverOf = new Map<string, string | undefined>();
+  const readers = new Map<string, Set<string>>();
+  const keep = (key: string, value: number) => {
     retained.set(key, value);
-    return true;
+    for (const reader of readers.get(key) ?? []) coverOf.delete(reader);
+  };
+  const release = (key: string) => {
+    retained.delete(key);
+    coverOf.delete(key);
+    for (const reader of readers.get(key) ?? []) coverOf.delete(reader);
+  };
+  const keptCover = (key: string, value: number) => {
+    if (coverOf.has(key)) return coverOf.get(key);
+    const read = (other: string) => {
+      const set = readers.get(other) ?? new Set<string>();
+      readers.set(other, set);
+      set.add(key);
+    };
+    const answer = coveredBy?.(key, (other) => {
+      read(other);
+      return other === key ? value : retained.get(other);
+    });
+    if (answer !== undefined) read(answer);
+    const cover =
+      answer !== undefined && answer !== key && retained.has(answer)
+        ? answer
+        : undefined;
+    coverOf.set(key, cover);
+    return cover;
   };
   const select = () => {
     for (const [key, value] of scoped) {
       if (retained.has(key) || dropped.has(key)) continue;
       // Stop at the first broad mark that does not fit, so a narrower mark
       // never takes the share ahead of it.
-      if (!admit(key, value, SCOPED_SHARE)) break;
+      if (!take(frontierKey(key), value, SCOPED_SHARE)) break;
+      keep(key, value);
     }
     for (const [key, value] of byRecent)
-      if (!retained.has(key) && !dropped.has(key)) admit(key, value);
+      if (
+        !retained.has(key) &&
+        !dropped.has(key) &&
+        take(frontierKey(key), value)
+      )
+        keep(key, value);
   };
   select();
-  // A cover admitted after the marks it covers frees them here. Only then can
-  // refilling keep more, so repeat until nothing drops.
+  // Refilling can keep more covered marks, so repeat until nothing drops.
   let pruned = true;
   while (coveredBy && pruned) {
     pruned = false;
@@ -165,29 +183,26 @@ export function retainRead(
       const cover = keptCover(key, value);
       if (cover !== undefined) covers.set(key, cover);
     }
-    for (const [key, cover] of covers) {
-      // Chains end at a kept mark: scopes only get broader along them.
-      let last = cover;
-      for (let hops = 0; covers.has(last) && hops < covers.size; hops++)
-        last = covers.get(last) as string;
-      if (covers.has(last)) continue;
+    // A cover that is itself covered passes the recency on to what replaced it.
+    const final = (key: string) => {
+      let cover = covers.get(key) ?? key;
+      for (let hops = 0; covers.has(cover) && hops < covers.size; hops++)
+        cover = covers.get(cover) as string;
+      return cover;
+    };
+    for (const key of covers.keys()) {
+      const cover = final(key);
+      if (cover === key || covers.has(cover)) continue;
       const value = retained.get(key) as number;
-      retained.delete(key);
-      dropped.set(key, cover);
+      release(key);
+      dropped.add(key);
       pruned = true;
       used -= cost(frontierKey(key), value);
       keys--;
+      if (nextRecent[key] !== undefined)
+        nextRecent[cover] = Math.max(nextRecent[cover] ?? 0, nextRecent[key]);
     }
     if (pruned) select();
-  }
-  // A dropped mark gives its recency to the kept mark at the end of its chain.
-  for (const [key, cover] of dropped) {
-    if (nextRecent[key] === undefined) continue;
-    let last = cover;
-    for (let hops = 0; dropped.has(last) && hops < dropped.size; hops++)
-      last = dropped.get(last) as string;
-    if (retained.has(last))
-      nextRecent[last] = Math.max(nextRecent[last] ?? 0, nextRecent[key]);
   }
   const state = Object.freeze({
     frontiers: Object.freeze(Object.fromEntries(retained)),

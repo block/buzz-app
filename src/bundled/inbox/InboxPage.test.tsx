@@ -1553,6 +1553,40 @@ async function chooseFilter(label: string, control = "Activity type") {
     ),
   );
 }
+it("Mentions uses the mentioned message and excludes ordinary unread thread progress", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await act(async () => {
+    await h.owner.session.unread.markThrough(
+      { kind: "message", channelId: "room", messageId: h.mention.id },
+      h.mention.id,
+    );
+  });
+  const response = message(h.viewer, "room", "My answer", 30, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  const progress = message(h.alice, "room", "Ordinary progress", 31, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  act(() => h.emit([response, progress]));
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("checkbox", { name: "Unread only" }));
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  const fresh = message(h.alice, "room", "Another decision", 32, [
+    ["e", h.mention.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  act(() => h.emit([fresh]));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveTextContent("Another decision");
+});
+
 async function openRowMenu(
   method: "context" | "keyboard" | "contextKey" = "context",
 ) {

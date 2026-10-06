@@ -14,8 +14,12 @@ add-existing membership, Save/recovery and all runner management are out of V1.
 
 ### Implemented compatibility view
 
-- The live development broker reads saved Buzz 1.0 agents from `~/Library/Application Support/dev.local.buzz.foundation/agent-controller/agents.json` (on Linux, `$XDG_DATA_HOME/dev.local.buzz.foundation/agent-controller/agents.json`, defaulting to `~/.local/share`). It projects each saved exact identity, including stopped agents, and safe artwork. Parked legacy import candidates and Classic profiles are excluded; an empty current store stays empty. Missing or invalid storage offers Retry without falling back to Classic. The reader does not write configuration, migrate identities, retrieve agent credentials, or manage processes.
-- The packaged native compatibility/import reader still reads the Classic post-fold library at `xyz.block.buzz.app/agents/managed-agents.json`; native management uses its existing app-owned controller. Explicit legacy input remains supported by the development projection, but the development broker never searches or merges Classic stores.
+- The live development broker (macOS and Linux) and packaged native host read the installed Buzz library at
+  `~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`
+  (on Linux, `$XDG_DATA_HOME/xyz.block.buzz.app/agents/managed-agents.json`,
+  defaulting to `~/.local/share`).
+  It does not search/merge the separate `.dev` library, read agent keys from
+  Keychain, write the file, run migrations, or call old loaders with side effects.
 - Only definition ID/name, identity public key/name/definition link, and optional
   avatar artwork leave the host. Prompts, configuration, credentials and execution receipts are not
   projected. This is local library evidence, **not verified ownership**.
@@ -80,7 +84,8 @@ including authoritative empty/loading/error states without legacy fallback;
 legacy identities only on hosts without native controls. Template refresh never
 waits for an unused legacy inventory. Native process
 status is not selection eligibility; stopped/native-only agents remain selectable.
-`agentLibrary` is the read-only host inventory source: saved Buzz 1.0 agents in the development browser, and the compatibility/import library in the packaged native host. Agents management and the shared display-name resolver keep their own distinct presentation contracts.
+`agentLibrary` remains the old-library compatibility/import source. Agents management
+and the shared display-name resolver keep their own distinct presentation contracts.
 
 Do not build another agent inventory in a plugin. Retain the shared projection only
 while needed; explicit Refresh retries source failures. Retaining choices preserves

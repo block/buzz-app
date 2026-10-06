@@ -1,7 +1,7 @@
 import { avatarSource } from "../src/shared/avatar-source.ts";
-// Read-only display projection of installed Buzz 1.0 agents. Explicit legacy
-// input remains supported for compatibility tests/import readers; never discover
-// Classic stores or call loaders that migrate keys or write configuration.
+// Read-only compatibility with old Buzz's post-fold managed-agents.json.
+// Never call its loaders: load_managed_agents hydrates/migrates keys and
+// load_personas can merge builtins and write back. Project display fields only.
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -19,25 +19,6 @@ function text(value, max = 256) {
   return value;
 }
 export function projectAgentLibrary(raw) {
-  if (!Array.isArray(raw)) {
-    if (
-      raw?.version !== 1 ||
-      !Array.isArray(raw.agents) ||
-      raw.agents.length > MAX_ROWS
-    )
-      throw failure();
-    // Parked identities are import candidates, not saved Buzz 1.0 agents.
-    raw = raw.agents.map((row) => {
-      if (
-        !row ||
-        typeof row !== "object" ||
-        Array.isArray(row) ||
-        !HEX.test(text(row.pubkey, 64))
-      )
-        throw failure();
-      return { pubkey: row.pubkey, name: row.name, avatar_url: row.picture };
-    });
-  }
   if (!Array.isArray(raw) || raw.length > MAX_ROWS) throw failure();
   const definitions = [],
     identities = [];
@@ -91,18 +72,18 @@ export function installedBuzzDataDir(
   home = homedir(),
 ) {
   if (platform === "darwin")
-    return join(home, "Library/Application Support/dev.local.buzz.foundation");
+    return join(home, "Library/Application Support/xyz.block.buzz.app");
   if (platform === "linux") {
     const xdg = env.XDG_DATA_HOME;
     const base = xdg && isAbsolute(xdg) ? xdg : join(home, ".local/share");
-    return join(base, "dev.local.buzz.foundation");
+    return join(base, "xyz.block.buzz.app");
   }
   return undefined;
 }
 export async function readAgentLibrary(
   path = (() => {
     const dir = installedBuzzDataDir();
-    return dir ? join(dir, "agent-controller/agents.json") : undefined;
+    return dir ? join(dir, "agents/managed-agents.json") : undefined;
   })(),
 ) {
   if (!path) throw failure();

@@ -322,7 +322,8 @@ it("starts sharing the selected model through the existing community lease", asy
 });
 
 it.each([
-  ["starting", "Starting /models/local.gguf…", true],
+  // Off can cancel a serve that is still starting, e.g. a long download.
+  ["starting", "Starting /models/local.gguf…", false],
   ["ready", "Preparing /models/local.gguf", false],
   ["failed", "Mesh needs recovery. Load failed.", false],
 ] as const)(
@@ -809,6 +810,38 @@ it("unsupported native builds report unavailable without invoking missing select
   ).toBe(true);
   expect(Component).toBeDefined();
 });
+
+it.each([
+  ["starting", "Sharing is off. Connecting to community compute…", false],
+  ["stopping", "Stopping…", true],
+] as const)(
+  "a consumer that is %s never freezes Share; only a shutdown waits",
+  async (phase, label, disabled) => {
+    native.invoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "mesh_compute_select"
+          ? "share-lease"
+          : { available: true, lifecycle: { state: phase }, sharing: null },
+      ),
+    );
+    mountSharing();
+    await screen.findByText(label);
+    const share = screen.getByRole("switch", { name: "Share this machine" });
+    if (disabled) {
+      expect(share).toHaveAttribute("aria-disabled", "true");
+      return;
+    }
+    // A join that never settles must not lock the member out of sharing.
+    expect(share).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(share);
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith(
+        "mesh_compute_share",
+        expect.objectContaining({ lease: "share-lease", auto: true }),
+      ),
+    );
+  },
+);
 
 function mountSharing() {
   const snapshot = {

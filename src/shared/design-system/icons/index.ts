@@ -367,3 +367,7 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
 
 import TablerCpuIcon from "@tabler/icons-react/dist/esm/icons/IconCpu.mjs";
 export const CpuIcon = defineIcon("tabler", TablerCpuIcon);
+import TablerHexagonIcon from "@tabler/icons-react/dist/esm/icons/IconHexagon.mjs";
+export const HexagonIcon = defineIcon("tabler", TablerHexagonIcon);
+import TablerHexagonFilledIcon from "@tabler/icons-react/dist/esm/icons/IconHexagonFilled.mjs";
+export const HexagonFilledIcon = defineIcon("tabler", TablerHexagonFilledIcon);

@@ -20,5 +20,134 @@
 .metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-section-gap);
+  margin: 0;
+  row-gap: var(--space-row-gap);
+  column-gap: var(--space-section-gap);
+}
+
+.sharingHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-control-inset);
+}
+
+/* Sharing status hexagon from block/buzz MeshComputeSettingsCard. */
+.hex {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--text-secondary);
+}
+
+.hex[data-state="working"] {
+  color: var(--text-primary);
+}
+
+.hex[data-state="sharing"] {
+  color: var(--text-success);
+}
+
+.hexPing {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  opacity: 0.3;
+  animation: hex-ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.hexTrack {
+  fill: none;
+  stroke: currentColor;
+  opacity: 0.2;
+}
+
+.hexTrace {
+  fill: none;
+  stroke: currentColor;
+  animation: hex-trace 1.1s linear infinite;
+}
+
+@keyframes hex-ping {
+  75%,
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@keyframes hex-trace {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+.fit[data-fit="comfortable"] {
+  color: var(--text-success);
+}
+
+.fit[data-fit="tight"],
+.fit[data-fit="tradeoff"] {
+  color: var(--text-warning);
+}
+
+.fit[data-fit="too_large"] {
+  color: var(--text-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hexPing,
+  .hexTrace {
+    animation: none;
+    transition: none;
+  }
+}
+
+.devices,
+.presets {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-panel);
+}
+
+.device,
+.preset {
+  display: flex;
+  align-items: center;
+  gap: var(--space-control-inset);
+  padding: var(--space-row-gap) var(--space-control-inset);
+}
+
+.device + .device,
+.preset + .preset {
+  border-top: 1px solid var(--border-standard);
+}
+
+.deviceBody,
+.presetBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.deviceMemory {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.presetIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border-radius: var(--radius-control);
 }

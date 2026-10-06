@@ -9,6 +9,7 @@ import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
+import { ShareHex, type ShareHexState } from "./ShareHex";
 import styles from "./Compute.module.css";
 
 type MeshStatus = {
@@ -342,6 +343,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const phase = status?.lifecycle?.state;
     // Saved consent and live intent, not runtime health.
     const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
+    // Serving proof, not consent: only a ready runtime with a loaded model glows.
+    const preparing =
+      phase === "ready" && status?.sharing && !status.modelReady;
+    const hexState: ShareHexState =
+      phase === "ready" && status?.sharing && status.modelReady
+        ? "sharing"
+        : busy || phase === "starting" || phase === "stopping" || preparing
+          ? "working"
+          : "idle";
     useEffect(() => {
       if (
         busy ||
@@ -420,19 +430,30 @@ export const apply: PluginModule["apply"] = (ctx) => {
         )}
         {isTauri() && status?.available && !otherCommunity && (
           <section aria-label="Share compute" className={styles.sharing}>
-            <h2 className="text-body">Share your compute</h2>
-            <p className="text-body-sm text-secondary">
-              Let {community?.name ?? "this community"} run prompts on this
-              machine. Auto picks the best model for your hardware; Advanced
-              lets you choose. Sharing resumes when you reopen Buzz.
-            </p>
+            <div className={styles.sharingHeader}>
+              <ShareHex state={hexState} />
+              <div>
+                <h2 className="m-0 text-body">
+                  {hexState === "sharing"
+                    ? "You’re sharing compute"
+                    : "Share your compute"}
+                </h2>
+                <p className="m-0 text-body-sm text-secondary">
+                  Let {community?.name ?? "this community"} run prompts on this
+                  machine. Auto picks the best model for your hardware; Advanced
+                  lets you choose. Sharing resumes when you reopen Buzz.
+                </p>
+              </div>
+            </div>
             <Switch
               label="Share this machine"
               checked={shareOn}
               disabled={
                 busy ||
                 !leaseReady ||
-                phase === "starting" ||
+                // Only a shutdown must finish first. Off may cancel a serve that
+                // is still starting (e.g. a long download), and On may replace a
+                // consumer that is still connecting; native enforces the same.
                 phase === "stopping" ||
                 snapshot.status !== "ready" ||
                 // Turning on: never replace an unrecovered failed runtime.

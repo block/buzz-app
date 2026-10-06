@@ -9,14 +9,17 @@ use nostr::key::PublicKey;
 pub(super) async fn read(
     host: &IdentityHost,
     community: &str,
-) -> Result<(Vec<String>, Vec<String>, Vec<nostr::event::Event>), String> {
+) -> Result<
+    (
+        Vec<String>,
+        Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>,
+        Vec<nostr::event::Event>,
+    ),
+    String,
+> {
     let events = member_events(host, community).await?;
     let owners = owner_ids_from_events(&events);
-    let targets = availability_from_events(events.clone())
-        .serve_targets
-        .into_iter()
-        .map(|target| target.endpoint_addr)
-        .collect();
+    let targets = availability_from_events(events.clone()).serve_targets;
     Ok((owners, targets, events))
 }
 

@@ -145,10 +145,12 @@ pub async fn mesh_compute_share(
             return Ok(()); // Share Off must leave an existing consumer alone.
         }
         if !stopping
-            && matches!(
-                host.lifecycle.phase(),
-                buzz_mesh_compute::lifecycle::Phase::Starting
-                    | buzz_mesh_compute::lifecycle::Phase::Stopping
+            && changing_state(
+                &host.lifecycle.phase(),
+                host.sharing
+                    .lock()
+                    .map_err(|_| "Mesh sharing unavailable")?
+                    .is_some(),
             )
         {
             return Err("Mesh is changing state; wait before sharing again".into());
@@ -237,6 +239,35 @@ mod tests {
                 max_vram_gb: Some(16),
             }
         );
+    }
+}
+
+/// Whether Share On must wait. A serve runtime that is starting and any
+/// shutdown are left to finish. A consumer client that is still connecting
+/// owns no sharing intent, and a join that never settles must not lock the
+/// member out of sharing, so it is stopped (confirmed) and replaced.
+fn changing_state(phase: &buzz_mesh_compute::lifecycle::Phase, serving: bool) -> bool {
+    use buzz_mesh_compute::lifecycle::Phase;
+    match phase {
+        Phase::Stopping => true,
+        Phase::Starting => serving,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod changing_state_tests {
+    use super::changing_state;
+    use buzz_mesh_compute::lifecycle::Phase;
+
+    #[test]
+    fn only_a_connecting_consumer_may_be_replaced_by_share_on() {
+        assert!(!changing_state(&Phase::Starting, false));
+        assert!(changing_state(&Phase::Starting, true));
+        assert!(changing_state(&Phase::Stopping, false));
+        assert!(changing_state(&Phase::Stopping, true));
+        assert!(!changing_state(&Phase::Ready, false));
+        assert!(!changing_state(&Phase::Stopped, false));
     }
 }
 

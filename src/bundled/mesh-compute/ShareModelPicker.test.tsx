@@ -56,10 +56,42 @@ it("selects the SDK-backed recommendation and discloses the download before shar
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(screen.getByRole("combobox")).toHaveTextContent("recommended");
-  expect(
-    screen.getByText("Downloads 6GB when sharing starts · fits comfortably."),
-  ).toBeInTheDocument();
+  const fit = screen.getByText("fits comfortably");
+  expect(fit).toHaveAttribute("data-fit", "comfortable");
+  expect(fit.parentElement).toHaveTextContent(
+    "Downloads 6GB when sharing starts · fits comfortably.",
+  );
   expect(invoke).toHaveBeenCalledWith("mesh_compute_catalog");
+});
+it("labels each option's fit and refuses models too large for this machine", async () => {
+  invoke.mockResolvedValue({
+    ...catalog,
+    entries: [
+      ...catalog.entries,
+      {
+        model: "fixture/huge:Q8",
+        name: "Huge model",
+        size: "90GB",
+        installed: false,
+        curated: true,
+        fit: "too_large",
+      },
+    ],
+  });
+  render(<Fixture />);
+  await screen.findByText("Auto — Fixture model (Q4) for this device");
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  fireEvent.click(screen.getByRole("combobox"));
+  expect(
+    await screen.findByRole("option", {
+      name: /Fixture model.*fits comfortably/,
+    }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByRole("option", {
+      name: /Huge model.*too large for this machine/,
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
 });
 it("keeps manual selection usable on catalog failure and retries the catalog", async () => {
   invoke

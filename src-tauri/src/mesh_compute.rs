@@ -241,7 +241,7 @@ async fn start_with_evidence(
     identity: &crate::identity::IdentityHost,
     lease: &str,
     mut owners: Vec<String>,
-    targets: Vec<String>,
+    targets: Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>,
     evidence: Vec<nostr::event::Event>,
 ) -> Result<(), String> {
     let community = host.lease.community(lease)?;
@@ -251,15 +251,17 @@ async fn start_with_evidence(
         .lock()
         .map_err(|_| "Mesh sharing unavailable")?
         .clone();
+    let path = mesh_owner_path()?;
+    let owner =
+        buzz_mesh_compute::identity::ensure_owner_at(&path).map_err(|error| error.to_string())?;
+    // Never dial this machine's own advert; it can outlive the runtime it names.
+    let targets = buzz_mesh_compute::discovery::peer_join_tokens(targets, &owner);
     if targets.is_empty() && sharing.is_none() {
         return Err(
             "No live community member is sharing compute; start serving on a member first".into(),
         );
     }
     host.lease.with_current(lease, |_| {
-        let path = mesh_owner_path()?;
-        let owner = buzz_mesh_compute::identity::ensure_owner_at(&path)
-            .map_err(|error| error.to_string())?;
         owners.push(owner.clone());
         let admission = (
             uuid::Uuid::new_v4().to_string(),

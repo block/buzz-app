@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import styles from "./Compute.module.css";
 
 type Catalog = {
   gpuName: string | null;
@@ -165,7 +166,8 @@ export function ShareModelPicker({
                 .filter((entry) => entry.curated)
                 .map((entry) => ({
                   value: entry.model,
-                  label: `${entry.name}${entry.model === catalog.recommended ? " — recommended" : ""}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
+                  label: `${entry.name}${entry.model === catalog.recommended ? " — recommended" : ""}${optionDetail(entry)}`,
+                  disabled: tooLarge(entry, displayModel),
                 })),
             },
             {
@@ -175,7 +177,8 @@ export function ShareModelPicker({
                   .filter((entry) => !entry.curated)
                   .map((entry) => ({
                     value: entry.model,
-                    label: `${entry.name}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
+                    label: `${entry.name}${optionDetail(entry)}`,
+                    disabled: tooLarge(entry, displayModel),
                   })),
                 { value: CUSTOM, label: "Custom model or local GGUF" },
               ],
@@ -188,9 +191,17 @@ export function ShareModelPicker({
           {entry.installed
             ? "Downloaded"
             : `Downloads ${entry.size ?? "the model"} when sharing starts`}
-          {entry.fit === "unknown"
-            ? "."
-            : ` · ${FIT_LABELS[entry.fit] ?? entry.fit.replaceAll("_", " ")}.`}
+          {entry.fit === "unknown" ? (
+            "."
+          ) : (
+            <>
+              {" · "}
+              <span className={styles.fit} data-fit={entry.fit}>
+                {fitLabel(entry.fit)}
+              </span>
+              .
+            </>
+          )}
         </p>
       )}
       {advanced &&
@@ -211,3 +222,13 @@ export function ShareModelPicker({
     </div>
   );
 }
+
+const fitLabel = (fit: string) => FIT_LABELS[fit] ?? fit.replaceAll("_", " ");
+
+function optionDetail(entry: Catalog["entries"][number]): string {
+  return `${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}${entry.fit === "unknown" ? "" : ` · ${fitLabel(entry.fit)}`}`;
+}
+
+/** A model this machine can't hold is not offered, unless it's already chosen. */
+const tooLarge = (entry: Catalog["entries"][number], selected: string) =>
+  entry.fit === "too_large" && entry.model !== selected;

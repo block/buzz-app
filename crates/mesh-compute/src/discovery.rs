@@ -91,6 +91,17 @@ fn latest_membership_list(events: &[nostr::event::Event]) -> Option<BTreeSet<Str
         })
 }
 
+/// Join tokens for other machines only. This machine's own advert (same Mesh
+/// owner) can outlive its runtime by a heartbeat, and joining it makes the SDK
+/// reject the token as its own node id and retry forever.
+pub fn peer_join_tokens(targets: Vec<MeshServeTarget>, own_owner: &str) -> Vec<String> {
+    targets
+        .into_iter()
+        .filter(|target| target.owner_id.as_deref() != Some(own_owner))
+        .map(|target| target.endpoint_addr)
+        .collect()
+}
+
 pub fn current_member_pubkeys(events: &[nostr::event::Event]) -> Vec<String> {
     latest_membership_list(events)
         .map(BTreeSet::into_iter)

@@ -59,6 +59,8 @@
     "allow-agent-control-log-challenge",
     "allow-agent-control-read-log",
     "allow-pi-install",
+    "allow-claude-install",
+    "allow-claude-auth-status",
     "allow-agent-security",
     "allow-agent-control-save",
     "allow-agent-control-save-defaults",

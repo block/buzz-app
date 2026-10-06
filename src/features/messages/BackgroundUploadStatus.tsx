@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import type { RelaySession } from "../relay/session";
@@ -19,6 +19,7 @@ export function BackgroundUploadStatus({
 }) {
   const uploads = useBackgroundUploads(session);
   const focusedCancel = useRef(false);
+  const phase = useId();
   useLayoutEffect(() => {
     if (uploads.uploading || !focusedCancel.current) return;
     focusedCancel.current = false;
@@ -31,15 +32,40 @@ export function BackgroundUploadStatus({
     )
       target.focus();
   }, [uploads.uploading, focusTarget]);
-  const label =
-    uploads.phase === "Uploading"
-      ? `${uploads.phase} ${uploads.percentage}%`
-      : uploads.phase;
   return (
     <>
       {uploads.uploading && (
         <div className={styles.backgroundUpload}>
-          <span role="status">{label}</span>
+          <span id={phase} role="status">
+            {uploads.phase}
+          </span>
+          {/* Desktop's bar: measured bytes, or an indeterminate sweep while
+              the host reports none. It never shows a number. */}
+          <div
+            aria-labelledby={phase}
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={
+              uploads.progress === null
+                ? undefined
+                : Math.round(uploads.progress * 100)
+            }
+            className={styles.backgroundUploadBar}
+            role="progressbar"
+          >
+            <div
+              className={
+                uploads.progress === null
+                  ? styles.backgroundUploadSweep
+                  : styles.backgroundUploadFill
+              }
+              style={
+                uploads.progress === null
+                  ? undefined
+                  : { transform: `scaleX(${uploads.progress})` }
+              }
+            />
+          </div>
           <Button
             onFocus={() => {
               focusedCancel.current = true;

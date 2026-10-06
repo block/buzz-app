@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -1648,8 +1649,13 @@ it("presents automation, links the owner and discloses the separate relay signer
   const open = vi.fn(() => true);
   try {
     renderMessage({
-      row: { ...row, authorId: signer, workflowOwnerId: ownerId },
-      profile: { name: "Relay" },
+      row: {
+        ...row,
+        authorId: ownerId,
+        signerId: signer,
+        workflowOwnerId: ownerId,
+      },
+      profile: { name: "Wes" },
       participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
       onOpenLink: open,
       canOpenLink: () => true,
@@ -1665,7 +1671,12 @@ it("presents automation, links the owner and discloses the separate relay signer
     expect(
       await screen.findByText(/the owner did not sign this message/),
     ).toBeTruthy();
-    expect(screen.getByText("Signed by the relay")).toBeTruthy();
+    expect(
+      screen.getByText("Signed by the relay").nextElementSibling,
+    ).toHaveTextContent(npubEncode(signer));
+    expect(
+      screen.getByText("Owner public key").nextElementSibling,
+    ).toHaveTextContent(npubEncode(ownerId));
     expect(
       screen.queryByRole("button", { name: "View Relay profile" }),
     ).toBeNull();

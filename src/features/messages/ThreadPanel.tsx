@@ -26,6 +26,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
+import { rowProfileIds } from "../relay/membership";
 import { MessageRow } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
@@ -329,17 +330,7 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
-  const authors = [
-    ...new Set(
-      rows.flatMap((row) => [
-        row.authorId,
-        ...row.mentions,
-        ...(row.mentionReferences ?? []),
-      ]),
-    ),
-  ]
-    .sort()
-    .join(":");
+  const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
       void session.profiles

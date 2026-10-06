@@ -22,7 +22,7 @@ export class MessageProjection {
     private profiling: RelayProfiler,
     private includeReplies: () => boolean = () => false,
     private clock = new MessageClock(),
-    private workflowAuthority?: string,
+    private signingAuthority?: string,
   ) {}
   snapshot() {
     return this.rows;
@@ -114,7 +114,7 @@ export class MessageProjection {
                     ],
                     {
                       includeReplies: this.includeReplies(),
-                      workflowAuthority: this.workflowAuthority,
+                      signingAuthority: this.signingAuthority,
                     },
                   )[0]
                 : undefined;

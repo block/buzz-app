@@ -1,4 +1,6 @@
 import { forwardRef } from "react";
+import claudeLogoUrl from "./claude.png?inline";
+import hermesLogoUrl from "./hermes.png?inline";
 import type { IconProps } from "./createDecorativeIcon";
 
 /** Goose's official mark, adapted from old Buzz. Apache-2.0 © Block, Inc.; see NOTICE.md. */
@@ -41,6 +43,44 @@ export const PiLogoArtwork = forwardRef<SVGSVGElement, IconProps>(
           d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"
         />
         <path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+      </svg>
+    );
+  },
+);
+
+/** Claude's bundled brand mark, reused unchanged from old Buzz; see NOTICE.md. */
+export const ClaudeLogoArtwork = forwardRef<SVGSVGElement, IconProps>(
+  function ClaudeLogoArtwork({ size = "1em", ...props }, ref) {
+    return (
+      // biome-ignore lint/a11y/noSvgWithoutTitle: the public gateway supplies accessibility semantics.
+      <svg
+        ref={ref}
+        width={size}
+        height={size}
+        viewBox="0 0 32 32"
+        xmlns="http://www.w3.org/2000/svg"
+        {...props}
+      >
+        <image href={claudeLogoUrl} width="32" height="32" />
+      </svg>
+    );
+  },
+);
+
+/** Hermes's bundled brand mark, reused unchanged from old Buzz; see NOTICE.md. */
+export const HermesLogoArtwork = forwardRef<SVGSVGElement, IconProps>(
+  function HermesLogoArtwork({ size = "1em", ...props }, ref) {
+    return (
+      // biome-ignore lint/a11y/noSvgWithoutTitle: the public gateway supplies accessibility semantics.
+      <svg
+        ref={ref}
+        width={size}
+        height={size}
+        viewBox="0 0 32 32"
+        xmlns="http://www.w3.org/2000/svg"
+        {...props}
+      >
+        <image href={hermesLogoUrl} width="32" height="32" />
       </svg>
     );
   },

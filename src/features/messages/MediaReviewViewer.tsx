@@ -31,6 +31,7 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
+import { rowProfileIds } from "../relay/membership";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { MessageComposer } from "./MessageComposer";
@@ -578,9 +579,7 @@ function ReviewComments({
         ?.querySelector(`[data-review-comment="${selectedComment}"]`)
         ?.scrollIntoView?.({ block: "nearest" });
   }, [selectedComment]);
-  const authors = [...new Set(replies.map((row) => row.authorId))]
-    .sort()
-    .join(":");
+  const authors = [...new Set(replies.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
       void session.profiles

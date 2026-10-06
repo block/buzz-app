@@ -29,7 +29,7 @@ it("uses only admission-owned proof, without verification during repeated folds"
   for (let i = 0; i < 20; i++) {
     const projected = projectEvents([event], [], [{ kinds: [9], limit: 50 }]);
     const rows = foldMessages("room", relay.pubkey, projected, {
-      workflowAuthority: relay.pubkey,
+      signingAuthority: relay.pubkey,
     });
     expect(rows[0]).toMatchObject({
       authorId: relay.pubkey,
@@ -113,4 +113,38 @@ it.each(
   expect(
     workflowOwner(eventDto(sample(nextTags)), relay.pubkey),
   ).toBeUndefined();
+});
+
+it("keeps workflow signer disclosure separate from main's attributed author and owner edits", () => {
+  const event = eventDto(sample([["p", owner.pubkey], ...tags]));
+  const edit = eventDto(
+    signed(owner, {
+      kind: 40003,
+      content: "Owner edit",
+      created_at: event.created_at + 1,
+      tags: [["e", event.id]],
+    }),
+  );
+  const [row] = foldMessages("room", relay.pubkey, [event, edit], {
+    signingAuthority: relay.pubkey,
+  });
+  expect(row).toMatchObject({
+    authorId: owner.pubkey,
+    signerId: relay.pubkey,
+    workflowOwnerId: owner.pubkey,
+    content: "Owner edit",
+  });
+  const deletion = eventDto(
+    signed(owner, {
+      kind: 5,
+      content: "",
+      created_at: event.created_at + 2,
+      tags: [["e", event.id]],
+    }),
+  );
+  expect(
+    foldMessages("room", relay.pubkey, [event, edit, deletion], {
+      signingAuthority: relay.pubkey,
+    }),
+  ).toEqual([]);
 });

@@ -515,7 +515,7 @@ export const MessageRow = memo(function MessageRow({
                 <WorkflowByline
                   ownerId={row.workflowOwnerId}
                   ownerName={workflowOwnerName}
-                  signer={row.authorId}
+                  signer={row.signerId ?? row.authorId}
                   canOpenLink={canOpenLink}
                   onOpenLink={onOpenLink}
                 />

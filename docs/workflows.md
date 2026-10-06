@@ -61,7 +61,11 @@ through generic Outbox Retry either; inspection and dismissal remain available.
 
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different
-heads retain the draft for review. Dismissal clears the notice and editor lock
+heads retain the draft for review. A verified head newer than the save releases
+its lock on toggle, run and delete; the relay's expected-revision check still
+rejects stale saves. Run requests do not leave configuration writes unresolved after
+unknown delivery, but a pending request still locks conflicting actions until its
+outcome is known. Dismissal clears the notice and editor lock
 only after durable dismissal; it neither undoes nor repeats a command. Exact
 readback does not retire a pending one-time-secret receipt, and a missing receipt
 does not undo verified configuration success. Unknown
@@ -173,7 +177,17 @@ Cached-only startup intentionally shows the actual signer until a live connectio
 establishes explicit relay authority. Saved operator-contact `relayAuthor` is not
 promoted to `self`, and no new trusted storage is introduced. Signer-based search
 and Inbox sender filters, permissions, mention policy and relay-reported participant
-summaries are unchanged. Participant summaries have no per-message owner evidence
+summaries are unchanged by workflow presentation. Channel/thread rows retain the
+effective-author attribution and owner edit/delete behavior added separately in
+#661; when that author differs from the signer, the row carries a separate signing
+key so the disclosure still identifies the actual relay. Thread and media views
+request workflow-owner profiles through the existing background profile directory.
+The workflow proof check controls only the automation label, not main's effective
+message-author policy. With explicit authority, an unadmitted copy has no workflow
+label but can still receive main's effective-author attribution; production reads
+must retain their admission-owned event objects. Without explicit authority,
+cached-only startup keeps the signer fallback described above.
+Participant summaries have no per-message owner evidence
 and continue to identify signing participants, not workflow owners. Workflow rows
 are not grouped together because the message metadata lacks a workflow/run ID.
 Exact workflow/run navigation and historical execution configuration are not claimed.

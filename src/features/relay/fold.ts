@@ -184,6 +184,28 @@ function parseSummary(
   }
 }
 
+/** Base Buzz's displayed author: output signed by the relay's explicit NIP-11
+ * `self` names its author in `actor`, else a leading `p` on channel events.
+ * Any other signer, including a contact-key fallback, is the author. */
+export function messageAuthor(
+  event: EventData,
+  signingAuthority: string | undefined,
+) {
+  if (!signingAuthority || event.pubkey !== signingAuthority)
+    return event.pubkey;
+  const actor = event.tags.find(
+    ([name, value]) => name === "actor" && HEX64.test(value ?? ""),
+  )?.[1];
+  if (actor) return actor;
+  const [name, value] = event.tags[0] ?? [];
+  return name === "p" &&
+    value &&
+    HEX64.test(value) &&
+    event.tags.some(([tag]) => tag === "h")
+    ? value
+    : event.pubkey;
+}
+
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
@@ -193,8 +215,8 @@ export function foldMessages(
   events: readonly EventData[],
   {
     includeReplies = false,
-    workflowAuthority,
-  }: { includeReplies?: boolean; workflowAuthority?: string | undefined } = {},
+    signingAuthority,
+  }: { includeReplies?: boolean; signingAuthority?: string | undefined } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
@@ -213,11 +235,15 @@ export function foldMessages(
       overlays.set(entry[1], list);
     }
   }
+  // The relay lets an attributed author edit and delete like the signer.
+  const byAuthor = (item: EventData, event: EventData) =>
+    item.pubkey === event.pubkey ||
+    item.pubkey === messageAuthor(event, signingAuthority);
   const deleted = (event: EventData) =>
     overlays
       .get(event.id)
       ?.some(
-        (item) => [5, 9005].includes(item.kind) && item.pubkey === event.pubkey,
+        (item) => [5, 9005].includes(item.kind) && byAuthor(item, event),
       ) ?? false;
   const rows: ChannelMessage[] = [];
   for (const event of events) {
@@ -256,7 +282,7 @@ export function foldMessages(
     const edits = aux
       .filter(
         (item) =>
-          item.kind === 40003 && item.pubkey === event.pubkey && !deleted(item),
+          item.kind === 40003 && byAuthor(item, event) && !deleted(item),
       )
       .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
     let content = edits[0]?.content ?? event.content;
@@ -281,6 +307,7 @@ export function foldMessages(
     const attachmentNames = new Map<string, string>();
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
+    const authorId = messageAuthor(event, signingAuthority);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -301,8 +328,9 @@ export function foldMessages(
               }
             : undefined;
         })(),
-        authorId: event.pubkey,
-        workflowOwnerId: workflowOwner(event, workflowAuthority),
+        authorId,
+        ...(authorId !== event.pubkey ? { signerId: event.pubkey } : {}),
+        workflowOwnerId: workflowOwner(event, signingAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,

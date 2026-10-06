@@ -1100,40 +1100,50 @@ for (const status of ["waiting", "starting"] as const) {
   });
 }
 
-it("runs Pi installation outside agent writes and preserves the report after Stop", async () => {
-  const fixture = controlFixture();
-  const install = deferred<HarnessInstallReport>();
-  fixture.host.installPi = () => install.promise;
-  const control = createAgentControl(fixture.host);
-  await control.refresh();
-  const installing = control.installPi?.();
-  expect(control.snapshot().piInstall?.installing).toBe(true);
-  expect(control.snapshot().busy).toBe(false);
-  expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
-  await expect(control.installPi?.()).rejects.toThrow("in progress");
-  await control.action(fixture.agent.id, "stop");
-  expect(fixture.calls).toContainEqual(
-    expect.objectContaining({ action: "stop" }),
-  );
-  const reads = fixture.calls.filter(
-    (call) => call.action === "snapshot",
-  ).length;
-  install.resolve({
-    ready: true,
-    restarted: 0,
-    restartFailures: 0,
-    logPath: "/fixture/pi-install.log",
-    output: "done",
-    error: null,
-  });
-  await installing;
-  expect(control.snapshot().piInstall?.report?.ready).toBe(true);
-  expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
-  expect(
-    fixture.calls.filter((call) => call.action === "snapshot"),
-  ).toHaveLength(reads + 1);
-  control.dispose();
-});
+it.each([
+  ["Pi", "installPi", "piInstall", "installClaude"],
+  ["Claude Code", "installClaude", "claudeInstall", "installPi"],
+] as const)(
+  "runs %s installation outside agent writes, excludes other installs and preserves the report after Stop",
+  async (_label, method, stateKey, other) => {
+    const fixture = controlFixture();
+    const install = deferred<HarnessInstallReport>();
+    fixture.host[method] = () => install.promise;
+    const otherInstall = vi.fn();
+    fixture.host[other] = otherInstall;
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const installing = control[method]?.();
+    expect(control.snapshot()[stateKey]?.installing).toBe(true);
+    expect(control.snapshot().busy).toBe(false);
+    expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+    await expect(control[method]?.()).rejects.toThrow("in progress");
+    await expect(control[other]?.()).rejects.toThrow("in progress");
+    expect(otherInstall).not.toHaveBeenCalled();
+    await control.action(fixture.agent.id, "stop");
+    expect(fixture.calls).toContainEqual(
+      expect.objectContaining({ action: "stop" }),
+    );
+    const reads = fixture.calls.filter(
+      (call) => call.action === "snapshot",
+    ).length;
+    install.resolve({
+      ready: true,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/pi-install.log",
+      output: "done",
+      error: null,
+    });
+    await installing;
+    expect(control.snapshot()[stateKey]?.report?.ready).toBe(true);
+    expect(control.snapshot().data?.agents[0]?.enabled).toBe(false);
+    expect(
+      fixture.calls.filter((call) => call.action === "snapshot"),
+    ).toHaveLength(reads + 1);
+    control.dispose();
+  },
+);
 
 for (const operation of ["save", "saveDefaults"] as const) {
   it(`${operation} restart credential wait admits Stop and drops the late result`, async () => {

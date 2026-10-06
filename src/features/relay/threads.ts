@@ -60,7 +60,7 @@ export function createThreadView({
   channelId,
   messageId,
   relayAuthor,
-  workflowAuthority,
+  signingAuthority,
   reader,
   seed,
   local,
@@ -74,7 +74,8 @@ export function createThreadView({
   channelId: string;
   messageId: string;
   relayAuthor: string;
-  workflowAuthority?: string | undefined;
+  /** Explicit NIP-11 self; only it may attribute messages to others. */
+  signingAuthority?: string | undefined;
   reader: RelayReader;
   seed: RelayEvent | undefined;
   local: LocalEvents | undefined;
@@ -192,7 +193,7 @@ export function createThreadView({
         rootUnavailable && !exact ? [] : [...inputs.values()],
         {
           includeReplies: true,
-          workflowAuthority,
+          signingAuthority,
         },
       ).map((row) => {
         const item = deliveries.get(row.id);

@@ -1,4 +1,4 @@
-//! Pinned, app-owned Node and npm tools for Pi. No user-global installs.
+//! Pinned, app-owned Node and npm tools. No user-global installs.
 use crate::harness_setup::HarnessSetup;
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,6 +15,52 @@ const MAX_ARCHIVE: u64 = 90 * 1024 * 1024;
 // Native steering needs Pi's steer disposition, added in 0.99.0.
 const PI: &str = "@earendil-works/pi-coding-agent@>=0.99.0";
 const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#72015de";
+
+// Both packages are pinned to versions available through the configured npm registry.
+const CLAUDE: &str = "@anthropic-ai/claude-code@2.1.289";
+const CLAUDE_ADAPTER: &str = "@agentclientprotocol/claude-agent-acp@0.85.1";
+
+#[derive(Clone, Copy)]
+pub(crate) enum Harness {
+    Pi,
+    Claude,
+}
+impl Harness {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Pi => "node-tools",
+            Self::Claude => "claude-tools",
+        }
+    }
+    fn revision(self) -> &'static str {
+        match self {
+            Self::Pi => adapter_rev(),
+            Self::Claude => "claude-2.1.289-acp-0.85.1",
+        }
+    }
+    fn binaries(self) -> [&'static str; 2] {
+        match self {
+            Self::Pi => ["pi", "buzz-pi-acp"],
+            Self::Claude => ["claude", "claude-agent-acp"],
+        }
+    }
+    fn packages(self) -> [(&'static str, bool, &'static str); 2] {
+        match self {
+            Self::Pi => [
+                (PI, false, "Installing Pi failed"),
+                (ADAPTER, true, "Installing the Pi ACP adapter failed"),
+            ],
+            Self::Claude => [
+                (CLAUDE, false, "Installing Claude Code failed"),
+                (
+                    CLAUDE_ADAPTER,
+                    false,
+                    "Installing the Claude Code ACP adapter failed",
+                ),
+            ],
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Artifact {
@@ -64,6 +110,8 @@ fn refuse_linked_prefix(prefix: &Path) -> Result<(), String> {
         prefix.join("lib/node_modules/@earendil-works"),
         prefix.join("lib/node_modules/@earendil-works/pi-coding-agent"),
         prefix.join("lib/node_modules/buzz-pi-acp"),
+        prefix.join("lib/node_modules/@anthropic-ai"),
+        prefix.join("lib/node_modules/@agentclientprotocol"),
         prefix.join("cache"),
         prefix.join("etc"),
         prefix.join("releases"),
@@ -360,10 +408,10 @@ pub(crate) fn current(app_data: &Path) -> bool {
 
 // Each shim moves by rename, so a starting agent sees an old or a new complete
 // release. Pi moves first because the previous adapter also runs on newer Pi.
-fn activate(tools: &Path, id: &str) -> Result<(), String> {
+fn activate(tools: &Path, id: &str, harness: Harness) -> Result<(), String> {
     let bin = tools.join("bin");
     std::fs::create_dir_all(&bin).map_err(|_| "Could not create app-owned tools directory")?;
-    for name in ["pi", "buzz-pi-acp"] {
+    for name in harness.binaries() {
         let staged = bin.join(format!(".{name}.{id}"));
         let _ = std::fs::remove_file(&staged);
         std::os::unix::fs::symlink(
@@ -371,7 +419,7 @@ fn activate(tools: &Path, id: &str) -> Result<(), String> {
             &staged,
         )
         .and_then(|()| std::fs::rename(&staged, bin.join(name)))
-        .map_err(|_| "Could not activate the new Pi install")?;
+        .map_err(|_| "Could not activate the new Harness install")?;
     }
     Ok(())
 }
@@ -392,30 +440,47 @@ pub(crate) async fn install(
     setup: &HarnessSetup,
     app_data: &Path,
     log: File,
+    harness: Harness,
 ) -> Result<bool, String> {
-    let home = PathBuf::from(std::env::var_os("HOME").ok_or("Pi install requires HOME")?);
+    let home = PathBuf::from(std::env::var_os("HOME").ok_or("Harness install requires HOME")?);
     let spec = artifact(std::env::consts::OS, std::env::consts::ARCH)
         .ok_or("Managed Node is unavailable on this platform")?;
     let node = install_node(setup, app_data, &home, &log, spec).await?;
-    let tools = app_data.join("node-tools");
+    let tools = app_data.join(harness.prefix());
     refuse_linked_prefix(&tools)?;
     let releases = tools.join("releases");
     std::fs::create_dir_all(&releases).map_err(|_| "Could not create app-owned npm prefix")?;
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis());
-    let id = format!("{}.{millis}", adapter_rev());
+    let id = format!("{}.{millis}", harness.revision());
     let prefix = releases.join(&id);
     std::fs::create_dir(&prefix).map_err(|_| "Could not create app-owned npm prefix")?;
     let result = async {
-        for (package, install_links, failure) in [
-            (PI, false, "Installing Pi failed"),
-            (ADAPTER, true, "Installing the Pi ACP adapter failed"),
-        ] {
+        for (package, install_links, failure) in harness.packages() {
             refuse_linked_prefix(&tools)?;
             refuse_linked_prefix(&prefix)?;
             let mut command = npm_command(&node, app_data, &home, &prefix, package, install_links)?;
             run_step(setup, &mut command, &log, failure).await?;
+        }
+        if matches!(harness, Harness::Claude) {
+            for name in harness.binaries() {
+                let mut command = tokio::process::Command::new(prefix.join("bin").join(name));
+                scrub(
+                    &mut command,
+                    &home,
+                    node.parent().ok_or("Invalid managed Node path")?,
+                    app_data,
+                )?;
+                command.arg("--version");
+                run_step(
+                    setup,
+                    &mut command,
+                    &log,
+                    &format!("Verifying {name} failed"),
+                )
+                .await?;
+            }
         }
         Ok::<_, String>(())
     }
@@ -424,8 +489,8 @@ pub(crate) async fn install(
         let _ = std::fs::remove_dir_all(&prefix);
         return Err(error);
     }
-    let previous = release_id(&tools.join("bin/buzz-pi-acp"));
-    activate(&tools, &id)?;
+    let previous = release_id(&tools.join("bin").join(harness.binaries()[1]));
+    activate(&tools, &id, harness)?;
     let mut keep = vec![id.as_str()];
     keep.extend(previous.as_deref());
     prune(&releases, &keep);
@@ -435,6 +500,92 @@ pub(crate) async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn claude_install_rejects_native_stub_before_activation_and_keeps_pi_releases() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path();
+        let setup = HarnessSetup::default();
+        let spec = artifact(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        let node_root = node_dir(app_data, spec);
+        std::fs::create_dir_all(node_root.join("bin")).unwrap();
+        std::fs::create_dir_all(node_root.join("lib/node_modules/npm/bin")).unwrap();
+        std::fs::write(node_root.join("lib/node_modules/npm/bin/npm-cli.js"), "").unwrap();
+        let write_executable = |path: &Path, source: &str| {
+            std::fs::write(path, source).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let node = node_root.join("bin/node");
+        // A local npm boundary fixture creates the requested package's launcher.
+        // Claude's native package can leave a failing stub despite npm success.
+        let npm = |cli_exit| {
+            format!(
+                r#"#!/bin/sh
+set -eu
+prefix="$5"
+case "$6" in
+  @anthropic-ai/claude-code@*) name=claude; code={cli_exit} ;;
+  @agentclientprotocol/claude-agent-acp@*) name=claude-agent-acp; code=0 ;;
+  *) exit 2 ;;
+esac
+mkdir -p "$prefix/bin"
+printf '#!/bin/sh\nexit %s\n' "$code" > "$prefix/bin/$name"
+chmod 755 "$prefix/bin/$name"
+"#
+            )
+        };
+        let tools = app_data.join("claude-tools");
+        let old = tools.join("releases/previous/bin");
+        std::fs::create_dir_all(&old).unwrap();
+        for name in ["claude", "claude-agent-acp"] {
+            write_executable(&old.join(name), "#!/bin/sh\nexit 0\n");
+        }
+        activate(&tools, "previous", Harness::Claude).unwrap();
+        let pi_release = app_data.join("node-tools/releases/pi-existing/bin");
+        std::fs::create_dir_all(&pi_release).unwrap();
+        std::fs::write(pi_release.join("pi"), "existing Pi").unwrap();
+        let log_path = app_data.join("install.log");
+        write_executable(&node, &npm(1));
+        let error = install(
+            &setup,
+            app_data,
+            File::create(&log_path).unwrap(),
+            Harness::Claude,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("Verifying claude failed"), "{error}");
+        assert_eq!(
+            release_id(&tools.join("bin/claude")),
+            Some("previous".into())
+        );
+        assert_eq!(
+            std::fs::read_dir(tools.join("releases")).unwrap().count(),
+            1
+        );
+        write_executable(&node, &npm(0));
+        assert!(install(
+            &setup,
+            app_data,
+            File::create(&log_path).unwrap(),
+            Harness::Claude
+        )
+        .await
+        .unwrap());
+        assert_ne!(
+            release_id(&tools.join("bin/claude")),
+            Some("previous".into())
+        );
+        assert!(old.join("claude").is_file());
+        assert_eq!(
+            std::fs::read_to_string(pi_release.join("pi")).unwrap(),
+            "existing Pi"
+        );
+        // A later Pi prune cannot reach the Claude release directory either.
+        prune(&app_data.join("node-tools/releases"), &["pi-existing"]);
+        assert!(tools.join("bin/claude").is_file());
+        assert!(tools.join("bin/claude-agent-acp").is_file());
+    }
     #[tokio::test]
     async fn failed_steps_report_their_own_npm_error_and_preserve_the_log() {
         use std::io::Write;
@@ -588,6 +739,8 @@ mod tests {
             "lib/node_modules/@earendil-works",
             "lib/node_modules/@earendil-works/pi-coding-agent",
             "lib/node_modules/buzz-pi-acp",
+            "lib/node_modules/@anthropic-ai",
+            "lib/node_modules/@agentclientprotocol",
             "etc",
             "releases",
         ] {
@@ -628,12 +781,12 @@ mod tests {
         let pinned = format!("{}.2", adapter_rev());
         let newer = format!("{}.3", adapter_rev());
         release(old);
-        activate(&tools, old).unwrap();
+        activate(&tools, old, Harness::Pi).unwrap();
         assert_eq!(adapter(), old);
         assert!(!current(dir.path()));
 
         release(&pinned);
-        activate(&tools, &pinned).unwrap();
+        activate(&tools, &pinned, Harness::Pi).unwrap();
         assert!(current(dir.path()));
         assert_eq!(adapter(), pinned);
         assert_eq!(

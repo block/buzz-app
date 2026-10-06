@@ -8,6 +8,9 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   sign-out, and disposal.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
+- `agents/` lists the signed-in account's remote agents beneath login. Requests
+  reuse the OAuth credential through native host HTTP; sign-out and navigation
+  discard late results. Listing does not enroll agents into Buzz communities.
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

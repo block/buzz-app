@@ -13,7 +13,7 @@ async function openManagement(page, card) {
   await expect(management).toBeVisible();
   return management;
 }
-async function closeManagement(page, management) {
+async function closeManagement(management) {
   await management.getByRole("button", { name: "Close", exact: true }).click();
   await expect(management).toHaveCount(0);
 }
@@ -634,7 +634,7 @@ test("unavailable runtime blocks launch and credential import while retaining St
     await expect(
       management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
-    await closeManagement(page, management);
+    await closeManagement(management);
     const editor = await openEditor(page);
     await expect(
       editor.getByRole("button", { name: "Start", exact: true }),
@@ -1445,7 +1445,7 @@ test("card Import opens a focused review and restores focus after dismissal", as
       management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
     await management.getByRole("button", { name: "Stop", exact: true }).click();
-    await closeManagement(page, management);
+    await closeManagement(management);
     await page.evaluate(() => window.agentControlFixture.releaseImport());
     // The host's rejection explains the conflicting Stop.
     await expect(dialog.getByRole("alert")).toContainText(
@@ -1563,7 +1563,7 @@ test("inventory keeps current-community tiles and compact rows without repeated 
     await expect(
       management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
-    await closeManagement(page, management);
+    await closeManagement(management);
     expect(await local.evaluate((el) => getComputedStyle(el).display)).toBe(
       "flex",
     );

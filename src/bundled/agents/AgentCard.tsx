@@ -92,6 +92,11 @@ export function AgentCard({
   const trigger = useRef<HTMLButtonElement>(null);
   const profileHandoff = useRef(false);
   const [managing, setManaging] = useState(false);
+  const managementTrigger = useRef<HTMLButtonElement | null>(null);
+  const manage = (button: HTMLButtonElement | null) => {
+    managementTrigger.current = button;
+    setManaging(true);
+  };
   const hasControls = tile && !!children;
   const presence = usePresenceStatus(
     session?.presence,
@@ -228,7 +233,7 @@ export function AgentCard({
                   onClick={() => {
                     trigger.current?.focus();
                     profileHandoff.current = true;
-                    setManaging(true);
+                    manage(trigger.current);
                   }}
                 >
                   Manage agent
@@ -359,7 +364,7 @@ export function AgentCard({
             }
             onClick={(event) => {
               if (onViewProfile) onViewProfile(event.currentTarget);
-              else setManaging(true);
+              else manage(event.currentTarget);
             }}
           />
         )}
@@ -368,7 +373,10 @@ export function AgentCard({
         <>
           {revealControls && (
             <div className="px-4 pb-4">
-              <Button size="compact" onClick={() => setManaging(true)}>
+              <Button
+                size="compact"
+                onClick={(event) => manage(event.currentTarget)}
+              >
                 Review agent status
               </Button>
             </div>
@@ -376,6 +384,7 @@ export function AgentCard({
           <Dialog
             open={managing}
             onOpenChange={setManaging}
+            finalFocus={managementTrigger}
             title={`Manage ${name}`}
           >
             <div className="flex min-w-0 flex-col gap-3">{children}</div>

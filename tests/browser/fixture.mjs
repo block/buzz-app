@@ -44,6 +44,7 @@ export const test = base.extend({
   threadUnreadOwnedRoot: [true, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
+  searchAuthor: [false, { option: true }],
   sessionChannels: [[], { option: true }],
   sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
@@ -96,6 +97,7 @@ export const test = base.extend({
       threadUnreadOwnedRoot,
       exactMessages,
       openSearch,
+      searchAuthor,
       sessionChannels,
       sessionWriteKinds,
       sessionParents,
@@ -1061,6 +1063,23 @@ export const test = base.extend({
         });
         return [];
       }
+      if (
+        searchAuthor &&
+        filter.kinds?.includes(0) &&
+        filter.search_mode === "prefix"
+      )
+        return [profiles.get(community)].filter((event) =>
+          JSON.parse(event.content)
+            .name.toLowerCase()
+            .startsWith(filter.search.toLowerCase()),
+        );
+      if (
+        searchAuthor &&
+        filter.kinds?.includes(9) &&
+        filter.search === undefined &&
+        filter.authors
+      )
+        return [];
       if (filter.search !== undefined)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { createRef } from "react";
+import { createRef, useState } from "react";
 import {
   act,
   cleanup,
@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
+import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ReadError } from "../../features/relay/errors";
@@ -1742,6 +1743,86 @@ it.each([
     }
   },
 );
+
+it("renders from:<author chip> without exposing the signed operand in the input", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    human = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([profile(human, { display_name: "Wes" })]);
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  function Search() {
+    const [query, setQuery] = useState("from:@wes");
+    return (
+      <SearchResults
+        session={owner.session}
+        query={query}
+        onQueryChange={setQuery}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />
+    );
+  }
+  try {
+    render(<Search />);
+    fireEvent.click(
+      await within(screen.getByRole("group", { name: "People" })).findByRole(
+        "option",
+        { name: /Wes/ },
+      ),
+    );
+    const chip = screen.getByRole("button", { name: "Remove author Wes" });
+    expect(chip).toHaveTextContent("from:@Wes");
+    expect(chip).toHaveAttribute("title", npubEncode(human.pubkey));
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    expect(chip.closest(".buzz-input-group")).toContainElement(input);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({ authors: [human.pubkey] }),
+    );
+    fireEvent.change(input, { target: { value: "before:" } });
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Dates" })).getByRole("option", {
+        name: /Yesterday/,
+      }),
+    );
+    expect(chip).toBeVisible();
+    expect((input as HTMLInputElement).value).toMatch(
+      /^before:\d{4}-\d{2}-\d{2} ?$/,
+    );
+    expect((input as HTMLInputElement).value).not.toContain(human.pubkey);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({ authors: [human.pubkey] }),
+    );
+    fireEvent.change(input, { target: { value: "deploy" } });
+    expect(input).toHaveValue("deploy");
+    expect(chip).toBeVisible();
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({
+        authors: [human.pubkey],
+        search: "deploy",
+      }),
+    );
+    fireEvent.click(chip);
+    expect(
+      screen.queryByRole("button", { name: "Remove author Wes" }),
+    ).toBeNull();
+    expect(input).toHaveValue("deploy");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("keeps both exact authors selectable ahead of a crowded prefix page", async () => {
   const relay = keypair(),

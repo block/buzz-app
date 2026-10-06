@@ -1,4 +1,5 @@
 import { useIdentityNames } from "../../features/identity-names/react";
+import { npubEncode } from "nostr-tools/nip19";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
@@ -88,6 +89,48 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
+  const [selectedAuthor, setSelectedAuthor] = useState<{
+    query: string;
+    pubkey: string;
+    name: string;
+    index: number;
+  }>();
+  const authorOperand = selectedAuthor ? `from:${selectedAuthor.pubkey}` : "";
+  const selectedIndex = selectedAuthor?.index ?? -1;
+  const showAuthorChip =
+    !!selectedAuthor &&
+    query === selectedAuthor.query &&
+    query.slice(selectedIndex, selectedIndex + authorOperand.length) ===
+      authorOperand;
+  const displayQuery = showAuthorChip
+    ? `${query.slice(0, selectedIndex)}${query.slice(selectedIndex + authorOperand.length).replace(/^\s/, "")}`
+    : undefined;
+  const updateDisplayQuery = (value: string) => {
+    const nextQuery = showAuthorChip
+      ? `from:${selectedAuthor?.pubkey} ${value.trimStart()}`
+      : value;
+    setSelectedAuthor(
+      showAuthorChip && selectedAuthor
+        ? { ...selectedAuthor, query: nextQuery, index: 0 }
+        : undefined,
+    );
+    onQueryChange(nextQuery);
+  };
+  const removeSelectedAuthor = () => {
+    if (!selectedAuthor || !showAuthorChip) return;
+    onQueryChange(displayQuery ?? "");
+    setSelectedAuthor(undefined);
+    input.current?.focus();
+  };
+  const updateDateQuery = (nextQuery: string) => {
+    if (showAuthorChip && selectedAuthor) {
+      const index = nextQuery.indexOf(authorOperand);
+      setSelectedAuthor(
+        index < 0 ? undefined : { ...selectedAuthor, query: nextQuery, index },
+      );
+    }
+    onQueryChange(nextQuery);
+  };
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
     lookupFailed?: boolean;
@@ -123,7 +166,7 @@ export function SearchResults({
             detail: date,
             icon: CalendarIcon,
             run: () =>
-              onQueryChange(
+              updateDateQuery(
                 `${query.slice(0, datePrompt.index)} ${datePrompt[1]}:${date} `.trimStart(),
               ),
           };
@@ -318,10 +361,18 @@ export function SearchResults({
                 shape: isAgent ? ("squircle" as const) : ("circle" as const),
               },
               isAgent,
-              run: () =>
-                onQueryChange(
-                  `${query.slice(0, authorToken.index)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}from:${pubkey}${query.slice(authorToken.index + authorToken[0].length) || " "}`,
-                ),
+              run: () => {
+                const prefix = `${query.slice(0, authorToken.index)}${authorToken[0].match(/^\s*/)?.[0] ?? ""}`;
+                const nextQuery = `${prefix}from:${pubkey}${query.slice(authorToken.index + authorToken[0].length) || " "}`;
+                setSelectedAuthor({
+                  query: nextQuery,
+                  pubkey,
+                  name: profile.name,
+                  index: prefix.length,
+                });
+                onQueryChange(nextQuery);
+                input.current?.focus();
+              },
             };
           })
       : [];
@@ -606,6 +657,17 @@ export function SearchResults({
     <SearchChoices
       query={query}
       onQueryChange={onQueryChange}
+      authorChip={
+        showAuthorChip && selectedAuthor
+          ? {
+              label: selectedAuthor.name,
+              title: npubEncode(selectedAuthor.pubkey),
+              onRemove: removeSelectedAuthor,
+            }
+          : undefined
+      }
+      displayQuery={displayQuery}
+      onDisplayQueryChange={updateDisplayQuery}
       input={input}
       label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
       placeholder={

@@ -148,12 +148,20 @@ export type SearchInputProps = {
   label?: string;
   placeholder?: string | undefined;
   scope?: { label: string; onRemove: () => void } | undefined;
+  authorChip?:
+    | { label: string; title: string; onRemove: () => void }
+    | undefined;
+  displayQuery?: string | undefined;
+  onDisplayQueryChange?: ((value: string) => void) | undefined;
 };
 
 export function SearchChoices({
   groups,
   query,
   onQueryChange,
+  authorChip,
+  displayQuery,
+  onDisplayQueryChange,
   input,
   label = "Search Buzz",
   placeholder = "Search pages, conversations and messages…",
@@ -224,6 +232,21 @@ export function SearchChoices({
         </button>
       )}
       <SearchField
+        prefix={
+          authorChip ? (
+            <span className="search-palette-author-prefix">
+              <button
+                type="button"
+                className="search-palette-author-chip"
+                aria-label={`Remove author ${authorChip.label}`}
+                title={authorChip.title}
+                onClick={authorChip.onRemove}
+              >
+                <span aria-hidden="true">×</span> from:@{authorChip.label}
+              </button>
+            </span>
+          ) : undefined
+        }
         inputRef={input}
         role="combobox"
         aria-controls={id}
@@ -232,8 +255,8 @@ export function SearchChoices({
         aria-activedescendant={selected ? optionId(selected) : undefined}
         label={label}
         placeholder={placeholder}
-        value={query}
-        onValueChange={onQueryChange}
+        value={displayQuery ?? query}
+        onValueChange={onDisplayQueryChange ?? onQueryChange}
         spellCheck={false}
         autoCorrect="off"
         autoCapitalize="off"

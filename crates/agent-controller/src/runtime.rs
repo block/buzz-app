@@ -340,6 +340,18 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn installed(name: &str) -> Option<PathBuf> {
+    // npm also writes an extensionless POSIX shim on Windows. Prefer launchers
+    // that Rust and the displayed PowerShell sign-in command can actually run.
+    #[cfg(windows)]
+    let names = if Path::new(name).extension().is_some() {
+        vec![name.to_owned()]
+    } else {
+        ["exe", "cmd", "bat"]
+            .map(|extension| format!("{name}.{extension}"))
+            .to_vec()
+    };
+    #[cfg(not(windows))]
+    let names = [name.to_owned()];
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/bin"));
@@ -353,7 +365,7 @@ pub fn installed(name: &str) -> Option<PathBuf> {
     ]);
     dirs.into_iter()
         .filter(|p| p.is_absolute())
-        .map(|p| p.join(name))
+        .flat_map(|p| names.iter().map(move |name| p.join(name)))
         .find(|p| executable(p).is_ok())
 }
 

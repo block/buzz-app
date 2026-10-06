@@ -2617,12 +2617,20 @@ async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[tokio::test]
 async fn claude_auth_check_exposes_only_confirmed_status() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
-    let directory = tempfile::tempdir().unwrap();
-    let cli = directory.path().join("claude");
+    let directory = tempfile::Builder::new()
+        .prefix("Claude tools ")
+        .tempdir()
+        .unwrap();
+    let cli = directory.path().join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
     for (output, exit, expected) in [
         (
             r#"{"loggedIn":true,"email":"private@example.com"}"#,
@@ -2637,8 +2645,13 @@ async fn claude_auth_check_exposes_only_confirmed_status() {
         (r#"{"email":"private@example.com"}"#, 0, None),
         ("not JSON", 0, None),
     ] {
-        std::fs::write(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n")).unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        #[cfg(unix)]
+        {
+            std::fs::write(&cli, format!("#!/bin/sh\n[ \"$1\" = auth ] && [ \"$2\" = status ] || exit 3\nprintf '%s' '{output}'\nexit {exit}\n")).unwrap();
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        std::fs::write(&cli, format!("@echo off\r\nif not \"%~1\"==\"auth\" exit /b 3\r\nif not \"%~2\"==\"status\" exit /b 3\r\necho {output}\r\nexit /b {exit}\r\n")).unwrap();
         assert_eq!(
             probe_claude_auth(&cli, &crate::host_command::effective_path()).await,
             expected

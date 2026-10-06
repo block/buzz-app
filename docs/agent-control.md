@@ -275,8 +275,8 @@ Hermes also appears in the main list once its executable is detected:
 - **Hermes Agent** shows **Ready** or **CLI needed** in **Add harness**, with a
   manual setup guide and no Install/Update action. **Check again** updates the
   chooser and main list; removing its executable hides the main row again.
-  Discovery searches for the exact `hermes-acp` launcher name. Windows `.exe`/`.cmd`/`.bat` launchers are a known discovery
-  limitation in this slice; saved absolute paths remain recognizable/editable.
+  Discovery searches for `hermes-acp`, resolving `.exe`/`.cmd`/`.bat` launchers
+  on Windows and skipping npm's extensionless POSIX companion.
 
 - **Claude Code** shows **CLI needed** or **Adapter needed** for missing tools,
   **Sign-in needed** when its CLI reports signed out, and **Ready** once tools
@@ -297,6 +297,12 @@ Hermes also appears in the main list once its executable is detected:
   npm install -g @anthropic-ai/claude-code@2.1.289
   npm install -g @agentclientprotocol/claude-agent-acp@0.85.1
   ```
+
+  Windows discovery resolves `node.exe` and native/Windows npm launchers;
+  the PowerShell sign-in command uses the selected `.exe`/`.cmd`/`.bat` path.
+  While installation runs, Install keeps keyboard focus but blocks activation.
+  Failure leaves it focused for retry. Success moves focus to the status if
+  Install still owns focus, without taking it from another control.
 
   **Sign in to Claude Code** shows the resolved CLI's `auth login` command,
   including managed Node on PATH when needed. Settings checks the selected CLI

@@ -8,6 +8,77 @@ use std::fs;
 use std::time::{Duration, Instant};
 const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
+#[cfg(windows)]
+#[test]
+fn installed_resolves_windows_npm_shims_and_native_executables() {
+    if let Some(root) = std::env::var_os("BUZZ_DISCOVERY_FIXTURE") {
+        let root = PathBuf::from(root);
+        assert_eq!(installed("claude"), Some(root.join("claude.cmd")));
+        assert_eq!(installed("node"), Some(root.join("node.exe")));
+        assert_eq!(
+            installed("claude-agent-acp"),
+            Some(root.join("claude-agent-acp.cmd"))
+        );
+        assert_eq!(
+            installed("fixture-native"),
+            Some(root.join("fixture-native.exe"))
+        );
+        assert_eq!(
+            installed("fixture-batch"),
+            Some(root.join("fixture-batch.bat"))
+        );
+        assert_eq!(
+            installed("fixture-native.exe"),
+            Some(root.join("fixture-native.exe"))
+        );
+        assert_eq!(installed("fixture-posix-only"), None);
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let later = root.join("later");
+    fs::create_dir(&later).unwrap();
+    for name in [
+        "claude",
+        "claude.cmd",
+        "node",
+        "node.exe",
+        "claude-agent-acp",
+        "claude-agent-acp.cmd",
+        "fixture-native.cmd",
+        "fixture-native.exe",
+        "fixture-batch.bat",
+        "fixture-posix-only",
+    ] {
+        fs::write(root.join(name), "fixture bytes").unwrap();
+    }
+    // Directory precedence wins over extension precedence in a later directory.
+    fs::write(later.join("claude.exe"), "fixture bytes").unwrap();
+    let path = std::env::join_paths([root.to_path_buf(), later].into_iter().chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .unwrap();
+    // Isolate PATH from other parallel native tests without mutating the parent env.
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "runtime::tests::installed_resolves_windows_npm_shims_and_native_executables",
+            "--nocapture",
+        ])
+        .env("BUZZ_DISCOVERY_FIXTURE", root)
+        .env("HOME", root.join("empty-home"))
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 struct Memory;
 impl Credentials for Memory {
     fn delete(&self, _: &str, _: &str) -> Result<()> {

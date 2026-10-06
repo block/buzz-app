@@ -641,6 +641,88 @@ it("installs Claude Code with durable progress, failed-step logs, retry and nati
   expect(install).toHaveBeenCalledTimes(2);
 });
 
+it.each([false, true] as const)(
+  "keeps keyboard retry usable and hands off success only while Install owns focus (moved: %s)",
+  async (moveFocus) => {
+    const user = userEvent.setup();
+    let finish!: (report: HarnessInstallReport) => void;
+    const pending = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    const report: HarnessInstallReport = {
+      ready: false,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/claude-install.log",
+      output: "npm error EACCES",
+      error: "Installation failed",
+    };
+    const install = vi.fn(() => pending);
+    const { fixture } = setupHarnesses("ready", {
+      claude: {
+        status: "cli-needed",
+        installSupported: true,
+        loginCommand: "'/fixture/claude' auth login",
+      },
+      installClaude: install,
+      checkClaudeAuth: async () => !moveFocus,
+    });
+    const row = within(
+      await screen.findByRole("listitem", { name: "Claude Code harness" }),
+    );
+    const button = row.getByRole("button", { name: "Install" });
+    for (let i = 0; i < 10 && document.activeElement !== button; i++) {
+      await user.tab();
+    }
+    expect(button).toHaveFocus();
+    await user.keyboard("{Enter}");
+    try {
+      expect(await row.findByText(/Installing Claude Code and/)).toBeVisible();
+      expect(button).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(install).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        finish(report);
+        await pending;
+      });
+    }
+    expect(await row.findByRole("alert")).toHaveTextContent(
+      "Installation failed",
+    );
+    expect(button).toHaveFocus();
+    expect(button).not.toBeDisabled();
+    const retry = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    install.mockReturnValue(retry);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+    let next: Element | null = null;
+    try {
+      expect(button).toHaveFocus();
+      if (moveFocus) {
+        next = screen.getByRole("button", { name: "Add harness" });
+        for (let i = 0; i < 10 && document.activeElement !== next; i++) {
+          await user.tab();
+        }
+        expect(next).toHaveFocus();
+      }
+      if (!fixture.data.claudeSetup) throw new Error("Missing Claude fixture");
+      fixture.data.claudeSetup.status = "ready";
+    } finally {
+      await act(async () => {
+        finish({ ...report, ready: true, error: null });
+        await retry;
+      });
+    }
+    const status = await row.findByText(moveFocus ? "Sign-in needed" : "Ready");
+    expect(row.queryByRole("button", { name: "Install" })).toBeNull();
+    if (moveFocus) expect(next).toHaveFocus();
+    else expect(status).toHaveFocus();
+  },
+);
+
 it("offers manual Claude setup on unsupported devices without treating setup as an agent choice", async () => {
   const user = userEvent.setup();
   const { control, fixture } = setupHarnesses("ready", {

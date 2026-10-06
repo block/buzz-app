@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -29,6 +29,15 @@ export function ClaudeHarnessSetup({
   };
   const toolsReady = setup?.status === "ready";
   const [auth, setAuth] = useState<boolean | null | "checking">("checking");
+  const statusRef = useRef<HTMLSpanElement>(null);
+  const installRef = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    return () => {
+      if (button.ownerDocument.activeElement === button) {
+        statusRef.current?.focus();
+      }
+    };
+  }, []);
   // A new install result also rechecks auth if React batches a fast install.
   // biome-ignore lint/correctness/useExhaustiveDependencies: install completion must trigger this read even when tool presence is unchanged.
   useEffect(() => {
@@ -56,7 +65,7 @@ export function ClaudeHarnessSetup({
           <span>Claude Code</span>
         </span>
         <span className="flex items-center gap-2">
-          <span className="text-secondary">
+          <span ref={statusRef} tabIndex={-1} className="text-secondary">
             {ready
               ? "Ready"
               : toolsReady
@@ -71,12 +80,12 @@ export function ClaudeHarnessSetup({
           </span>
           {!toolsReady && setup.installSupported && control.installClaude && (
             <Button
+              ref={installRef}
               size="sm"
               loading={installing}
               disabled={
                 state.status !== "ready" ||
                 state.busy ||
-                installing ||
                 state.piInstall?.installing
               }
               onClick={() => void control.installClaude?.().catch(() => {})}

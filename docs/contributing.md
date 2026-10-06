@@ -202,11 +202,13 @@ Browser and desktop share the React application, community sessions, durable
 outbox, protocol models and live scheduler. **The goal is one code path per feature
 in development and release:** desktop development uses the same shared frontend
 and Rust host as packaged desktop, not a Node implementation of the feature.
-`dev/` is only for browser-only development and broker tests, and is being shrunk;
-it is not a second product backend. New features do not get broker support. A
-pinned `just web` run therefore cannot reach new native features; develop and test
-those with `BUZZ_DEV_VIEWER= just desktop` instead. Node code does not run in a
-browser merely because it serves one, and packaged desktop has no Node backend.
+`dev/` supplies browser-development host support and broker tests, not a second
+owner of feature logic. **Preserve supported browser capabilities:** reduce
+duplicate implementations, not available workflows. Reuse shared feature owners
+rather than add parallel Node feature logic; native-only capabilities do not
+require speculative browser parity. Develop and test those with
+`BUZZ_DEV_VIEWER= just desktop`. Node code does not run in a browser merely because
+it serves one, and packaged desktop has no Node backend.
 
 | Mode | Identity and relay host |
 | --- | --- |
@@ -243,10 +245,12 @@ app as incidental cleanup. See [identity custody and acceptance](identity.md).
   contract cases are the long-term pattern for necessary cross-language logic,
   not a universal adapter or code generator. Existing JSON fixtures can be read by
   Vitest and Rust `include_str!`.
-- **`dev/` Node copy + Rust implementation:** only Rust ships. Shared cases are a
-  temporary drift check until the Node copy is removed, not a reason to preserve
-  or expand it. Document intentional or unresolved differences with separate
-  expected outcomes; neither implementation automatically defines intended policy.
+- **Node browser host + Rust native host:** only Rust ships in packaged desktop,
+  but browser workflows still need host support. Share application policy where
+  practical; retain necessary host enforcement and I/O. Shared cases check drift
+  wherever both hosts implement the same contract, without requiring automatic
+  parity. Document intentional or unresolved differences with separate expected
+  outcomes; neither implementation automatically defines intended policy.
   Changing outcomes is a behavior decision, not a refactor. Do not add a second
   source of feature policy in `dev/`.
 
@@ -259,13 +263,12 @@ same change. Reuse existing runners and CI; this is not an extra full-suite gate
 for each edit. Keep feature details with their owner, not copied into this guide.
 
 [Canvas shape cases](../src/features/channel-templates/canvas-signing-contract.json)
-are a temporary Node/Rust mirror check, not a permanent dual-host contract. They
-cover kind-40100 tag shape, including an explicitly rejected native deserialization
-case; each host separately tests the UTF-8 content limit. This is not whole endpoint
-parity: broker freshness checks, native serialized-event limits, HTTP/IPC
-authorization and publication outcomes are separate layers. Existing host-specific
-checks remain necessary until the corresponding broker endpoint is retired; retain
-the Rust regression cases when removing the Node consumer.
+check the existing Node/Rust contract for kind-40100 tag shape, including an
+explicitly rejected native deserialization case; each host separately tests the
+UTF-8 content limit. This is not whole endpoint parity: broker freshness checks,
+native serialized-event limits, HTTP/IPC authorization and publication outcomes
+are separate layers. Keep host-specific checks and regression coverage while the
+corresponding boundary is callable, including after any adapter replacement.
 
 **Manual testing of anything that ships uses `BUZZ_DEV_VIEWER= just desktop`.**
 The explicit empty value overrides a pin inherited from `.env.local`; merely
@@ -281,7 +284,7 @@ agreed isolated identity/data setup; browser fixtures and test identities must
 never use real keys. Do not launch a native app or switch someone's active identity
 merely to follow this testing guidance.
 
-### Broker reduction sequence
+### Broker consolidation and completion
 
 The behavior-preserving cleanup pass shares status text/emoji limits, DM
 participant-set policy, and sidebar intent rules with their existing
@@ -292,26 +295,22 @@ trim first. Star and mute commands share one broker implementation in
 `sidebar-toggle.mjs`; their distinct absent-unstar/unmute behavior stays in the
 shared edit owner. This does not make broker and native signing policies identical.
 
-The remaining sequence below requires retiring or replacing browser capabilities;
-it is not an automatic queue of follow-up cleanup PRs or authorization to delete current
-browser workflows. Each slice must identify its callers, move needed regression
-coverage to the shipped owner, and delete displaced code in the same change. A
-whole broker endpoint/module can go only after its browser use is explicitly
-retired or replaced; do not weaken a still-callable endpoint to reduce duplication.
+There is no follow-up retirement queue. Further consolidation needs a demonstrated
+duplicate responsibility, a current shared owner or justified replacement, and
+preserved browser and native behavior. Necessary host-specific enforcement and
+I/O are not duplication to remove merely because two hosts implement them.
 
-| Order | Existing `dev/` responsibility | Reduction and exit condition |
-| --- | --- | --- |
-| 1 | `user-status.mjs` | Text/emoji policy is now shared with `src/features/relay/user-status-policy.ts`. Remove the remaining broker shape/time checks only when its status endpoint is retired; do not copy them into Rust incidentally. |
-| 2 | `channel-kit.mjs`, `session-commands.mjs`, `direct-messages.mjs`, signing branches in `relay-broker.mjs` | Retire browser write capabilities one feature at a time after native acceptance and replacement fixture coverage. Remove each Node validator/encryption helper with its last caller; keep native signing tests. |
-| 3 | `read-state.mjs`, `sidebar-{preferences,sort,toggle}.mjs` | Retire encrypted-state broker routes and their Node copies once browser callers no longer need them. Shared frontend edit policy and native custody remain. |
-| 4 | `agent-memory.mjs`, `agent-observer.mjs`, `archive.mjs`, `project-git.mjs`, `attachment-{file,upload}.mjs`, `media-preparation.mjs` | Remove feature-by-feature after archive/observer, repository and media browser uses are retired or replaced and native failure/recovery coverage is retained. Do not delete user data or migrate credentials as cleanup. |
-| 5 | `relay-broker.mjs` and its declaration | Remove residual routes and the custom stream bridge only after their consumers and broker-backed fixtures are retired or replaced. Any shared-transport replacement is a separate design decision, not an assumed prerequisite. |
+A broker endpoint/module can be removed only after a replacement preserves its
+supported browser workflow and custody guarantees, all callers move, and relevant
+regression coverage follows. Native acceptance alone does not prove a browser
+replacement works. Capability retirement is a separate explicit product decision,
+not part of this cleanup; do not weaken a callable endpoint to reduce line count.
 
 Developer tools (`developer-settings.ts`, `live-setup-probe.mjs`) are not Rust
 feature mirrors. Legacy library and hosted-community helpers (`agent-library.mjs`,
-`builderlab.mjs`) need separate caller/capability decisions before removal; they
-are not automatically replaced by native identity. This sequence adds no new
-backend and changes no runtime defaults or credentials.
+`builderlab.mjs`) are not automatically replaced by native identity. A transport
+replacement or new backend needs a separate design decision. This cleanup changes
+no runtime defaults or credentials.
 
 ## Interactive product iteration
 

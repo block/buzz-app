@@ -17,6 +17,7 @@ import { orderPages, pagePresentation } from "./presentation";
 import { PageIcon } from "./PageIcon";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
+import { WindowControls } from "./WindowControls";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
@@ -211,6 +212,7 @@ export function AppShell({
             onSettings={() => onSelect("settings")}
             onProfile={onProfile}
           />
+          <WindowControls />
         </div>
       </header>
 

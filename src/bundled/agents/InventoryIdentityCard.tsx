@@ -166,9 +166,13 @@ export function InventoryIdentityCard({
         identities={[{ pubkey: row.pubkey, name: row.displayName }]}
         session={session}
         editable={setups}
+        imported={setups.some((agent) => agent.id === importedId)}
         revealControls={setups.some(
           (agent) =>
-            agent.id === importedId || !!agent.error || agent.profilePending,
+            agent.id === importedId ||
+            !!agent.error ||
+            agent.profilePending ||
+            !!actions(agent).notice,
         )}
         onViewProfile={
           profileKeys?.has(row.pubkey)

@@ -1241,3 +1241,38 @@ it("Stop retires a late replay-attachment failure without overwriting its result
   expect(control.snapshot().mentionError).toBeUndefined();
   control.dispose();
 });
+
+it("versions only accepted process actions, per native ID across callers", async () => {
+  const fixture = controlFixture();
+  fixture.data.agents.push({ ...structuredClone(fixture.agent), id: "other" });
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const late = deferred<typeof fixture.data>();
+  const action = fixture.host.action;
+  fixture.host.action = (id, command) =>
+    command === "start" ? late.promise : action(id, command);
+  const starting = control.action(fixture.agent.id, "start").catch(() => {});
+  try {
+    const started = control.snapshot().actionVersions;
+    expect(started?.[fixture.agent.id]).toEqual(expect.any(Number));
+    await expect(control.action(fixture.agent.id, "restart")).rejects.toThrow(
+      "in progress",
+    );
+    expect(control.snapshot().actionVersions).toBe(started);
+    await control.action("other", "stop");
+    expect(control.snapshot().actionVersions?.[fixture.agent.id]).toBe(
+      started?.[fixture.agent.id],
+    );
+    await control.action(fixture.agent.id, "stop");
+    expect(control.snapshot().actionVersions?.[fixture.agent.id]).not.toBe(
+      started?.[fixture.agent.id],
+    );
+  } finally {
+    late.resolve(structuredClone(fixture.data));
+    await starting;
+  }
+  const versions = control.snapshot().actionVersions;
+  await control.refresh();
+  expect(control.snapshot().actionVersions).toBe(versions);
+  control.dispose();
+});

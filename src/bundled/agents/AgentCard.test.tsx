@@ -274,3 +274,58 @@ it("opens the profile from the tile without opening its separate management cont
     screen.getByRole("button", { name: "Actions for Agent" }),
   ).toHaveFocus();
 });
+
+it("returns to persistent Actions when Review disappears while Manage is open", async () => {
+  const user = userEvent.setup();
+  const card = (revealControls: boolean) => (
+    <AgentCard name="Agent" identities={[]} revealControls={revealControls}>
+      <button type="button">Start</button>
+    </AgentCard>
+  );
+  const view = render(card(true));
+  const review = screen.getByRole("button", { name: "Review agent status" });
+  await user.click(review);
+  await screen.findByRole("dialog", { name: "Manage Agent" });
+  view.rerender(card(false));
+  expect(review).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(
+    screen.getByRole("button", { name: "Actions for Agent" }),
+  ).toHaveFocus();
+});
+
+it.each(["tile", "row"] as const)(
+  "focuses a persistent %s surface on import, not on later updates",
+  async (layout) => {
+    const card = (imported: boolean) => (
+      <AgentCard
+        name="Agent"
+        identities={[]}
+        layout={layout}
+        imported={imported}
+        revealControls={imported}
+        onEdit={() => {}}
+      >
+        <button type="button">Start</button>
+      </AgentCard>
+    );
+    const view = render(card(false));
+    const scroll = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      view.rerender(card(true));
+      const target = screen.getByRole("button", {
+        name: layout === "tile" ? "Review agent status" : "Actions for Agent",
+      });
+      expect(target).toHaveFocus();
+      expect(scroll).toHaveBeenCalledOnce();
+      target.blur();
+      view.rerender(card(true));
+      expect(target).not.toHaveFocus();
+      expect(scroll).toHaveBeenCalledOnce();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = previous;
+    }
+  },
+);

@@ -314,6 +314,53 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       ),
     ).toEqual([]);
     await panel.getByRole("button", { name: "Import Fixture agent" }).click();
+    // Import hands focus to the persistent card, before Manage is opened.
+    const review = panel.getByRole("button", { name: "Review agent status" });
+    await expect(review).toBeFocused();
+    const importedCard = panel.getByRole("article").filter({
+      has: page.getByRole("button", { name: "Review agent status" }),
+    });
+    const importedActions = importedCard.getByRole("button", {
+      name: /^Actions for /,
+    });
+    // Capture the persistent button ID: both identities share a display name,
+    // and Review disappears once the imported agent starts.
+    const actionsId = await importedActions.getAttribute("id");
+    expect(actionsId).toBeTruthy();
+    // This fixture's default host action targets only its original agent.
+    // Model the imported record explicitly for the focus-return transition.
+    await page.evaluate(() => {
+      const fixture = window.agentControlFixture;
+      const action = fixture.host.action;
+      fixture.host.action = async (id, command) => {
+        if (id !== "second-fixture") return action(id, command);
+        fixture.calls.push({ action: command, payload: { id } });
+        const imported = fixture.data.agents.find((agent) => agent.id === id);
+        imported.enabled = command !== "stop";
+        imported.status = command === "stop" ? "stopped" : "running";
+        imported.runningRevision =
+          command === "stop" ? null : imported.revision;
+        return structuredClone(fixture.data);
+      };
+    });
+    await review.click();
+    const management = page.getByRole("dialog", { name: /^Manage / });
+    await management
+      .getByRole("button", { name: "Start", exact: true })
+      .click();
+    await expect(
+      management.getByText("Process running · relay readiness unverified", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(review).toHaveCount(0);
+    await management.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(
+      management.getByText("Process stopped", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(management).toHaveCount(0);
+    await expect(page.locator(`[id="${actionsId}"]`)).toBeFocused();
     // Only the two managed identities have controls; the template stays read-only.
     await expect(
       panel.getByRole("article").filter({
@@ -1414,6 +1461,30 @@ test("card Import opens a focused review and restores focus after dismissal", as
     await expect(trigger).toBeFocused();
     await trigger.click();
     await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    // Successful completion hands focus to the new local card, not the
+    // disconnected Import button or the page header.
+    await trigger.click();
+    await dialog
+      .getByRole("button", { name: "Import agent", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const review = page.getByRole("button", { name: "Review agent status" });
+    await expect(review).toBeFocused();
+    await expect(review).toBeInViewport();
+    // Reset this synthetic identity for the separately gated recovery path below.
+    await page.evaluate(async () => {
+      const fixture = window.agentControlFixture;
+      fixture.data.agents = fixture.data.agents.filter(
+        (agent) => agent.id !== "second-fixture",
+      );
+      await fixture.control.refresh();
+    });
+    await expect(trigger).toBeVisible();
+    // A successful import must not suppress return focus on the next dismissal.
+    await trigger.click();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();

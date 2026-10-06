@@ -457,10 +457,12 @@ function ManagedAgents({
               identities={[agent]}
               session={connection.session}
               editable={[agent]}
+              imported={agent.id === importedId}
               revealControls={
                 agent.id === importedId ||
                 !!agent.error ||
-                !!agent.profilePending
+                !!agent.profilePending ||
+                !!actions(agent).notice
               }
               onEdit={edit}
               onDuplicate={duplicate}

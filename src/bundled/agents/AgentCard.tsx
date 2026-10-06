@@ -59,9 +59,11 @@ export function AgentCard({
   layout = "tile",
   headingLevel = 3,
   revealControls = false,
+  imported = false,
 }: {
   children?: ReactNode;
   revealControls?: boolean;
+  imported?: boolean;
   identityLabel?: (identity: { pubkey: string; name: string }) => string;
   layout?: "tile" | "row";
   headingLevel?: 3 | 4 | 5;
@@ -90,6 +92,7 @@ export function AgentCard({
   const tile = layout === "tile";
   const Heading = `h${headingLevel}` as "h3" | "h4" | "h5";
   const trigger = useRef<HTMLButtonElement>(null);
+  const review = useRef<HTMLButtonElement>(null);
   const profileHandoff = useRef(false);
   const [managing, setManaging] = useState(false);
   const managementTrigger = useRef<HTMLButtonElement | null>(null);
@@ -98,6 +101,12 @@ export function AgentCard({
     setManaging(true);
   };
   const hasControls = tile && !!children;
+  useEffect(() => {
+    if (!imported) return;
+    const target = review.current ?? trigger.current;
+    target?.scrollIntoView?.({ block: "nearest" });
+    target?.focus();
+  }, [imported]);
   const presence = usePresenceStatus(
     session?.presence,
     identities.length === 1 ? identities[0]?.pubkey : undefined,
@@ -374,6 +383,7 @@ export function AgentCard({
           {revealControls && (
             <div className="px-4 pb-4">
               <Button
+                ref={review}
                 size="compact"
                 onClick={(event) => manage(event.currentTarget)}
               >
@@ -384,7 +394,11 @@ export function AgentCard({
           <Dialog
             open={managing}
             onOpenChange={setManaging}
-            finalFocus={managementTrigger}
+            finalFocus={() =>
+              managementTrigger.current?.isConnected
+                ? managementTrigger.current
+                : trigger.current
+            }
             title={`Manage ${name}`}
           >
             <div className="flex min-w-0 flex-col gap-3">{children}</div>

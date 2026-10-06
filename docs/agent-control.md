@@ -23,7 +23,8 @@ and **Delete** separate. **Manage agent** opens the configured destinations’
 **Start / Stop**, recovery, and identity/source controls in a dialog; it is also
 the card-click fallback when no profile panel is available. Closing Manage does not
 cancel Start/Stop or discard its failure reason. Reopening retains that result
-until another action or an observed process-status transition supersedes it.
+until another action from Manage or Edit, or an observed process-status transition,
+supersedes it. Retained failures expose **Review agent status** on the card.
 Duplicate seeds Create with editable settings and a fresh identity; write-only
 environment values require re-entry. Delete stops the local process and removes
 this app's settings and Keychain key after confirmation. The key remains while
@@ -91,7 +92,8 @@ agent stopped. The source is read-only and no legacy credential access occurs.
 
 **Import** preserves the selected old-installation identity and private key. It
 requires an explicit destination and a fresh source/destination-bound preview.
-Successful import saves a configured, stopped setup. It does not start a listener,
+Successful import saves a configured, stopped setup and moves keyboard focus to
+the persistent card’s **Review agent status** button (or Actions for a row). It does not start a listener,
 invite an agent, or modify the source installation. An identity already held
 locally cannot be imported again into another community; use **Clone** instead.
 The native prepare and commit boundaries both enforce that exact-key rule.

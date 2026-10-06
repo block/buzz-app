@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   agentFailureReason,
   canStopAgent,
@@ -33,17 +33,10 @@ export function ManagedAgentActions({
   onUseHere?: ((pubkey: string, action: "use" | "clone") => void) | undefined;
 }) {
   const [settingUp, setSettingUp] = useState(false);
-  const details = useRef<HTMLDivElement>(null);
   const { checking, notice, act } = action;
-  useEffect(() => {
-    if (imported) {
-      details.current?.scrollIntoView?.({ block: "nearest" });
-      details.current?.focus();
-    }
-  }, [imported]);
   const startBlock = agentLaunchBlock(state, agent);
   return (
-    <div ref={details} tabIndex={-1} className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
         {showCommunity && (
           <p className="m-0 break-all text-body-sm text-secondary">
@@ -153,21 +146,26 @@ export function useManagedAgentActions(
       string,
       {
         status: AgentView["status"];
+        version: number | undefined;
         checking: boolean;
         notice: string | null;
       }
     >
   >({});
-  const attempts = useRef(new Map<string, object>());
-  const [observed, setObserved] = useState(state.data?.agents);
-  if (observed !== state.data?.agents) {
-    setObserved(state.data?.agents);
+  const [observed, setObserved] = useState(state);
+  if (
+    observed.data?.agents !== state.data?.agents ||
+    observed.actionVersions !== state.actionVersions
+  ) {
+    setObserved(state);
     setOutcomes((current) =>
       Object.fromEntries(
-        Object.entries(current).filter(([id, outcome]) =>
-          state.data?.agents.some(
-            (agent) => agent.id === id && agent.status === outcome.status,
-          ),
+        Object.entries(current).filter(
+          ([id, outcome]) =>
+            state.actionVersions?.[id] === outcome.version &&
+            state.data?.agents.some(
+              (agent) => agent.id === id && agent.status === outcome.status,
+            ),
         ),
       ),
     );
@@ -176,23 +174,26 @@ export function useManagedAgentActions(
     checking: outcomes[agent.id]?.checking ?? false,
     notice: outcomes[agent.id]?.notice ?? null,
     act(action) {
-      const attempt = {};
-      attempts.current.set(agent.id, attempt);
-      const currentAttempt = () => attempts.current.get(agent.id) === attempt;
+      const pending = control.action(agent.id, action);
+      const version = control.snapshot().actionVersions?.[agent.id];
+      const currentAttempt = () =>
+        control.snapshot().actionVersions?.[agent.id] === version;
       setOutcomes((current) => ({
         ...current,
         [agent.id]: {
           status: agent.status,
+          version,
           checking: false,
           notice: null,
         },
       }));
-      void control.action(agent.id, action).catch(async (problem: unknown) => {
+      void pending.catch(async (problem: unknown) => {
         if (!currentAttempt()) return;
         setOutcomes((current) => ({
           ...current,
           [agent.id]: {
             status: agent.status,
+            version,
             checking: true,
             notice: null,
           },
@@ -215,6 +216,7 @@ export function useManagedAgentActions(
           if (current && !current.error && !succeeded)
             next[agent.id] = {
               status: current.status,
+              version,
               checking: false,
               notice:
                 refreshed.status === "ready"

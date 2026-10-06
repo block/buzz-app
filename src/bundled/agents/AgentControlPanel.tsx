@@ -7,7 +7,7 @@ import {
 } from "../../features/agents/control-react";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { PageNavigation } from "../../features/navigation/service";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -90,6 +90,9 @@ export function AgentControlPanel({
     name: string;
     source?: ImportSource;
   } | null>(null);
+  // Success hands focus to the card. Suppress the popup's queued return before
+  // unmount; it resolves its target before the card's focus effect runs.
+  const importCompleted = useRef(false);
   useEffect(() => {
     setImportSelection((current) =>
       current?.destination === importDestination ? current : null,
@@ -223,6 +226,7 @@ export function AgentControlPanel({
           : undefined
       }
       onImported={(agents) => {
+        importCompleted.current = true;
         setImportedId(agents[0]?.id ?? null);
         setImportSections([]);
         setImportSelection(null);
@@ -291,6 +295,7 @@ export function AgentControlPanel({
               ...(source ? { source } : {}),
             }),
           (pubkey, source) => {
+            importCompleted.current = false;
             setImportSelection({
               destination: importDestination,
               trigger:
@@ -366,7 +371,9 @@ export function AgentControlPanel({
               <Dialog.Popup
                 data-buzz-ui=""
                 className="buzz-dialog agent-controls text-body"
-                finalFocus={() => importSelection.trigger}
+                finalFocus={() =>
+                  importCompleted.current ? false : importSelection.trigger
+                }
                 aria-modal={!state.pendingCredentialWrite}
               >
                 {importForm}

@@ -844,7 +844,12 @@ it.each([
       expect(await within(dialog).findByText(message)).toBeVisible();
       await closeManagement(dialog);
     }
-    dialog = await manageCard(card);
+    const review = await within(card).findByRole("button", {
+      name: "Review agent status",
+    });
+    expect(review).toBeVisible();
+    fireEvent.click(review);
+    dialog = await screen.findByRole("dialog", { name: /^Manage / });
     expect(await within(dialog).findByText(message)).toBeVisible();
     // The same-status refresh must not clear the result or leak it to another native ID.
     await act(async () => control.refresh());
@@ -856,58 +861,100 @@ it.each([
     await act(async () => control.refresh());
     f.agent.status = original;
     await act(async () => control.refresh());
+    expect(
+      within(card).queryByRole("button", { name: "Review agent status" }),
+    ).toBeNull();
     dialog = await manageCard(card);
     expect(within(dialog).queryByText(message)).toBeNull();
   },
 );
 
-it("does not revive a superseded Start failure after recovery Stop", async () => {
-  let reject!: (reason: string) => void;
-  const pending = new Promise<never>((_resolve, no) => {
-    reject = no;
-  });
-  const { f, control } = setup("connected", (f) => {
-    f.data.parked = [];
-    f.agent.status = "stopped";
-    f.agent.enabled = false;
-  });
-  const action = f.host.action;
-  f.host.action = vi.fn((id, command) =>
-    command === "start" ? pending : action(id, command),
-  );
-  const card = (
-    await screen.findAllByRole("article", { name: "Agent Fixture agent" })
-  )[0];
-  if (!card) throw Error("Missing managed card");
-  let dialog = await manageCard(card);
-  fireEvent.click(
-    within(dialog).getAllByRole("button", { name: "Start" })[0] as HTMLElement,
-  );
-  try {
-    await waitFor(() =>
-      expect(control.snapshot().pendingLaunch).toBe(f.agent.id),
-    );
-    await closeManagement(dialog);
-    dialog = await manageCard(card);
-    fireEvent.click(
-      within(dialog).getAllByRole("button", { name: "Stop" })[0] as HTMLElement,
-    );
-    await waitFor(() =>
-      expect(f.calls.some((call) => call.action === "stop")).toBe(true),
-    );
-    await waitFor(() => expect(control.snapshot().stopping).toBe(false));
-    await closeManagement(dialog);
-  } finally {
-    await act(async () => {
-      reject("late start failure");
-      await pending.catch(() => {});
+it.each([
+  ["legacy", "Manage"],
+  ["legacy", "Edit"],
+  ["unified", "Manage"],
+  ["unified", "Edit"],
+] as const)(
+  "does not revive a superseded Start failure after %s %s Stop",
+  async (inventory, surface) => {
+    let reject!: (reason: string) => void;
+    const pending = new Promise<never>((_resolve, no) => {
+      reject = no;
     });
-  }
-  await waitFor(() => expect(control.snapshot().busy).toBe(false));
-  dialog = await manageCard(card);
-  expect(within(dialog).queryByText(/The agent didn't start/)).toBeNull();
-  expect(within(dialog).queryByText(/couldn't confirm whether/)).toBeNull();
-});
+    const { f, control } = setup("connected", (f) => {
+      if (inventory === "unified") f.data.parked = [];
+      f.agent.status = "stopped";
+      f.agent.enabled = false;
+    });
+    const action = f.host.action;
+    f.host.action = vi.fn((id, command) =>
+      command === "start" ? pending : action(id, command),
+    );
+    const card = (
+      await screen.findAllByRole("article", { name: "Agent Fixture agent" })
+    )[0];
+    if (!card) throw Error("Missing managed card");
+    let dialog = await manageCard(card);
+    fireEvent.click(
+      within(dialog).getAllByRole("button", {
+        name: "Start",
+      })[0] as HTMLElement,
+    );
+    try {
+      await waitFor(() =>
+        expect(control.snapshot().pendingLaunch).toBe(f.agent.id),
+      );
+      await closeManagement(dialog);
+      if (surface === "Edit") {
+        fireEvent.click(
+          within(card).getByRole("button", {
+            name: "Actions for Fixture agent",
+          }),
+        );
+        fireEvent.click(
+          (
+            await screen.findAllByRole("menuitem", { name: /^Edit/ })
+          )[0] as HTMLElement,
+        );
+        dialog = screen.getByRole("dialog", { name: "Edit agent" });
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Runtime" }),
+        );
+      } else {
+        dialog = await manageCard(card);
+      }
+      fireEvent.click(
+        within(dialog).getAllByRole("button", {
+          name: "Stop",
+        })[0] as HTMLElement,
+      );
+      await waitFor(() =>
+        expect(f.calls.some((call) => call.action === "stop")).toBe(true),
+      );
+      await waitFor(() => expect(control.snapshot().stopping).toBe(false));
+      if (surface === "Edit") {
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Close editor" }),
+        );
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      } else {
+        await closeManagement(dialog);
+      }
+    } finally {
+      await act(async () => {
+        reject("late start failure");
+        await pending.catch(() => {});
+      });
+    }
+    await waitFor(() => expect(control.snapshot().busy).toBe(false));
+    dialog = await manageCard(card);
+    expect(within(dialog).queryByText(/The agent didn't start/)).toBeNull();
+    expect(within(dialog).queryByText(/couldn't confirm whether/)).toBeNull();
+    expect(
+      within(dialog).getAllByText("Process stopped").length,
+    ).toBeGreaterThan(0);
+  },
+);
 
 it("retires a card Start failure after the editor starts and stops the agent", async () => {
   const { f } = setup();
@@ -1151,13 +1198,15 @@ it("focuses the imported managed identity without starting it", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Review agent status" }),
-  );
+  const review = await screen.findByRole("button", {
+    name: "Review agent status",
+  });
+  await waitFor(() => expect(review).toHaveFocus());
+  fireEvent.click(review);
   const imported = await screen.findByRole("dialog", { name: /^Manage / });
   const notice = await within(imported).findByText(/Imported, not started\./);
   expect(imported).toHaveTextContent("wss://third.example");
-  expect(notice.parentElement).toHaveFocus();
+  expect(notice).toBeVisible();
   expect(
     within(imported).queryByRole("button", { name: "Use here" }),
   ).toBeNull();
@@ -3388,6 +3437,13 @@ it("unified card Import selects exact identity and development source, then move
   const configuredCard = await screen.findByRole("article", {
     name: `Agent Fixture agent · ${npubEncode("cd".repeat(32)).slice(-4)}`,
   });
+  await waitFor(() =>
+    expect(
+      within(configuredCard).getByRole("button", {
+        name: "Review agent status",
+      }),
+    ).toHaveFocus(),
+  );
   expect(
     within(await manageCard(configuredCard)).getByRole("button", {
       name: "Start",

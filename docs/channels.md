@@ -1135,7 +1135,7 @@ back to an offset without a same-message guarantee.
 Channels supports plain-text Markdown authoring with a shared durable outbox and bounded history.
 Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
 tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
-Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
+Only credential-free HTTP(S) links are active; raw HTML is ignored and inline remote images
 are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
 event-local and are not substituted inside links or code.
 Authenticated live traffic reconciles through the same session. Channel creation is not

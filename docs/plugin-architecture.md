@@ -676,7 +676,7 @@ Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets an
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
 It does not fetch titles. Messages currently recognize
-credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;

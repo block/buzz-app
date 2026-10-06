@@ -27,7 +27,11 @@ import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
 import * as messageContent from "../relay/message-content";
-import { MAX_MARKDOWN_LENGTH, safeMessageUrl } from "../relay/message-content";
+import {
+  MAX_MARKDOWN_LENGTH,
+  safeLinkUrl,
+  safeMessageUrl,
+} from "../relay/message-content";
 import type { ChannelMessage } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
@@ -170,19 +174,23 @@ second
     expect(html).toContain("remote alt");
   });
 
-  it("allows credential-free HTTPS links and makes other destinations non-clickable", () => {
-    expect(safeMessageUrl("https://example.com/path?q=1")).toBe(
+  it("allows credential-free HTTP(S) links and makes other destinations non-clickable", () => {
+    expect(safeLinkUrl("https://example.com/path?q=1")).toBe(
       "https://example.com/path?q=1",
     );
+    expect(safeLinkUrl("http://example.com")).toBe("http://example.com/");
     for (const url of [
-      "http://example.com",
       "javascript:alert(1)",
       "data:text/html,x",
       "file:///tmp/x",
       "/relative",
       "https://user:secret@example.com",
+      "http://user:secret@example.com",
     ])
-      expect(safeMessageUrl(url)).toBeUndefined();
+      expect(safeLinkUrl(url)).toBeUndefined();
+    // Projected attachments keep the stricter HTTPS-only rule.
+    expect(safeMessageUrl("https://example.com")).toBe("https://example.com/");
+    expect(safeMessageUrl("http://example.com")).toBeUndefined();
 
     const safe = render("[Example](https://example.com/path)");
     expect(safe).toContain('href="https://example.com/path"');
@@ -194,6 +202,15 @@ second
     expect(unsafe).not.toContain("<a");
     expect(unsafe).toContain("bad");
     expect(unsafe).toContain("local");
+  });
+
+  it("links plain HTTP URLs with sentence punctuation left outside the anchor", () => {
+    expect(render("See http://localhost:3000 now")).toContain(
+      '<a href="http://localhost:3000/"',
+    );
+    const sentence = render("see http://localhost:3000.");
+    expect(sentence).toContain('href="http://localhost:3000/"');
+    expect(sentence).toContain(">http://localhost:3000</a>.");
   });
 
   it("falls back to literal text before recursively rendering deeply nested inbound content", () => {
@@ -681,6 +698,20 @@ describe("Markdown inline extensions", () => {
     expect(html).toContain(":party_parrot: PLUGIN @Mic</code>");
     expect(html).toContain("PLUGIN :party_parrot: @Mic</span>");
   });
+
+  it.each(["http", "https"])(
+    "keeps emoji shortcodes and encoded punctuation verbatim inside bare %s links",
+    (scheme) => {
+      const url = `${scheme}://a.test/:party_parrot:/&#58;x`;
+      const html = render(url, {
+        emoji: [party],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      });
+      expect(html).not.toContain("<img");
+      expect(html).toContain(`>${url.replace("&", "&amp;")}</a>`);
+    },
+  );
 
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };

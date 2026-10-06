@@ -1211,9 +1211,16 @@ The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
 and search load only when opened. Search by name/shortcode, then choose an emoji
 to insert at the cursor; Enter selects a search result and Escape closes the picker
-and returns focus. You can also type `:shortcode:`. The picker follows the host
-Light/Dark choice, including while already open, without recreating its search or
-dictionary. It does not independently follow the operating system.
+and returns focus. You can also type `:shortcode:`: the closing colon after one
+exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with
+that emoji, while partial names, namesakes, times, URLs and code keep the typed
+text, including raw Markdown code in pasted or restored drafts. Replacement requires
+both catalogs to load successfully; partial suggestions and retry remain available
+without automatically accepting the colon. One undo restores the full typed shortcode,
+including its closing colon, with the caret after it. The picker follows the host
+Light/Dark choice, including while already
+open, without recreating its search or dictionary. It does not independently
+follow the operating system.
 
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose

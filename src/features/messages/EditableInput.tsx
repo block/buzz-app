@@ -464,10 +464,41 @@ export function EditableInput({
       text: string,
       recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
+      terminator?: ":",
     ) => {
-      if (!editable() || composing.current) return false;
-      if (range) setRange(range.start, range.end);
-      const { from, to, $from } = editor.state.selection;
+      if (!editable() || composing.current || editor.composing) return false;
+      if (terminator) {
+        const source = projection();
+        if (
+          !range ||
+          recipient ||
+          !editor.state.selection.empty ||
+          source.source(editor.state.selection.from) !== range.end
+        )
+          return false;
+        // Like inline input rules, keep the typed source as the undo target.
+        const typed = editor.state.tr.insertText(terminator);
+        if (
+          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
+          current.current.maxLength
+        )
+          return false;
+        const previous = editor.state;
+        editor.dispatch(typed);
+        if (editor.state === previous) return false;
+        range = { start: range.start, end: range.end + terminator.length };
+        openTokens(range.start, range.end);
+      } else if (range) setRange(range.start, range.end);
+      const source = projection();
+      // Do not select the shortcode in a separate transaction: undo must retain
+      // the collapsed caret following the colon, not the replacement range.
+      const from = range
+        ? source.position(range.start)
+        : editor.state.selection.from;
+      const to = range
+        ? source.position(range.end, -1)
+        : editor.state.selection.to;
+      const $from = editor.state.doc.resolve(from);
       const marks = $from.parent.type
         .allowedMarks(editor.state.storedMarks ?? $from.marks())
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
@@ -519,8 +550,10 @@ export function EditableInput({
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength
       )
-        return false;
+        return !!terminator; // The typed colon landed even if conversion cannot.
+      const unconverted = editor.state;
       editor.dispatch(tr.scrollIntoView());
+      if (terminator && editor.state !== unconverted) separateHistory = true;
       editor.focus();
       return true;
     };

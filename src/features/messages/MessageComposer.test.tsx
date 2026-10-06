@@ -6,7 +6,15 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import {
   act,
   cleanup,
@@ -48,6 +56,10 @@ import type {
 import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
+import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
+import * as emojiSearch from "../../bundled/emoji/emoji-search";
+import type { EmojiSnapshot } from "../relay/emoji-directory";
+import { emojiQuery } from "../../bundled/emoji/emoji-query";
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { setRememberAgentsPreference } from "./mention-preferences";
@@ -143,9 +155,9 @@ function mount(
     },
   ];
   const emojiListeners = new Set<() => void>();
-  let emoji = {
-    status: "ready" as const,
-    entries: [] as readonly CustomEmoji[],
+  let emoji: Pick<EmojiSnapshot, "status" | "entries"> = {
+    status: "ready",
+    entries: [],
   };
   const outboxListeners = new Set<() => void>();
   let pending: readonly OutgoingEvent[] = [];
@@ -364,9 +376,9 @@ function mount(
       });
       return published;
     },
-    replaceCompletionProvider() {
+    replaceCompletionProvider(pluginId = "test") {
       act(() => {
-        completions = [completion("2")];
+        completions = [{ ...completion("2"), pluginId }];
         for (const listener of completionListeners) listener();
       });
     },
@@ -390,9 +402,12 @@ function mount(
         for (const listener of libraryListeners) listener();
       });
     },
-    setEmoji(entries: readonly CustomEmoji[]) {
+    setEmoji(
+      entries: readonly CustomEmoji[],
+      status: EmojiSnapshot["status"] = "ready",
+    ) {
       act(() => {
-        emoji = { status: "ready", entries };
+        emoji = { status, entries };
         for (const listener of emojiListeners) listener();
       });
     },
@@ -747,10 +762,16 @@ it.each(["click", "Enter", "Tab"])(
   },
 );
 
-it.each([undefined, "other"])(
-  "leaves space alone if the latest publication's exact match is %s",
-  (spaceId) => {
+it.each([
+  [" ", "test", undefined],
+  [" ", "test", "other"],
+  [":", "buzz.emoji", undefined],
+  [":", "buzz.emoji", "other"],
+])(
+  "leaves %s alone for %s if the latest publication's exact match is %s",
+  (key, pluginId, spaceId) => {
     const h = mount();
+    h.replaceCompletionProvider(pluginId);
     const input = h.input();
     input.focus();
     h.fill("!search");
@@ -765,7 +786,7 @@ it.each([undefined, "other"])(
     });
     act(() => {
       publish({ items, spaceId });
-      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+      expect(fireEvent.keyDown(input, { key })).toBe(true);
     });
     expect(input).toHaveValue("!search");
     expect(h.messages.send).not.toHaveBeenCalled();
@@ -2719,6 +2740,189 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
     [],
     [],
   );
+});
+
+/** The real Emoji provider; the fixture provider above never publishes an exact match. */
+function mountEmojiTypeahead() {
+  // jsdom has no canvas; previews fall back to the uncentred glyph.
+  const context = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockImplementation(() => null);
+  onTestFinished(() => context.mockRestore());
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "typeahead",
+      key: "buzz.emoji/typeahead",
+      pluginId: "buzz.emoji",
+      revision: "1",
+      title: "Emoji",
+      match: ({ text, start }) => emojiQuery(text, start),
+      component: EmojiCompletion,
+    },
+  ];
+  return mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+}
+// ":" is Shift+; on US layouts, so the typed colon arrives with shiftKey set.
+const colon = (input: ComposerInputElement) =>
+  fireEvent.keyDown(input, { key: ":", shiftKey: true });
+
+it.each([
+  ["hello :-1", "hello 👎"],
+  [":+1", "👍"],
+  ["say :SMILE", "say 😄"],
+])(
+  "replaces an exact shortcode with its emoji on the closing colon: %s",
+  async (typed, expected) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    const label = `:${typed.slice(typed.lastIndexOf(":") + 1).toLowerCase()}:`;
+    await screen.findByRole("option", { name: label });
+    expect(colon(h.input())).toBe(false);
+    expect(h.input()).toHaveValue(expected);
+    expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+      expected.length,
+      expected.length,
+    ]);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  },
+);
+
+it("keeps the typed colon after a partial shortcode and never accepts emoji on Space", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("hello :smil");
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("hello :smil");
+  h.fill("hello :-1");
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(true);
+  expect(h.input()).toHaveValue("hello :-1");
+});
+
+it.each(["at 10:30", "see http"])(
+  "leaves the colon in times and URLs alone: %s",
+  (typed) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    // No syntax match means no provider mounts, so no asynchronous search is pending.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(colon(h.input())).toBe(true);
+    expect(h.input()).toHaveValue(typed);
+  },
+);
+
+it("keeps a shortcode literal inside inline code", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("run :-1");
+  act(() => {
+    h.input().setSelectionRange(0, 7);
+    h.input().toggleFormat("code");
+    h.input().setSelectionRange(7, 7);
+  });
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("run :-1");
+});
+
+it("waits for the community catalog before authorizing a Unicode replacement", async () => {
+  const h = mountEmojiTypeahead();
+  h.setEmoji([], "loading");
+  h.fill(":smile");
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue(":smile");
+  // Release the pending catalog with a namesake after Unicode has settled.
+  h.setEmoji([{ shortcode: "smile", url: "https://emoji.test/smile.png" }]);
+  await screen.findByRole("option", { name: ":smile: Unicode emoji" });
+  expect(colon(h.input())).toBe(true);
+  // A later complete, unambiguous catalog permits the same query without typing.
+  h.setEmoji([]);
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("😄");
+});
+
+it("keeps Unicode suggestions and retry without replacement after a community failure", async () => {
+  const h = mountEmojiTypeahead();
+  h.setEmoji([], "error");
+  h.fill(":smile");
+  await screen.findByText(
+    "Community emoji unavailable; Unicode results shown.",
+  );
+  expect(screen.getByRole("option", { name: ":smile:" })).toBeInTheDocument();
+  expect(colon(h.input())).toBe(true);
+  await h.user.click(screen.getByRole("option", { name: "Retry suggestions" }));
+  expect(h.session.emoji.refresh).toHaveBeenCalledOnce();
+  h.setEmoji([]);
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(false);
+});
+
+it("keeps custom suggestions and retry without replacement after a Unicode failure", async () => {
+  const search = vi
+    .spyOn(emojiSearch, "searchEmoji")
+    .mockRejectedValue(new Error("chunk unavailable"));
+  onTestFinished(() => search.mockRestore());
+  const h = mountEmojiTypeahead();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  h.fill(":party");
+  await screen.findByText("Unicode emoji unavailable. Custom matches shown.");
+  expect(screen.getByRole("option", { name: ":party:" })).toBeInTheDocument();
+  expect(colon(h.input())).toBe(true);
+  search.mockRestore();
+  await h.user.click(screen.getByRole("option", { name: "Retry suggestions" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Unicode emoji unavailable. Custom matches shown."),
+    ).toBeNull(),
+  );
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue(":party:");
+});
+
+it.each([
+  ["```\n:-1\n```", 7],
+  ["~~~\n:-1", 7],
+  ["`run :-1`", 8],
+  ["    :-1", 7],
+])(
+  "keeps a shortcode literal inside raw Markdown code: %s",
+  async (text, caret) => {
+    const h = mountEmojiTypeahead();
+    h.fill(text);
+    act(() => h.input().setSelectionRange(caret, caret));
+    fireEvent(document, new Event("selectionchange"));
+    await screen.findByRole("option", { name: ":-1:" });
+    expect(colon(h.input())).toBe(true);
+    expect(h.input()).toHaveValue(text);
+  },
+);
+
+it("restores the typed colon and collapsed caret with one undo, and isolates subsequent typing", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("hello :-1");
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("hello 👎");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello :-1:");
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([10, 10]);
+  act(() => h.input().undo(true));
+  expect(h.input()).toHaveValue("hello 👎");
+  await h.user.type(h.input(), "!");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello 👎");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello :-1:");
 });
 
 it("rejects overlong and over-limit tool edits without changing accepted intent", () => {

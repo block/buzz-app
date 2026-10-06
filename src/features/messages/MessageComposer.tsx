@@ -38,7 +38,10 @@ import {
 } from "../../shared/design-system/icons/index";
 import { ComposerAttachments } from "./ComposerAttachments";
 import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
-import { sendInBackground } from "./background-upload";
+import {
+  sendInBackground,
+  useBackgroundSendPending,
+} from "./background-upload";
 import { BackgroundUploadStatus } from "./BackgroundUploadStatus";
 import type { UploadedAttachment } from "../relay/attachments";
 import {
@@ -260,6 +263,7 @@ function Composer({
   const mentionRoster = useContext(DraftMentionRoster);
   const agentChoices = inviteAgents || !!sessionConversation;
   const recoveryKey = `${scope}:${draftKey}`;
+  const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
     if (submission) return;
     const recovery = recoveryFor(session);
@@ -840,6 +844,7 @@ function Composer({
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       (!draft.trim() && !attachments.items.length) ||
       attachments.blocked ||
+      sendPending ||
       sendAttempt.current ||
       !outbox
     )
@@ -972,6 +977,7 @@ function Composer({
         const followup = JSON.stringify(next);
         sendInBackground(
           session,
+          recoveryKey,
           channelId,
           capturedAttachments,
           (uploaded) => {
@@ -1364,7 +1370,7 @@ function Composer({
             title={editing.target ? "Save changes" : "Send message"}
             disabled={
               disabled ||
-              (!editing.target && (!!accepted || conflict)) ||
+              (!editing.target && (!!accepted || conflict || sendPending)) ||
               (!!editing.target && (editing.locked || editDisabled)) ||
               admitting ||
               sending ||

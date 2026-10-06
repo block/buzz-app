@@ -1129,7 +1129,10 @@ function ThreadMessages({
                       ...tree.ancestors(selectedParent.id),
                     ]),
                 );
-              setReplyParent(undefined);
+              // A background send may publish after the user picked a new target.
+              setReplyParent((current) =>
+                current === replyParent ? undefined : current,
+              );
               setSent(id);
             }}
           />

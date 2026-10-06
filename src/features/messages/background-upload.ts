@@ -17,7 +17,11 @@ export type BackgroundUploads = Readonly<{
   notices: readonly Notice[];
   host: object | undefined;
 }>;
-type Job = { store: AttachmentDraft; controller: AbortController };
+type Job = {
+  owner: string;
+  store: AttachmentDraft;
+  controller: AbortController;
+};
 type Queue = {
   jobs: Job[];
   notices: readonly Notice[];
@@ -83,9 +87,10 @@ function reason(error: unknown) {
 }
 
 /** Takes admitted files after Send; files upload in order, then publish once.
- * Cancel and failure hand the files back to `recover`; a closed session drops them. */
+ * Every unpublished outcome hands the files back to `recover`. */
 export function sendInBackground(
   session: RelaySession,
+  owner: string,
   channelId: string,
   files: readonly DraftAttachment[],
   publish: (uploaded: readonly UploadedAttachment[]) => void,
@@ -95,7 +100,7 @@ export function sendInBackground(
   const key = `background:${crypto.randomUUID()}`;
   const store = attachmentDraft(session, key, channelId);
   store.adopt(files);
-  const job = { store, controller: new AbortController() };
+  const job = { owner, store, controller: new AbortController() };
   const { signal } = job.controller;
   queue.jobs.push(job);
   const stop = store.subscribe(() => update(queue));
@@ -109,13 +114,7 @@ export function sendInBackground(
       publish(uploaded);
       return;
     } catch (error) {
-      // Sign-out, leave and reconnection abort session uploads without a user action.
-      if (
-        !signal.aborted &&
-        error instanceof Error &&
-        error.name === "AbortError"
-      )
-        return;
+      // Session aborts (access change, cache clear, close) restore like failures.
       if (!signal.aborted)
         notice = uploaded
           ? `Message failed to send: ${reason(error)}`
@@ -138,6 +137,13 @@ export function cancelBackgroundUpload(session: RelaySession) {
     (job) => !job.controller.signal.aborted,
   );
   live.at(-1)?.controller.abort();
+}
+
+/** Like Desktop, a conversation cannot send again until its upload settles. */
+export function useBackgroundSendPending(session: RelaySession, owner: string) {
+  const queue = queueFor(session);
+  const pending = () => queue.jobs.some((job) => job.owner === owner);
+  return useSyncExternalStore(queue.subscribe, pending, pending);
 }
 
 export function dismissBackgroundUploadNotice(

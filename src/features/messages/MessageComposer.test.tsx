@@ -945,17 +945,33 @@ async function mountUploadComposer(
       },
       async query(filters) {
         return filters.flatMap((filter) =>
-          filter.kinds?.includes(39002)
-            ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
-            : filter.kinds?.includes(39000)
-              ? [metadata(relay, "channel", "General", 1700000000)]
-              : [],
+          filter["#d"]?.includes("other")
+            ? filter.kinds?.includes(39002)
+              ? [roster(relay, "other", other.members, other.time)]
+              : [metadata(relay, "other", "Random", other.time)]
+            : filter.kinds?.includes(39002)
+              ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
+              : filter.kinds?.includes(39000)
+                ? [metadata(relay, "channel", "General", 1700000000)]
+                : [],
         );
       },
       writer: { kinds: [9], sign, publish },
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
+  const other = { members: [] as string[], time: 1700000000 };
+  /** Changes membership of an unrelated channel; losing it revokes access. */
+  const otherMembership = (joined: boolean) => {
+    other.members = joined ? [viewer.pubkey] : [];
+    other.time++;
+    return act(() =>
+      owner.session.read([
+        { kinds: [39002], "#d": ["other"], limit: 1 },
+        { kinds: [39000], "#d": ["other"], limit: 1 },
+      ]),
+    );
+  };
   await act(() =>
     owner.session.read([
       { kinds: [39002], "#d": ["channel"], limit: 1 },
@@ -981,7 +997,17 @@ async function mountUploadComposer(
   const send = () =>
     within(view.container).getByRole("button", { name: "Send message" });
   owners.push(owner);
-  return { ...view, owner, input, form, send, uploadCalls, sign, publish };
+  return {
+    ...view,
+    owner,
+    input,
+    form,
+    send,
+    uploadCalls,
+    sign,
+    publish,
+    otherMembership,
+  };
 }
 
 it("keeps picker, paste and drop attachments local until Send starts upload and publish", async () => {
@@ -1249,23 +1275,56 @@ it("keeps a background reply on the parent captured at Send", async () => {
   ]);
 });
 
+it("blocks Send in a conversation until its background send settles", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  await userEvent.type(h.input(), "look at this");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+
+  // Composition stays open; only Send waits, so the text cannot overtake.
+  await userEvent.type(h.input(), "thoughts?");
+  expect(h.input()).toHaveValue("thoughts?");
+  expect(h.send()).toBeDisabled();
+  fireEvent.submit(h.form());
+  await act(async () => {});
+  expect(h.publish).not.toHaveBeenCalled();
+
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("look at this");
+  expect(h.publish.mock.calls[1]?.[0].content).toBe("thoughts?");
+});
+
 it("cancels the newest background send, restores its draft and leaves older sends running", async () => {
+  const root = "b".repeat(64);
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("one.txt"));
   await userEvent.type(h.input(), "first");
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  expect(h.input()).toHaveValue("");
 
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={root}
+    />,
+  );
   attachByPaste(h.input(), attachmentFile("two.txt"));
   await userEvent.type(h.input(), "second");
+  await waitFor(() => expect(h.send()).toBeEnabled());
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
-  await userEvent.type(h.input(), "plain");
-  fireEvent.click(h.send());
-  // Text-only sends never wait behind uploads.
-  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
-  expect(h.publish.mock.calls[0]?.[0].content).toBe("plain");
+  expect(h.input()).toHaveValue("");
 
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
@@ -1278,14 +1337,44 @@ it("cancels the newest background send, restores its draft and leaves older send
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("two.txt"));
   });
-  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
-  expect(h.publish.mock.calls[1]?.[0].content).toContain("first");
-  expect(h.publish.mock.calls[1]?.[0].content).toContain("[one.txt](<");
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("first");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[one.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].tags).not.toContainEqual([
+    "e",
+    root,
+    "",
+    "root",
+  ]);
   expect(screen.queryByText(/^Uploading/)).toBeNull();
-  expect(h.publish).toHaveBeenCalledTimes(2);
 });
 
-it("drops background sends silently when their session closes", async () => {
+it.each([
+  ["an unrelated channel's access is revoked", "revoke"],
+  ["the cache is cleared", "clear"],
+] as const)("restores a background send when %s", async (_case, trigger) => {
+  const h = await mountUploadComposer();
+  if (trigger === "revoke") await h.otherMembership(true);
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+
+  if (trigger === "revoke") await h.otherMembership(false);
+  else await act(() => h.owner.clearCache());
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("caption"));
+  expect(within(h.form()).getByText("notes.txt")).toBeVisible();
+  expect(screen.getByText(/^Upload failed: /)).toBeVisible();
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("never publishes a background send after its session closes", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile());
   await userEvent.type(h.input(), "caption");
@@ -1299,7 +1388,6 @@ it("drops background sends silently when their session closes", async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor());
   });
   await waitFor(() => expect(screen.queryByText(/^Uploading/)).toBeNull());
-  expect(screen.queryByText(/Upload failed/)).toBeNull();
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.sign).not.toHaveBeenCalled();
 });

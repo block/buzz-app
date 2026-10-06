@@ -184,7 +184,7 @@ it("registers with a saved UUID and attests through the existing owner signer", 
     agent_name: "Helper",
     idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
   });
-  expect(await h.client.attest(agent, h.signal)).toMatchObject({
+  expect(await h.client.attest(agent, h.signal, () => true)).toMatchObject({
     status: "Active",
   });
   expect(h.host.prepareRemoteAgentAuthorization).toHaveBeenCalledWith(
@@ -313,6 +313,7 @@ it.each(["sign-out", "cancel"])(
         status: "Unattested",
       },
       controller.signal,
+      () => true,
     );
     if (action === "cancel") controller.abort();
     else h.session.signOut();

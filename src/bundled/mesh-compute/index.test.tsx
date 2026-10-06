@@ -149,15 +149,10 @@ it("preserves the running lease through reconnect and revokes on identity change
   dispose();
 });
 
-it("renders Running without claiming connectivity, stops by lease, and separates errors", async () => {
-  let state = "ready";
+it("renders Running without a Disconnect control and separates refresh errors", async () => {
   native.invoke.mockImplementation((command) => {
     if (command === "mesh_compute_select") return Promise.resolve("lease");
-    if (command === "mesh_compute_release") {
-      state = "stopped";
-      return Promise.resolve();
-    }
-    return Promise.resolve({ available: true, lifecycle: { state } });
+    return Promise.resolve({ available: true, lifecycle: { state: "ready" } });
   });
   const snapshot = {
     status: "ready",
@@ -180,26 +175,22 @@ it("renders Running without claiming connectivity, stops by lease, and separates
   render(<Component />);
   await screen.findByText("Running");
   expect(screen.queryByText("Connected")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Disconnect" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
-  await screen.findByText("Off");
-  expect(native.invoke).toHaveBeenCalledWith("mesh_compute_release", {
-    lease: "lease",
-  });
-  expect(native.invoke).toHaveBeenLastCalledWith(
-    "mesh_compute_status",
-    undefined,
-  );
-  expect(native.invoke).toHaveBeenCalledWith("mesh_compute_select", {
-    community: "https://fixture.example",
-    restoreSharing: false,
-  });
+  // Legacy Buzz and the donor design have one control: Share this machine.
+  expect(
+    screen.queryByRole("button", {
+      name: /Disconnect|Connect|Cancel connection/,
+    }),
+  ).not.toBeInTheDocument();
   native.invoke.mockRejectedValueOnce(new Error("Status unavailable"));
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Status unavailable",
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Off");
+  expect(screen.getByRole("status")).toHaveTextContent("Running");
+  expect(native.invoke).not.toHaveBeenCalledWith(
+    "mesh_compute_release",
+    expect.anything(),
+  );
   dispose();
 });
 
@@ -325,7 +316,7 @@ it("starts sharing the selected model through the existing community lease", asy
 it.each([
   ["starting", "Starting /models/local.gguf…", true],
   ["ready", "Preparing /models/local.gguf", false],
-  ["failed", "Sharing failed for /models/local.gguf", false],
+  ["failed", "Mesh needs recovery. Load failed.", false],
 ] as const)(
   "shows serving intent truthfully in %s",
   async (phase, label, disabled) => {
@@ -682,8 +673,8 @@ it("shows the failure and native cause in Auto mode without presenting it as an 
   apply(ctx);
   render(<Component />);
   await screen.findByText("Native model startup failed: fixture cause");
-  expect(screen.getByText(/Sharing failed\./)).toHaveTextContent(
-    "Turn sharing off to clear it",
+  expect(screen.getByText(/Mesh needs recovery\./)).toHaveTextContent(
+    "Restart Buzz before starting Mesh again",
   );
   expect(screen.queryByText(/Saved model:/)).not.toBeInTheDocument();
 });
@@ -809,4 +800,117 @@ it("unsupported native builds report unavailable without invoking missing select
     ),
   ).toBe(true);
   expect(Component).toBeDefined();
+});
+
+function mountSharing() {
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: () => {},
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  render(<Component />);
+}
+
+it("failed with saved sharing: Off persists the disarm, then On stays blocked until restart", async () => {
+  let enabled = true;
+  native.invoke.mockImplementation((command, args) => {
+    if (command === "mesh_compute_select") return Promise.resolve("lease");
+    if (command === "mesh_compute_share") {
+      expect(args).toMatchObject({ lease: "lease", model: null });
+      enabled = false;
+      return Promise.resolve();
+    }
+    return Promise.resolve({
+      available: true,
+      lifecycle: { state: "failed", reason: "Startup failed" },
+      sharing: null,
+      savedSharing: { model: "m/Q4", enabled, auto: true },
+    });
+  });
+  mountSharing();
+  const toggle = await screen.findByRole("switch", {
+    name: "Share this machine",
+  });
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  expect(
+    screen.getByText(/Sharing is still enabled for next launch/),
+  ).toBeInTheDocument();
+  expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
+  // Consent is cleared; the unconfirmed runtime is never presented as stopped.
+  expect(
+    screen.getByText(/Shutdown could not be confirmed\. Restart Buzz/),
+  ).toBeInTheDocument();
+  expect(toggle).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(toggle);
+  expect(
+    native.invoke.mock.calls.filter(([c]) => c === "mesh_compute_share"),
+  ).toHaveLength(1);
+});
+
+it("a failed disarm write leaves sharing visibly enabled with the error", async () => {
+  native.invoke.mockImplementation((command) => {
+    if (command === "mesh_compute_select") return Promise.resolve("lease");
+    if (command === "mesh_compute_share")
+      return Promise.reject("Could not write sharing settings");
+    return Promise.resolve({
+      available: true,
+      lifecycle: { state: "failed", reason: "Startup failed" },
+      sharing: null,
+      savedSharing: { model: "m/Q4", enabled: true, auto: true },
+    });
+  });
+  mountSharing();
+  const toggle = await screen.findByRole("switch", {
+    name: "Share this machine",
+  });
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(toggle);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not write sharing settings",
+  );
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+});
+
+it("a rejected community selection is retried instead of stranding Share", async () => {
+  let selects = 0;
+  native.invoke.mockImplementation((command) => {
+    if (command === "mesh_compute_select")
+      return ++selects === 1
+        ? Promise.reject("Previous Mesh runtime shutdown is not confirmed")
+        : Promise.resolve("fresh-lease");
+    if (command === "mesh_compute_share") return Promise.resolve();
+    return Promise.resolve({
+      available: true,
+      lifecycle: { state: "stopped" },
+      sharing: null,
+      savedSharing: { model: "m/Q4", enabled: false, auto: true },
+    });
+  });
+  mountSharing();
+  const toggle = await screen.findByRole("switch", {
+    name: "Share this machine",
+  });
+  await waitFor(() =>
+    expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith(
+      "mesh_compute_share",
+      expect.objectContaining({ lease: "fresh-lease" }),
+    ),
+  );
+  expect(selects).toBe(2);
 });

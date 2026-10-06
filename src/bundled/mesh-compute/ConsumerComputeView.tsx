@@ -8,24 +8,16 @@ import styles from "./Compute.module.css";
 export function ConsumerComputeView({
   communityName,
   children,
-  active,
-  starting,
-  disabled,
   status,
   error,
   refreshDisabled,
-  connect,
   refresh,
 }: {
   communityName: string | undefined;
   children?: ReactNode;
-  active: boolean;
-  starting: boolean;
-  disabled: boolean;
   status: string;
   error: string | undefined | null;
   refreshDisabled: boolean;
-  connect: () => void;
   refresh: () => void;
 }) {
   return (
@@ -44,11 +36,6 @@ export function ConsumerComputeView({
             run on their machine.
           </p>
           {children}
-          {active && (
-            <Button onClick={connect} disabled={disabled}>
-              {starting ? "Cancel connection" : "Disconnect"}
-            </Button>
-          )}
           <p role="status">{status}</p>
           {status === "Running" && (
             <p className="text-body-sm text-secondary">

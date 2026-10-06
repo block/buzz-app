@@ -73,6 +73,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       )
       .catch(() => {});
   };
+  // A rejected selection must not strand every later action behind a dead
+  // promise: retry the current community once, then surface the real error.
+  const currentLease = async () => {
+    const selected = lease;
+    if (!selected) throw new Error("Connect to a community first");
+    try {
+      return { selected, id: await selected };
+    } catch (error) {
+      if (!scope || selected !== lease) throw error;
+      const retry = select(scope);
+      lease = retry;
+      return { selected: retry, id: await retry };
+    }
+  };
   const sync = () => {
     const snapshot = ctx.relay.snapshot();
     const identityChanged = viewer !== undefined && snapshot.viewer !== viewer;
@@ -124,7 +138,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
       setError(null);
       if (isTauri()) {
         const selected = lease;
+        // A rejected selection still shows authoritative status and its error;
+        // the next action retries the selection.
         void (selected ?? Promise.resolve())
+          .catch((reason) => {
+            if (active && snapshot === ctx.relay.snapshot())
+              setError(String(reason));
+          })
           .then(() => invoke<MeshStatus>("mesh_compute_status"))
           .then(
             (result) => {
@@ -142,6 +162,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
+    // Controls wait for this community's selection instead of rejecting clicks.
+    const [leaseReady, setLeaseReady] = useState(false);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: lease follows the relay snapshot.
+    useEffect(() => {
+      let active = true;
+      const selected = lease;
+      setLeaseReady(!selected);
+      void selected?.then(
+        (id) => {
+          if (active) setLeaseReady(Boolean(id));
+        },
+        () => {
+          // A rejected selection is retried by the next action.
+          if (active) setLeaseReady(true);
+        },
+      );
+      return () => {
+        active = false;
+      };
+    }, [snapshot.viewer, snapshot.scope]);
     const [replaceConfirmed, setReplaceConfirmed] = useState(false);
     const viewedCommunity =
       snapshot.status === "ready" && snapshot.viewer && snapshot.scope
@@ -187,12 +227,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     }, [status?.savedSharing?.model, status?.savedSharing?.auto]);
     const reset = async () => {
-      const selected = lease;
       setBusy(true);
       setError(null);
       try {
-        if (!selected) throw new Error("Connect to a community first");
-        const id = await selected;
+        const { selected, id } = await currentLease();
         if (!id) throw new Error("Mesh native runtime is unavailable");
         if (disposed || selected !== lease)
           throw new Error("Community changed");
@@ -209,19 +247,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
           setAuto(true);
         }
       } catch (reason) {
-        if (!disposed && snapshot === ctx.relay.snapshot())
+        if (!disposed && snapshot === ctx.relay.snapshot()) {
           setError(String(reason));
+          const result = await invoke<MeshStatus>("mesh_compute_status").catch(
+            () => null,
+          );
+          if (result && !disposed && snapshot === ctx.relay.snapshot())
+            setStatus(result);
+        }
       } finally {
         if (!disposed) setBusy(false);
       }
     };
     const share = async (clearSaved = false) => {
-      const selected = lease;
       setBusy(true);
       setError(null);
       try {
-        if (!selected) throw new Error("Connect to a community first");
-        const id = await selected;
+        const { selected, id } = await currentLease();
         if (!id) throw new Error("Mesh native runtime is unavailable");
         if (disposed || selected !== lease)
           throw new Error("Community changed");
@@ -252,31 +294,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
         if (!disposed) setBusy(false);
       }
     };
-    const run = async (action: "start" | "stop" | "status") => {
-      const selected = lease;
+    const refresh = async () => {
       setBusy(true);
       setError(null);
       try {
-        if (action === "start") {
-          if (!selected) throw new Error("Connect to a community first");
-          const id = await selected;
-          if (!id) throw new Error("Mesh native runtime is unavailable");
-          if (disposed || selected !== lease)
-            throw new Error("Community changed");
-          await invoke("mesh_compute_start", { lease: id });
-        } else if (action === "stop") {
-          if (!selected) throw new Error("No Mesh selection");
-          const id = await selected;
-          if (!id) throw new Error("Mesh native runtime is unavailable");
-          if (disposed || selected !== lease)
-            throw new Error("Community changed");
-          await invoke("mesh_compute_release", { lease: id });
-          // Disconnect preserves the saved preference without immediately restoring it.
-          if (!disposed && selected === lease && scope) {
-            lease = select(scope, false);
-            await lease;
-          }
-        }
         const result = await invoke<MeshStatus>("mesh_compute_status");
         if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
       } catch (error) {
@@ -287,6 +308,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     };
     const phase = status?.lifecycle?.state;
+    // Saved consent and live intent, not runtime health.
+    const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
     useEffect(() => {
       if (
         busy ||
@@ -318,21 +341,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         clearTimeout(timer);
       };
     }, [status, busy, error, snapshot]);
-    const enabled =
-      phase === "starting" || phase === "ready" || phase === "stopping";
     return (
       <ConsumerComputeView
         communityName={community?.name}
-        active={enabled && !otherCommunity}
-        starting={phase === "starting"}
-        disabled={
-          busy ||
-          !isTauri() ||
-          !status?.available ||
-          !phase ||
-          phase === "stopping" ||
-          (!enabled && snapshot.status !== "ready")
-        }
         status={
           !isTauri()
             ? "Open Buzz desktop to use shared compute."
@@ -353,8 +364,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           status?.reason
         }
         refreshDisabled={busy || !isTauri()}
-        connect={() => void run(enabled ? "stop" : "start")}
-        refresh={() => void run("status")}
+        refresh={() => void refresh()}
       >
         {otherCommunity && (
           <section aria-label="Bound compute community">
@@ -395,16 +405,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
             </p>
             <Switch
               label="Share this machine"
-              checked={Boolean(status.sharing || status.savedSharing?.enabled)}
+              checked={shareOn}
               disabled={
                 busy ||
+                !leaseReady ||
                 phase === "starting" ||
                 phase === "stopping" ||
                 snapshot.status !== "ready" ||
-                (!status.sharing &&
-                  !status.savedSharing?.enabled &&
-                  !auto &&
-                  !model.trim())
+                // Turning on: never replace an unrecovered failed runtime.
+                (!shareOn && (phase === "failed" || (!auto && !model.trim())))
               }
               onCheckedChange={(next) => {
                 if (next) void share();
@@ -412,7 +421,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
               }}
             />
             <p aria-live="polite" className="text-body-sm">
-              {shareStatus(status, phase, community?.name)}
+              {leaseReady
+                ? shareStatus(status, phase, community?.name)
+                : "Checking shared compute…"}
             </p>
             {status.sharing && status.download && !status.download.done && (
               <DownloadProgress download={status.download} />
@@ -475,16 +486,23 @@ function shareStatus(
 ): string {
   const where = communityName ?? "your community";
   const model = status.sharing;
-  if (phase === "failed")
-    return `Sharing failed${model ? ` for ${model}` : ""}. Turn sharing off to clear it; restart Buzz if shutdown cannot be confirmed.`;
-  if (!model)
-    return status.savedSharing?.enabled
-      ? "Sharing is on but not running. Turn it off and on to retry."
-      : "Sharing is off.";
+  const enabled = Boolean(model || status.savedSharing?.enabled);
+  if (phase === "failed") {
+    const cause = status.lifecycle?.reason
+      ? ` ${status.lifecycle.reason}.`
+      : "";
+    return enabled
+      ? `Mesh needs recovery.${cause} Sharing is still enabled for next launch; turn it off to disable automatic sharing. Restart Buzz before starting Mesh again.`
+      : `Mesh needs recovery.${cause} Shutdown could not be confirmed. Restart Buzz before starting Mesh again.`;
+  }
   if (phase === "stopping")
     return status.finishingJoin
       ? "Stopping, finishing a peer connection…"
-      : "Stopping sharing…";
+      : "Stopping…";
+  if (!model)
+    return status.savedSharing?.enabled
+      ? "Sharing is enabled but not running. Turn it off and on to start it again."
+      : "Sharing is off.";
   if (phase === "starting") return `Starting ${model}…`;
   if (phase === "ready")
     return status.modelReady

@@ -598,10 +598,42 @@ async function chooseFilter(label: string, control = "Activity type") {
   await user.click(await screen.findByRole("option", { name: label }));
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: control })).toHaveTextContent(
-      label,
+      control === "Filters" && label === "All" ? "Filters" : label,
     ),
   );
 }
+it("Mentions uses the mentioned message and excludes ordinary unread thread progress", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await act(async () => {
+    await h.owner.session.unread.markThrough(
+      { kind: "message", channelId: "room", messageId: h.mention.id },
+      h.mention.id,
+    );
+  });
+  const response = message(h.viewer, "room", "My answer", 30, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  const progress = message(h.alice, "room", "Ordinary progress", 31, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  act(() => h.emit([response, progress]));
+  await chooseFilter("Mentions");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Please review this");
+  expect(rows()[0]).not.toHaveTextContent("Ordinary progress");
+  await chooseFilter("Unread only", "Filters");
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  const fresh = message(h.alice, "room", "Another decision", 32, [
+    ["e", h.mention.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  act(() => h.emit([fresh]));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveTextContent("Another decision");
+});
+
 async function openRowMenu(
   method: "context" | "keyboard" | "contextKey" = "context",
 ) {
@@ -624,6 +656,304 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it.each(["All activity", "Mentions"])(
+  "Unresponded under %s stays until our reply, independently of reading",
+  async (activity) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    const initialCount = activity === "All activity" ? 2 : 1;
+    await chooseFilter(activity);
+    await chooseFilter("Unresponded only", "Filters");
+    expect(rows()).toHaveLength(initialCount);
+    await act(async () => {
+      await h.owner.session.unread.markThrough(
+        { kind: "message", channelId: "room", messageId: h.mention.id },
+        h.mention.id,
+      );
+    });
+    expect(rows()).toHaveLength(initialCount);
+    const otherReply = message(h.alice, "room", "Someone else's answer", 30, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    act(() => h.emit([otherReply]));
+    expect(rows()).toHaveLength(initialCount);
+    const elsewhere = message(h.viewer, "room", "An unrelated response", 31, [
+      ["e", h.root?.id ?? "", "", "reply"],
+    ]);
+    act(() => h.emit([elsewhere]));
+    expect(rows()).toHaveLength(1);
+    const response = message(h.viewer, "room", "Handled", 32, [
+      ["e", h.mention.id, "", "reply"],
+    ]);
+    act(() => h.emit([response]));
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    const fresh = message(h.alice, "room", "Another decision", 33, [
+      ["e", h.mention.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    act(() => h.emit([fresh]));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await chooseFilter("All", "Filters");
+    await chooseFilter("All activity");
+    expect(rows().length).toBeGreaterThan(1);
+  },
+);
+
+it("Unresponded follows the selected activity after ordinary thread progress", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  const response = message(h.viewer, "room", "My answer", 30, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  const progress = message(h.alice, "room", "Ordinary progress", 31, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  await act(async () => {
+    await h.owner.session.unread.markThrough(
+      { kind: "message", channelId: "room", messageId: h.mention.id },
+      h.mention.id,
+    );
+    h.emit([response, progress]);
+  });
+  await chooseFilter("Mentions");
+  await chooseFilter("Unresponded only", "Filters");
+  expect(rows()).toHaveLength(0);
+  await chooseFilter("Threads");
+  expect(
+    rows().some((row) => row.textContent?.includes("Ordinary progress")),
+  ).toBe(true);
+  await chooseFilter("All activity");
+  expect(
+    rows().some((row) => row.textContent?.includes("Ordinary progress")),
+  ).toBe(true);
+});
+
+// This mounted matrix owns filter intersections; real browser coverage owns the
+// composer/relay boundary, rather than repeating all permutations in Playwright.
+it.each(
+  ["All activity", "DMs", "Threads", "Mentions"].flatMap((activity) =>
+    ["Everyone", "Humans", "Agents"].map((sender) => ({ activity, sender })),
+  ),
+)(
+  "Unresponded intersects $activity and $sender",
+  async ({ activity, sender }) => {
+    const h = fixture({ withDm: true, withSenders: true });
+    if (!h.root) throw new Error("Missing fixture root");
+    const humanRoot = message(h.viewer, "room", "Human discussion", 34);
+    const agentRoot = message(h.viewer, "room", "Agent discussion", 35);
+    const humanThread = message(h.alice, "room", "Human thread decision", 40, [
+      ["e", humanRoot.id, "", "reply"],
+    ]);
+    const agentThread = message(h.agent, "room", "Agent thread decision", 41, [
+      ["e", agentRoot.id, "", "reply"],
+    ]);
+    const additions = [
+      humanRoot,
+      agentRoot,
+      humanThread,
+      agentThread,
+      message(h.viewer, "room", "Existing discussion handled", 37, [
+        ["e", h.root.id, "", "reply"],
+      ]),
+    ];
+    h.events.push(...additions);
+    act(() => h.emit(additions));
+    const pending = [
+      {
+        event: h.mention,
+        sender: "Humans",
+        thread: false,
+        mentioned: true,
+        channelId: "room",
+      },
+      ...h.events
+        .filter((event) =>
+          [
+            "Agent mention",
+            "Public agent mention",
+            "Unprofiled mention",
+            "Late profile mention",
+          ].includes(event.content),
+        )
+        .map((event) => ({
+          event,
+          sender:
+            event.pubkey === h.agent.pubkey ||
+            event.pubkey === h.profileAgent.pubkey
+              ? "Agents"
+              : "Unknown",
+          thread: false,
+          mentioned: true,
+          channelId: "room",
+        })),
+      {
+        event: humanThread,
+        sender: "Humans",
+        thread: true,
+        mentioned: false,
+        channelId: "room",
+      },
+      {
+        event: agentThread,
+        sender: "Agents",
+        thread: true,
+        mentioned: false,
+        channelId: "room",
+      },
+      ...h.events
+        .filter((event) =>
+          ["A direct reply", "Agent direct reply"].includes(event.content),
+        )
+        .map((event) => ({
+          event,
+          sender: event.pubkey === h.alice.pubkey ? "Humans" : "Agents",
+          thread: false,
+          mentioned: false,
+          channelId: event.pubkey === h.alice.pubkey ? "dm-room" : "agent-dm",
+        })),
+    ];
+    const expected = pending.filter(
+      (row) =>
+        (activity !== "DMs" || row.channelId !== "room") &&
+        (activity !== "Mentions" || row.mentioned) &&
+        (activity !== "Threads" || row.thread) &&
+        (sender === "Everyone" || row.sender === sender),
+    );
+    render(h.view);
+    await screen.findByText("Agent thread decision");
+    await chooseFilter(activity);
+    await chooseFilter(sender, "Sender");
+    await chooseFilter("Unresponded only", "Filters");
+    const assertPending = async (contents: string[]) => {
+      await waitFor(() => {
+        expect(rows()).toHaveLength(contents.length);
+        for (const content of contents)
+          expect(
+            rows().some((row) =>
+              row.textContent?.includes(
+                content === h.mention.content ? "Please review this" : content,
+              ),
+            ),
+          ).toBe(true);
+      });
+    };
+    await assertPending(expected.map(({ event }) => event.content));
+    expect(h.journal()?.state.frontiers).toEqual({}); // Filters do not mark read.
+    await act(async () => {
+      for (const { event, channelId } of pending)
+        await h.owner.session.unread.markThrough(
+          channelId === "room"
+            ? { kind: "message", channelId, messageId: event.id }
+            : { kind: "channel", channelId },
+          event.id,
+        );
+    });
+    await assertPending(expected.map(({ event }) => event.content));
+    // Another participant's answers are not the viewer's responses.
+    const otherReplies = pending.map(({ event, channelId }, index) => {
+      const author = [h.alice, h.agent, h.profileAgent, h.unknown, h.late].find(
+        (key) => key.pubkey === event.pubkey,
+      );
+      if (!author) throw new Error("Missing original sender");
+      return message(
+        author,
+        channelId,
+        `Other answer ${index}`,
+        50 + index,
+        channelId === "room" ? [["e", event.id, "", "reply"]] : [],
+      );
+    });
+    act(() => h.emit(otherReplies));
+    // Ordinary peer replies do not follow a standalone mention's thread.
+    await waitFor(() => expect(rows()).toHaveLength(expected.length));
+    const responses = pending.map(({ event, channelId }, index) =>
+      message(h.viewer, channelId, `Our answer ${index}`, 70 + index, [
+        ["e", event.id, "", "reply"],
+      ]),
+    );
+    act(() => h.emit(responses));
+    await assertPending([]);
+    await act(async () => {
+      for (const [index, event] of otherReplies.entries())
+        await h.owner.session.unread.markThrough(
+          pending[index]?.channelId === "room"
+            ? { kind: "message", channelId: "room", messageId: event.id }
+            : { kind: "channel", channelId: pending[index]?.channelId ?? "" },
+          event.id,
+        );
+    });
+    const fresh = [
+      message(h.alice, "room", "Fresh human decision", 90, [
+        ["e", humanThread.id, "", "reply"],
+        ["p", h.viewer.pubkey],
+      ]),
+      message(h.agent, "room", "Fresh agent decision", 91, [
+        ["e", agentThread.id, "", "reply"],
+      ]),
+      message(h.alice, "dm-room", "Fresh human DM", 92, [
+        ["p", h.viewer.pubkey],
+      ]),
+      message(h.agent, "agent-dm", "Fresh agent DM", 93, [
+        ["p", h.viewer.pubkey],
+      ]),
+    ];
+    act(() => h.emit(fresh));
+    await assertPending(
+      fresh
+        .filter(
+          (event, index) =>
+            (activity !== "DMs" || index >= 2) &&
+            (activity !== "Threads" || index < 2) &&
+            (activity !== "Mentions" || index === 0) &&
+            (sender === "Everyone" ||
+              event.pubkey ===
+                (sender === "Humans" ? h.alice.pubkey : h.agent.pubkey)),
+        )
+        .map((event) => event.content),
+    );
+  },
+);
+
+it("same-second replies require ancestry and deleting our reply restores Unresponded", async () => {
+  const h = fixture();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  await chooseFilter("Unresponded only", "Filters");
+  const response = message(h.viewer, "room", "Immediate response", 21, [
+    ["e", h.mention.id, "", "reply"],
+  ]);
+  act(() => h.emit([response]));
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  const fresh = message(h.alice, "room", "Same-second followup", 21, [
+    ["e", h.mention.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  act(() => h.emit([fresh]));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const nested = message(h.viewer, "room", "Response to followup", 21, [
+    ["e", fresh.id, "", "reply"],
+  ]);
+  act(() => h.emit([nested]));
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  act(() =>
+    h.emit([
+      signed(h.viewer, {
+        kind: 5,
+        created_at: 22,
+        content: "",
+        tags: [
+          ["h", "room"],
+          ["e", nested.id],
+        ],
+      }),
+    ]),
+  );
+  await waitFor(() => expect(rows()).toHaveLength(1));
+});
+
 it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
   const h = fixture();
   render(h.view);
@@ -674,7 +1004,7 @@ it("filters real session evidence, opens an exact message and marks it read, and
   expect(
     screen.queryByText(/Marked unread on this device/),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  await chooseFilter("Unread only", "Filters");
   expect(rows()).toHaveLength(1);
   await chooseFilter("Threads");
   expect(rows()).toHaveLength(1);
@@ -779,12 +1109,12 @@ it("offers Show more only while matching unread conversations remain paginated",
   await act(async () => {
     await h.owner.session.unread.markChannelRead("room");
   });
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  await chooseFilter("Unread only", "Filters");
   expect(rows()).toHaveLength(0);
   expect(
     screen.queryByRole("button", { name: "Show more" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  await chooseFilter("All", "Filters");
   expect(rows()).toHaveLength(50);
   expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
 });
@@ -1203,11 +1533,11 @@ it.each([true, false])(
   },
 );
 
-it("shows two accessible filters without removed options, bulk action or coverage boilerplate", async () => {
+it("shows three accessible filters without removed options, bulk action or coverage boilerplate", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  expect(screen.getAllByRole("combobox")).toHaveLength(2);
+  expect(screen.getAllByRole("combobox")).toHaveLength(3);
   expect(
     screen.getByRole("combobox", { name: "Activity type" }),
   ).toHaveTextContent("All activity");
@@ -1229,9 +1559,7 @@ it("shows two accessible filters without removed options, bulk action or coverag
       /Verified recent conversations|Results are bounded|Feed history reached its result limit|Read-state sync is unavailable on this host/,
     ),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Filters" })).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();
@@ -2356,7 +2684,7 @@ it.each(["close", "delete", "delete-pending"])(
     render(h.view);
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+    await chooseFilter("Unread only", "Filters");
     expect(rows()).toHaveLength(1);
     const release = action === "delete-pending" ? h.holdSave() : () => {};
     try {

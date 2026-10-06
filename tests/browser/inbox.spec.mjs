@@ -2,6 +2,11 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
 
+async function chooseResponseFilter(page, inbox, name) {
+  await inbox.getByRole("combobox", { name: "Filters", exact: true }).click();
+  await page.getByRole("option", { name, exact: true }).click();
+}
+
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
 test.use({
@@ -74,7 +79,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   // Main's fixture now also mentions the viewer in the other thread's nested
   // reply. Keep both groups and select this exact preview, not a namesake row.
   const mentionRow = rows.filter({ hasText: "Unread reply 1" });
-  await expect(rows.filter({ hasText: "Broadcast reply" })).toHaveCount(1);
+  await expect(rows.filter({ hasText: "Broadcast descendant" })).toHaveCount(1);
   const source = mentionRow.locator("[data-inbox-source]");
   await expect(source).toHaveText("#Alpha");
   expect(
@@ -132,7 +137,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     const toolbar = inbox.locator('[class*="toolbar"]').first();
     const layout = await toolbar.evaluate((element) => {
       const [activity, sender] = element.querySelectorAll('[role="combobox"]');
-      const unread = element.querySelector('[role="checkbox"]');
+      const unread = element.querySelectorAll('[role="combobox"]')[2];
       if (!activity || !sender || !unread) return;
       const a = activity.getBoundingClientRect();
       const s = sender.getBoundingClientRect();
@@ -313,7 +318,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     page.getByRole("menuitem", { name: "Mark unread" }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await chooseResponseFilter(page, inbox, "Unread only");
   await expect(rows).toHaveCount(2);
   await row.getByRole("button", { name: /^Open / }).click();
   await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
@@ -805,7 +810,7 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   );
   await inbox.getByRole("combobox", { name: "Activity type" }).click();
   await page.getByRole("option", { name: "DMs", exact: true }).click();
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await chooseResponseFilter(page, inbox, "Unread only");
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const row = list.getByRole("listitem").first();
   await expect(list.getByRole("listitem")).toHaveCount(1);
@@ -851,7 +856,7 @@ test("Escape from an unread detail restores its invoking row", async ({
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await chooseResponseFilter(page, inbox, "Unread only");
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const first = list
     .getByRole("listitem")

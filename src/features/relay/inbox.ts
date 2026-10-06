@@ -15,6 +15,10 @@ export type InboxItem = Readonly<{
   preview: string;
   createdAt: number;
   mentioned: boolean;
+  /** Observed activity in this projection without a later verified reply by the viewer. */
+  unresponded: boolean;
+  /** The same conversation projected from explicit mention evidence only. */
+  mention?: InboxItem | undefined;
   thread: boolean;
   unreadCount: number;
   manual: boolean;

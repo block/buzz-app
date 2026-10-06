@@ -24,7 +24,6 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
@@ -44,6 +43,12 @@ import { dmLabel } from "./dm-label";
 
 type ActivityFilter = "all" | "dms" | "threads" | "mentions";
 type SenderFilter = "everyone" | "humans" | "agents";
+type ResponseFilter = "all" | "unread" | "unresponded";
+const responseFilters = [
+  { value: "all", label: "All" },
+  { value: "unread", label: "Unread only" },
+  { value: "unresponded", label: "Unresponded only" },
+] as const;
 const activities = [
   { value: "all", label: "All activity" },
   { value: "dms", label: "DMs" },
@@ -163,7 +168,7 @@ export function InboxView({
   );
   const [activity, setActivity] = useState<ActivityFilter>("all");
   const [senderFilter, setSenderFilter] = useState<SenderFilter>("everyone");
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [responseFilter, setResponseFilter] = useState<ResponseFilter>("all");
   const [drafts, setDrafts] = useState(false);
   const draftsControl = useRef<HTMLButtonElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<{
@@ -219,16 +224,21 @@ export function InboxView({
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
-  const activityItems = items.filter((item) =>
-    matchesActivity(
-      item,
-      activity,
-      list.channels.some(
-        (channel) =>
-          channel.id === item.channelId && channel.channelType === "dm",
-      ),
-    ),
-  );
+  const activityItems = items
+    .map((item) => (activity === "mentions" ? item.mention : item))
+    .filter(
+      (item): item is InboxItem =>
+        !!item &&
+        matchesActivity(
+          item,
+          activity,
+          list.channels.some(
+            (channel) =>
+              channel.id === item.channelId && channel.channelType === "dm",
+          ),
+        ),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
   const selected = items.find(
@@ -306,7 +316,12 @@ export function InboxView({
       (senderFilter === "everyone" ||
         senderKind(item.authorId) ===
           (senderFilter === "agents" ? "agent" : "human")) &&
-      (!unreadOnly || hasUnread(item) || item.id === selectedId),
+      (responseFilter === "all" ||
+        (responseFilter === "unread"
+          ? hasUnread(item) ||
+            (item.id === selectedId &&
+              item.messageIds.includes(selectedTarget?.messageId ?? ""))
+          : item.unresponded)),
   );
   const visible = matching.slice(0, limit);
   const profileKey = [
@@ -553,11 +568,20 @@ export function InboxView({
                   }}
                 />
               </div>
-              <Checkbox
-                label="Unread only"
-                checked={unreadOnly}
-                onCheckedChange={(checked) => {
-                  setUnreadOnly(checked);
+              <Select
+                label="Filters"
+                variant="compact"
+                value={responseFilter}
+                valueLabel={
+                  responseFilter === "all"
+                    ? "Filters"
+                    : (responseFilters.find(
+                        (option) => option.value === responseFilter,
+                      )?.label ?? "Filters")
+                }
+                groups={[{ label: "", options: responseFilters }]}
+                onValueChange={(value) => {
+                  setResponseFilter(value as ResponseFilter);
                   setLimit(50);
                 }}
               />
@@ -606,13 +630,18 @@ export function InboxView({
                 !failure && (
                   <div className={styles.empty} role="status">
                     <h3 className="text-label">
-                      {unreadOnly
+                      {responseFilter === "unread"
                         ? "No unread activity in this view"
-                        : "No recent activity in this view"}
+                        : responseFilter === "unresponded"
+                          ? activity === "mentions"
+                            ? "No unresponded mentions in this view"
+                            : "No unresponded activity in this view"
+                          : "No recent activity in this view"}
                     </h3>
                     <p className="text-body text-subtle">
-                      Mentions, direct messages, and replies in threads you
-                      participate in appear here.
+                      {responseFilter === "unresponded"
+                        ? "Activity stays here until you reply in the conversation."
+                        : "Mentions, direct messages, and replies in threads you participate in appear here."}
                     </p>
                   </div>
                 )}

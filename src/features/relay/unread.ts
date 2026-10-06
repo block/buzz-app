@@ -855,10 +855,19 @@ export function createUnread({
         if (channel.cached || !channel.members?.includes(viewer)) continue;
         const dm = channel.channelType === "dm";
         const groups = new Map<string, Evidence[]>();
+        const responses = new Map<string, Evidence[]>();
         for (const entry of byChannel.get(channel.id) ?? []) {
           want(entry, dm);
-          if (entry.event.pubkey === viewer || !category(entry, dm)) continue;
           const id = dm ? channel.id : (entry.rootId ?? entry.event.id);
+          if (entry.event.pubkey === viewer) {
+            if (dm || entry.parentId) {
+              const replies = responses.get(id) ?? [];
+              replies.push(entry);
+              responses.set(id, replies);
+            }
+            continue;
+          }
+          if (!category(entry, dm)) continue;
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -875,54 +884,89 @@ export function createUnread({
               a.event.created_at - b.event.created_at ||
               a.event.id.localeCompare(b.event.id),
           );
-          const latest = entries[entries.length - 1];
-          if (!latest) continue;
-          const unread = entries.filter((entry) => isUnread(entry, state, dm));
-          const representative = unread[0] ?? latest;
-          const replies = entries.filter((entry) => entry.rootId !== undefined);
-          const lastReply = replies[replies.length - 1];
-          const target: ReadTarget = dm
-            ? { kind: "channel", channelId: channel.id }
-            : lastReply?.rootId &&
-                events.has(lastReply.rootId) &&
-                !tombstones.has(lastReply.rootId)
-              ? {
+          const project = (
+            entries: readonly Evidence[],
+          ): InboxItem | undefined => {
+            const latest = entries[entries.length - 1];
+            if (!latest) return;
+            const unread = entries.filter((entry) =>
+              isUnread(entry, state, dm),
+            );
+            const representative = unread[0] ?? latest;
+            const replies = entries.filter(
+              (entry) => entry.rootId !== undefined,
+            );
+            const lastReply = replies[replies.length - 1];
+            const target: ReadTarget = dm
+              ? { kind: "channel", channelId: channel.id }
+              : lastReply?.rootId &&
+                  events.has(lastReply.rootId) &&
+                  !tombstones.has(lastReply.rootId)
+                ? {
+                    kind: "thread",
+                    channelId: channel.id,
+                    rootId: lastReply.rootId,
+                  }
+                : {
+                    kind: "message",
+                    channelId: channel.id,
+                    messageId: latest.event.id,
+                  };
+            const readThrough: { target: ReadTarget; messageId: string }[] = dm
+              ? []
+              : entries
+                  .filter(
+                    (entry) =>
+                      !entry.rootId ||
+                      !!reads.localUnread(`msg:${entry.event.id}`),
+                  )
+                  .map((entry) => ({
+                    target: {
+                      kind: "message" as const,
+                      channelId: channel.id,
+                      messageId: entry.event.id,
+                    },
+                    messageId: entry.event.id,
+                  }));
+            if (!dm && lastReply?.rootId)
+              readThrough.push({
+                target: {
                   kind: "thread",
                   channelId: channel.id,
                   rootId: lastReply.rootId,
-                }
-              : {
-                  kind: "message",
-                  channelId: channel.id,
-                  messageId: latest.event.id,
-                };
-          const readThrough: { target: ReadTarget; messageId: string }[] = dm
-            ? []
-            : entries
-                .filter(
-                  (entry) =>
-                    !entry.rootId ||
-                    !!reads.localUnread(`msg:${entry.event.id}`),
-                )
-                .map((entry) => ({
-                  target: {
-                    kind: "message" as const,
-                    channelId: channel.id,
-                    messageId: entry.event.id,
-                  },
-                  messageId: entry.event.id,
-                }));
-          if (!dm && lastReply?.rootId)
-            readThrough.push({
-              target: {
-                kind: "thread",
-                channelId: channel.id,
-                rootId: lastReply.rootId,
-              },
-              messageId: lastReply.event.id,
-            });
-          items.push(
-            Object.freeze({
+                },
+                messageId: lastReply.event.id,
+              });
+            const mentions = entries.filter(
+              (entry) => category(entry, dm) === "mention",
+            );
+            const repliesByViewer = responses.get(id) ?? [];
+            const latestResponse = repliesByViewer.reduce(
+              (time, entry) => Math.max(time, entry.event.created_at),
+              -1,
+            );
+            // IDs are not chronology. In the same second, only reply ancestry
+            // proves that a response followed the incoming activity.
+            const ancestors = new Set<string>();
+            for (const response of repliesByViewer) {
+              if (response.event.created_at !== latestResponse) continue;
+              let parent = response.parentId;
+              const visited = new Set<string>();
+              while (parent && !visited.has(parent)) {
+                visited.add(parent);
+                const ancestor = byId.get(parent);
+                if (!ancestor || ancestor.channelId !== channel.id) break;
+                ancestors.add(parent);
+                parent = ancestor.parentId;
+              }
+            }
+            const unresponded = entries.some(
+              (entry) =>
+                entry.event.created_at > latestResponse ||
+                (entry.event.created_at === latestResponse &&
+                  !ancestors.has(entry.event.id)),
+            );
+            return Object.freeze({
               id: `${channel.id}:${id}`,
               channelId: channel.id,
               target: Object.freeze(target),
@@ -937,7 +981,8 @@ export function createUnread({
                 content.get(representative.event.id) ??
                 representative.event.content,
               createdAt: latest.event.created_at,
-              mentioned: entries.some((entry) => entry.mentioned),
+              mentioned: mentions.length > 0,
+              unresponded,
               thread: entries.some((entry) => entry.parentId !== undefined),
               unreadCount: unread.length,
               manual:
@@ -953,8 +998,18 @@ export function createUnread({
                   }),
                 ),
               ),
-            }),
-          );
+            });
+          };
+          const item = project(entries);
+          if (item)
+            items.push(
+              Object.freeze({
+                ...item,
+                mention: project(
+                  entries.filter((entry) => category(entry, dm) === "mention"),
+                ),
+              }),
+            );
         }
       }
     items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));

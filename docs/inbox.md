@@ -16,8 +16,9 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 Inbox now renders chat-only DMs, mentions and participating threads through
 `session.unread.inbox()`, with independent Activity type and Sender filters and
-an Unread only toggle. Sender classification uses `session.agentChoices` and
+a Filters dropdown (All, Unread only, or Unresponded only). Sender classification uses `session.agentChoices` and
 cached/profile-backed identity evidence, never a new inventory or name heuristic.
+The Mentions activity filter uses explicit mention messages for each conversation's preview, sender, ordering, resume point and unread count. A later ordinary reply does not make a read mention unread again. DMs remain direct activity rather than mentions merely because their recipient is tagged. All activity and Threads retain their conversation-wide projections.
 Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
 specific group members awaiting their stored edit/deletion closure. Those rows
 say “Preview updating…” or “Preview unavailable. Retry inbox.”; other rows stay
@@ -252,3 +253,9 @@ Independent changed-path re-review found no remaining blockers in the repairs.
 These are local fixture/service results, not checks on pushed PR heads or a future
 merged tree. Human, live-relay and attended native/packaged acceptance remain open;
 no full scan or shipping-readiness attestation is implied.
+
+## Unresponded activity
+
+Unresponded only shows conversations containing observed activity matching the selected Activity type with no later verified reply from the current viewer in that same conversation. DMs includes incoming direct messages; Threads includes replies in threads you participate in; All activity includes both and explicit mentions. Mentions applies response detection only to explicit mention evidence, so ordinary follow-up progress can be unresponded under Threads or All activity while the earlier mention remains answered. Reading and manual unread state do not count as responding. Another participant's reply, or the viewer's reply in a different thread, cannot clear it. New matching activity after the viewer's reply returns the conversation. Same-second replies clear only incoming messages in their verified parent ancestry, never by event-ID ordering. Deleted replies no longer count.
+
+This is a deterministic filter over the existing bounded verified Inbox history, not semantic answer detection or a task artifact. Missing reply history can leave a conversation showing as unresponded. The filter creates no device-local archive state; another client can derive the same result once it observes the same messages. Activity and sender filters still apply.

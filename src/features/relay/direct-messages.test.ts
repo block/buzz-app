@@ -144,6 +144,9 @@ it("rejects self, duplicate, empty and over-limit recipients before contacting t
       [],
       [t.viewer.pubkey],
       [t.other.pubkey, t.other.pubkey],
+      ["a".repeat(63)],
+      ["A".repeat(64)],
+      [` ${t.other.pubkey}`],
       Array.from({ length: 9 }, () => keypair().pubkey),
     ])
       await expect(

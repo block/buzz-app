@@ -1,3 +1,4 @@
+import { validDirectMessageParticipants } from "../src/features/relay/direct-message-policy.ts";
 import { randomUUID } from "node:crypto";
 import { finalizeEvent } from "nostr-tools";
 
@@ -6,15 +7,8 @@ export function directMessageEvent(input, viewer, key) {
   if (
     !input ||
     !Array.isArray(input.pubkeys) ||
-    input.pubkeys.length < 1 ||
-    input.pubkeys.length > 8 ||
-    input.pubkeys.some(
-      (value) =>
-        typeof value !== "string" ||
-        !/^[0-9a-f]{64}$/.test(value) ||
-        value === viewer,
-    ) ||
-    new Set(input.pubkeys).size !== input.pubkeys.length
+    input.pubkeys.some((value) => typeof value !== "string") ||
+    !validDirectMessageParticipants(input.pubkeys, viewer)
   )
     throw new Error("Choose between one and eight other people.");
   return finalizeEvent(

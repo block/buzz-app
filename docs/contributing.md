@@ -283,7 +283,15 @@ merely to follow this testing guidance.
 
 ### Broker reduction sequence
 
-The following is the proposed removal order, not authorization to delete current
+The behavior-preserving cleanup pass shares status text/emoji limits, DM
+participant-set policy, and sidebar intent rules with their existing
+`src/features/relay` owners. The broker still executes those checks host-side and
+retains its stricter untrusted-envelope checks; native Rust enforcement is
+unchanged. Status reads still validate raw text before trimming, while local edits
+trim first. This does not make broker and native signing policies identical.
+
+The remaining sequence below requires retiring or replacing browser capabilities;
+it is not an automatic queue of follow-up cleanup PRs or authorization to delete current
 browser workflows. Each slice must identify its callers, move needed regression
 coverage to the shipped owner, and delete displaced code in the same change. A
 whole broker endpoint/module can go only after its browser use is explicitly
@@ -291,7 +299,7 @@ retired or replaced; do not weaken a still-callable endpoint to reduce duplicati
 
 | Order | Existing `dev/` responsibility | Reduction and exit condition |
 | --- | --- | --- |
-| 1 | `user-status.mjs` | Remove repeated text/emoji policy in favor of the existing `src/features/relay` owner. Keep remaining broker shape/time enforcement only while its status endpoint is supported; do not copy it into Rust incidentally. |
+| 1 | `user-status.mjs` | Text/emoji policy is now shared with `src/features/relay/user-status-policy.ts`. Remove the remaining broker shape/time checks only when its status endpoint is retired; do not copy them into Rust incidentally. |
 | 2 | `channel-kit.mjs`, `session-commands.mjs`, `direct-messages.mjs`, signing branches in `relay-broker.mjs` | Retire browser write capabilities one feature at a time after native acceptance and replacement fixture coverage. Remove each Node validator/encryption helper with its last caller; keep native signing tests. |
 | 3 | `read-state.mjs`, `sidebar-{preferences,mutes,sort,stars}.mjs` | Retire encrypted-state broker routes and their Node copies once browser callers no longer need them. Shared frontend edit policy and native custody remain. |
 | 4 | `agent-memory.mjs`, `agent-observer.mjs`, `archive.mjs`, `project-git.mjs`, `attachment-{file,upload}.mjs`, `media-preparation.mjs` | Remove feature-by-feature after archive/observer, repository and media browser uses are retired or replaced and native failure/recovery coverage is retained. Do not delete user data or migrate credentials as cleanup. |

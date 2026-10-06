@@ -1,4 +1,7 @@
-import { editSidebarToggle } from "../src/features/relay/sidebar-edits.ts";
+import {
+  editSidebarToggle,
+  validSidebarChannelId,
+} from "../src/features/relay/sidebar-edits.ts";
 import { finalizeEvent, getPublicKey, nip44 } from "nostr-tools";
 import { decodeSidebarPreferences } from "./sidebar-preferences.mjs";
 
@@ -9,8 +12,7 @@ export function assertSidebarMuteIntent(intent) {
     typeof intent !== "object" ||
     Array.isArray(intent) ||
     typeof intent.channelId !== "string" ||
-    !intent.channelId.trim() ||
-    intent.channelId.length > 256 ||
+    !validSidebarChannelId(intent.channelId) ||
     typeof intent.muted !== "boolean" ||
     Object.keys(intent).some((key) => !["channelId", "muted"].includes(key))
   )

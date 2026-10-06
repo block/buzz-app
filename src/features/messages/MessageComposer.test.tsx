@@ -1441,6 +1441,9 @@ it("offers message preparation retry after a failed attachment send remounts", a
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   h.unmount();
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
+  );
   const again = render(
     <MessageComposer
       session={h.owner.session}
@@ -1449,9 +1452,6 @@ it("offers message preparation retry after a failed attachment send remounts", a
       channelName="General"
     />,
     { wrapper: ToastProvider },
-  );
-  await act(async () =>
-    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
   );
   const composer = within(again.container);
   await waitFor(() =>
@@ -1471,6 +1471,24 @@ it("offers message preparation retry after a failed attachment send remounts", a
   expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
   expect(composer.getByText("emoji-remount.txt")).toBeVisible();
   expect(h.publish).not.toHaveBeenCalled();
+  again.unmount();
+  const returned = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(
+    within(returned.container).queryByRole("button", {
+      name: "Retry message preparation",
+    }),
+  ).toBeNull();
+  expect(within(returned.container).getByRole("textbox")).toHaveValue(
+    "caption :party:",
+  );
 });
 
 it("keeps a remaining upload failure banner when removing one of two failed files", async () => {

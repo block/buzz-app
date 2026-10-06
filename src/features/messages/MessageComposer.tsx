@@ -113,13 +113,33 @@ const recoveryListeners = new WeakMap<
   RelaySession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
+// Only undelivered preparation failures need replay. The saved draft and
+// attachment store remain the owners of the actual recovered content.
+const missedPreparation = new WeakMap<
+  RelaySession,
+  Map<string, RecoveredSend>
+>();
+function takeMissedPreparation(session: RelaySession, key: string) {
+  const byKey = missedPreparation.get(session);
+  const recovered = byKey?.get(key);
+  byKey?.delete(key);
+  return recovered;
+}
 function notifyRecovered(
   session: RelaySession,
   key: string,
   recovered: RecoveredSend,
 ) {
-  for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
-    listener(recovered);
+  const listeners = recoveryListeners.get(session)?.get(key);
+  if (recovered.preparationError !== undefined) {
+    let byKey = missedPreparation.get(session);
+    if (!byKey) {
+      byKey = new Map();
+      missedPreparation.set(session, byKey);
+    }
+    byKey.set(key, recovered);
+  }
+  for (const listener of listeners ?? []) listener(recovered);
 }
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
@@ -575,17 +595,26 @@ function Composer({
     return stop;
   }, [scope, submission, editingDraft]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
+    takeMissedPreparation(session, recoveryKey);
     if (editing.target) deferredRecovery.current = recovered;
     reconcileDraft(recovered.draft);
     if (!editing.target) setError(errorForRecovery(recovered.preparationError));
   });
-  useEffect(
-    () =>
-      subscribeRecovery(session, recoveryKey, (recovered) =>
-        receiveRecovery(recovered),
-      ),
-    [session, recoveryKey],
-  );
+  useEffect(() => {
+    const stop = subscribeRecovery(session, recoveryKey, (recovered) =>
+      receiveRecovery(recovered),
+    );
+    // Recovery may have completed between unmount and this subscription. Replay
+    // only if its saved caption still owns the draft; never attach an old error
+    // to a replacement written while the composer was away.
+    const missed = takeMissedPreparation(session, recoveryKey);
+    if (
+      missed &&
+      viewRevision(scope, draftKey) === JSON.stringify(missed.draft)
+    )
+      receiveRecovery(missed);
+    return stop;
+  }, [session, recoveryKey, scope, draftKey]);
   function resolveDraft(keep: boolean) {
     const current = viewRevision(scope, draftKey);
     if (current === undefined) {

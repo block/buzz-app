@@ -187,8 +187,12 @@ cards use the existing relay protocol; no server changes are part of this slice.
   capture/playback, discovery and native adapter. A controller outlives panel
   mounts and is disposed with its plugin activation.
 - `src-tauri/src/relay/huddle` owns one native audio connection, identity-bound
-  admission, purpose-bound event construction, Opus and socket cleanup. Signing
-  stays in the existing IdentityHost. Commands are available only to the main
+  admission, purpose-bound event construction, and socket cleanup. The pinned
+  `buzz-audio-client` crate from `block/buzz` supplies the shared audio handshake,
+  v2 wire format, Opus sender, and per-peer jitter buffer; it does not pull in the
+  v0 desktop app or speech models. Receivers drain 10 ms frames and reset on peer
+  removal/reassignment. Signing stays in the existing IdentityHost. Commands are
+  available only to the main
   application webview.
 
 This is a client-only implementation. It uses the existing private ephemeral

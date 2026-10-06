@@ -164,14 +164,7 @@ fn provider_customizations_survive_and_dangling_links_are_repaired() {
 #[test]
 fn redirected_directories_and_skill_files_are_rejected_without_external_writes() {
     use std::os::unix::fs::symlink;
-    for redirected in [
-        "",
-        ".agents",
-        ".agents/skills",
-        ".agents/skills/buzz-cli",
-        ".claude",
-        ".claude/skills",
-    ] {
+    for redirected in ["", ".agents", ".agents/skills", ".agents/skills/buzz-cli"] {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join(".buzz");
         let outside = dir.path().join("outside");
@@ -197,5 +190,54 @@ fn redirected_directories_and_skill_files_are_rejected_without_external_writes()
         symlink(&outside, &file).unwrap();
         assert!(ensure_buzz_cli_skill(&workspace).is_err());
         assert_eq!(fs::read_to_string(outside).unwrap(), "untouched");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn redirected_provider_skips_only_its_link_and_preserves_external_content() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    for provider in [".claude", ".codex", ".goose"] {
+        for child in ["", "skills"] {
+            let dir = tempfile::tempdir().unwrap();
+            let workspace = dir.path().join(".buzz");
+            let outside = dir.path().join("outside");
+            fs::create_dir(&outside).unwrap();
+            fs::write(outside.join("SKILL.md"), "external skill").unwrap();
+            fs::set_permissions(&outside, fs::Permissions::from_mode(0o750)).unwrap();
+            let parent = workspace.join(provider);
+            let link = if child.is_empty() {
+                parent
+            } else {
+                parent.join(child)
+            };
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(&outside, &link).unwrap();
+            for _ in 0..2 {
+                ensure_buzz_cli_skill(&workspace).unwrap();
+                let canonical = workspace.join(".agents/skills/buzz-cli/SKILL.md");
+                let content = fs::read_to_string(&canonical).unwrap();
+                assert!(content.starts_with("---\nname: buzz-cli\n"));
+                for other in [".claude", ".codex", ".goose"] {
+                    if other != provider {
+                        let discovered = workspace.join(other).join("skills/buzz-cli/SKILL.md");
+                        assert_eq!(
+                            fs::canonicalize(discovered).unwrap(),
+                            fs::canonicalize(&canonical).unwrap()
+                        );
+                    }
+                }
+                assert_eq!(
+                    fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+                    "external skill"
+                );
+                assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+                assert_eq!(
+                    fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+                    0o750
+                );
+                assert_eq!(fs::read_link(&link).unwrap(), outside);
+            }
+        }
     }
 }

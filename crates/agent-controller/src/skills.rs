@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 // Copied from desktop/src-tauri/src/managed_agents/nest_skill.md at the Buzz
-// revision in runtime/agent-runtime.json (4f51b9e1010e086a16c099cd8d8218ca974a5e18).
+// revision in runtime/agent-runtime.json.
 const CLI_SKILL: &str = include_str!("buzz_cli_skill.md");
 // Shares the old desktop's marker. Bump only with a newer template; never
 // downgrade an installation refreshed by a newer old desktop.
@@ -42,22 +42,32 @@ pub fn ensure_buzz_cli_skill(workspace: &Path) -> Result<()> {
     #[cfg(unix)]
     for provider in PROVIDERS {
         let parent = workspace.join(provider);
-        private_directory(&parent)?;
-        let skills = parent.join("skills");
-        private_directory(&skills)?;
-        let link = skills.join("buzz-cli");
-        match fs::symlink_metadata(&link) {
-            Ok(meta) if meta.file_type().is_symlink() && !link.exists() => {
-                fs::remove_file(&link).map_err(|_| "Could not repair Buzz skill link")?;
-            }
-            Ok(_) => continue, // Preserve existing links and custom real directories.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err("Could not inspect Buzz skill link".into()),
+        if let Err(error) = link_provider(&parent) {
+            eprintln!(
+                "buzz: skipped CLI skill link at {}: {error}",
+                parent.display()
+            );
         }
-        std::os::unix::fs::symlink("../../.agents/skills/buzz-cli", &link)
-            .map_err(|_| "Could not create Buzz skill link")?;
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn link_provider(parent: &Path) -> Result<()> {
+    private_directory(parent)?;
+    let skills = parent.join("skills");
+    private_directory(&skills)?;
+    let link = skills.join("buzz-cli");
+    match fs::symlink_metadata(&link) {
+        Ok(meta) if meta.file_type().is_symlink() && !link.exists() => {
+            fs::remove_file(&link).map_err(|_| "Could not repair Buzz skill link")?;
+        }
+        Ok(_) => return Ok(()), // Preserve existing links and custom real directories.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("Could not inspect Buzz skill link".into()),
+    }
+    std::os::unix::fs::symlink("../../.agents/skills/buzz-cli", &link)
+        .map_err(|_| "Could not create Buzz skill link".into())
 }
 
 #[cfg(unix)]
@@ -74,10 +84,14 @@ fn migrate_claude_skill(workspace: &Path, canonical: &Path) -> Result<()> {
         Err(_) => return Err("Could not inspect canonical Buzz skill directory".into()),
     };
     let provider = workspace.join(".claude");
-    // Check each ancestor before inspecting or moving the legacy skill.
-    private_directory(&provider)?;
     let skills = provider.join("skills");
-    private_directory(&skills)?;
+    // Migrate only from the workspace's own directories. A missing or
+    // redirected ancestor holds no legacy layout to move, and must not stop
+    // the canonical install.
+    let real_dir = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+    if !real_dir(&provider) || !real_dir(&skills) {
+        return Ok(());
+    }
     let legacy = skills.join("buzz-cli");
     match fs::symlink_metadata(&legacy) {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {

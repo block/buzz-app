@@ -30,8 +30,7 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
   const root = new Context();
   root.provide("communityReader", {
-    snapshot: () =>
-      ({ selected: "https://community.example" }) as ClientSnapshot,
+    snapshot: () => ({ selected: null }) as ClientSnapshot,
     subscribe: () => () => {},
   });
   const runtime = new PluginRuntime(root, async () => builderlab);
@@ -100,8 +99,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   });
   const root = new Context();
   root.provide("communityReader", {
-    snapshot: () =>
-      ({ selected: "https://community.example" }) as ClientSnapshot,
+    snapshot: () => ({ selected: "primary" }) as ClientSnapshot,
     subscribe: () => () => {},
   });
   const runtime = new PluginRuntime(root, async () => builderlab);
@@ -174,7 +172,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
       .map(([, input]) => input);
     expect(mutations).toHaveLength(2);
     expect(JSON.parse(mutations[1].request.body).community_url).toBe(
-      "wss://community.example",
+      "wss://primary.example",
     );
     expect(
       mutations.every(

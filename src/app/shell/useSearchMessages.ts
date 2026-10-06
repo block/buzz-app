@@ -40,8 +40,8 @@ export function useSearchMessages(
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
   const hasFilters =
-    parsed.from !== null ||
-    parsed.in !== null ||
+    !!(parsed.from && normalizeFromHandle(parsed.from)) ||
+    !!(parsed.in && normalizeInChannel(parsed.in)) ||
     parsed.since !== null ||
     parsed.until !== null;
   // An unfinished author token is an identity prompt, not free-text search.

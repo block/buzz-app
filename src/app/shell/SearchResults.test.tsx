@@ -1218,6 +1218,46 @@ it("translates combined operators into a single server-ranked scoped read and op
   }
 });
 
+it("does not read messages for punctuation-only operands after normalization", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange: vi.fn(),
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: vi.fn(),
+  };
+  try {
+    const view = render(<SearchResults {...props} query="in:#" />);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 240)));
+    expect(reads).toHaveLength(0);
+    view.rerender(<SearchResults {...props} query="from:. " />);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 240)));
+    expect(reads).toHaveLength(0);
+    view.rerender(<SearchResults {...props} query="in:# after:2024-01-15" />);
+    await waitFor(() => expect(reads).toHaveLength(1));
+    expect(reads[0]).toEqual([
+      expect.objectContaining({
+        since: Math.floor(new Date(2024, 0, 15).getTime() / 1000),
+      }),
+    ]);
+    expect(reads[0]?.[0]).not.toHaveProperty("search");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("runs operator-only date and author searches without a text predicate", async () => {
   const relay = keypair(),
     viewer = keypair(),

@@ -402,8 +402,8 @@ it("retains every protected inherited floor at the exact serialized reserve cap"
   expect(kept.reserve).toEqual(reserve);
 });
 it("refilling a full budget with covered marks scans each mark a bounded number of times", () => {
-  // Carl's shape: thread catch-up marks nearly fill the budget, and a merge
-  // brings many message marks that the kept channel mark already covers.
+  // Thread catch-up marks nearly fill the budget, and a merge brings many
+  // message marks that the kept channel mark already covers.
   const hex = (prefix: string, n: number) =>
     `${prefix}${n.toString(16).padStart(64, "0")}`;
   // 1,115 of these leave room for one more message mark at the local limit.
@@ -443,8 +443,8 @@ it("refilling a full budget with covered marks scans each mark a bounded number 
   ).toBeGreaterThan(1000);
 });
 it("covered marks hold their share until pruning, so recent message reads keep their space", () => {
-  // Wes's shape at the real publication limit: covered catch-up marks rank
-  // first in their scope, and recent message reads compete for the rest.
+  // At the real publication limit, covered catch-up marks rank first in their
+  // scope, and recent message reads compete for the rest.
   const hex = (prefix: string, n: number) =>
     `${prefix}${n.toString(16).padStart(64, "0")}`;
   const channels = [0, 1, 2].map(
@@ -497,4 +497,50 @@ it("covered marks hold their share until pruning, so recent message reads keep t
   const keptMessages = messages.filter((key) => frontiers[key] !== undefined);
   expect(keptThreads).toEqual(threads.slice(-348));
   expect(keptMessages).toEqual(messages.slice(-139));
+});
+it("a cover admitted on refill drops the marks it covers", () => {
+  // `thread:a` does not fit at first, so `thread-activity:a` is first found
+  // uncovered. Pruning the channel-covered messages makes room for
+  // `thread:a`; the catch-up mark must then be asked again, so its space
+  // goes to `msg:b`.
+  const room = "x".repeat(50);
+  const state = {
+    frontiers: {
+      [room]: 500,
+      "msg:c0": 100,
+      "msg:c1": 100,
+      "thread-activity:a": 300,
+      "thread:a": 300,
+      "msg:b": 600,
+    },
+    overrides: {},
+  };
+  const recent = {
+    "msg:c0": 9000,
+    "msg:c1": 8999,
+    "thread-activity:a": 8000,
+    "thread:a": 7000,
+    "msg:b": 6000,
+  };
+  const covered = (
+    key: string,
+    frontier: (key: string) => number | undefined,
+  ) => {
+    const cover = key.startsWith("msg:")
+      ? room
+      : key.startsWith("thread-activity:")
+        ? `thread:${key.slice(16)}`
+        : undefined;
+    return cover !== undefined &&
+      (frontier(cover) ?? -1) >= (frontier(key) ?? 0)
+      ? cover
+      : undefined;
+  };
+  const kept = retainRead([state], recent, "fixture", 150, covered);
+  expect(kept.state.frontiers).toEqual({
+    [room]: 500,
+    "thread:a": 300,
+    "msg:b": 600,
+  });
+  expect(kept.recent["thread:a"]).toBe(8000);
 });

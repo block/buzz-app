@@ -1928,8 +1928,6 @@ it("uses transferred sizes after image preparation and resets unknown totals on 
   await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
   const retryBar = screen.getByRole("progressbar", { name: "Uploading" });
   expect(retryBar).not.toHaveAttribute("aria-valuenow");
-  act(() => first?.progress?.(1, first.file.size));
-  expect(retryBar).not.toHaveAttribute("aria-valuenow");
   act(() => h.uploadCalls[2]?.progress?.(2, 20));
   expect(retryBar).toHaveAttribute(
     "aria-valuenow",

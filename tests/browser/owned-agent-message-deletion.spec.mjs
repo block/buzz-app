@@ -35,6 +35,7 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   await expect(row).toBeVisible();
+  await row.scrollIntoViewIfNeeded();
   await row.hover();
   await row.getByRole("button", { name: "More message actions" }).click();
   const action = page.getByRole("menuitem", {
@@ -53,6 +54,9 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
     name: "Delete message?",
   });
   await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.getByRole("heading", { name: "Delete message?" }),
+  ).toBeVisible();
   await expect(confirmation).toContainText(
     "This requests removal of this message from Buzz’s relay.",
   );
@@ -60,12 +64,23 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
   await expect(
     confirmation.getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
+  await confirmation.evaluate((dialog) =>
+    Promise.all(
+      dialog
+        .getAnimations({ subtree: true })
+        .filter(
+          (animation) =>
+            animation.effect?.getComputedTiming().endTime !== Infinity,
+        )
+        .map((animation) => animation.finished),
+    ),
+  );
   await expect
     .poll(() =>
       app.report.publications.filter(({ event: item }) => item.kind === 5),
     )
     .toHaveLength(0);
-  await confirmation.screenshot({
+  await page.screenshot({
     path: testInfo.outputPath("owned-agent-delete-confirmation.png"),
   });
 

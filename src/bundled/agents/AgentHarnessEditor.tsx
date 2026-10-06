@@ -93,7 +93,9 @@ export function AgentHarnessEditor({
           onChange({
             command,
             ...(pickedOption
-              ? { integration: option?.id }
+              ? {
+                  integration: option?.id === "codex" ? option.id : undefined,
+                }
               : { integration: undefined, configuration: undefined }),
             ...(pickedOption && (enteringExternal || external || isPreset)
               ? {

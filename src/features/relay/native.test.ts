@@ -17,7 +17,17 @@ import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
 import { createRelaySession } from "./session";
 
+const progressChannels = new Map<string, (message: unknown) => void>();
 vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    readonly id = `__CHANNEL__:${progressChannels.size}`;
+    constructor(onmessage: (message: unknown) => void) {
+      progressChannels.set(this.id, onmessage);
+    }
+    toJSON() {
+      return this.id;
+    }
+  },
   invoke: vi.fn(),
   isTauri: () => true,
   convertFileSrc: (path: string, protocol: string) =>
@@ -96,10 +106,13 @@ beforeEach(() => {
     }
     if (command === "relay_upload") {
       if (hangUploads) return new Promise(() => {});
-      uploads.push({
-        bytes: new Uint8Array(args as ArrayBuffer),
-        headers: (options as { headers: Record<string, string> }).headers,
-      });
+      const { headers } = options as { headers: Record<string, string> };
+      uploads.push({ bytes: new Uint8Array(args as ArrayBuffer), headers });
+      const report = progressChannels.get(
+        headers["x-buzz-upload-progress"] ?? "",
+      );
+      report?.({ sent: 0, total: 3 });
+      report?.({ sent: 2, total: 3 });
       const result = (options as { headers: Record<string, string> }).headers[
         "x-buzz-preparation"
       ]
@@ -1548,6 +1561,37 @@ it.each([
     ).rejects.toMatchObject({ code });
   },
 );
+
+it("reports native upload bytes through a progress channel only when asked", async () => {
+  const transport = await connectNativeTransport(community);
+  assert(transport.uploadAttachment);
+  uploadResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.png`,
+      type: "image/png",
+      size: 3,
+      sha256: hash,
+    },
+  });
+  const file = new File([new Uint8Array([1, 2, 3])], "a.png", {
+    type: "image/png",
+  });
+  const progress = vi.fn();
+  await transport.uploadAttachment(
+    file,
+    new AbortController().signal,
+    progress,
+  );
+  expect(uploads.at(-1)?.headers["x-buzz-upload-progress"]).toMatch(
+    /^__CHANNEL__:\d+$/,
+  );
+  expect(progress.mock.calls).toEqual([
+    [0, 3],
+    [2, 3],
+  ]);
+  await transport.uploadAttachment(file, new AbortController().signal);
+  expect(uploads.at(-1)?.headers).not.toHaveProperty("x-buzz-upload-progress");
+});
 
 it("settles a cancelled native upload at once and cancels it natively", async () => {
   const transport = await connectNativeTransport(community);

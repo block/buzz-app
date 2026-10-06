@@ -2,7 +2,12 @@ import { defineIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
-import { GooseLogoArtwork, PiLogoArtwork } from "./HarnessLogos";
+import {
+  GooseLogoArtwork,
+  PiLogoArtwork,
+  ClaudeLogoArtwork,
+  HermesLogoArtwork,
+} from "./HarnessLogos";
 
 // Brand artwork requested for Harness Settings; general UI glyphs remain Tabler.
 export const GooseLogoIcon = defineIcon("custom", GooseLogoArtwork, {
@@ -381,4 +386,24 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   category: "messaging",
   provenance: "Original Buzz HashArrowIn; retained by explicit design request",
   intendedSizes: [{ width: 16, height: 16 }],
+});
+
+export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
+  meaning: "Claude harness",
+  category: "Custom brand mark",
+  provenance:
+    "Bundled Claude mark reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+
+export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
+  meaning: "Hermes harness",
+  category: "Custom brand mark",
+  provenance:
+    "Bundled Hermes mark reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [
+    { width: 24, height: 24 },
+    { width: 32, height: 32 },
+    { width: 48, height: 48 },
+  ],
 });

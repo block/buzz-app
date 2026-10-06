@@ -25,9 +25,9 @@ as its server address and appends `/api/goose`.
 On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
 `product=builderlab` to the shared native
 [`oauth_callback` module](../../../src-tauri/src/oauth_callback/README.md).
-Native code inserts a loopback `returnTo` address, opens the browser, and returns
-callback parameters to the plugin. Builderlab explicitly disables native OAuth
-state for its custom protocol and uses a random callback path.
+Native code inserts a loopback `redirect_uri` address, opens the browser, and returns
+callback parameters to the plugin. Native code generates and validates OAuth
+state; the plugin also uses a random callback path.
 
 The plugin posts the callback code to `/v1/auth/login/exchange`, then verifies
 the returned session credential with `/v1/auth/me` using the

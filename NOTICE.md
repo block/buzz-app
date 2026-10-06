@@ -69,3 +69,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Claude Code: the bundled `icons/claude.png` is reused unchanged from Block Buzz's
+`desktop/src/features/onboarding/assets/harness-logos/claude.png` to identify
+Anthropic's Claude Code harness. Claude is a trademark of Anthropic.
+
+Hermes Agent: the bundled `icons/hermes.png` is reused unchanged from Block Buzz's
+`desktop/public/harness-logos/hermes.png`. Its upstream is
+[NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), revision
+`6ad632b`, `website/static/img/logo.png`, MIT © 2025 Nous Research. Old Buzz
+cropped the border, padded it to square, resized to 64×64 and quantised it to
+16 colours. The MIT license terms above also apply to this artwork, with the
+Nous Research copyright notice.

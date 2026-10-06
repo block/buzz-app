@@ -35,7 +35,10 @@ pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
 pub use restart::{RestartChange, RestartDiffEntry};
-pub use runtime::{installed, managed_tool, Action, Controller, GooseModelContext, ModelContext};
+pub use runtime::{
+    installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,
+    ModelContext,
+};
 pub use secret::{Credentials, Secret};
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

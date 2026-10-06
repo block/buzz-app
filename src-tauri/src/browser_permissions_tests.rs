@@ -115,6 +115,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_control_log_challenge",
         "agent_control_read_log",
         "pi_install",
+        "claude_install",
+        "claude_auth_status",
         "agent_control_save",
         "agent_control_save_defaults",
         "agent_control_start_on_app_launch",

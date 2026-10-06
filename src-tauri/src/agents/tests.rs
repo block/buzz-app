@@ -2627,6 +2627,18 @@ fn windows_claude_manual_setup_uses_runnable_launchers() {
         assert_eq!(setup.status, "ready");
         assert!(!setup.install_supported);
         assert_eq!(setup.cli, Some(root.join("claude.cmd")));
+        let options = harness_options(&app_data);
+        let option = options
+            .iter()
+            .find(|option| option.label == "Claude Code")
+            .unwrap();
+        assert!(option.available);
+        assert_eq!(
+            option.command,
+            root.join("claude-agent-acp.cmd").to_string_lossy()
+        );
+        assert!(option.default_args.is_empty());
+        assert!(option.providers.is_empty());
         assert!(setup
             .login_command
             .unwrap()
@@ -2649,10 +2661,24 @@ fn windows_claude_manual_setup_uses_runnable_launchers() {
         assert_eq!(claude_setup(&app_data).cli, Some(root.join("claude.exe")));
         std::fs::remove_file(root.join("claude-agent-acp.cmd")).unwrap();
         assert_eq!(claude_setup(&app_data).status, "adapter-needed");
+        assert!(
+            !harness_options(&app_data)
+                .iter()
+                .find(|option| option.label == "Claude Code")
+                .unwrap()
+                .available
+        );
         std::fs::write(root.join("claude-agent-acp.bat"), "fixture bytes").unwrap();
         assert_eq!(claude_setup(&app_data).status, "ready");
         std::fs::remove_file(root.join("node.exe")).unwrap();
         assert_eq!(claude_setup(&app_data).status, "cli-needed");
+        assert!(
+            !harness_options(&app_data)
+                .iter()
+                .find(|option| option.label == "Claude Code")
+                .unwrap()
+                .available
+        );
         return;
     }
     let directory = tempfile::Builder::new()

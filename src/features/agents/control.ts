@@ -105,7 +105,7 @@ export interface ControlSnapshot {
     defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
-  /** Installation only; not offered to agent creation until Claude launch is supported. */
+  /** Settings setup/auth guidance; selectable tools are reported in harnessOptions. */
   claudeSetup?: {
     status: "ready" | "cli-needed" | "adapter-needed";
     installSupported: boolean;

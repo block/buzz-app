@@ -245,8 +245,8 @@ installation guidance and device-wide defaults.
 ### Harnesses
 
 The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
-**Claude Code**. Claude Code supports installation only in this slice; it is
-not yet a choice when creating an agent. **Add harness** opens the Tier 2 Hermes chooser and setup details.
+**Claude Code**. Claude Code is also a choice in Create/Edit once its tools are
+installed. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected:
 
 - **Buzz Agent** is bundled and shows **Ready**.
@@ -311,10 +311,28 @@ Hermes also appears in the main list once its executable is detected:
   after installation. Only its `loggedIn` boolean is exposed; account metadata
   is discarded. Ready rows hide setup guidance; failed installs retain their
   error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
-  runtime; the separate CLI provides the sign-in command. This PR does not
-  launch Claude agents, discover models or restart agents.
-  Native reports this setup separately through `claudeSetup`, outside
-  `harnessOptions`, so it cannot become a creation or default-harness choice.
+  runtime; the separate CLI provides the sign-in command. Native retains
+  `claudeSetup` for Settings and reports the selected adapter in `harnessOptions`
+  for Create/Edit. Picker availability confirms installed tools, not sign-in or
+  inference. Claude is not a device-wide default-harness choice yet.
+
+  **Create agent → Harness → Claude Code** uses Claude's own model and sign-in.
+  Provider, model browsing and Test connection are not offered in this slice.
+  Saved model/provider fields remain visible for recovery; choose **Use Claude
+  Code defaults** before saving or starting those agents. Start uses the saved
+  absolute adapter path with empty default arguments. Managed adapters use the
+  pinned managed Node; external adapters prefer a runnable Node beside the adapter,
+  then native discovery. Node and adapter directories precede the existing
+  controlled tools PATH, after bundled Buzz tools. Shell provider credentials
+  are not inherited. Explicit Advanced environment values remain write-only.
+  Buzz points `CLAUDE_CODE_EXECUTABLE` at the selected runnable CLI unless Advanced
+  environment explicitly overrides it. This avoids relying on the SDK's optional
+  native-binary download. Windows `.cmd`/`.bat` login launchers cannot be used by
+  the JavaScript SDK, so those installations use the SDK's bundled native runtime
+  and must include its platform optional dependency.
+  The pinned `buzz-acp` owns Claude system-prompt append, channel/thread sessions,
+  permissions, cancellation and cleanup. Create, Start/Stop/Restart and retry use
+  the existing native controller, without another identity or lifecycle owner.
 
 Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
 owned by the controller and read by both Rust and TypeScript. Native discovery

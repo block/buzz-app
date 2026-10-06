@@ -135,6 +135,18 @@ test("one cancellation explains one log", () => {
   assert.equal(watched.unexplained().length, 1);
 });
 
+test("a log during navigation uses up its cancellation", () => {
+  const page = fakePage("webkit");
+  const watched = watchPageErrors(page);
+  navigate(page);
+  cancel(page, query);
+  page.emit("pageerror", reloadCancelLog());
+  page.emit("framenavigated", page.mainFrame());
+  // The new document reports the same URL without a new cancellation.
+  page.emit("pageerror", reloadCancelLog());
+  assert.equal(watched.unexplained().length, 1);
+});
+
 test("an unhandled rejection is never an engine report", () => {
   const page = fakePage("webkit");
   const watched = watchPageErrors(page);

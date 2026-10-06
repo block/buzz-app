@@ -63,16 +63,18 @@ export function watchPageErrors(page) {
         // "Unhandled Promise Rejection".
         const url = cancelledLoad.exec(message)?.[1];
         if (!url) return true;
+        // Accept the log for a request that Playwright saw cancelled, once per
+        // cancellation. Use up a matching cancellation first, even during a
+        // navigation, so it cannot explain a later log for the same URL.
+        const match = unmatched.indexOf(url);
+        if (match >= 0) {
+          unmatched.splice(match, 1);
+          return false;
+        }
         // A fetch that the old document starts after the main-frame navigation
         // request and before the new document commits is refused inside
         // fetch(). Playwright sees no request for it.
-        if (leaving.has(index)) return false;
-        // Otherwise accept the log only for a request that Playwright saw
-        // cancelled, once per cancellation.
-        const match = unmatched.indexOf(url);
-        if (match < 0) return true;
-        unmatched.splice(match, 1);
-        return false;
+        return !leaving.has(index);
       });
     },
   };

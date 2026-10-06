@@ -31,6 +31,7 @@ export function oauthTarget(
 export type Credential = Readonly<{
   value: string;
   account: Readonly<{
+    subject: string;
     email: string;
   }>;
 }>;
@@ -143,6 +144,7 @@ export async function browserCredential(
     return Object.freeze({
       value: session_credential,
       account: Object.freeze({
+        subject: account.subject,
         email: typeof account.email === "string" ? account.email.trim() : "",
       }),
     });

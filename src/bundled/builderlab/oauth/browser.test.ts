@@ -42,7 +42,7 @@ it("acquires a verified credential through the code-only callback", async () => 
   const { host, bridge, controller } = fixture();
   expect(await browserCredential(host, controller.signal, bridge)).toEqual({
     value: "private-token",
-    account: { email: "a@example.com" },
+    account: { subject: "user", email: "a@example.com" },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
   expect(options).not.toHaveProperty("id");
@@ -139,7 +139,7 @@ it.each([
   [undefined, ""],
   [123, ""],
 ])(
-  "accepts an account without workspace data and keeps only email %j",
+  "accepts an account without workspace data and keeps subject and email %j",
   async (email, expected) => {
     const { host, bridge, controller } = fixture();
     vi.mocked(host.request)
@@ -160,7 +160,7 @@ it.each([
       });
     expect(await browserCredential(host, controller.signal, bridge)).toEqual({
       value: "private-token",
-      account: { email: expected },
+      account: { subject: "user", email: expected },
     });
   },
 );

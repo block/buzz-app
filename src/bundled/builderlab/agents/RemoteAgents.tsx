@@ -1,5 +1,7 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "../../../shared/design-system/ui/Button";
+import { Field } from "../../../shared/design-system/ui/Field";
+import { Input } from "../../../shared/design-system/ui/Input";
 import type { LoginSnapshot, OAuthSession } from "../oauth/session";
 import type { AgentClient, RemoteAgent } from "./client";
 
@@ -31,9 +33,15 @@ function AgentList({
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const operation = useRef<AbortController | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Account changes and explicit refreshes must restart the read.
   useEffect(() => {
     const controller = new AbortController();
+    operation.current = controller;
+    setBusy(false);
+    setName("");
     setLoading(true);
     setAgents(undefined);
     setError(undefined);
@@ -55,6 +63,34 @@ function AgentList({
     );
     return () => controller.abort();
   }, [client, account, revision]);
+  const change = async (agent?: RemoteAgent) => {
+    const signal = operation.current?.signal;
+    if (!signal || signal.aborted || busy || loading || !active()) return;
+    setBusy(true);
+    setError(undefined);
+    const show = (row: RemoteAgent) =>
+      setAgents((rows) => [
+        ...(rows ?? []).filter((item) => item.id !== row.id),
+        row,
+      ]);
+    try {
+      const registered = agent ?? (await client.register(name, signal));
+      if (signal.aborted) return;
+      show(registered);
+      if (!agent) setName("");
+      const ready = await client.attest(registered, signal);
+      if (!signal.aborted) show(ready);
+    } catch (reason) {
+      if (!signal.aborted)
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not create the agent. Retry the same name.",
+        );
+    } finally {
+      if (!signal.aborted) setBusy(false);
+    }
+  };
   return (
     <section
       data-buzz-ui=""
@@ -62,6 +98,34 @@ function AgentList({
       aria-label="Remote agents"
     >
       <h3 className="text-heading-sm text-primary">Remote agents</h3>
+      <form
+        className="flex flex-col items-start gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void change();
+        }}
+      >
+        <Field
+          label="Agent name"
+          description="Up to 64 letters, numbers, spaces, dots, hyphens or underscores."
+        >
+          <Input
+            value={name}
+            onValueChange={setName}
+            maxLength={64}
+            required
+            disabled={busy || loading}
+          />
+        </Field>
+        <Button
+          type="submit"
+          variant="prominent"
+          loading={busy}
+          disabled={loading || !name.trim()}
+        >
+          Create agent
+        </Button>
+      </form>
       {loading && (
         <p role="status" className="text-body-sm text-secondary">
           Loading remote agents…
@@ -85,6 +149,17 @@ function AgentList({
               <span className="break-all text-mono text-secondary">
                 {agent.pubkey}
               </span>
+              {agent.status === "Unattested" && (
+                <div>
+                  <Button
+                    variant="outline"
+                    disabled={busy || loading}
+                    onClick={() => void change(agent)}
+                  >
+                    Finish setup
+                  </Button>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -93,6 +168,7 @@ function AgentList({
         <Button
           variant="outline"
           loading={loading}
+          disabled={busy}
           onClick={() => {
             if (active()) setRevision((value) => value + 1);
           }}

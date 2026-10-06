@@ -1,6 +1,7 @@
 import type { Host, HostResponse } from "../../../features/host/service";
-import { oauthTarget } from "../oauth/browser";
+import { oauthTarget, type Credential } from "../oauth/browser";
 import type { OAuthSession } from "../oauth/session";
+import { clearRegistration, registrationIntent } from "./registration";
 
 export type RemoteAgent = Readonly<{
   id: string;
@@ -28,17 +29,21 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
 }
 
 export function createAgentClient(host: Host, session: OAuthSession) {
-  async function request(path: string, body: unknown, signal: AbortSignal) {
+  function check(credential: Credential, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (
+      session.snapshot().status !== "signed-in" ||
+      session.credential() !== credential
+    )
+      throw new DOMException("Builderlab session changed.", "AbortError");
+  }
+  async function request(
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
     const credential = session.credential();
-    const check = () => {
-      signal.throwIfAborted();
-      if (
-        session.snapshot().status !== "signed-in" ||
-        session.credential() !== credential
-      )
-        throw new DOMException("Builderlab session changed.", "AbortError");
-    };
     let response: HostResponse;
     try {
       response = await host.request({
@@ -52,18 +57,27 @@ export function createAgentClient(host: Host, session: OAuthSession) {
         body: JSON.stringify(body),
       });
     } catch {
-      check();
+      check(credential, signal);
       throw new Error("Could not reach Builderlab. Try again.");
     }
-    check();
+    check(credential, signal);
     if (response.status === 401) {
       session.signOut();
-      throw new Error("Your Builderlab session expired. Sign in again.");
+      throw Object.assign(
+        new Error("Your Builderlab session expired. Sign in again."),
+        { status: 401 },
+      );
     }
     if (response.status === 403)
-      throw new Error("This Builderlab account cannot manage remote agents.");
+      throw Object.assign(
+        new Error("This Builderlab account cannot manage remote agents."),
+        { status: 403 },
+      );
     if (response.status < 200 || response.status >= 300)
-      throw new Error(`Builderlab request failed (HTTP ${response.status}).`);
+      throw Object.assign(
+        new Error(`Builderlab request failed (HTTP ${response.status}).`),
+        { status: response.status },
+      );
     try {
       const result = JSON.parse(response.body);
       if (!result || typeof result !== "object" || Array.isArray(result))
@@ -74,6 +88,108 @@ export function createAgentClient(host: Host, session: OAuthSession) {
     }
   }
   return {
+    async register(name: string, signal: AbortSignal): Promise<RemoteAgent> {
+      signal.throwIfAborted();
+      const agentName = name.trim();
+      if (!/^[\w .-]{1,64}$/.test(agentName))
+        throw new Error(
+          "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
+        );
+      const { account } = session.credential();
+      const intent = registrationIntent(
+        oauthTarget(),
+        account.subject,
+        agentName,
+      );
+      let result: Record<string, unknown>;
+      try {
+        result = await request(
+          "register-agent",
+          { agent_name: agentName, idempotency_key: intent.key },
+          signal,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "status" in error &&
+          [400, 401, 403, 404, 409, 422].includes(Number(error.status))
+        ) {
+          clearRegistration(intent);
+        } else if (error instanceof Error && error.name !== "AbortError") {
+          throw new Error(
+            `${error.message} Retry the same name to recover the original request.`,
+          );
+        }
+        throw error;
+      }
+      const status = resultStatus(result.status);
+      const rejected = new Map<string | number, string>([
+        [2, "Agent creation is disabled on this server."],
+        ["DISABLED", "Agent creation is disabled on this server."],
+        [3, "Finish setup for an existing agent before creating another."],
+        [
+          "REGISTRATIONS",
+          "Finish setup for an existing agent before creating another.",
+        ],
+        [4, "Your remote agent limit has been reached."],
+        ["AGENTS", "Your remote agent limit has been reached."],
+        [5, "This creation request conflicts with another agent name."],
+        [
+          "CONFLICT",
+          "This creation request conflicts with another agent name.",
+        ],
+      ]).get(status);
+      if (rejected) {
+        clearRegistration(intent);
+        throw new Error(rejected);
+      }
+      if (
+        ![1, "UNATTESTED"].includes(status) ||
+        typeof result.agent_id !== "string" ||
+        !result.agent_id.trim() ||
+        typeof result.agent_pubkey !== "string" ||
+        !/^[0-9a-f]{64}$/.test(result.agent_pubkey)
+      )
+        throw new Error(
+          "Creation was not confirmed. Retry the same name to recover the original request.",
+        );
+      clearRegistration(intent);
+      return {
+        id: result.agent_id,
+        name: agentName,
+        pubkey: result.agent_pubkey,
+        status: "Unattested",
+      };
+    },
+    async attest(
+      agent: RemoteAgent,
+      signal: AbortSignal,
+    ): Promise<RemoteAgent> {
+      signal.throwIfAborted();
+      const credential = session.credential();
+      if (!host.prepareRemoteAgentAuthorization)
+        throw new Error(
+          "Remote agent authorization is unavailable in this Buzz build.",
+        );
+      const tag = await host.prepareRemoteAgentAuthorization(
+        agent.pubkey,
+        signal,
+      );
+      check(credential, signal);
+      const result = await request(
+        "attest-agent",
+        {
+          agent_pubkey: agent.pubkey,
+          owner_auth_tag_json: JSON.stringify(tag),
+        },
+        signal,
+      );
+      if (![1, "ACTIVE"].includes(resultStatus(result.status)))
+        throw new Error(
+          "Agent setup was not confirmed. Use Finish setup to try again.",
+        );
+      return { ...agent, status: "Active" };
+    },
     async list(signal: AbortSignal): Promise<readonly RemoteAgent[]> {
       const result = await request("list-agents", {}, signal);
       if (![1, "SUCCESS"].includes(resultStatus(result.status)))

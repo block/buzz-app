@@ -26,7 +26,7 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
     await expect(
       page.getByRole("combobox", { name: "Model to share" }),
-    ).toContainText("Qwen 27B — recommended");
+    ).toContainText("Qwen 27B (Q4_K_M) — recommended");
     await page.getByRole("combobox", { name: "Model to share" }).click();
     await expect(page.getByRole("option", { name: /Gemma E4B/ })).toBeVisible();
     await expect(page.getByRole("option", { name: /Qwen 9B/ })).toBeVisible();

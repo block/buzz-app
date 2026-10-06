@@ -581,8 +581,15 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         .find(|option| option["id"] == "codex")
         .expect("Codex harness option");
     assert_eq!(codex["label"], "Codex");
-    assert_eq!(codex["available"], false);
-    assert_eq!(codex["status"], "not-enabled");
+    assert_eq!(codex["available"], cfg!(unix));
+    assert_eq!(
+        codex["status"],
+        if cfg!(unix) {
+            "check-needed"
+        } else {
+            "not-enabled"
+        }
+    );
     assert_eq!(
         codex["configurationPolicy"],
         json!({

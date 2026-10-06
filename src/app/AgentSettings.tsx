@@ -46,6 +46,7 @@ const labels = {
   ready: "Ready",
   "cli-needed": "CLI needed",
   "adapter-needed": "Adapter needed",
+  "check-needed": "Check needed",
   "not-enabled": "Not enabled",
 } as const;
 // Artwork only; native harnessOptions still own availability and configuration.

@@ -33,11 +33,11 @@ export function AgentHarnessEditor({
   const kind = harnessKind(draft.command);
   const preset = harnessPreset(draft.command);
   const harness =
-    harnessOption(options, draft.command) ??
+    harnessOption(options, draft.command, draft.integration) ??
     (preset
       ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
-  const policy = harnessPolicy(options, draft.command);
+  const policy = harnessPolicy(options, draft.command, draft.integration);
   const isPreset = !!preset;
   // Missing policy preserves older hosts; native policy wins whenever supplied.
   const external = policy
@@ -92,9 +92,10 @@ export function AgentHarnessEditor({
                 : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
           onChange({
             command,
-            ...(pickedOption &&
-            option &&
-            (enteringExternal || external || isPreset)
+            ...(pickedOption
+              ? { integration: option?.id }
+              : { integration: undefined, configuration: undefined }),
+            ...(pickedOption && (enteringExternal || external || isPreset)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
                   provider: enteringExternal
@@ -103,6 +104,16 @@ export function AgentHarnessEditor({
                   model: "",
                 }
               : {}),
+            ...(pickedOption && option?.id === "codex"
+              ? {
+                  args: "[]",
+                  provider: "",
+                  model: "",
+                  configuration: { mode: "default" },
+                }
+              : pickedOption && draft.integration === "codex"
+                ? { configuration: undefined }
+                : {}),
           });
         }}
       />
@@ -134,7 +145,7 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      {!isPreset && (
+      {!isPreset && policy?.provider !== "external" && (
         <ConfigChoice
           disabled={disabled || piLoading}
           key={harness?.label ?? draft.command}

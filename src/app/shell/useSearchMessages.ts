@@ -1,3 +1,4 @@
+import { workflowOwner } from "../../features/relay/workflow-attribution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
@@ -14,6 +15,7 @@ export type SearchMessage = Readonly<{
   id: string;
   channelId: string;
   authorId: string;
+  workflowOwnerId?: string | undefined;
   createdAt: number;
   preview: string;
 }>;
@@ -194,6 +196,10 @@ export function useSearchMessages(
                 id: event.id,
                 channelId: hitChannelId,
                 authorId: event.pubkey,
+                workflowOwnerId: workflowOwner(
+                  event,
+                  session.workflowAuthority,
+                ),
                 createdAt: event.created_at,
                 preview:
                   text.replace(/\s+/g, " ").trim().slice(0, 240) ||

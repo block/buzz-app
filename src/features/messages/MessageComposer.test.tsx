@@ -4237,6 +4237,44 @@ for (const channelType of ["stream", "forum"] as const)
     },
   );
 
+it("carries only notified agents into the next draft", async () => {
+  const h = mount();
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [second.pubkey, { name: "Honey", isAgent: true }],
+    ]),
+  );
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "stream",
+        members: ["d".repeat(64), second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+    outbox: { ...h.session.outbox, supports: (kind: number) => kind === 9 },
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  // The outside agent became a reference, so it is not addressed again.
+  await h.user.keyboard("again");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledTimes(2);
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
+});
+
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {

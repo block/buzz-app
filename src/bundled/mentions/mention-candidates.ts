@@ -1,25 +1,26 @@
-import type { ChannelSummary } from "../relay/contracts";
-import type { RelaySession } from "../relay/session";
-import type { MentionRecipient } from "./mention-draft";
-import { availableMentionAgents } from "../agents/mention-choices";
-import { knownAgentPubkeys } from "../agents/known";
-import { archiveHides } from "../relay/identity-archives";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelaySession } from "../../features/relay/session";
+import type { MentionRecipient } from "../../features/messages/mention-draft";
+import { knownAgentPubkeys } from "../../features/agents/known";
+import {
+  allowsOutsideMentions,
+  archivedMention,
+} from "../../features/messages/mention-admission";
 
-/** The shared archive discovery rule applied to mention recipients. */
-export function archivedMention(session: RelaySession, pubkey: string) {
-  return archiveHides(session.archives, pubkey, session.viewer);
-}
-
-/**
- * Whether a destination can name people outside it from the community
- * directory. A session cannot: its mentions admit agents through the session
- * choice policy. This follows the channel type, not composer props, because
- * some session composers (media comments, edits) do not carry session mode.
- */
-export function allowsOutsideMentions(
-  channel: Pick<ChannelSummary, "channelType"> | undefined,
+/** Managed agents offered outside a stream or forum when the viewer can add members. */
+function availableMentionAgents(
+  channel: ChannelSummary | undefined,
+  agents: readonly { pubkey: string; name: string; managed?: boolean }[],
+  canInvite: boolean | undefined,
 ) {
-  return !!channel && channel.channelType !== "session";
+  return channel?.members &&
+    !channel.archived &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    canInvite
+    ? agents.filter(
+        (agent) => agent.managed && !channel.members?.includes(agent.pubkey),
+      )
+    : [];
 }
 
 /** Row detail for an outside choice. Nobody can be added to a DM. */
@@ -31,7 +32,7 @@ export function outsideMentionDetail(
     : "Not in channel · Choose whether to add when you send";
 }
 
-/** Recipient eligibility, shared by menus, draft naming and insertion. No reads or writes. */
+/** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
 export function mentionCandidates(
   session: RelaySession,
   channelId: string,
@@ -58,7 +59,6 @@ export function mentionCandidates(
         : availableMentionAgents(
             channel,
             agents,
-            false,
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
@@ -103,32 +103,4 @@ export function mentionCandidates(
         ),
       ],
     }));
-}
-
-/** Session lifetime isolates community/viewer; bounded per-destination explicit choices. */
-const histories = new WeakMap<RelaySession, Map<string, Map<string, number>>>();
-export function mentionHistory(session: RelaySession, channelId: string) {
-  return histories.get(session)?.get(channelId);
-}
-export function rememberMention(
-  session: RelaySession,
-  channelId: string,
-  pubkey: string,
-) {
-  let destinations = histories.get(session);
-  if (!destinations) {
-    destinations = new Map();
-    histories.set(session, destinations);
-  }
-  let history = destinations.get(channelId);
-  if (!history) {
-    history = new Map();
-    destinations.set(channelId, history);
-  }
-  const next = Math.max(0, ...history.values()) + 1;
-  history.delete(pubkey);
-  history.set(pubkey, next);
-  if (history.size > 100) history.delete(history.keys().next().value ?? "");
-  if (destinations.size > 100)
-    destinations.delete(destinations.keys().next().value ?? "");
 }

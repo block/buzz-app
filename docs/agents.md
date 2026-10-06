@@ -158,8 +158,10 @@ its notification intent. Chips remain available without the Mentions chooser.
 
 ### Chooser rules
 
-Both the toolbar picker and inline completion use `mention-candidates.ts` and
-`mention-ranking.ts`. Membership permits notification, not a promise that an agent
+The Mentions plugin owns what both the toolbar picker and inline completion
+offer, and their order (`src/bundled/mentions/mention-candidates.ts` and
+`mention-ranking.ts`). The composer admits a selected recipient by its own rule
+(`mention-admission.ts`), which does not depend on the plugin. Membership permits notification, not a promise that an agent
 will accept or answer the prompt. DMs, like channels, can name outside people;
 they become references because nobody can be added to a DM. Ordinary
 nonmember consent and session invitation rules remain the access owners;
@@ -203,8 +205,9 @@ page of the same chooser stay visible (one picker, or one inline `@` token; inli
 completion remounts per keystroke, so the page is kept per session outside it) and the chooser shows "Searching community…". Uncached queries
 reach the network only after a 200 ms typing pause. Settled first pages are cached
 per session and query (100 queries); errors are not cached, and Retry reads the
-current query again. Identity naming uses eligible candidates plus the
-current draft recipients, not every cached profile.
+current query again. Chooser identity naming uses eligible candidates plus the
+current draft recipients, not every cached profile. Composer chips name their
+recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
@@ -213,8 +216,8 @@ names, ambiguous names, modified Space, IME composition, code and protected lite
 ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
 
-The composer rejects already-known archived recipients (never the viewer) at send entry and omits
-ineligible agents from the next draft. This is not an archive transaction: archive
+The composer rejects already-known archived recipients (never the viewer) at send entry. The next
+draft keeps only agents that the sent message notified. This is not an archive transaction: archive
 changes during enrollment, dispatch or retry are intentionally not covered. The
 existing relay membership/send/retry validator is unchanged.
 

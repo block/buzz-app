@@ -7,7 +7,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
-import { archivedMention } from "../../features/messages/mention-candidates";
+import { archivedMention } from "../../features/messages/mention-admission";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
   CalendarIcon,

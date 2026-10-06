@@ -26,32 +26,6 @@ const FIT_LABELS: Record<string, string> = {
   too_large: "too large for this machine",
 };
 
-/** Readable label for catalog slugs like "Qwen3.8-27B-UD-Q4_K_XL" or raw refs. */
-export function displayModelName(name: string, model: string): string {
-  const suffix = model.includes(":") ? model.split(":").at(-1) : undefined;
-  // Only short quant tags, never file paths from exact refs.
-  const quant =
-    suffix && /^[A-Z0-9_.-]+$/i.test(suffix) && !/\.gguf$/i.test(suffix)
-      ? suffix
-      : undefined;
-  let base = name.split("/").at(-1) ?? name;
-  base = (base.split(":")[0] ?? base).replace(/-GGUF$/i, "");
-  if (quant) {
-    const at = base.toUpperCase().lastIndexOf(quant.toUpperCase());
-    if (at > 0) base = base.slice(0, at);
-  }
-  base = base
-    .replace(/[-_.\s]+$/, "")
-    .replace(/[-_]+/g, " ")
-    .trim();
-  return quant ? `${base} (${quant})` : base;
-}
-
-/** Catalog layer counts are not a download size; hide them. */
-function displaySize(size: string | null | undefined): string | undefined {
-  return size && !/layers?$/i.test(size.trim()) ? size : undefined;
-}
-
 export function ShareModelPicker({
   model,
   onChange,
@@ -134,14 +108,12 @@ export function ShareModelPicker({
       {auto && (
         <p className="text-body">
           {catalog?.recommended
-            ? `Auto — ${displayModelName(entry?.name ?? catalog.recommended, catalog.recommended)} for this device`
+            ? `Auto — ${entry?.name ?? catalog.recommended} (${catalog.recommended.split(":").at(-1)}) for this device`
             : "Auto — chooses a model for this device when sharing starts."}
         </p>
       )}
       {entry && !advanced && !auto && (
-        <p className="text-body">
-          {displayModelName(entry.name, entry.model)} — selected model.
-        </p>
+        <p className="text-body">{entry.name} — selected model.</p>
       )}
       {catalog && !catalog.recommended && !model && !auto && (
         <p>No recommended model is available. Choose a model under Advanced.</p>
@@ -193,7 +165,7 @@ export function ShareModelPicker({
                 .filter((entry) => entry.curated)
                 .map((entry) => ({
                   value: entry.model,
-                  label: `${displayModelName(entry.name, entry.model)}${entry.model === catalog.recommended ? " — recommended" : ""}${displaySize(entry.size) ? ` · ${displaySize(entry.size)}` : ""}${entry.installed ? " · installed" : " · download"}`,
+                  label: `${entry.name}${entry.model === catalog.recommended ? " — recommended" : ""}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
                 })),
             },
             {
@@ -203,7 +175,7 @@ export function ShareModelPicker({
                   .filter((entry) => !entry.curated)
                   .map((entry) => ({
                     value: entry.model,
-                    label: `${displayModelName(entry.name, entry.model)}${displaySize(entry.size) ? ` · ${displaySize(entry.size)}` : ""}${entry.installed ? " · installed" : " · download"}`,
+                    label: `${entry.name}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
                   })),
                 { value: CUSTOM, label: "Custom model or local GGUF" },
               ],
@@ -215,7 +187,7 @@ export function ShareModelPicker({
         <p className="text-body-sm text-secondary">
           {entry.installed
             ? "Downloaded"
-            : `Downloads ${displaySize(entry.size) ?? "the model"} when sharing starts`}
+            : `Downloads ${entry.size ?? "the model"} when sharing starts`}
           {entry.fit === "unknown"
             ? "."
             : ` · ${FIT_LABELS[entry.fit] ?? entry.fit.replaceAll("_", " ")}.`}

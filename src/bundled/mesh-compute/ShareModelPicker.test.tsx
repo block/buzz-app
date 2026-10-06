@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { displayModelName, ShareModelPicker } from "./ShareModelPicker";
+import { ShareModelPicker } from "./ShareModelPicker";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 afterEach(() => {
@@ -227,22 +227,4 @@ it("shows a next-start notice only when Auto differs from the running model", as
   expect(
     screen.getByText("Auto selection applies next time sharing starts."),
   ).toBeInTheDocument();
-});
-
-it("shows readable model names instead of catalog slugs", () => {
-  expect(
-    displayModelName(
-      "NVIDIA-Nemotron-3-Super-120B-A12B-UD-Q4_K_XL-MTPv2",
-      "meshllm/NVIDIA-Nemotron-3-Super-120B-A12B-UD-Q4_K_XL-MTPv2-GGUF:UD-Q4_K_XL-MTPv2",
-    ),
-  ).toBe("NVIDIA Nemotron 3 Super 120B A12B (UD-Q4_K_XL-MTPv2)");
-  expect(
-    displayModelName(
-      "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M",
-      "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M",
-    ),
-  ).toBe("Qwen3.8 27B (UD-Q4_K_M)");
-  expect(displayModelName("/models/local.gguf", "/models/local.gguf")).toBe(
-    "local.gguf",
-  );
 });

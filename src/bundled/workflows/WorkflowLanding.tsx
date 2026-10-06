@@ -72,33 +72,34 @@ type DefinitionsSnapshot = ReturnType<
   WorkflowView<WorkflowDefinitions>["snapshot"]
 >;
 
+/** Whether this workflow's configuration still has a write in flight or a save
+ * awaiting readback. Delivered run requests never lock configuration, and a
+ * save is resolved once a newer head replaces it; the relay's expected-revision
+ * check still rejects stale saves. */
 export function workflowOperationLocked(
   operations: readonly WorkflowOperation[],
   definition: WorkflowDefinition,
 ) {
-  const matches = (operation: WorkflowOperation) =>
-    operation.workflow.channelId === definition.channelId &&
-    operation.workflow.id === definition.id &&
-    operation.workflow.owner === definition.owner;
-  if (
-    operations.some(
-      (operation) =>
-        operation.action === "delete" &&
-        operation.outcome !== "rejected" &&
-        matches(operation),
-    )
-  )
-    return true;
+  let newestSave: WorkflowOperation | undefined;
   for (let index = operations.length - 1; index >= 0; index--) {
     const operation = operations[index];
-    if (!operation) continue;
-    if (!matches(operation) || operation.outcome === "rejected") continue;
-    if (operation.outcome === "pending" || operation.outcome === "unknown")
+    if (
+      !operation ||
+      operation.outcome === "rejected" ||
+      operation.workflow.channelId !== definition.channelId ||
+      operation.workflow.id !== definition.id ||
+      operation.workflow.owner !== definition.owner
+    )
+      continue;
+    if (operation.action === "delete" || operation.outcome === "pending")
       return true;
-    if (operation.action === "save")
-      return operation.eventId !== definition.revision;
+    if (operation.action === "save") newestSave ??= operation;
   }
-  return false;
+  return (
+    !!newestSave &&
+    newestSave.eventId !== definition.revision &&
+    definition.createdAt <= newestSave.createdAt
+  );
 }
 
 function useLandingDefinitions(

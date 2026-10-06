@@ -94,3 +94,49 @@ it("keeps loaded configurations visible without a refresh banner", async () => {
     screen.getByRole("button", { name: "Refresh configurations" }),
   ).toBeEnabled();
 });
+
+it("runs despite a lost earlier run receipt, opens history on success and reports rejection", async () => {
+  const fixture = createWorkflowFixture();
+  // A journaled run whose receipt was lost (e.g. across a restart).
+  act(() => {
+    fixture.capability.trigger(fixtureDefinition);
+    fixture.finish("unknown");
+  });
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onDelete={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  const run = async () => {
+    await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+    const item = await screen.findByRole("menuitem", { name: "Run now" });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(item);
+    const confirm = screen.queryByRole("alertdialog");
+    if (confirm)
+      await user.click(
+        within(confirm).getByRole("button", { name: "Run now" }),
+      );
+  };
+  await run();
+  expect(fixture.calls.trigger).toBe(2);
+  expect(fixture.calls.runs).toBe(0);
+  act(() => fixture.finish("succeeded"));
+  expect(fixture.calls.runs).toBe(1);
+  await run();
+  expect(fixture.calls.trigger).toBe(3);
+  act(() => fixture.finish("rejected"));
+  expect(screen.getByText("Failed to trigger workflow")).toBeVisible();
+  expect(screen.getByText("Fixture conflict")).toBeVisible();
+  // Delete stays available for the owner.
+  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Delete workflow" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+});

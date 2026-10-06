@@ -485,7 +485,8 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   ).toBe(true);
   await editor.action("Run now");
   await page.evaluate(() => window.workflowFixture.finish("unknown"));
-  await editor.expectAction("Run now", false);
+  // Like base Buzz, a lost run receipt informs but never locks the workflow.
+  await editor.expectAction("Run now", true);
   await expect(page.getByText(/The run may have started/)).toBeVisible();
   const id = await page.evaluate(
     () =>
@@ -493,8 +494,8 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   );
   await button("Close editor").click();
   await button("Message helper").click();
-  await editor.expectAction("Run now", false);
-  await expect(button("Save changes")).toBeDisabled();
+  await editor.expectAction("Run now", true);
+  await expect(button("Save changes")).toBeEnabled();
   expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
     1,
   );
@@ -1823,7 +1824,7 @@ test("generic Outbox offers message retry but no workflow replay", async ({
     .toBe(1);
   await page.evaluate(() => window.workflowSessionFixture.reject());
   await expect(
-    page.getByText("Run request was rejected.", { exact: true }),
+    page.getByText("Failed to trigger workflow", { exact: true }),
   ).toBeVisible();
   // The Outbox is page chrome beneath the modal editor.
   await button("Close editor").click();

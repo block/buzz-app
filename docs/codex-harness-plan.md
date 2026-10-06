@@ -44,13 +44,12 @@ before implementing each layer.
   modal open with its draft and actionable feedback; the saved revision and
   running agent remain unchanged. Save and any required restart happen only
   after successful validation of that exact edit.
-- **Runtime fallback is prohibited.** If the selected model or effort cannot be
-  applied, or inference fails because the model is missing, inaccessible, or
-  limited by quota or tokens/context, fail the affected turn and expose the
-  specific known cause. Never switch to another model or effort to continue.
-  Default may resolve Codex defaults at session creation; it must not silently
-  substitute another model after that selection fails. Preserve the saved
-  agent and recovery controls. Do not describe every failure as model exhaustion.
+- **Preserve existing runtime fallback.** Keep the current buzz-app runtime's
+  model/effort selection and fallback behavior. Do not add a strict no-fallback
+  policy or require an upstream runtime fix for this integration. Keep requested
+  settings distinct from observed runtime settings, including any fallback.
+  Preserve the saved agent and recovery controls. This does not relax the
+  separate requirement that Advanced Create/Edit validation confirm its inputs.
 - **Keep full access.** Codex execution retains the full-access behavior approved
   for the previous implementation. Preserve current Buzz owner authorization,
   identity protection, and process containment; full access is not permission
@@ -258,12 +257,12 @@ existing credential boundary. Any required durable recovery record must not
 store plaintext credentials. This is a focused creation prerequisite, not a
 general storage rewrite.
 
-Enforce no-fallback behavior at actual session startup and inference, not only
-during validation. Verify the exact pinned engine; if it continues with default
-settings after a rejected selection, land a focused upstream fix and runtime
-pin before this PR is complete. Provide a bounded, sanitized failure result to
-the existing host UI; rejection must be visible when PR 5 enables Codex and
-cannot wait for the richer session reporting in PR 6.
+Preserve the pinned runtime's existing model/effort selection and fallback
+behavior. Continuing with defaults after a rejected runtime selection does not
+require an upstream fix or runtime-pin update for this stack. Keep existing
+runtime error reporting and recovery behavior. Advanced Create/Edit validation
+must still confirm its requested settings before admitting the save; that
+validation requirement does not change the runtime fallback policy.
 
 **Automated acceptance:** persistence round trips and legacy compatibility;
 Default emits no inherited model/effort override; Advanced requires explicit
@@ -272,8 +271,9 @@ duplicate Create requests, stale validation, exact launch context, full-access
 configuration, startup cancellation, Stop, and child cleanup. Inject failures
 and crash/recovery boundaries between credential and record writes. Prove failed
 Edit validation neither saves nor restarts; successful validation admits only
-the checked revision. Reject model/effort application and inference limits and
-assert no alternate model or effort is used and a failure reaches the host UI.
+the checked revision. Reject unconfirmed Advanced settings during validation.
+Exercise runtime selection rejection and inference limits without changing the
+pinned engine's fallback or error behavior.
 
 **Local app acceptance:** use a native integration driver for the real Create
 path until PR 5 exposes it. Exercise Default and Advanced, inspect the agent in
@@ -283,7 +283,7 @@ Confirm failed validation leaves no newly created agent or listener. Report
 the driver-assisted scope honestly; this is not final UI acceptance.
 Change execution settings through the native Edit path and verify failure leaves
 the running agent untouched. Exercise a rejected runtime selection and confirm
-the turn fails visibly without a fallback model.
+that the existing runtime fallback and recovery behavior is preserved.
 
 ### PR 5 Complete Create and Edit UI
 
@@ -320,7 +320,7 @@ coverage. This is the complete creation milestone, including effort controls.
 
 Report requested settings separately from model/effort observed in real
 conversation sessions. Include session and observation time, rejected settings,
-and failed turns without fallback. Show not reported before evidence exists.
+reported fallback settings, and failed turns. Show not reported before evidence exists.
 Reuse existing activity/diagnostic ownership; discovery and a running PID are not runtime
 configuration evidence.
 
@@ -335,8 +335,8 @@ must not certify a newer launch or newly saved configuration.
 
 **Local app acceptance:** observe a fresh Default and Advanced conversation.
 Verify not reported before session evidence, then independently reported model
-and effort. Exercise rejection without fallback and restart. Check packaged-app
-behavior when its observation transport differs from development.
+and effort. Exercise selection rejection, existing fallback behavior, and restart.
+Check packaged-app behavior when its observation transport differs from development.
 
 ## Testing and review workflow
 
@@ -371,8 +371,8 @@ For the complete feature, explicitly prove:
 6. A confirmed mention produces a signed reply in the intended channel.
 7. Existing harness/provider creation and editing still work.
 8. Failed Edit validation preserves the saved/running revision and editable draft.
-9. Runtime model/effort rejection and inference limits surface a failure without
-   selecting a fallback model or effort.
+9. Runtime model/effort rejection and inference limits retain existing fallback
+   and error behavior; observations do not confuse requested and actual settings.
 
 ## Remaining decisions and boundaries
 

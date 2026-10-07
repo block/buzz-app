@@ -1057,9 +1057,10 @@ function Composer({
     let followup: string | undefined;
     const notifyComplete = () => {
       if (!published || !cleaned || notified || !live.current) return;
-      // A follow-up typed while uploading must not be hidden by auto-archive.
+      // A follow-up draft while uploading must not be hidden by auto-archive.
       if (
         dirty.current ||
+        attachments.store.snapshot().length > 0 ||
         JSON.stringify(valueRef.current) !== followup ||
         viewRevision(scope, draftKey) === undefined ||
         viewRevision(scope, draftKey) !== revision.current ||

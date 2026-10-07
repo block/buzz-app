@@ -1139,6 +1139,7 @@ it.each([
   "success",
   "failure",
   "followup",
+  "attachment-followup",
   "remote-draft",
   "unmount",
   "cancel",
@@ -1154,6 +1155,12 @@ it.each([
     expect(completed).not.toHaveBeenCalled();
     await waitFor(() => expect(h.input()).toHaveValue(""));
     if (outcome === "followup") await userEvent.type(h.input(), "Next draft");
+    if (outcome === "attachment-followup") {
+      attachByPaste(h.input(), attachmentFile("next.txt"));
+      await waitFor(() =>
+        expect(within(h.form()).getByText("next.txt")).toBeVisible(),
+      );
+    }
     if (outcome === "remote-draft") {
       localStorage.setItem(
         `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`,
@@ -1181,6 +1188,10 @@ it.each([
       });
     } else expect(completed).not.toHaveBeenCalled();
     if (outcome === "followup") expect(h.input()).toHaveValue("Next draft");
+    if (outcome === "attachment-followup") {
+      expect(h.input()).toHaveValue("");
+      expect(within(h.form()).getByText("next.txt")).toBeVisible();
+    }
   },
 );
 

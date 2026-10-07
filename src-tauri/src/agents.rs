@@ -1247,10 +1247,11 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        Ok((request, ticket, host.credentials.clone()))
+        let attested = host.controller.attested_owner(&id)?;
+        Ok((request, ticket, host.credentials.clone(), attested))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested) = prepared;
     prepare_tools_path().await;
     let target = id.clone();
     let pi = run(owner.clone(), move |host| {
@@ -1282,9 +1283,14 @@ async fn start_guarded(
     }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
-    // The human key is read the same way, for the owner check below.
+    // Kept agents answer to the owner who authorized them, not whoever signs in
+    // next: a mismatch is refused before the agent's key is read.
     let signed_in = owner.3.viewer().await.ok();
-    let acquired = if preflight.is_ok() {
+    let ready = buzz_agent_controller::check_owner(attested.as_deref(), signed_in.as_deref())
+        .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
+    let acquired = if let Err(error) = ready {
+        Err(error)
+    } else {
         tauri::async_runtime::spawn_blocking(move || {
             if !restore && replay_floor.is_none() && guard.is_none() {
                 credentials.retry();
@@ -1295,8 +1301,6 @@ async fn start_guarded(
         .map_err(|_| "Native credential operation failed".to_owned())
         .and_then(|v| v)
         .and_then(|v| v.ok_or("Saved agent key is unavailable; nothing was started".into()))
-    } else {
-        Err(preflight.as_ref().err().unwrap().clone())
     };
     let target = id.clone();
     if acquired.is_ok() {
@@ -1313,12 +1317,7 @@ async fn start_guarded(
     }
     run(owner, move |host| {
         let replay_floor = host.take_start(&id, ticket)?.replay_floor;
-        // Kept agents answer to the owner who authorized them, not whoever signs in next.
-        let key = match acquired.and_then(|key| {
-            host.controller
-                .check_owner(&id, signed_in.as_deref())
-                .map(|()| key)
-        }) {
+        let key = match acquired {
             Ok(key) => key,
             Err(error) => {
                 host.controller.record_error(&id, error);

@@ -22,6 +22,21 @@ export function signOutReady(state: {
   );
 }
 
+/** Native refusals carry `{ message, reopen }`; anything else is a plain error. */
+function signOutFailure(reason: unknown) {
+  if (
+    typeof reason === "object" &&
+    reason !== null &&
+    "message" in reason &&
+    typeof reason.message === "string"
+  )
+    return {
+      message: reason.message,
+      reopen: "reopen" in reason && reason.reopen === true,
+    };
+  return { message: String(reason), reopen: false };
+}
+
 export function SignOutDialog({
   identity,
   onClose,
@@ -36,6 +51,8 @@ export function SignOutDialog({
   const [phrase, setPhrase] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // Agents may already be stopped; only reopening Buzz can finish or recover.
+  const [reopen, setReopen] = useState(false);
   const ready = signOutReady({ touched, haveKey, wipe, phrase });
   async function confirm() {
     setPending(true);
@@ -43,8 +60,10 @@ export function SignOutDialog({
     try {
       await identity.signOut({ wipe, removeAgents: wipe && removeAgents });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setPending(false);
+      const failure = signOutFailure(reason);
+      setError(failure.message);
+      setReopen(failure.reopen);
+      setPending(failure.reopen);
     }
   }
   return (
@@ -52,15 +71,15 @@ export function SignOutDialog({
       title="Sign out of Buzz?"
       description="Buzz restarts and removes your private key from this device. Without your key you can’t sign back in as this identity, so save it first."
       onClose={onClose}
-      pending={pending}
+      pending={pending && !reopen}
       actions={
         <>
-          <Button type="button" disabled={pending} onClick={onClose}>
+          <Button type="button" disabled={pending && !reopen} onClick={onClose}>
             Cancel
           </Button>
           <Button
             type="button"
-            disabled={!ready || pending}
+            disabled={!ready || pending || reopen}
             onClick={() => void confirm()}
           >
             {wipe ? "Sign out and wipe" : "Sign out"}
@@ -107,9 +126,10 @@ export function SignOutDialog({
               onChange={(event) => setPhrase(event.currentTarget.value)}
             />
             <p className="text-body-sm text-muted">
-              Wipe removes this identity from this device only. It can’t reach
-              your clipboard, keys you exported, or relay data; your npub and
-              its history stay on the relays.
+              Wipe clears this app’s data, local storage, caches and plugin
+              storage on this device only. It can’t reach your clipboard, keys
+              you exported, or relay data; your npub and its history stay on the
+              relays.
             </p>
           </>
         )}

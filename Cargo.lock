@@ -707,6 +707,7 @@ dependencies = [
  "portable-pty",
  "qrcode",
  "reqwest",
+ "rfd",
  "rusqlite",
  "rustls",
  "secp256k1 0.31.1",

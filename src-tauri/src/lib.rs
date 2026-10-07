@@ -516,11 +516,13 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = app_context();
-    // A pending Sign out finishes before any window, webview storage or identity read.
-    let identity = IdentityHost::new(
-        sign_out::Paths::resolve(&context.config().identifier)
-            .and_then(|paths| sign_out::finish_pending(&paths, identity::remove_saved_key)),
-    );
+    // A pending Sign out finishes before any window, webview storage, service or
+    // identity read; if it can't, Buzz explains and exits without opening.
+    let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
+        sign_out::boot(&paths, identity::remove_saved_key)
+            .unwrap_or_else(|message| sign_out::exit_with(&message))
+    });
+    let identity = IdentityHost::default();
     let agent_identity = identity.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
@@ -618,6 +620,10 @@ pub fn run() {
         builder
     } else {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
+    let builder = match instance {
+        Some(instance) => builder.manage(instance),
+        None => builder,
     };
     builder
         .manage(image_clipboard::ImageClipboard::default())

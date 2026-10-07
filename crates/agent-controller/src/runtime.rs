@@ -864,24 +864,21 @@ impl Controller {
     /// signs in next. `signed_in` is `None` when no human identity is available.
     /// A missing or malformed attestation is refused later by launch validation.
     pub fn check_owner(&self, id: &str, signed_in: Option<&str>) -> Result<()> {
+        check_owner(self.attested_owner(id)?.as_deref(), signed_in)
+    }
+    /// The human owner named in the agent's saved authorization, if any.
+    pub fn attested_owner(&self, id: &str) -> Result<Option<String>> {
         let agent = self
             .store
             .agents()?
             .into_iter()
             .find(|agent| agent.id == id)
             .ok_or("Agent no longer exists")?;
-        let owner = agent
+        Ok(agent
             .auth_tag
             .as_deref()
             .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
-            .and_then(|tag| tag.into_iter().nth(1));
-        match owner {
-            Some(owner) if signed_in != Some(owner.as_str()) => Err(
-                "This agent belongs to a different Buzz identity. Sign in with its owner's key to start it."
-                    .into(),
-            ),
-            _ => Ok(()),
-        }
+            .and_then(|tag| tag.into_iter().nth(1)))
     }
     /// Sign out's "Also remove my agents": stop and delete every local agent and its key.
     /// Deployed remote agents keep running remotely; the device wipe drops their record.
@@ -1301,4 +1298,15 @@ fn goose_args(command: &str, args: &[String]) -> Vec<String> {
         normalized.remove(0);
     }
     normalized
+}
+
+/// Kept agents answer to the owner who authorized them, not whoever signs in next.
+pub fn check_owner(attested: Option<&str>, signed_in: Option<&str>) -> Result<()> {
+    match attested {
+        Some(owner) if signed_in != Some(owner) => Err(
+            "This agent belongs to a different Buzz identity. Sign in with its owner's key to start it."
+                .into(),
+        ),
+        _ => Ok(()),
+    }
 }

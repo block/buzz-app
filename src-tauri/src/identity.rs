@@ -280,8 +280,6 @@ enum State {
     Unread,
     Missing,
     Ready(Key),
-    /// An unfinished sign-out may have left the key saved; never read or replace it.
-    Blocked(String),
 }
 struct Identity {
     state: State,
@@ -300,7 +298,6 @@ impl Identity {
         }
         match &self.state {
             State::Ready(key) => key.viewer().map(Some),
-            State::Blocked(error) => Err(error.clone()),
             _ => Ok(None),
         }
     }
@@ -912,18 +909,12 @@ impl IdentityHost {
         .await
     }
 }
-impl IdentityHost {
-    /// `blocked` reports a sign-out that could not finish at launch.
-    pub(crate) fn new(blocked: Option<String>) -> Self {
-        Self(Arc::new(Mutex::new(Identity {
-            state: blocked.map_or(State::Unread, State::Blocked),
-            store: Box::new(OsStore),
-        })))
-    }
-}
 impl Default for IdentityHost {
     fn default() -> Self {
-        Self::new(None)
+        Self(Arc::new(Mutex::new(Identity {
+            state: State::Unread,
+            store: Box::new(OsStore),
+        })))
     }
 }
 async fn with_identity<T: Send + 'static>(

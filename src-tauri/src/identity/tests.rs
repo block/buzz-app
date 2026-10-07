@@ -444,16 +444,3 @@ fn remove_key_deletes_then_confirms_absence() {
     assert!(remove_key(&store).is_err());
     assert!(store.saved.lock().unwrap().is_some());
 }
-#[test]
-fn unfinished_sign_out_blocks_restore_create_and_export() {
-    let store = Arc::new(Memory::default());
-    let mut owner = Identity {
-        state: State::Blocked("Sign out could not finish".into()),
-        store: Box::new(store.clone()),
-    };
-    assert_eq!(owner.restore().unwrap_err(), "Sign out could not finish");
-    assert!(owner.save(None).is_err());
-    assert!(owner.export().is_err());
-    assert_eq!(*store.reads.lock().unwrap(), 0);
-    assert!(store.saved.lock().unwrap().is_none());
-}

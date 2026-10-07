@@ -288,6 +288,138 @@ it.each([1, 4])(
   },
 );
 
+it("binds export approval to configuration and source across native refreshes", () => {
+  const agent = portableAgent();
+  const props = {
+    agent,
+    defaultSessionPolicy: "thread" as const,
+    destination: "https://relay.example.test",
+    onClose: vi.fn(),
+  };
+  const mounted = render(<AgentSnapshotExport {...props} />);
+  const exportButton = () => screen.getByRole("button", { name: "Export" });
+  const approval = () =>
+    screen.getByRole("checkbox", {
+      name: /I reviewed the portable configuration/,
+    });
+  fireEvent.click(approval());
+  expect(exportButton()).toBeEnabled();
+  mounted.rerender(<AgentSnapshotExport {...props} agent={{ ...agent }} />);
+  expect(approval()).toBeChecked();
+  expect(exportButton()).toBeEnabled();
+
+  const changed = { ...agent, systemPrompt: "New private fixture" };
+  mounted.rerender(<AgentSnapshotExport {...props} agent={changed} />);
+  expect(approval()).not.toBeChecked();
+  expect(exportButton()).toBeDisabled();
+  fireEvent.click(approval());
+  expect(exportButton()).toBeEnabled();
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{ ...changed, picture: "https://images.example.test/new.png" }}
+    />,
+  );
+  expect(exportButton()).toBeDisabled();
+  fireEvent.click(approval());
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{ ...changed, sessionPolicy: null }}
+      defaultSessionPolicy="channel"
+    />,
+  );
+  expect(exportButton()).toBeDisabled();
+  fireEvent.click(approval());
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{ ...changed, pubkey: "ab".repeat(32) }}
+    />,
+  );
+  expect(exportButton()).toBeDisabled();
+  fireEvent.click(approval());
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={changed}
+      destination="https://other.example.test"
+    />,
+  );
+  expect(exportButton()).toBeDisabled();
+});
+
+it("aborts a pending export if the source changes and then returns to its old value", async () => {
+  const agent = portableAgent();
+  let release!: () => void;
+  const refresh = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const dispose = vi.fn();
+  const session = {
+    agentMemories: {
+      open: vi.fn(() => ({
+        refresh,
+        dispose,
+        snapshot: () => ({
+          status: "ready",
+          listing: { partial: false, entries: [] },
+        }),
+      })),
+    },
+  } as never;
+  const download = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = download;
+      static revokeObjectURL = vi.fn();
+    },
+  );
+  const props = {
+    agent,
+    session,
+    destination: "https://relay.example.test",
+    onClose: vi.fn(),
+  };
+  const mounted = render(<AgentSnapshotExport {...props} />);
+  fireEvent.change(screen.getByLabelText("Memories"), {
+    target: { value: "core" },
+  });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I reviewed the portable configuration/,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I confirm that I want to include memory/,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{ ...agent, systemPrompt: "changed" }}
+    />,
+  );
+  mounted.rerender(<AgentSnapshotExport {...props} />);
+  release();
+  await waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+  expect(download).not.toHaveBeenCalled();
+  expect(props.onClose).not.toHaveBeenCalled();
+  expect(
+    screen
+      .getAllByRole("alert")
+      .some((node) => node.textContent?.includes("configuration changed")),
+  ).toBe(true);
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
 it("reviews the exact portable configuration including avatar URL and effective selectors", () => {
   const agent = portableAgent();
   agent.picture =

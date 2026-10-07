@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { AgentControl, AgentView } from "../../features/agents/control";
@@ -39,8 +39,8 @@ export function AgentSnapshotExport({
 }) {
   const [level, setLevel] = useState<MemoryLevel>("none");
   const [format, setFormat] = useState<"json" | "png">("png");
-  const [confirmed, setConfirmed] = useState(false);
-  const [reviewed, setReviewed] = useState(false);
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(null);
+  const [reviewedKey, setReviewedKey] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   let review: AgentSnapshot | undefined;
@@ -51,10 +51,42 @@ export function AgentSnapshotExport({
     reviewError =
       cause instanceof Error ? cause.message : "Export unavailable.";
   }
+  // Approval is for these exact serialized bytes and this source/destination,
+  // not for the lifetime of a mounted dialog across native inventory refreshes.
+  const reviewKey = review
+    ? JSON.stringify([
+        agent.id,
+        agent.pubkey,
+        agent.relayUrl,
+        destination,
+        review,
+      ])
+    : null;
+  const currentKey = useRef(reviewKey);
+  const changedDuringExport = useRef(false);
+  useLayoutEffect(() => {
+    if (currentKey.current !== reviewKey) {
+      currentKey.current = reviewKey;
+      changedDuringExport.current = true;
+      setReviewedKey(null);
+      setConfirmedKey(null);
+    }
+  }, [reviewKey]);
+  const reviewed = reviewKey !== null && reviewedKey === reviewKey;
+  const confirmed =
+    reviewed && confirmedKey === JSON.stringify([reviewKey, level]);
   const exportFile = async () => {
-    if (pending || !reviewed || !review || (level !== "none" && !confirmed))
+    const approvedKey = reviewKey;
+    if (
+      pending ||
+      !reviewed ||
+      !review ||
+      !approvedKey ||
+      (level !== "none" && !confirmed)
+    )
       return;
     setPending(true);
+    changedDuringExport.current = false;
     setError("");
     try {
       let entries: { slug: string; body: string }[] = [];
@@ -123,6 +155,13 @@ export function AgentSnapshotExport({
           /* Missing or cross-origin artwork uses the placeholder. */
         }
       }
+      // A refresh while memory or artwork was loading must not share a newly
+      // unreviewed source under an earlier approval.
+      if (changedDuringExport.current || currentKey.current !== approvedKey) {
+        throw new Error(
+          "Agent configuration changed. Review it again before exporting.",
+        );
+      }
       const bytes = encodeAgentSnapshot(snapshot, format, artwork);
       download(
         bytes,
@@ -177,7 +216,7 @@ export function AgentSnapshotExport({
               relayOrigin(agent.relayUrl) !== relayOrigin(destination)
             }
             onChange={(event) => {
-              setConfirmed(false);
+              setConfirmedKey(null);
               setLevel(event.target.value as MemoryLevel);
             }}
           >
@@ -217,7 +256,9 @@ export function AgentSnapshotExport({
             type="checkbox"
             checked={reviewed}
             disabled={pending}
-            onChange={(event) => setReviewed(event.target.checked)}
+            onChange={(event) =>
+              setReviewedKey(event.target.checked ? reviewKey : null)
+            }
           />{" "}
           I reviewed the portable configuration and understand it may contain
           private information.
@@ -239,7 +280,13 @@ export function AgentSnapshotExport({
                 type="checkbox"
                 checked={confirmed}
                 disabled={pending}
-                onChange={(event) => setConfirmed(event.target.checked)}
+                onChange={(event) =>
+                  setConfirmedKey(
+                    event.target.checked && reviewed
+                      ? JSON.stringify([reviewKey, level])
+                      : null,
+                  )
+                }
               />{" "}
               I confirm that I want to include memory in this snapshot.
             </label>

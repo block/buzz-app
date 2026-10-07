@@ -31,7 +31,18 @@ fn saved_worker_count_projects_to_portable_next_launch_count() {
     agent.harness.command = "buzz-agent".into();
     agent.imported = Value::Null;
     let defaults = AgentDefaults::default();
-    assert_eq!(agent.view(&defaults).launch_parallelism, None);
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
+    agent.harness.command = "/opt/buzz-agent".into();
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
+    agent.harness.command = "buzz-agent".into();
+    let mut other_device = defaults.clone();
+    other_device
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "4".into());
+    assert_eq!(agent.view(&other_device).launch_parallelism, Some(4));
+    // The source's fallback must export explicitly: otherwise importing on
+    // other_device would silently change its listener from 1 to 4.
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(1));
     for count in [1, 4] {
         agent
             .environment

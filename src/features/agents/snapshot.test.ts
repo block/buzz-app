@@ -16,6 +16,23 @@ const utf8 = new TextEncoder();
 const parse = (value: unknown) =>
   parseAgentSnapshot(utf8.encode(JSON.stringify(value)));
 
+it("exports the native listener fallback explicitly across different destination defaults", () => {
+  const source = portableAgent();
+  source.launchParallelism = 1; // Native projection when no worker setting exists.
+  const exported = buildAgentSnapshot(source);
+  expect(exported.definition.parallelism).toBe(1);
+  const imported = parseAgentSnapshot(encodeAgentSnapshot(exported, "json"));
+  expect(imported.definition.parallelism).toBe(1);
+  // Import writes 1 rather than inheriting the destination's worker default of 4.
+  const destination = portableAgent();
+  destination.launchParallelism = imported.definition.parallelism ?? null;
+  expect(buildAgentSnapshot(destination).definition.parallelism).toBe(1);
+  expect(
+    parseAgentSnapshot(encodeAgentSnapshot(exported, "png")).definition
+      .parallelism,
+  ).toBe(1);
+});
+
 it.each(["json", "png"] as const)(
   "round trips %s with no credentials, identity, or local arguments",
   (format) => {

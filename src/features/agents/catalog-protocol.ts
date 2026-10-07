@@ -420,3 +420,63 @@ export function parsePublication(
     members: parsed,
   };
 }
+
+/** The v1 team snapshot shape accepted by the shared team import path. Catalog
+ * entries never carry memories, allowlists or secrets, so neither does this. */
+export interface CatalogTeamSnapshot {
+  format: "buzz-team-snapshot";
+  version: 1;
+  team: { name: string; description?: string; instructions?: string };
+  members: {
+    format: "buzz-agent-snapshot";
+    version: 1;
+    definition: {
+      name: string;
+      systemPrompt: string;
+      runtime?: string;
+      model?: string;
+      provider?: string;
+      sessionPolicy: SessionPolicy;
+      respondTo?: RespondTo;
+    };
+    profile: { displayName: string; about?: string; avatarUrl?: string };
+    memory: { level: "none"; entries: [] };
+  }[];
+}
+
+/** Adapts a parsed catalog team for import. The importer still validates the
+ * result natively before creating anything. */
+export function catalogTeamSnapshot(
+  publication: TeamPublication,
+): CatalogTeamSnapshot {
+  const optional = <K extends string, V>(key: K, value: V | undefined) =>
+    (value === undefined ? {} : { [key]: value }) as Partial<Record<K, V>>;
+  return {
+    format: "buzz-team-snapshot",
+    version: 1,
+    team: {
+      name: publication.name,
+      ...optional("description", publication.description),
+      ...optional("instructions", publication.instructions),
+    },
+    members: publication.members.map((member) => ({
+      format: "buzz-agent-snapshot",
+      version: 1,
+      definition: {
+        name: member.displayName,
+        systemPrompt: member.systemPrompt,
+        ...optional("runtime", member.runtime),
+        ...optional("model", member.model),
+        ...optional("provider", member.provider),
+        sessionPolicy: member.sessionPolicy,
+        ...optional("respondTo", member.respondTo),
+      },
+      profile: {
+        displayName: member.displayName,
+        ...optional("about", member.description),
+        ...optional("avatarUrl", member.avatarUrl),
+      },
+      memory: { level: "none", entries: [] },
+    })),
+  };
+}

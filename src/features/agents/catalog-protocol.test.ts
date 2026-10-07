@@ -4,6 +4,7 @@ import {
   agentCatalogContent,
   catalogCreatedAt,
   catalogHeads,
+  catalogTeamSnapshot,
   catalogTemplate,
   memberKey,
   parsePublication,
@@ -223,5 +224,69 @@ describe("catalog writes", () => {
   it("supersedes a future-dated head", () => {
     expect(catalogCreatedAt(50, { created_at: 90 })).toBe(91);
     expect(catalogCreatedAt(50)).toBe(50);
+  });
+});
+
+describe("catalog team adoption", () => {
+  it("adapts a shared team to a memory-free v1 snapshot", () => {
+    const content = JSON.stringify({
+      v: 1,
+      name: "Crew",
+      description: "Ships things.",
+      instructions: "Work together.",
+      members: [
+        {
+          member_key: "k1",
+          display_name: "Mate",
+          system_prompt: "Help.",
+          description: "First mate.",
+          model: "m1",
+          respond_to: "anyone",
+          session_policy: "thread",
+          avatar_url: "https://example.test/a.png",
+          memories: [{ slug: "core", body: "secret" }],
+          env_vars: { TOKEN: "x" },
+        },
+      ],
+    });
+    const parsed = parsePublication(
+      event(
+        30178,
+        [
+          ["d", "crew"],
+          ["shared", "true"],
+        ],
+        content,
+      ),
+    );
+    if (parsed?.kind !== 30178) throw new Error("team did not parse");
+    expect(catalogTeamSnapshot(parsed)).toEqual({
+      format: "buzz-team-snapshot",
+      version: 1,
+      team: {
+        name: "Crew",
+        description: "Ships things.",
+        instructions: "Work together.",
+      },
+      members: [
+        {
+          format: "buzz-agent-snapshot",
+          version: 1,
+          definition: {
+            name: "Mate",
+            systemPrompt: "Help.",
+            model: "m1",
+            sessionPolicy: "thread",
+            respondTo: "anyone",
+          },
+          profile: {
+            displayName: "Mate",
+            about: "First mate.",
+            avatarUrl: "https://example.test/a.png",
+          },
+          memory: { level: "none", entries: [] },
+        },
+      ],
+    });
   });
 });

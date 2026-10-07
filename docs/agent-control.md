@@ -243,6 +243,25 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
+## Installed machine tools
+
+Local agents retain access to installed tools without inheriting the desktop's
+identity or provider-credential environment. On Unix the controller reads the
+user's interactive login-shell PATH once per app process, using a cleared
+environment and a two-second bounded probe. It merges that PATH with inherited
+machine tool directories, `~/.local/bin`, and a system fallback. Restart the app
+after changing shell startup PATH configuration. An unavailable or failed shell
+probe falls back to the inherited and system directories. Windows retains its
+native tool PATH.
+
+Bundled Buzz tools and harness-owned pinned runtimes remain first. Explicit
+agent PATH directories are also included, but cannot displace those tools.
+Empty, relative, and duplicate Unix directories are omitted. Only PATH comes
+back from the shell: other variables exported by startup files are not copied
+into the agent. The existing launch environment allowlist, explicit saved
+provider settings, and managed identity overrides are unchanged. This is tool
+discovery, not an OS sandbox or a restriction on access to files on the machine.
+
 ## Harnesses and agent defaults
 
 Individual-agent configuration stays on the Agents page; Settings → Agents owns

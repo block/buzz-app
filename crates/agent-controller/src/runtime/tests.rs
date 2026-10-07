@@ -1164,12 +1164,7 @@ fn launch_path_puts_bundled_tools_before_platform_tools() {
         expected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         assert!(env.contains_key(std::ffi::OsStr::new("SystemRoot")));
     } else {
-        if cfg!(target_os = "linux") {
-            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-            expected.extend(home.map(|home| home.join(".local/bin")));
-            expected.push("/usr/local/bin".into());
-        }
-        expected.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(Into::into));
+        expected.extend(std::env::split_paths(&tools_path().unwrap()));
     }
     assert_eq!(std::env::split_paths(path).collect::<Vec<_>>(), expected);
 }
@@ -3459,3 +3454,96 @@ while :; do /bin/sleep 0.1; done
 
 #[cfg(target_os = "macos")]
 mod protection_integration;
+
+#[test]
+#[cfg(unix)]
+fn launch_discovers_login_shell_tools_without_inheriting_credentials() {
+    const FIXTURE: &str = "BUZZ_TOOL_PATH_FIXTURE";
+    let Some(root) = std::env::var_os(FIXTURE) else {
+        let dir = tempfile::Builder::new()
+            .prefix("Installed tools ")
+            .tempdir()
+            .unwrap();
+        let tools = dir.path().join("custom tools");
+        fs::create_dir_all(&tools).unwrap();
+        crate::test_executable::write_executable(
+            &tools.join("installed-helper"),
+            "#!/bin/sh\nprintf 'discovered'\n",
+        );
+        let shell = dir.path().join("login-shell");
+        crate::test_executable::write_executable(&shell, format!(
+            "#!/bin/sh\n[ \"${{OPENAI_API_KEY-unset}}\" = unset ] || exit 1\n[ \"${{BUZZ_PRIVATE_KEY-unset}}\" = unset ] || exit 1\nexport SHELL_EXPORTED_SECRET=from-shell\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n", tools.display()));
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::launch_discovers_login_shell_tools_without_inheriting_credentials",
+                "--nocapture",
+            ])
+            .env(FIXTURE, dir.path())
+            .env("SHELL", shell)
+            .env("PATH", "/usr/bin:/bin")
+            .env("BUZZ_PRIVATE_KEY", "parent-key")
+            .env("NOSTR_PRIVATE_KEY", "parent-key")
+            .env("BUZZ_RELAY_URL", "wss://parent.example")
+            .env("OPENAI_API_KEY", "parent-provider-secret")
+            .env("BUZZ_ACP_REPLAY_FLOOR", "parent-replay")
+            .env("GIT_CONFIG_COUNT", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
+    let runtime = bundle(&root);
+    let mut saved = agent(&root);
+    // An explicit tool path adds tools without displacing the bundled runtime.
+    saved.environment.insert(
+        "PATH".into(),
+        root.join("owner tools").display().to_string(),
+    );
+    let command = runtime
+        .command(&saved, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    let paths = command
+        .get_envs()
+        .find(|(name, _)| *name == "PATH")
+        .unwrap()
+        .1
+        .unwrap();
+    let paths = std::env::split_paths(paths).collect::<Vec<_>>();
+    assert_eq!(paths[0], root);
+    assert!(paths.contains(&root.join("owner tools")));
+    assert_eq!(
+        installed("installed-helper"),
+        Some(root.join("custom tools/installed-helper"))
+    );
+    // Exercise the resulting environment, including env_clear, in a real child.
+    let mut child = command;
+    crate::test_executable::write_executable(
+        &root.join("buzz-acp"),
+        r#"#!/bin/sh
+installed-helper || exit 1
+printf '\n%s\n%s\n%s\n' "$BUZZ_PRIVATE_KEY" "$NOSTR_PRIVATE_KEY" "$BUZZ_RELAY_URL"
+for name in OPENAI_API_KEY SHELL_EXPORTED_SECRET BUZZ_ACP_REPLAY_FLOOR GIT_CONFIG_COUNT; do
+    eval "value=\${$name-unset}"
+    [ "$value" = unset ] || exit 2
+done
+"#,
+    );
+    child.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = child.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("discovered\n{KEY}\n{KEY}\nwss://relay.example\n")
+    );
+}

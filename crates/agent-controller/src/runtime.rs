@@ -166,10 +166,16 @@ impl RuntimeBundle {
                 },
             )
         };
-        let path = std::env::join_paths(
-            std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
-        )
-        .map_err(|_| "Invalid runtime tools path")?;
+        let path = path::compose(
+            std::iter::once(self.directory.clone())
+                .chain(std::env::split_paths(&tools_path))
+                .chain(
+                    environment
+                        .get("PATH")
+                        .into_iter()
+                        .flat_map(std::env::split_paths),
+                ),
+        )?;
         command.envs(environment).env("PATH", &path);
         if let Some((_, Some(cli))) = &claude {
             if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
@@ -321,25 +327,9 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
-/// PATH after the runtime bundle for non-Pi harnesses. Windows keeps its native
-/// PATH, where Git Bash and user tools are installed; Unix uses a fixed floor
-/// plus, on Linux, common user-level install locations.
-fn tools_path() -> Result<std::ffi::OsString> {
-    if cfg!(windows) {
-        return Ok(std::env::var_os("PATH").unwrap_or_default());
-    }
-    let mut dirs = Vec::new();
-    if cfg!(target_os = "linux") {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        dirs.extend(
-            home.filter(|h| h.is_absolute())
-                .map(|h| h.join(".local/bin")),
-        );
-        dirs.push(PathBuf::from("/usr/local/bin"));
-    }
-    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
-}
+pub(crate) mod path;
+use path::tools_path;
+
 /// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
 /// An app-owned adapter keeps using its pinned Node, independently of global tools.
 fn claude_tools(
@@ -443,9 +433,7 @@ fn installed_names(names: &[String]) -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/bin"));
     }
-    dirs.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
+    dirs.extend(std::env::split_paths(&tools_path().ok()?));
     dirs.extend([
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),

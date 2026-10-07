@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { nip44 } from "nostr-tools";
 import { expect, it, vi } from "vitest";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { KIT_TAG } from "../channel-templates/model";
 import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
@@ -79,7 +79,7 @@ it("decodes four individually bounded populated preferences beyond the former ag
   ];
   expect(Buffer.byteLength(JSON.stringify(events))).toBeGreaterThan(256 * 1024);
   const projected = (
-    await import("../../../dev/sidebar-preferences.mjs")
+    await import("../../../browser-host/sidebar-preferences.mjs")
   ).decodeSidebarPreferences(events, viewer.secret);
   expect(projected.sections).toHaveLength(100);
   expect(Object.keys(projected.assignments)).toHaveLength(1000);

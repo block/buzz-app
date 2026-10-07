@@ -514,6 +514,30 @@ test("installed pre-push forwards stdin and runs related tests with literal path
   assert.equal(f.git("stash", "list"), "");
 });
 
+for (const name of [
+  "browser-host/relay-broker.mjs",
+  "scripts/developer-settings.ts",
+  "scripts/live-setup-probe.mjs",
+]) {
+  test(`${name} selects related tests and deletion selects the full suite`, (t) => {
+    const f = pushFixture(t, { [name]: "export const value = 1;\n" });
+    const result = f.push();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(f.args(), [
+      "related",
+      "--run",
+      "--passWithNoTests",
+      path.join(f.git("rev-parse", "--show-toplevel").trim(), name),
+    ]);
+    f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+    f.git("rm", name);
+    f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
+    const deleted = f.push();
+    assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
+    assert.deepEqual(f.args(), ["run"]);
+  });
+}
+
 for (const [file, content] of [
   ["notes.md", "# notes\n"],
   ["docs/probe.md", "# docs\n"],

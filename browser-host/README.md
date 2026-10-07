@@ -1,8 +1,12 @@
-# Browser development host
+# Browser host
 
-This directory contains the Node host used by live browser development and
-broker-backed tests, plus development tooling. It is checked-in source, not a
-cache or another relay server. Packaged desktop uses the native Rust host.
+This directory contains the **Node host for browser development and tests**.
+It is checked-in source, not browser-compatible application code, a cache, a
+production browser backend or another relay server. Packaged desktop uses the
+native Rust host in `src-tauri/`; shared application logic stays in `src/`.
+Development tooling lives in `scripts/`, including the
+[developer-settings Vite plugin](../scripts/developer-settings.ts) and
+[live setup probe](../scripts/live-setup-probe.mjs).
 
 See [shared logic and host boundaries](../docs/contributing.md#shared-logic-and-host-boundaries)
 for the runtime/identity matrix, ownership rules and cross-host test expectations.

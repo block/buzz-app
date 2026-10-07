@@ -36,8 +36,11 @@ import {
   signed,
 } from "../relay/testing";
 import type { ReadStateSigning } from "../relay/read-state-host";
-// @ts-expect-error Exercise the production codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Exercise the production codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import type { RelayEvent } from "../relay/events";
 
 composerDOMFixture();

@@ -54,7 +54,8 @@ if (base.status === 0) {
       .split("\0")
       .filter(Boolean);
   const files = changed();
-  const source = /^(?:src|dev)\/.*\.(?:[cm]?[jt]sx?)$/s;
+  const source =
+    /^(?:(?:src|browser-host)\/.*\.(?:[cm]?[jt]sx?)|scripts\/(?:developer-settings(?:\.test)?\.(?:ts|mjs)|live-setup-probe(?:\.test)?\.mjs))$/s;
   const shared =
     /^(?:package\.json|pnpm-lock\.yaml|(?:vitest|vite)\.config\.[cm]?[jt]s|tsconfig[^/]*\.json|tests\/relay-config\.ts|bin\/)/;
   const rust =

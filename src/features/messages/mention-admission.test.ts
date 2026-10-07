@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { mentionAdmission } from "./mention-admission";
+import { mentionAdmission, pastedMentionRecipient } from "./mention-admission";
 
 const member = "a".repeat(64);
 const outside = "b".repeat(64);
@@ -83,4 +83,29 @@ it("refuses invalid keys, archived identities and closed destinations", () => {
         "channel",
       )(member),
     ).toBe(false);
+});
+
+it("names a pasted recipient from current state, and leaves an unknown outsider display-only", () => {
+  const base = session({ channelType: "stream" });
+  const profiles = new Map([[outside, { name: "Jane" }]]);
+  const withProfiles = {
+    ...base,
+    profiles: { snapshot: () => profiles },
+  } as unknown as RelaySession;
+  expect(pastedMentionRecipient(withProfiles, "channel", outside)).toEqual({
+    pubkey: outside,
+    name: "Jane",
+  });
+  expect(pastedMentionRecipient(withProfiles, "channel", member)).toEqual({
+    pubkey: member,
+    name: member.slice(0, 12),
+  });
+  expect(pastedMentionRecipient(withProfiles, "channel", library)).toEqual({
+    pubkey: library,
+    name: "Honey",
+  });
+  expect(pastedMentionRecipient(withProfiles, "channel", "f".repeat(64))).toBe(
+    null,
+  );
+  expect(pastedMentionRecipient(withProfiles, "channel", archived)).toBe(null);
 });

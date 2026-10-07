@@ -664,6 +664,7 @@ dependencies = [
  "buzzodz-plugins",
  "bytes",
  "chrono",
+ "fs2",
  "futures-lite",
  "futures-util",
  "getrandom 0.3.4",

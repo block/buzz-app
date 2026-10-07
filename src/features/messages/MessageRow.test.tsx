@@ -449,7 +449,7 @@ it.each([9, 40002])(
       "@M![x](https://example.test/a.png)ic",
       "@M![x](http://example.test/a.png)ic",
       "@![x](https://example.test/a.png)Mic",
-      "Hello @Mic ![x](https://example.test/a.png)",
+      "Hello @M![x](https://example.test/a.png)ic ![y](https://example.test/b.png)",
     ]) {
       const event = signed(author, {
         kind,
@@ -462,7 +462,7 @@ it.each([9, 40002])(
       const [folded] = foldMessages("channel", relay.pubkey, [event]);
       if (!folded) throw new Error("missing message");
       expect(folded.content).toContain("@Mic");
-      expect(folded.attachmentContentRemoved).toBe(true);
+      expect(folded.attachmentSeams?.length).toBeGreaterThan(0);
       expect(folded.mentions).toEqual([recipient.pubkey]);
       const html = renderToStaticMarkup(
         <MessageRow
@@ -482,9 +482,72 @@ it.each([9, 40002])(
     const [unchanged] = foldMessages("channel", relay.pubkey, [
       message(author, "channel", "@Mic  \n", 1),
     ]);
-    expect(unchanged?.attachmentContentRemoved).toBeUndefined();
+    expect(unchanged?.attachmentSeams).toBeUndefined();
   },
 );
+
+it("binds signed names beside removed attachments that cannot join them", () => {
+  const author = keypair(),
+    person = keypair(),
+    agent = keypair(),
+    namesake = keypair(),
+    relay = keypair();
+  const media = "https://relay.test/media/shot.png";
+  const profiles = new Map([
+    [person.pubkey, { name: "kalvin" }],
+    [agent.pubkey, { name: "am", isAgent: true as const }],
+    [namesake.pubkey, { name: "kalvin chau" }],
+  ]);
+  const render = (
+    content: string,
+    mentions: string[],
+    tags: string[][] = [],
+  ) => {
+    const [folded] = foldMessages("channel", relay.pubkey, [
+      message(author, "channel", content, 1, [
+        ...mentions.map((pubkey) => ["p", pubkey]),
+        ...tags,
+      ]),
+    ]);
+    if (!folded) throw new Error("missing message");
+    return renderToStaticMarkup(
+      <MessageRow
+        row={folded}
+        profile={undefined}
+        participantProfiles={profiles}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  };
+  const chip = (kind: string, name: string) =>
+    new RegExp(
+      `data-mention-kind="${kind}"[^>]*aria-label="View ${name} profile"`,
+    );
+  expect(
+    render(
+      "@kalvin <https://github.com/block/buzz/pull/7904> :pray-for-stamp:\n![image](https://static.example/stamp.gif)",
+      [person.pubkey],
+    ),
+  ).toMatch(chip("person", "kalvin"));
+  expect(
+    render(
+      `@am i like the \`:ls\` feature\n\n![image.png](<${media}>)`,
+      [agent.pubkey],
+      [["imeta", `url ${media}`, "m image/png"]],
+    ),
+  ).toMatch(chip("agent", "am"));
+  // Removal may end a name, but a longer name must not cross the seam.
+  const joined = render("@kalvin![x](https://example.test/a.png) chau", [
+    person.pubkey,
+    namesake.pubkey,
+  ]);
+  expect(joined).toMatch(chip("person", "kalvin"));
+  expect(joined).not.toContain("View kalvin chau profile");
+});
 
 it.each([9, 40002])(
   "preserves signed kind %s code indentation through fold and render",

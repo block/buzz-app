@@ -301,6 +301,7 @@ export function foldMessages(
         ? projectMarkdownAttachments(content, imetaUrls)
         : {
             content,
+            seams: Object.freeze([] as number[]),
             urls: Object.freeze([] as string[]),
             names: Object.freeze([]),
           };
@@ -352,10 +353,7 @@ export function foldMessages(
             }
           : {}),
         ...(edits.length ? { edited: true as const } : {}),
-        ...(projected.content !== content &&
-        projected.content !== content.trimEnd()
-          ? { attachmentContentRemoved: true as const }
-          : {}),
+        ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(
             event.tags.flatMap((tag) =>

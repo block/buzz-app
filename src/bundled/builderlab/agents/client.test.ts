@@ -36,6 +36,7 @@ async function fixture(subject = "user") {
   await session.signIn();
   const host: Host = {
     runCommand: vi.fn(),
+    secrets: { has: vi.fn(), enter: vi.fn(), delete: vi.fn() },
     request: vi.fn(async () =>
       response({ status: "LIST_AGENTS_STATUS_SUCCESS", agents: [row] }),
     ),

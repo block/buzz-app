@@ -14,6 +14,7 @@ import { SquaresFourIcon } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { CredentialAccess } from "./CredentialAccess";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 
@@ -359,6 +360,9 @@ export function Settings({
                       );
                     })}
                   </SettingsGroup>
+                  {catalog && selected === "plugins" && (
+                    <CredentialAccess revision={catalog} />
+                  )}
                 </div>
               </section>
             </div>

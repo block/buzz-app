@@ -13,6 +13,8 @@ use std::{
 };
 
 pub mod imports;
+mod secret_grants;
+pub use secret_grants::SecretGrant;
 
 pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
@@ -676,6 +678,7 @@ impl Manager {
             self.save(&registry)?;
             if action == "remove" {
                 // Commit removal first. A cleanup failure cannot re-enable the plugin.
+                self.forget_secret_grants_locked(id)?;
                 let path = self.root.join("artifacts").join(id);
                 if path.exists() {
                     fs::remove_dir_all(path)

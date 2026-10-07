@@ -14,6 +14,7 @@ function setup(
   const requests: HostRequest[] = [];
   const host: Host = {
     runCommand: async () => null,
+    secrets: { has: vi.fn(), enter: vi.fn(), delete: vi.fn() },
     request: vi.fn(async (input: HostRequest) => {
       requests.push(input);
       const entry = replies[input.url.slice(API.length)];

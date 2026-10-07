@@ -25,6 +25,7 @@ function fixture() {
   };
   const host: Host = {
     runCommand: vi.fn(),
+    secrets: { has: vi.fn(), enter: vi.fn(), delete: vi.fn() },
     request: vi.fn(async ({ url }) => ({
       status: 200,
       headers: {},

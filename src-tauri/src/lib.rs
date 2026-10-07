@@ -29,6 +29,7 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+mod plugin_secrets;
 
 mod notifications;
 mod os_idle;
@@ -76,6 +77,11 @@ use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
+use plugin_secrets::{
+    plugin_secret_delete, plugin_secret_enter, plugin_secret_entry_cancel,
+    plugin_secret_entry_prompt, plugin_secret_entry_submit, plugin_secret_grants,
+    plugin_secret_has, plugin_secret_revoke, ConsentPrompts, SecretEntry,
+};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -453,6 +459,14 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_recover,
         plugin_host_run_command,
         plugin_host_request,
+        plugin_secret_has,
+        plugin_secret_delete,
+        plugin_secret_enter,
+        plugin_secret_grants,
+        plugin_secret_revoke,
+        plugin_secret_entry_prompt,
+        plugin_secret_entry_submit,
+        plugin_secret_entry_cancel,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
@@ -582,6 +596,8 @@ pub fn run() {
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
+        .manage(ConsentPrompts::default())
+        .manage(SecretEntry::default())
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
         .manage(OAuthCallbackHost::default())

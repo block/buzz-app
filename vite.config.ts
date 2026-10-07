@@ -75,6 +75,17 @@ export default defineConfig(async ({ command, mode }) => {
       ),
     },
     clearScreen: false,
+    build: {
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL("index.html", import.meta.url)),
+          // App-owned credential entry window (see src-tauri/src/plugin_secrets.rs).
+          "secret-entry": fileURLToPath(
+            new URL("secret-entry.html", import.meta.url),
+          ),
+        },
+      },
+    },
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so
       // each worktree has its own stable default. The CLI's --port still wins.

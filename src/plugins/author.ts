@@ -10,7 +10,13 @@ export type {
   TemplateProviders,
 } from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
-export type { Host, HostRequest, HostResponse } from "../features/host/service";
+export type {
+  Host,
+  HostRequest,
+  HostResponse,
+  HostSecretReference,
+  HostSecrets,
+} from "../features/host/service";
 export type {
   IdentityNames,
   NamingPolicy,

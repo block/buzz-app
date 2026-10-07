@@ -7,7 +7,9 @@ function validUrl(url: string): boolean {
     const parsed = new URL(url);
     return parsed.protocol === "buzz:"
       ? !!parseBuzzLink(url)
-      : parsed.protocol === "https:" && !parsed.username && !parsed.password;
+      : (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+          !parsed.username &&
+          !parsed.password;
   } catch {
     return false;
   }

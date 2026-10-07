@@ -317,7 +317,7 @@ export function AgentSettingsFields({
                 options: [
                   {
                     value: "",
-                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "thread" ? "Each thread" : "Entire channel"})`,
+                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "channel" ? "Entire channel" : "Each thread"})`,
                   },
                   { value: "channel", label: "Entire channel" },
                   { value: "thread", label: "Each thread" },

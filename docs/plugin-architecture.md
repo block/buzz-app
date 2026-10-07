@@ -82,7 +82,7 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` gives a page a row in the
 shell's page navigation. Pages without it are still listed in search and reachable
-by deep link or from another page; Channels and Sessions are bundled examples.
+by deep link or from another page; Channels is a bundled example.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
@@ -150,7 +150,7 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 
 Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
-Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
+Settings → Plugins, then manage templates under Settings → Messages → Templates and saved teams on Agents. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
@@ -171,7 +171,7 @@ so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
 account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`dev/builderlab.mjs`), which keep the session
+broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
 over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
 `https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
@@ -188,7 +188,8 @@ provider components must check `active()` before accepting delayed work or start
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
 
 Normal Create selects a saved template without a customization disclosure or raw
-setup dump. Templates & teams settings retain lineup/Canvas editing. Disabling
+setup dump. Templates settings retain recipe lineup/Canvas editing; saved-team
+lineups and instructions are edited on Agents. Disabling
 preserves saved group default references but does not apply them to new intent.
 Accepted drafts get a compact summary and Clear action only when the provider is
 unavailable or fails;
@@ -568,6 +569,8 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+For kind 30177 publication, follow the
+[managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
 The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
 Shared message UI opens exact public-key targets through ordinary page callbacks;
@@ -675,7 +678,7 @@ Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets an
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
 It does not fetch titles. Messages currently recognize
-credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
@@ -822,7 +825,12 @@ intent survives optional plugin removal and remains subject to session validatio
 
 One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
 the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
-plain Enter/forward Tab accept, and Escape dismisses pending results. A rejected
+plain Enter/forward Tab accept, and Escape dismisses pending results. A typed
+terminator accepts the provider-verified unique exact match: plain Space for a
+mention, the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
+only after both Unicode and community catalogs successfully settle. The editor refuses
+typed terminators in rich or raw Markdown literal ranges; colon conversion records the
+typed source first so undo restores the closing colon and collapsed caret. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
 keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.

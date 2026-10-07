@@ -347,10 +347,16 @@ kept broader mark already covers, and gives the freed space to the next marks in
 A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
 its cover, so the smaller wire budget protects the cover as it would have protected the
 dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
-channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
-replaces a message mark: a reply finds its channel from its own event, but finds its
-thread only while its root is loaded. Catch-up marks never make another mark redundant:
-older clients ignore them and read through the message, thread and channel marks.
+channel mark, a catch-up mark under its channel or thread mark, and the mark of an
+ordinary top-level message under its channel's `activity:` mark. That last rule needs
+the channel's known type, because an `activity:` mark never reads DM messages (reading
+a DM writes its channel mark instead); a roster can list a channel before its metadata
+gives the type. Mentions, broadcasts and
+DM messages keep their marks. A thread or thread catch-up mark never replaces a message
+mark: a reply finds its channel from its own event, but finds its thread only while its
+root is loaded. Older desktop and mobile clients ignore `activity:`, so they show the
+ordinary top-level messages it covers as unread. This is accepted; it never makes a
+read in those clients unread here.
 Marks without retained evidence are kept, and nothing is dropped while any override
 exists. Reading an already covered message saves nothing. Only frontier-only hints can
 be pruned; older messages may look unread again. No synthetic channel prefix is
@@ -418,7 +424,7 @@ durable account-owned intent survives without exposing revoked context projectio
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
   reverified disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
-- `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
+- `browser-host/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.
 - `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
   presentation, unchanged summary counts, hover/keyboard-focus treatment, independent

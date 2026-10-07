@@ -8,6 +8,7 @@ import {
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import { CustomEmoji } from "./CustomEmoji";
 import {
+  exactEmoji,
   searchEmoji,
   searchCustomEmoji,
   type EmojiMatch,
@@ -142,6 +143,7 @@ export function EmojiCompletion({
         edit: { text: item.text },
       }));
     };
+    // Suggestions may be partial; automatic replacement needs both catalogs.
     const retrySearch = () => {
       retry((value) => value + 1);
       if (catalog.status === "error") void session.emoji.refresh();
@@ -156,6 +158,9 @@ export function EmojiCompletion({
         if (withdraw) withdraw();
         withdraw = publish({
           items: items(matches),
+          ...(catalog.status === "ready"
+            ? { spaceId: exactEmoji(query.query, matches) }
+            : {}),
           ...(catalog.status === "error"
             ? {
                 status: "Community emoji unavailable; Unicode results shown.",

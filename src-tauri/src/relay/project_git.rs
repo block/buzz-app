@@ -1,5 +1,5 @@
 //! Packaged repository reads with the development broker's `project-git` contract
-//! (`dev/project-git.mjs`). IdentityHost signs the NIP-98 header; system Git reads into
+//! (`browser-host/project-git.mjs`). IdentityHost signs the NIP-98 header; system Git reads into
 //! an isolated bare repository that is removed after every outcome. No checkout, hooks,
 //! submodules, user Git configuration, arbitrary URL or write RPC.
 use super::{hex_key, origin, upload_id, RelayResponse, Result, Uploads};

@@ -34,8 +34,8 @@ import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { emojiMatches, messageParts } from "../relay/emoji";
-import { safeMessageUrl } from "../relay/message-content";
+import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
+import { safeLinkUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
 import {
@@ -144,7 +144,7 @@ function protectInlineContent(
         .map((part) => {
           const partStart = partOffset;
           partOffset += part.length;
-          const urlPart = part.startsWith("https://");
+          const urlPart = linkPart(part);
           let result = "";
           let end = 0;
           // Protect explicitly encoded URL punctuation before GFM's fallback
@@ -306,7 +306,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 }
 
 const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) || profileKey(value) ? value : safeMessageUrl(value);
+  parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) =>

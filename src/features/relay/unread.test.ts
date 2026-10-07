@@ -22,8 +22,11 @@ import {
   flush,
   bounds,
 } from "./testing";
-// @ts-expect-error Test the production Node codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -2802,9 +2805,18 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
   },
 );
 
-it("catch-up keeps the message marks older clients read; only a channel mark replaces them", async () => {
+const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
+  signed(h.relay, {
+    kind: 39000,
+    content: "",
+    created_at: 20,
+    tags: [["d", "room"], ["name", "room"], ...(type ? [["t", type]] : [])],
+  });
+
+it("catch-up replaces the ordinary message marks it reads; attention marks stay", async () => {
   const h = setup();
   h.grant("room");
+  h.emit([channelMetadata(h, "stream")]);
   const first = message(h.alice, "room", "first", 11);
   const mention = message(h.alice, "room", "mention", 12, [
     ["p", h.viewer.pubkey],
@@ -2813,26 +2825,75 @@ it("catch-up keeps the message marks older clients read; only a channel mark rep
   h.emit([first, mention, bottom]);
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id, mention.id]);
-  // Older clients ignore `activity:`; they read these messages through
-  // their own marks, so catch-up must not replace them.
+  // Catch-up reads the ordinary message, so its own mark goes. The timeline
+  // does not prove the mention was seen, so the mention keeps its mark.
   await lease.catchUp(bottom.id);
   expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${first.id}`]: 11,
     [`msg:${mention.id}`]: 12,
     "activity:room": 13,
   });
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   lease.dispose();
-  // A channel mark covers everything, including its own catch-up mark.
-  clock(30);
-  await h.session.unread.markChannelRead("room");
-  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
   // Reading a covered message again saves nothing new.
   const revision = h.journal()?.revision;
   const again = h.session.unread.reading("room");
   await again.observe([first.id, mention.id]);
   again.dispose();
   expect(h.journal()?.revision).toBe(revision);
+  // A channel mark covers everything, including its own catch-up mark.
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+});
+
+it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([channelMetadata(h, "dm")]);
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBe("dm");
+  const first = message(h.alice, "room", "first", 11);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // A DM never gets an `activity:` mark; its own channel mark covers it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
+  lease.dispose();
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", bottom.id).unread).toBe(false);
+});
+
+it("catch-up keeps message marks while the channel type is unknown", async () => {
+  const h = setup();
+  // The roster lists the channel before its metadata says it is a DM.
+  h.grant("room");
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBeUndefined();
+  const first = message(h.alice, "room", "first", 11);
+  const second = message(h.alice, "room", "second", 12);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, second, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // Pruning keeps the existing mark, and a later read still writes its own.
+  await lease.observe([second.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${first.id}`]: 11,
+    [`msg:${second.id}`]: 12,
+    "activity:room": 13,
+  });
+  h.emit([channelMetadata(h, "dm")]);
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", second.id).unread).toBe(false);
 });
 
 it("pruning keeps every mark that still reads something, and unread does not change", async () => {

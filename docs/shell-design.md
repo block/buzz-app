@@ -30,10 +30,12 @@ semantic tokens, UI authoring rules and the local component reference.
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
   activation/re-enable order. Sidebar navigation lists only pages registered with
-  `primary: true` (Inbox, Bestie, Projects, Agents and Workflows among the bundled
+  `primary: true` (Inbox, Bestie, Projects, Agents, Sessions and Workflows among the bundled
   plugins); page search lists every active page. Inbox and Bestie are placeholder
-  pages of their own plugins, so disabling Bestie removes its row. Channels and Sessions are vended without rows: Messages opens by default,
-  from any channel row and from search; Sessions opens from Messages and search.
+  pages of their own plugins, so disabling Bestie removes its row. Channels is
+  vended without a row: Messages opens by default, from any channel row and from
+  search. Sessions opens from its page row, Messages and search; disabling the
+  Sessions plugin removes its row.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.

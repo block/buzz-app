@@ -352,7 +352,7 @@ Informational cards
 have the same bottom inset without a phantom action margin. Use heading level 4
 inside a named settings group; the default is level 3.
 
-Use it for emoji upload and My emojis, plugin loading, software update status, Personal groups, Templates & teams
+Use it for emoji upload and My emojis, plugin loading, software update status, Personal groups, Templates
 (including the library tabs), and hosted-community setup and empty lists. Setup cards
 can remain alongside existing objects; only use empty-result wording once the
 collection has loaded and is empty. Keep loading, permission,

@@ -23,6 +23,7 @@ pub(crate) use channel_writes::{
     relay_kit_prepare,
 };
 pub(crate) use kit::relay_kit_sign;
+mod media_blocks;
 mod media_preparation;
 mod project_git;
 pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
@@ -1106,8 +1107,9 @@ const MAX_MEDIA: usize = 100 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
-/// The relay's own cap on a single 206 response.
-const MAX_MEDIA_RANGE: usize = 16 * 1024 * 1024;
+/// Only `media_blocks` sends `Range`, always for one block, so a 206 is never
+/// buffered past it.
+const MAX_MEDIA_RANGE: usize = media_blocks::BLOCK as usize;
 
 /// `buzz-media://` serves relay `GET /media/*` to `<img>`, `<video>` and
 /// `<audio>`, which cannot send the required Blossom `Authorization` header.
@@ -1124,7 +1126,8 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, range)) => fetch_media(&host, url, range).await,
+            Ok((url, Some((start, end)))) => media_blocks::read(&host, &url, start, end).await,
+            Ok((url, None)) => fetch_media(&host, url, None).await,
             Err(status) => Err(status),
         };
         responder.respond(response.unwrap_or_else(|status| {
@@ -1316,7 +1319,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
 /// `convertFileSrc(url, "buzz-media")` on every desktop platform.
 fn media_request(
     request: &tauri::http::Request<Vec<u8>>,
-) -> std::result::Result<(Url, Option<String>), u16> {
+) -> std::result::Result<(Url, Option<(u64, u64)>), u16> {
     if request.method() != tauri::http::Method::GET {
         return Err(405);
     }
@@ -1355,7 +1358,7 @@ fn media_url(target: &str) -> Option<Url> {
 }
 
 /// One `bytes=START-[END]` range, bounded so a response fits one buffer.
-fn media_range(value: &str) -> Option<String> {
+fn media_range(value: &str) -> Option<(u64, u64)> {
     let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
     let start: u64 = start.parse().ok()?;
     let last = start.checked_add(MEDIA_CHUNK - 1)?;
@@ -1364,7 +1367,7 @@ fn media_range(value: &str) -> Option<String> {
     } else {
         end.parse::<u64>().ok()?.min(last)
     };
-    (end >= start).then(|| format!("bytes={start}-{end}"))
+    (end >= start).then_some((start, end))
 }
 
 async fn fetch_media(

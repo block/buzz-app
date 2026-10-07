@@ -15,6 +15,41 @@ const settled = async (page, query) => {
     .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
     .toBe(0);
 };
+// Native keydown/text input and browser undo selection need both real engines;
+// catalog failure/ordering and Markdown permutations live in the composer unit tests.
+test("closing-colon emoji conversion restores literal source and caret on undo", async ({
+  page,
+}) => {
+  const input = await open(page);
+  await input.fill("");
+  await input.pressSequentially("hello :-1");
+  await expect(
+    page.getByRole("option", { name: ":-1:", exact: true }),
+  ).toBeVisible();
+  await input.press("Shift+Semicolon");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello :-1:");
+  await expect(input).toHaveJSProperty("selectionStart", 10);
+  await expect(input).toHaveJSProperty("selectionEnd", 10);
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.pressSequentially("!");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello :-1:");
+
+  // Pasted/restored Markdown remains plain editor text, not a rich code node.
+  await input.fill("```\n:-1\n```");
+  await input.evaluate((el) => el.setSelectionRange(7, 7));
+  await expect(
+    page.getByRole("option", { name: ":-1:", exact: true }),
+  ).toBeVisible();
+  await input.press("Shift+Semicolon");
+  await expect(input).toHaveJSProperty("value", "```\n:-1:\n```");
+});
+
 const expectAvatarShape = async (target, shape) => {
   await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",

@@ -544,25 +544,46 @@ export function createUnread({
     // Channel catch-up never acknowledges thread replies: retained evidence
     // cannot prove nonparticipation, especially after reload. Only ordinary
     // top-level messages inherit it; reply attention/direct thread dots survive.
-    const ordinary =
-      !threadReference(event) && !priority(entry, dm)
-        ? state.frontiers[`activity:${channelId}`]
-        : undefined;
+    const ordinary = timeline(entry, dm)
+      ? state.frontiers[`activity:${channelId}`]
+      : undefined;
     const thread = rootId
       ? state.frontiers[`thread-activity:${rootId}`]
       : undefined;
     const caughtUp = Math.max(frontier ?? -1, ordinary ?? -1, thread ?? -1);
     return event.created_at > caughtUp || !!forced;
   }
+  /** An ordinary top-level message: the channel catch-up mark reads it. Its
+   * event alone decides this, except DM, which needs the listed channel. */
+  function timeline(entry: Evidence, dm: boolean) {
+    return !threadReference(entry.event) && !priority(entry, dm);
+  }
+  /** The channel catch-up mark reads this message. Until the channel's type
+   * is known, it might be a DM, whose messages catch-up never reads. A roster
+   * can list a channel before its metadata arrives, so being listed is not
+   * enough. */
+  function caughtUp(
+    entry: Evidence,
+    frontier: (key: string) => number | undefined,
+  ) {
+    const type = channels
+      .list()
+      .channels.find((channel) => channel.id === entry.channelId)?.channelType;
+    return (
+      type !== undefined &&
+      timeline(entry, type === "dm") &&
+      (frontier(`activity:${entry.channelId}`) ?? -1) >= entry.event.created_at
+    );
+  }
   /** A mark is redundant when a broader mark already reads all it reads.
-   * Catch-up marks (`activity:`, `thread-activity:`) never make another mark
-   * redundant: older clients ignore them, so the message, thread and channel
-   * marks they would replace are the read state those clients see.
-   * Only the channel mark covers a message mark. A reply finds its channel
-   * from its own event, but finds its thread only while the root is loaded;
-   * after a reload without the root, a thread mark no longer reads it.
-   * Only retained evidence supplies a message's channel; marks without it are
-   * kept. */
+   * The channel mark covers a message mark, and the channel catch-up mark
+   * (`activity:`) covers an ordinary top-level message's mark. Older desktop
+   * and mobile clients ignore `activity:`, so they show those messages as
+   * unread; that is accepted. A reply finds its channel from its own event,
+   * but finds its thread only while the root is loaded; after a reload without
+   * the root, a thread or thread catch-up mark no longer reads it. So neither
+   * covers a message mark. Only retained evidence supplies a message's
+   * channel; marks without it are kept. */
   reads.setCoverage((key, frontier) => {
     const value = frontier(key) ?? Number.POSITIVE_INFINITY;
     const separator = key.indexOf(":");
@@ -576,7 +597,11 @@ export function createUnread({
     indexEvidence();
     const entry = byId.get(id);
     if (!entry) return undefined;
-    if (kind === "msg") return by(entry.channelId, entry.event.created_at);
+    if (kind === "msg")
+      return (
+        by(entry.channelId, entry.event.created_at) ??
+        (caughtUp(entry, frontier) ? `activity:${entry.channelId}` : undefined)
+      );
     if (kind === "thread") return by(entry.channelId, value);
     if (kind === "thread-activity")
       return by(entry.channelId, value) ?? by(`thread:${id}`, value);
@@ -1900,7 +1925,13 @@ export function createUnread({
               messageId: id,
             };
             const event = requireMessage(target, id);
+            indexEvidence();
+            const entry = byId.get(id);
+            const state = reads.state();
             if (
+              (entry &&
+                !state.overrides[targetKey(target)] &&
+                caughtUp(entry, (key) => state.frontiers[key])) ||
               (effectiveFrontier(
                 reads.state(),
                 targetKey(target),

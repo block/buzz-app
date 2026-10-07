@@ -29,7 +29,7 @@ export function ComposerLinkDialog({
     if (disabled) return;
     const href = composerLinkUrl(url);
     if (!href) {
-      setError("Use an HTTPS URL or a valid buzz:// link.");
+      setError("Use an HTTP(S) URL or a valid buzz:// link.");
       return;
     }
     if (/[\r\n]/.test(text)) {

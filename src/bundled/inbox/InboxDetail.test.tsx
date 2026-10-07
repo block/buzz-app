@@ -30,8 +30,11 @@ import {
   readJournal,
   type ReadJournal,
 } from "../../features/relay/read-state-storage";
-// @ts-expect-error Node host codec, with disposable test identities only.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Node host codec, with disposable test identities only.
+} from "../../../browser-host/read-state.mjs";
 
 composerDOMFixture();
 const scrollDescriptor = Object.getOwnPropertyDescriptor(

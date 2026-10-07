@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
-import { outsideMentionDetail } from "../../features/messages/mention-candidates";
+import { outsideMentionDetail } from "./mention-candidates";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 

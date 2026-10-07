@@ -93,8 +93,8 @@ export function AgentHarnessEditor({
       )}
       {missingPreset && (
         <p className="text-body-sm text-secondary">
-          {preset.label} needs its ACP launcher. Install it using the manual
-          setup guide in Settings.
+          {preset.label} needs its ACP launcher. Set it up under Settings →
+          Agents → Harnesses.
         </p>
       )}
       {(missingPi || missingPreset) && onOpenHarnesses && (

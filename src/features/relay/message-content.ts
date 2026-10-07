@@ -3,15 +3,24 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 export const MAX_MARKDOWN_LENGTH = 100_000;
 export const MAX_MARKDOWN_DEPTH = 100;
 
-export function safeMessageUrl(value: string): string | undefined {
+/** Active links accept credential-free HTTP(S) destinations. */
+export function safeLinkUrl(value: string): string | undefined {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      !url.username &&
+      !url.password
       ? url.href
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Projected attachments and imeta media stay HTTPS-only. */
+export function safeMessageUrl(value: string): string | undefined {
+  const url = safeLinkUrl(value);
+  return url?.startsWith("https:") ? url : undefined;
 }
 
 type MarkdownNode = {

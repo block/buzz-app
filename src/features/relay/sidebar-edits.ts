@@ -8,6 +8,40 @@ import {
   nextSidebarSectionOrder,
 } from "./sidebar-registers.ts";
 
+// Typed intent policy; host adapters retain untrusted-envelope validation.
+export function validSidebarChannelId(channelId: string): boolean {
+  return !!channelId.trim() && channelId.length <= 256;
+}
+
+export function validSidebarAssignment(
+  intent: SidebarAssignmentIntent,
+): boolean {
+  const { channelId, sectionId, createSection } = intent;
+  return (
+    validSidebarChannelId(channelId) &&
+    (sectionId === undefined || validSidebarChannelId(sectionId)) &&
+    (!createSection ||
+      (sectionId === undefined &&
+        /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(createSection.id) &&
+        validSidebarChannelId(createSection.name)))
+  );
+}
+
+export function validSidebarSort(
+  group: string,
+  mode: SidebarSortMode,
+  sectionIds: readonly string[],
+): boolean {
+  return (
+    group.length <= 264 &&
+    ["alpha", "recent"].includes(mode) &&
+    sectionIds.length <= 100 &&
+    sectionIds.every(validSidebarChannelId) &&
+    (["starred", "channels", "forums", "dms"].includes(group) ||
+      (group.startsWith("section:") && sectionIds.includes(group.slice(8))))
+  );
+}
+
 // Pure edits of validated, projected heads. Hosts retain validation, signing,
 // publication, readback and serialization; these functions never perform I/O.
 export function editSidebarAssignment(

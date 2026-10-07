@@ -415,6 +415,12 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   });
   const video = review.locator("video");
   await expect(video).toHaveJSProperty("readyState", 4);
+  // This tests enlarged hit targets, not autoplay. Explicitly pause so the short
+  // clip cannot end and restart in WebKit when muting makes autoplay eligible.
+  await video.evaluate((el) => el.pause());
+  await expect(
+    review.getByRole("button", { name: "Play video", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
@@ -485,6 +491,7 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   await expect(video).toHaveJSProperty("muted", wasMuted);
   await mute.click();
   await expect(video).toHaveJSProperty("muted", !wasMuted);
+  await expect(video).toHaveJSProperty("paused", true);
   await reaction.click();
   const comments = review.getByRole("complementary", {
     name: "Media comments",

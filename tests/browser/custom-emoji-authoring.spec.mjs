@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { verifyEvent } from "nostr-tools/pure";
 import { watchPageErrors } from "./page-errors.mjs";
-import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { fixtureAliases, fixtureRelayUrl } from "../relay-config.ts";
 
 // 1x1 PNGs; distinct bytes give distinct Blossom hashes.

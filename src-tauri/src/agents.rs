@@ -21,7 +21,6 @@ pub(crate) struct Snapshot {
     local_inventory_actions: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
-    // Setup only until Claude's agent launch contract is implemented.
     claude_setup: ClaudeSetup,
     databricks_defaults: crate::agent_models::Defaults,
     agent_defaults: buzz_agent_controller::BuildDefaults,
@@ -88,13 +87,15 @@ struct ClaudeSetup {
     cli: Option<PathBuf>,
     #[serde(skip)]
     node: Option<PathBuf>,
+    #[serde(skip)]
+    adapter: Option<PathBuf>,
 }
 
 fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
     let cli = buzz_agent_controller::installed_npm_tool("claude");
     let managed_cli = buzz_agent_controller::managed_tool(app_data, "claude");
     let managed_node = buzz_agent_controller::managed_tool(app_data, "node");
-    let (_, status, managed) = npm_choice(
+    let (adapter, status, managed) = npm_choice(
         NpmTools {
             cli: cli.clone(),
             adapter: buzz_agent_controller::installed_npm_tool("claude-agent-acp"),
@@ -139,6 +140,7 @@ fn claude_setup(app_data: &std::path::Path) -> ClaudeSetup {
         login_command,
         cli,
         node,
+        adapter,
     }
 }
 /// Explicit Settings read, never part of periodic snapshots or controller writes.
@@ -359,8 +361,23 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     options.extend(
         buzz_agent_controller::harness_presets()
             .iter()
+            .filter(|preset| preset.id != "claude")
             .map(|preset| preset_option(preset, buzz_agent_controller::installed(&preset.command))),
     );
+    let claude = claude_setup(app_data);
+    options.push(HarnessOption {
+        command: claude.adapter.map_or_else(
+            || "claude-agent-acp".into(),
+            |path| path.to_string_lossy().into_owned(),
+        ),
+        label: "Claude Code",
+        available: claude.status == "ready",
+        status: claude.status,
+        install_supported: Some(claude.install_supported),
+        update_supported: Some(false),
+        default_args: vec![],
+        providers: &[],
+    });
     options
 }
 
@@ -434,6 +451,10 @@ impl Host {
         bundle: Result<RuntimeBundle, String>,
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
+        // Provision before restoring agents; failures remain nonfatal, as in old Buzz.
+        if let Err(error) = buzz_agent_controller::ensure_buzz_cli_skill(&workspace) {
+            eprintln!("buzz: failed to install CLI skill: {error}");
+        }
         let app_data = root
             .parent()
             .ok_or("Invalid local agent storage")?

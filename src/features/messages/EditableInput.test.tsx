@@ -76,6 +76,7 @@ function linkDecorations(text: string): EditorDecoration[] {
 function mount(
   initial: string | MentionDraft = "",
   options: {
+    maxLength?: number;
     links?: boolean;
     acceptRecipient?: EditableInputProps["acceptRecipient"];
   } = {},
@@ -93,7 +94,7 @@ function mount(
         value={value.text}
         disabled={false}
         placeholder="Draft"
-        maxLength={16000}
+        maxLength={options.maxLength ?? 16000}
         // Explicit recipients render as mention tokens, as in RichComposerInput.
         decorationsFor={(current) =>
           [
@@ -134,6 +135,30 @@ function mount(
     formats: () => formats,
   };
 }
+
+it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
+  const h = mount(":-1", { maxLength: 3 });
+  act(() =>
+    expect(h.input.insertText("👎", undefined, { start: 0, end: 3 }, ":")).toBe(
+      false,
+    ),
+  );
+  expect(h.input).toHaveValue(":-1");
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
+});
+
+it("keeps exactly one typed colon when the conversion exceeds the limit", () => {
+  const h = mount(":x", { maxLength: 3 });
+  act(() =>
+    expect(
+      h.input.insertText("too long", undefined, { start: 0, end: 2 }, ":"),
+    ).toBe(true),
+  );
+  expect(h.input).toHaveValue(":x:");
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue(":x");
+});
 
 /** Exercise ProseMirror's actual MutationObserver/readDOMChange seam, including
  * marksAcross on deletion. This is not a claim about native WebKit keystrokes. */
@@ -701,6 +726,40 @@ it.each([true, false])(
     expect(h.markdown()).toBe("**pasted** _source_");
   },
 );
+
+it("adds and edits HTTP links through the composer, but rejects credentialed URLs", () => {
+  const h = mount("docs", { links: true });
+  act(() => h.input.setSelectionRange(0, 4));
+  const add = h.input.editLink();
+  expect(add?.existing).toBe(false);
+  act(() => expect(add?.save("docs", "http://example.com/docs")).toBe(true));
+  expect(h.markdown()).toBe("[docs](http://example.com/docs)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({
+    existing: true,
+    href: "http://example.com/docs",
+  });
+  act(() => expect(edit?.save("guide", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const unsafe = h.input.editLink();
+  act(() =>
+    expect(unsafe?.save("guide", "http://user:pw@example.com")).toBe(false),
+  );
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+});
+
+it("edits a detected plain HTTP link", () => {
+  const h = mount("See http://localhost:3000", { links: true });
+  act(() => h.input.setSelectionRange(8, 8));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({ existing: true, href: "http://localhost:3000" });
+  act(() => expect(edit?.save("local", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
+});
 
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();

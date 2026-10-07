@@ -1701,7 +1701,15 @@ fn clipboard_decodes_pixels_and_rejects_invalid_or_oversized_images() {
     image::codecs::png::PngEncoder::new(&mut png)
         .write_image(pixels.as_raw(), 2, 1, image::ExtendedColorType::Rgba8)
         .unwrap();
-    assert_eq!(clipboard_pixels(&png).unwrap(), (2, 1, pixels.into_raw()));
+    assert_eq!(
+        clipboard_pixels(&png).unwrap(),
+        (2, 1, pixels.clone().into_raw())
+    );
+    let mut webp = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
+        .write_image(pixels.as_raw(), 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert_eq!(clipboard_pixels(&webp).unwrap(), (2, 1, pixels.into_raw()));
     assert!(clipboard_pixels(b"not an image").is_err());
     assert!(clipboard_pixels(&vec![0; 50 * 1024 * 1024 + 1]).is_err());
 
@@ -1713,6 +1721,54 @@ fn clipboard_decodes_pixels_and_rejects_invalid_or_oversized_images() {
         .unwrap();
     assert!(encoded.len() < 50 * 1024 * 1024);
     assert!(clipboard_pixels(&encoded).is_err());
+}
+
+#[test]
+fn clipboard_bounds_embedded_webp_vp8_frames_before_decode() {
+    fn chunk(tag: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut bytes = tag.to_vec();
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+        if data.len() & 1 != 0 {
+            bytes.push(0);
+        }
+        bytes
+    }
+    fn webp(chunks: &[u8]) -> Vec<u8> {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&(chunks.len() as u32 + 4).to_le_bytes());
+        bytes.extend_from_slice(b"WEBP");
+        bytes.extend_from_slice(chunks);
+        bytes
+    }
+    let vp8 = |width: u16, height: u16| {
+        let mut header = [0, 0, 0, 0x9d, 0x01, 0x2a, 0, 0, 0, 0];
+        header[6..8].copy_from_slice(&width.to_le_bytes());
+        header[8..10].copy_from_slice(&height.to_le_bytes());
+        chunk(b"VP8 ", &header)
+    };
+    let mut static_chunks = chunk(b"VP8X", &[0, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
+    static_chunks.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&static_chunks), 64 * 64 * 4).is_ok());
+    assert!(check_webp_vp8_frames(&webp(&static_chunks), 64 * 64 * 4 - 1).is_err());
+    let mut mismatch = chunk(b"VP8X", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    mismatch.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&mismatch), 64 * 64 * 4).is_err());
+
+    // The first animated frame nests VP8 after a 16-byte ANMF header.
+    let mut frame = vec![0; 16];
+    frame[6] = 63;
+    frame[9] = 63;
+    frame.extend(vp8(64, 64));
+    let mut animated_chunks = chunk(b"VP8X", &[2, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
+    animated_chunks.extend(chunk(b"ANMF", &frame));
+    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 4096).is_err());
+    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 64 * 64 * 4).is_ok());
+    frame[6] = 0;
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
+    frame[6] = 63;
+    frame.pop();
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
 }
 
 #[test]

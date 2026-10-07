@@ -130,52 +130,82 @@ it("checks the viewer's later reply before presenting an older mention as unresp
   expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
   expect(h.session.channels.window("room").rows).toEqual([]);
 });
-it("checks a cold nested reply with only an intermediate parent tag", async () => {
-  const channelId = "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd";
-  const origin = "https://relay.test";
-  const h = setup(channelId, origin);
-  h.admit([h.viewer.pubkey, h.alice.pubkey]);
-  const root = message(h.viewer, channelId, "assignment", 10);
-  const mention = message(h.alice, channelId, "needs input", 20, [
-    ["e", root.id, "", "reply"],
-    ["p", h.viewer.pubkey],
-  ]);
-  const response = message(h.viewer, channelId, "nested answer", 30, [
-    ["e", mention.id, "", "reply"],
-  ]);
-  const query = h.query.getMockImplementation();
-  if (!query) throw new Error("Missing fixture query");
-  h.query.mockImplementation(async (filters) => {
-    const filter = filters[0];
-    if (filter?.thread_window)
-      return [
-        mention,
-        response,
-        signed(h.relay, {
-          kind: 39007,
-          created_at: 31,
-          tags: [
-            ["d", await threadBinding(filter, origin, h.viewer.pubkey)],
-            ["h", channelId],
-            ["e", root.id],
-          ],
-          content: JSON.stringify({
-            version: 1,
-            direction: "older",
-            has_more: false,
-            next_cursor: null,
-          }),
-        }),
-      ];
-    if (filter?.ids?.includes(root.id)) return [root];
-    if (filter?.kinds?.includes(9) && filter["#e"]?.includes(root.id))
-      return filter.until === undefined ? [mention] : [];
-    return query(filters);
-  });
-  h.live.receive([root, mention]);
-  await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
-  expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
-});
+it.each(["complete", "paged", "cold ancestors", "missing bounds"])(
+  "checks a cold nested reply with only an intermediate parent tag (%s)",
+  async (mode) => {
+    const channelId = "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd";
+    const origin = "https://relay.test";
+    const h = setup(channelId, origin);
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const root = message(h.viewer, channelId, "assignment", 10);
+    const parent = message(h.alice, channelId, "earlier progress", 15, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const mention = message(h.alice, channelId, "needs input", 20, [
+      ["e", mode === "cold ancestors" ? parent.id : root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    const response = message(h.viewer, channelId, "nested answer", 30, [
+      ["e", mention.id, "", "reply"],
+    ]);
+    const query = h.query.getMockImplementation();
+    if (!query) throw new Error("Missing fixture query");
+    h.query.mockImplementation(async (filters) => {
+      const filter = filters[0];
+      if (filter?.thread_window) {
+        expect(filter["#e"]).toEqual([root.id]);
+        expect(filter.since).toBeUndefined();
+        const hasMore = mode === "paged" && filter.until === undefined;
+        return [
+          ...(hasMore
+            ? [response]
+            : filter.until
+              ? [mention]
+              : [parent, mention, response]),
+          ...(mode === "missing bounds"
+            ? []
+            : [
+                signed(h.relay, {
+                  kind: 39007,
+                  created_at: 31,
+                  tags: [
+                    ["d", await threadBinding(filter, origin, h.viewer.pubkey)],
+                    ["h", channelId],
+                    ["e", root.id],
+                  ],
+                  content: JSON.stringify({
+                    version: 1,
+                    direction: "older",
+                    has_more: hasMore,
+                    next_cursor: hasMore
+                      ? { created_at: response.created_at, id: response.id }
+                      : null,
+                  }),
+                }),
+              ]),
+        ];
+      }
+      if (filter?.ids?.includes(root.id)) return [root];
+      if (filter?.ids?.includes(parent.id)) return [parent];
+      if (filter?.kinds?.includes(9) && filter["#e"]?.includes(root.id))
+        return filter.until === undefined ? [mention] : [];
+      return query(filters);
+    });
+    h.live.receive(mode === "cold ancestors" ? [mention] : [root, mention]);
+    await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
+    if (mode === "missing bounds") {
+      expect(h.session.inboxFeed.snapshot()).toMatchObject({
+        status: "error",
+        checkedResponses: [],
+      });
+    } else {
+      expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+      expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(
+        false,
+      );
+    }
+  },
+);
 it.each(["thread", "dm"])(
   "checks cold later replies for ordinary %s activity",
   async (kind) => {

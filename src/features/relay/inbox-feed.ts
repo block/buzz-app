@@ -4,6 +4,11 @@ import type { RelayEvent, ReadFilter } from "./events";
 import type { RelayReader } from "./reader";
 import type { InboxItem } from "./inbox";
 import { threadReference } from "./thread-reference";
+import {
+  canonicalChannel,
+  MissingThreadBounds,
+  threadBounds,
+} from "./thread-window";
 
 const mentionKinds = [9, 40002];
 const cursorOf = (event: RelayEvent) => ({
@@ -133,11 +138,46 @@ export function createInboxFeed({
   async function conversation(item: InboxItem, signal: AbortSignal) {
     const retained = item.messageIds.flatMap((id) => retainedEvent(id) ?? []);
     if (!retained.length) return [];
-    const rootId =
+    let rootId =
       item.rootId ??
       retained.map(threadReference).find((reference) => reference)?.rootId ??
       item.messageId;
-    if (item.target.kind !== "channel" && !item.rootId)
+    const canonical =
+      item.target.kind !== "channel" && canonicalChannel.test(item.channelId);
+    if (canonical && !item.rootId) {
+      const visited = new Set<string>();
+      for (;;) {
+        if (visited.has(rootId) || visited.size === 32)
+          throw new Error("Inbox reply ancestry is unavailable. Retry inbox.");
+        visited.add(rootId);
+        const root =
+          retainedEvent(rootId) ??
+          (
+            await reader.read(
+              [
+                {
+                  kinds: mentionKinds,
+                  "#h": [item.channelId],
+                  ids: [rootId],
+                  limit: 1,
+                },
+              ],
+              { signal },
+            )
+          )[0];
+        if (
+          !root ||
+          root.id !== rootId ||
+          !root.tags.some(
+            ([key, value]) => key === "h" && value === item.channelId,
+          )
+        )
+          throw new Error("Inbox reply ancestry is unavailable. Retry inbox.");
+        const reference = threadReference(root);
+        if (!reference) break;
+        rootId = reference.rootId;
+      }
+    } else if (item.target.kind !== "channel" && !item.rootId)
       await reader.read([{ kinds: mentionKinds, ids: [rootId], limit: 1 }], {
         signal,
       });
@@ -145,35 +185,63 @@ export function createInboxFeed({
       kinds: mentionKinds,
       "#h": [item.channelId],
       ...(item.target.kind === "channel" ? {} : { "#e": [rootId] }),
-      since: Math.min(...retained.map((event) => event.created_at)),
-      limit: 500,
+      ...(canonical
+        ? { thread_window: true, depth_limit: 100, limit: 200 }
+        : {
+            since: Math.min(...retained.map((event) => event.created_at)),
+            limit: 500,
+          }),
     };
     const collected: RelayEvent[] = [];
     let cursor: ReturnType<typeof cursorOf> | undefined;
     for (;;) {
+      let bounds: ReturnType<typeof threadBounds> | undefined;
       const page = [
         ...(await addressedRead(
           { ...filter, ...(cursor ?? {}) },
           signal,
           (visible, raw = visible) => {
             if (
-              raw.some((event) => !visible.some((row) => row.id === event.id))
+              raw.some(
+                (event) =>
+                  mentionKinds.includes(event.kind) &&
+                  !visible.some((row) => row.id === event.id),
+              )
             )
               throw new Error(
                 "Inbox replies could not be verified for current access. Retry inbox.",
               );
+            if (canonical) {
+              const bound = raw.find((event) => event.kind === 39007);
+              if (!bound) throw new MissingThreadBounds();
+              bounds = threadBounds(bound); // Reader verified signer and request binding.
+            }
           },
         )),
-      ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+      ]
+        .filter((event) => mentionKinds.includes(event.kind))
+        .sort(
+          (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+        );
       const previous = cursor;
       if (previous && page.some((event) => !older(event, previous)))
         throw new Error("Inbox replies did not advance. Retry inbox.");
       collected.push(...page);
       if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
         throw new Error("Inbox replies exceed the read budget. Retry inbox.");
-      const last = page.at(-1);
-      if (!last) return collected;
-      cursor = cursorOf(last);
+      if (bounds) {
+        if (!bounds.hasMore) return collected;
+        if (!page.length || !bounds.cursor)
+          throw new Error("Inbox replies are unavailable. Retry inbox.");
+        cursor = {
+          until: bounds.cursor.created_at,
+          before_id: bounds.cursor.id,
+        };
+      } else {
+        const last = page.at(-1);
+        if (!last) return collected;
+        cursor = cursorOf(last);
+      }
     }
   }
   async function refresh(candidates?: readonly InboxItem[]) {

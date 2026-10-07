@@ -1217,8 +1217,27 @@ export const test = base.extend({
           rootId = filter["#e"][0];
         const candidates = [
           ...(histories.get(`${community}/${channelId}`) ?? []),
-          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(community === "primary"
+            ? [...threadReplies.values()].flat()
+            : []),
         ];
+        const byId = new Map(candidates.map((event) => [event.id, event]));
+        const belongsToRoot = (event) => {
+          const seen = new Set();
+          for (let depth = 0; depth < (filter.depth_limit ?? 100); depth++) {
+            const tags = event.tags.filter(([key]) => key === "e");
+            const reference =
+              tags.find((tag) => tag[3] === "root") ??
+              tags.find((tag) => tag[3] === "reply");
+            const id = reference?.[1]?.toLowerCase();
+            if (id === rootId) return true;
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            event = byId.get(id);
+            if (!event) return false;
+          }
+          return false;
+        };
         const rows = [
           ...new Map(candidates.map((event) => [event.id, event])).values(),
         ]
@@ -1226,8 +1245,9 @@ export const test = base.extend({
             (event) =>
               filter.kinds.includes(event.kind) &&
               event.tags.some(
-                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
+                ([key, value]) => key === "h" && value === channelId,
               ) &&
+              belongsToRoot(event) &&
               (filter.until === undefined ||
                 event.created_at < filter.until ||
                 (event.created_at === filter.until &&

@@ -98,7 +98,7 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
     "Already answered before this visit",
     false,
     true,
-    root,
+    app.inboxWindow.replies[0].id,
   );
   for (let index = 0; index < 500; index++)
     app.append(
@@ -167,8 +167,8 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
     .toBe(true);
   const checks = app.report.queries
     .slice(beforeQueries)
-    .filter(({ filter }) => filter.since !== undefined);
-  expect(checks).toHaveLength(2); // One root, one page, then its terminal page.
+    .filter(({ filter }) => filter.thread_window === true);
+  expect(checks).toHaveLength(1); // Signed bounds prove this canonical window is complete.
   app.report.unrespondedPerformance = {
     checkedRoots: 1,
     responseReads: checks.length,

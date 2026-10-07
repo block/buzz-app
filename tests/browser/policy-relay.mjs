@@ -466,7 +466,7 @@ export function policyRelay({
           filter.kinds?.includes(9) &&
           filter["#h"]?.length &&
           filter.top_level === undefined &&
-          filter.depth_limit === undefined &&
+          (filter.depth_limit === undefined || filter.thread_window === true) &&
           filter.until === undefined
         )
           return new Promise((resolve, reject) => {

@@ -215,6 +215,35 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       text: "Quote :party:\n\ncode\n",
       trusted: true,
     });
+    // Across rows, the handler must omit the same user-select: none row chrome
+    // engines do: the hovered action bars and the hidden full dates.
+    const brokenBody = page.getByText("Broken :missing:", { exact: true });
+    await historic.hover();
+    await brokenBody.hover();
+    await historic.evaluate(
+      (image, end) => {
+        const range = document.createRange();
+        range.setStartBefore(image.closest("p"));
+        range.setEndAfter(end);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      },
+      await brokenBody.elementHandle(),
+    );
+    await observeCopyPayload();
+    await copySelection();
+    await expect
+      .poll(copyPayload)
+      .toMatchObject({ prevented: true, trusted: true });
+    const { text: rowsText } = await copyPayload();
+    expect(rowsText).toMatch(
+      /^Historic :unknown:party: and https:\/\/example\.test\/:party:\n/,
+    );
+    expect(rowsText).toMatch(
+      /\nFixture ReaderJan 1, 1970 at 12:00 AM\nBroken :missing:$/,
+    );
+    expect(rowsText).not.toMatch(/Thursday|👍|❤️|😂/u);
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.
     await draft().fill(":party:");

@@ -55,6 +55,7 @@ function serialize(
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
   if (!(node instanceof Element)) return children(node, format, range);
+  if (unselectable(node)) return "";
   // SVG tag names keep their case.
   const tag = node.tagName.toUpperCase();
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
@@ -133,6 +134,11 @@ function serialize(
   return format === "html" && blockTag.test(tag) && !node.querySelector(blocks)
     ? `<p>${inner}</p>`
     : inner;
+}
+
+/** Engines omit computed `user-select: none` chrome from copies; so do we. */
+export function unselectable(element: Element): boolean {
+  return getComputedStyle(element).userSelect === "none";
 }
 
 function anchor(node: Element, inner: string, format: CopyFormat): string {

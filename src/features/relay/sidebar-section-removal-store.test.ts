@@ -38,7 +38,7 @@ function setup(
     undefined,
     undefined,
     mute,
-    undefined,
+    async () => data.sort ?? {},
     undefined,
     remove,
   );
@@ -202,7 +202,7 @@ it("does not remove a section if its sort reset fails, and retries safely", asyn
   }
 });
 
-it("retains a confirmed reset after section removal fails and retries without another reset", async () => {
+it("retains a confirmed reset after section removal fails and resets again on retry", async () => {
   const sorted = {
     ...data,
     sort: { "section:work": "recent" as const, channels: "recent" as const },
@@ -233,7 +233,7 @@ it("retains a confirmed reset after section removal fails and retries without an
       sort: { channels: "recent" },
     });
     await store.queries.removeSection("work");
-    expect(writeSort).toHaveBeenCalledOnce();
+    expect(writeSort).toHaveBeenCalledTimes(2);
     expect(remove).toHaveBeenCalledTimes(2);
   } finally {
     store.dispose();
@@ -278,66 +278,105 @@ it("fences a late sort reset before invoking section removal", async () => {
   }
 });
 
-it("removing and replacing a sorted section at the live cap remains decodable", async () => {
-  let sections = {
-    version: 1,
-    sections: Array.from({ length: 100 }, (_, order) => ({
-      id: `group-${order}`,
-      name: `Group ${order}`,
-      order,
-    })),
-    assignments: {},
-  } as Record<string, unknown>;
-  let sort = {
-    version: 1,
-    groups: Object.fromEntries([
-      ...Array.from({ length: 100 }, (_, i) => [
-        `section:group-${i}`,
-        "recent",
+it.each([false, true])(
+  "removing and replacing a sorted section at the live cap remains decodable (stale local sort: %s)",
+  async (stale) => {
+    let sections = {
+      version: 1,
+      sections: Array.from({ length: 100 }, (_, order) => ({
+        id: `group-${order}`,
+        name: `Group ${order}`,
+        order,
+      })),
+      assignments: {},
+    } as Record<string, unknown>;
+    let sort = {
+      version: 1,
+      groups: Object.fromEntries([
+        ...Array.from({ length: 100 }, (_, i) => [
+          `section:group-${i}`,
+          "recent",
+        ]),
+        ...["starred", "channels", "forums", "dms"].map((key) => [
+          key,
+          "recent",
+        ]),
       ]),
-      ...["starred", "channels", "forums", "dms"].map((key) => [key, "recent"]),
-    ]),
-  } as Record<string, unknown>;
-  const project = () =>
-    projectSidebarPreferences(sections, undefined, undefined, sort);
+    } as Record<string, unknown>;
+    const project = () =>
+      projectSidebarPreferences(sections, undefined, undefined, sort);
+    const store = createSidebarPreferencesStore(
+      async () => {
+        const current = project();
+        if (!stale) return current;
+        const localSort = { ...current.sort };
+        delete localSort["section:group-0"];
+        return { ...current, sort: localSort };
+      },
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (group, mode) => {
+        sort = editSidebarSort(sort, 1, group, mode, 2);
+        return project().sort ?? {};
+      },
+      undefined,
+      async (id) => {
+        sections = editSidebarSectionRemoval(sections, 1, id, 3);
+        return project();
+      },
+    );
+    try {
+      await store.queries.ensure();
+      await store.queries.removeSection("group-0");
+      const replacement = "00000000-1234-1234-1234-123456789abc";
+      sections = editSidebarAssignment(
+        sections,
+        1,
+        {
+          channelId: "beta",
+          createSection: { id: replacement, name: "Replacement" },
+        },
+        4,
+      );
+      sort = editSidebarSort(sort, 1, `section:${replacement}`, "recent", 5);
+      const result = project();
+      expect(result.sections).toHaveLength(100);
+      expect(Object.keys(result.sort ?? {})).toHaveLength(104);
+      expect(result.sort?.["section:group-0"]).toBeUndefined();
+      expect(result.sort?.["section:group-1"]).toBe("recent");
+      expect(result.sort?.channels).toBe("recent");
+      expect(result.assignments.beta).toBe(replacement);
+    } finally {
+      store.dispose();
+    }
+  },
+);
+
+it("does not offer removal without a sort writer even when local sorting is Alpha", async () => {
+  const remove = vi
+    .fn<SidebarSectionRemovalMutator>()
+    .mockResolvedValue(removed);
   const store = createSidebarPreferencesStore(
-    async () => project(),
+    async () => data,
     true,
     undefined,
     undefined,
     undefined,
     undefined,
-    async (group, mode) => {
-      sort = editSidebarSort(sort, 1, group, mode, 2);
-      return project().sort ?? {};
-    },
     undefined,
-    async (id) => {
-      sections = editSidebarSectionRemoval(sections, 1, id, 3);
-      return project();
-    },
+    undefined,
+    remove,
   );
   try {
     await store.queries.ensure();
-    await store.queries.removeSection("group-0");
-    const replacement = "00000000-1234-1234-1234-123456789abc";
-    sections = editSidebarAssignment(
-      sections,
-      1,
-      {
-        channelId: "beta",
-        createSection: { id: replacement, name: "Replacement" },
-      },
-      4,
+    expect(store.queries.removeSectionWritable).toBe(false);
+    await expect(store.queries.removeSection("work")).rejects.toThrow(
+      "unavailable",
     );
-    sort = editSidebarSort(sort, 1, `section:${replacement}`, "recent", 5);
-    const result = project();
-    expect(result.sections).toHaveLength(100);
-    expect(Object.keys(result.sort ?? {})).toHaveLength(104);
-    expect(result.sort?.["section:group-0"]).toBeUndefined();
-    expect(result.sort?.["section:group-1"]).toBe("recent");
-    expect(result.sort?.channels).toBe("recent");
-    expect(result.assignments.beta).toBe(replacement);
+    expect(remove).not.toHaveBeenCalled();
   } finally {
     store.dispose();
   }

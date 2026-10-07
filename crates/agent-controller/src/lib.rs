@@ -1,6 +1,7 @@
 //! Local configuration and process ownership; never tied to a page or relay session.
 //! No legacy desktop dependency, implicit identity creation, or credential projection.
 mod agent_defaults;
+mod app_agent;
 mod bundle;
 mod community;
 mod config;
@@ -28,6 +29,7 @@ mod test_executable;
 pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
+pub use app_agent::{AppAgent, AppAgents, NewAppAgent};
 pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
 pub use create::{CreationProfile, NewAgent};

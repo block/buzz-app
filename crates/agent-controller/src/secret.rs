@@ -78,6 +78,15 @@ impl Secret {
             ],
         )
     }
+    /// A plain signed event; callers bound the kind and size.
+    pub(crate) fn signed(
+        &self,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        self.sign_event(kind, content, tags)
+    }
     fn sign_event(
         &self,
         kind: u16,

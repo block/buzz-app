@@ -89,6 +89,52 @@ it("lists the authenticated account through the configured native host", async (
     body: "{}",
   });
 });
+it("updates instructions through the existing authenticated endpoint", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValue(response({}));
+  await h.client.updateInstructions(
+    {
+      id: row.agent_id,
+      name: row.agent_name,
+      pubkey: row.agent_pubkey,
+      status: "Active",
+    },
+    "Remember only preferences the owner confirms.",
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenCalledWith({
+    url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent",
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
+    },
+    body: JSON.stringify({
+      agent_pubkey: row.agent_pubkey,
+      agent_instructions: "Remember only preferences the owner confirms.",
+    }),
+  });
+});
+it("rejects an invalid update before sending and discards a late update after sign-out", async () => {
+  const h = await fixture();
+  const agent = {
+    id: row.agent_id,
+    name: row.agent_name,
+    pubkey: row.agent_pubkey,
+    status: "Active" as const,
+  };
+  await expect(
+    h.client.updateInstructions(agent, "x".repeat(20001), h.signal),
+  ).rejects.toThrow("Invalid");
+  expect(h.host.request).not.toHaveBeenCalled();
+  const held = deferred<HostResponse>();
+  vi.mocked(h.host.request).mockReturnValue(held.promise);
+  const pending = h.client.updateInstructions(agent, "Be helpful.", h.signal);
+  h.session.signOut();
+  held.resolve(response({}));
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+});
 it.each([{}, { agents: [] }])(
   "accepts an empty protobuf list %j",
   async (value) => {

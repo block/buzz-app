@@ -10,6 +10,7 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { createEnrollment } from "./agents/enrollment";
+import type {} from "./service";
 
 export const inject = ["host", "settingsCards", "relay", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -33,6 +34,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       : undefined;
   });
   const enrollment = createEnrollment(ctx.relay, ctx.communityReader, session);
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  const loginUnavailableReason = browserLoginAvailable()
+    ? unavailable
+    : "Open the Buzz desktop app to sign in with Builderlab.";
+  ctx.provide("builderlab", {
+    login: session,
+    loginAvailable,
+    loginUnavailableReason,
+    agents,
+    enrollment,
+  });
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
@@ -41,12 +53,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <>
         <Login
           session={session}
-          available={browserLoginAvailable() && !unavailable}
-          unavailableReason={
-            browserLoginAvailable()
-              ? unavailable
-              : "Open the Buzz desktop app to sign in with Builderlab."
-          }
+          available={loginAvailable}
+          unavailableReason={loginUnavailableReason}
           active={active}
         />
         <RemoteAgents

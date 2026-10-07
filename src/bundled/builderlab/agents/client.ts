@@ -108,6 +108,23 @@ export function createAgentClient(
           : "Agent deletion was not confirmed. Retry Delete agent.",
       );
     },
+    async updateInstructions(
+      agent: RemoteAgent,
+      instructions: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (
+        !/^[0-9a-f]{64}$/.test(agent.pubkey) ||
+        typeof instructions !== "string" ||
+        instructions.length > 20000
+      )
+        throw new Error("Invalid remote agent instructions.");
+      await request(
+        "update-agent",
+        { agent_pubkey: agent.pubkey, agent_instructions: instructions },
+        signal,
+      );
+    },
     async register(name: string, signal: AbortSignal): Promise<RemoteAgent> {
       signal.throwIfAborted();
       const agentName = name.trim();

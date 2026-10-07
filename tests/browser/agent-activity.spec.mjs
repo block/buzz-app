@@ -228,8 +228,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   const panel = activityPanel(page);
   await expect(panel.locator("code").first()).toHaveText(first);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   // Telemetry supplies keys before any profile or directory facts exist.
   const agentSelect = panel.getByRole("combobox", {
@@ -595,8 +595,8 @@ it("profile activity opens the exact agent and originating channel before its fi
   });
   await expect(panel.locator("code").first()).toHaveText(agent);
   await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(`Alpha · ${profileChannelId}`);
+    panel.getByRole("combobox", { name: "Conversation", exact: true }),
+  ).toHaveText(/^#Alpha · whole channel/);
   await showRaw(panel);
   await expect(
     panel.getByText(/No captured records for this identity in this channel/),
@@ -628,10 +628,12 @@ it("profile activity opens the exact agent and originating channel before its fi
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
-  await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await panel
+    .getByRole("combobox", { name: "Conversation", exact: true })
+    .click();
   await page
     .getByRole("option", {
-      name: "All channels (including unscoped records)",
+      name: "All conversations (including unscoped records)",
       exact: true,
     })
     .click();
@@ -983,17 +985,11 @@ test.describe("thread activity", () => {
     await expect(activityPanel(page).locator("code").first()).toHaveText(agent);
     await expect(
       activityPanel(page).getByRole("combobox", {
-        name: "Channel",
-        exact: true,
-      }),
-    ).toHaveText(/Alpha.*alpha/);
-    // The thread composer opens this thread's scope, not channel-wide details.
-    await expect(
-      activityPanel(page).getByRole("combobox", {
         name: "Conversation",
         exact: true,
       }),
-    ).toHaveText("This thread");
+    ).toHaveText(/^#Alpha › /);
+    // The thread composer opens this thread's scope, not channel-wide details.
     await page
       .getByRole("button", { name: /^Close (?!Thread).* tab$/, exact: true })
       .click();

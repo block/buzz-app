@@ -68,12 +68,6 @@ const thread = (turn: TranscriptTurn) =>
     : turn.threadRootId
       ? `Thread ${turn.threadRootId.slice(0, 8)}`
       : "Thread unknown";
-const sessionStarts = (turns: readonly TranscriptTurn[]) =>
-  turns.filter(
-    (turn, index) =>
-      turn.newSession ||
-      (!!turn.sessionId && turn.sessionId !== turns[index - 1]?.sessionId),
-  );
 
 /** Turn-by-turn transcript of the loaded activity. */
 export function ActivityTranscript({
@@ -88,7 +82,6 @@ export function ActivityTranscript({
   /** Paging controls shown above the oldest loaded turn. */
   before?: ReactNode;
 }) {
-  const starts = new Set(sessionStarts(transcript.turns));
   return (
     <div className={styles.timeline}>
       {before}
@@ -103,7 +96,6 @@ export function ActivityTranscript({
           turn={turn}
           state={turn.endedAt ? "ended" : (state(turn.turnId) ?? "unknown")}
           agentName={agentName}
-          session={starts.has(turn)}
         />
       ))}
     </div>
@@ -114,12 +106,10 @@ function Turn({
   turn,
   state,
   agentName,
-  session,
 }: {
   turn: TranscriptTurn;
   state: TurnState;
   agentName: string;
-  session: boolean;
 }) {
   const status = turn.error
     ? "Error"
@@ -129,10 +119,10 @@ function Turn({
         ? "Completed"
         : "Status unknown";
   const facts = [
-    time(turn.startedAt),
     turn.endedAt ? duration(turn.endedAt - turn.startedAt) : "",
     thread(turn),
     turn.source === "heartbeat" ? "heartbeat" : "",
+    turn.newSession ? "new session" : "",
     turn.stopReason ?? "",
     turn.context
       ? `context ${Math.round(turn.context.used / 1000)}k/${Math.round(turn.context.size / 1000)}k`
@@ -143,15 +133,13 @@ function Turn({
       className={styles.turn}
       aria-label={`Turn ${time(turn.startedAt)}`}
     >
-      {session && (
-        <p className={`text-body-sm ${styles.session}`}>
-          {[
-            turn.newSession ? "New session" : "Session",
-            new Date(turn.startedAt).toLocaleString(),
-            ...turn.config,
-          ].join(" · ")}
-        </p>
-      )}
+      <p className={`text-body-sm ${styles.session}`}>
+        {[
+          "Turn",
+          new Date(turn.startedAt).toLocaleString(),
+          ...turn.config,
+        ].join(" · ")}
+      </p>
       <header className={`text-body-sm ${styles.turnHeader}`}>
         <span data-state={turn.error ? "error" : state}>{status}</span>
         {facts.map((fact) => (

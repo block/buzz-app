@@ -478,17 +478,22 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-A thread composer opens `buzz:agent-activity?…&thread=<root>`, which is valid only
-with its channel. **Conversation → This thread** shows turns whose thread root is
+Agents use a channel or a thread as their conversation context, so one
+**Conversation** selector scopes the view: all conversations, a whole channel
+(threads included), or one thread. Threads are listed from loaded turns and named
+by their first prompt. A thread composer opens `buzz:agent-activity?…&thread=<root>`
+(valid only with its channel) with that thread selected. A turn's thread root is
 the payload's `threadRootEventId` (harness 2026-10-01 and later) or, for older
 harnesses, the prompt `<context>` block's `Thread root:`. Turns whose thread cannot
-be recovered appear only under **Whole channel** and are counted, never guessed.
-Whole channel labels each turn as channel conversation, a thread or unknown.
+be recovered appear only in the whole channel and are counted, never guessed. The
+whole channel labels each turn as channel conversation, a thread or unknown. Each
+turn starts with a **Turn** line (start time and the session's selected config,
+e.g. model); its status line notes when the turn started a new ACP session.
 
 The transcript covers only loaded records: the live window plus one saved page.
 
-The **Channel** selector filters raw entries and working-turn counts, or shows all
-channels including unscoped records. For a selected channel, batches are projected
+In **Raw**, a channel or thread selection filters entries and working-turn counts
+to that channel; all conversations includes unscoped records. For a selected channel, batches are projected
 as individual matching children, with the original envelope ID retained; displayed
 child JSON is reserialized, not claimed byte-identical to the envelope. Unscoped
 children are omitted rather than inheriting the enclosing batch's channel. The
@@ -616,7 +621,7 @@ Pi/Goose remain honored. Existing running processes are not restarted by this ch
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
 For a contextual view, click the identity's avatar/mention in the channel, then
-**View activity**. It preselects that exact key and channel; **Channel → All channels**
+**View activity**. It preselects that exact key and channel; **Conversation → All conversations**
 broadens the view. Alternatively, select an active agent above the channel or thread composer.
 Check the transcript, then open **Raw**, expand entries and close/reopen the panel. In **Settings → Agents → Saved agent
 activity**, verify both capture switches and the host path. Disable the **Agent

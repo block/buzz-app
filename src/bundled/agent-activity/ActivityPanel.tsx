@@ -68,7 +68,12 @@ export function ActivityDetails({
     [snapshot.records, snapshot.historyAgents],
   );
   const [selected, select] = useState(selection?.agent ?? "");
-  const [channelId, selectChannel] = useState(selection?.channelId ?? "");
+  // "" is every conversation, a channel ID is the whole channel, and
+  // `channel thread` is one thread (IDs contain no spaces).
+  const [conversation, selectConversation] = useState(
+    [selection?.channelId, selection?.threadRootId].filter(Boolean).join(" "),
+  );
+  const [channelId = "", threadRootId] = conversation.split(" ");
   const agentChoices = useMemo(
     () => [...new Set([...agents, ...(selected ? [selected] : [])])],
     [agents, selected],
@@ -109,6 +114,8 @@ export function ActivityDetails({
       ...(channelId ? [channelId] : []),
     ]),
   ];
+  const channelName = (id: string) =>
+    `#${channels.find((channel) => channel.id === id)?.name ?? id}`;
   const region = useRef<HTMLElement>(null);
   useEffect(() => {
     region.current?.focus();
@@ -127,13 +134,29 @@ export function ActivityDetails({
       turn.agent === agent && (!channelId || turn.channelId === channelId),
   );
   const [view, setView] = useState<"transcript" | "raw">("transcript");
-  const [threadScope, setThreadScope] = useState(!!selection?.threadRootId);
-  // A thread belongs to its originating channel; another channel drops it.
-  const thread =
-    selection?.threadRootId && channelId === selection.channelId
-      ? selection.threadRootId
-      : undefined;
-  const threadRootId = threadScope ? thread : undefined;
+  // Threads are discovered from loaded turns and labelled by their first turn.
+  const threads = useMemo(() => {
+    const found = new Map<string, string>();
+    for (const turn of activityTranscript(snapshot.records, { agent }).turns) {
+      const key = `${turn.channelId} ${turn.threadRootId}`;
+      if (!turn.channelId || !turn.threadRootId || found.has(key)) continue;
+      const prompt = turn.items.find((item) => item.type === "prompt");
+      const text =
+        prompt?.type === "prompt"
+          ? prompt.text.split("\n").find(Boolean)?.slice(0, 60)
+          : undefined;
+      found.set(
+        key,
+        `${new Date(turn.startedAt).toLocaleString(undefined, {
+          dateStyle: "short",
+          timeStyle: "short",
+        })} · ${text || `thread ${turn.threadRootId.slice(0, 8)}`}`,
+      );
+    }
+    if (threadRootId && !found.has(conversation))
+      found.set(conversation, `thread ${threadRootId.slice(0, 8)}`);
+    return found;
+  }, [snapshot.records, agent, threadRootId, conversation]);
   const transcript = useMemo(
     () =>
       activityTranscript(snapshot.records, {
@@ -316,7 +339,7 @@ export function ActivityDetails({
           {transcript.unknownThread > 0 && (
             <p className="text-body-sm text-secondary">
               {transcript.unknownThread} turn(s) with an unknown thread appear
-              only in Whole channel.
+              only in the whole channel.
             </p>
           )}
         </>
@@ -375,47 +398,39 @@ export function ActivityDetails({
               />
               <code className="break-all font-mono text-mono">{agent}</code>
               <Select
-                label="Channel"
-                value={channelId}
+                label="Conversation"
+                value={conversation}
                 groups={[
                   {
                     label: "Activity scope",
                     options: [
                       {
                         value: "",
-                        label: "All channels (including unscoped records)",
+                        label: "All conversations (including unscoped records)",
                       },
-                      ...channelChoices.map((id) => ({
-                        value: id,
-                        label: `${channels.find((channel) => channel.id === id)?.name ?? "Channel"} · ${id}`,
-                      })),
                     ],
                   },
+                  ...channelChoices.map((id) => ({
+                    label: channelName(id),
+                    options: [
+                      {
+                        value: id,
+                        label: `${channelName(id)} · whole channel, including threads`,
+                      },
+                      ...[...threads]
+                        .filter(([key]) => key.startsWith(`${id} `))
+                        .map(([key, label]) => ({
+                          value: key,
+                          label: `${channelName(id)} › ${label}`,
+                        })),
+                    ],
+                  })),
                 ]}
-                onValueChange={(id) => {
-                  selectChannel(id);
+                onValueChange={(value) => {
+                  selectConversation(value);
                   expand([]);
                 }}
               />
-              {thread && (
-                <Select
-                  label="Conversation"
-                  value={threadScope ? "thread" : "channel"}
-                  groups={[
-                    {
-                      label: "Conversation context",
-                      options: [
-                        { value: "thread", label: "This thread" },
-                        {
-                          value: "channel",
-                          label: "Whole channel, including threads",
-                        },
-                      ],
-                    },
-                  ]}
-                  onValueChange={(value) => setThreadScope(value === "thread")}
-                />
-              )}
               <p role="status">
                 {working
                   ? `${working} observed working turn(s).`

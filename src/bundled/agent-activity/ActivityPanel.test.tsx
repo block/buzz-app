@@ -133,12 +133,13 @@ it("shows a thread transcript and switches to the whole channel", async () => {
   expect(within(panel).getByText("Check CI first.")).toBeVisible();
   expect(within(panel).getByText("Build is green.")).toBeVisible();
 
-  // Whole channel shows both conversations, each labeled.
+  // Threads are named by their first prompt; the whole channel shows both
+  // conversations, each labeled.
+  const scope = within(panel).getByRole("combobox", { name: "Conversation" });
+  expect(scope).toHaveTextContent(/^#alpha › .+ · fix the build$/);
+  await user.click(scope);
   await user.click(
-    within(panel).getByRole("combobox", { name: "Conversation" }),
-  );
-  await user.click(
-    await screen.findByRole("option", { name: /Whole channel/ }),
+    await screen.findByRole("option", { name: /^#alpha · whole channel/ }),
   );
   expect(within(panel).getAllByText("channel question")[0]).toBeVisible();
   expect(within(panel).getByText(/Channel conversation/)).toBeVisible();
@@ -204,7 +205,8 @@ it("hides Pi's startup banner and shows session config and edit diffs", async ()
   );
   const user = userEvent.setup();
   const panel = screen.getByRole("region", { name: "Agent activity" });
-  expect(within(panel).getByText(/^New session · .* · opus$/)).toBeVisible();
+  expect(within(panel).getByText(/^Turn · .* · opus$/)).toBeVisible();
+  expect(within(panel).getByText("· new session")).toBeVisible();
   // Pi's repeated startup banner is not presented as the agent's reply.
   expect(within(panel).queryByText("pi v1 banner")).toBeNull();
   expect(within(panel).getByText("/notes.md")).toBeVisible();

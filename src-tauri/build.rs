@@ -97,6 +97,7 @@ fn main() {
             "agent_control_create_authorize",
             "agent_control_create_commit",
             "agent_control_creation_profile",
+            "agent_control_snapshot_memory_write",
             "agent_control_snapshot",
             "agent_control_log_challenge",
             "agent_control_read_log",

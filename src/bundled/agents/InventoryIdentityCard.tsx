@@ -44,6 +44,7 @@ export function InventoryIdentityCard({
   sourceProfiles,
   edit,
   duplicate,
+  onExport,
   remove,
   removeRelay,
   archive,
@@ -67,6 +68,7 @@ export function InventoryIdentityCard({
   sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
+  onExport?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   /** Undefined when this connection cannot remove relay-only agents. */
   removeRelay?:
@@ -181,6 +183,7 @@ export function InventoryIdentityCard({
         }
         onEdit={setups.length ? edit : undefined}
         onDuplicate={setups.length ? duplicate : undefined}
+        onExport={setups.length ? onExport : undefined}
         onDelete={setups.length ? remove : undefined}
         archived={!!archive?.archived}
         archive={

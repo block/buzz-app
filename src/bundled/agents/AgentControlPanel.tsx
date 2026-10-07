@@ -25,6 +25,8 @@ import { relayOrigin } from "../../features/communities/destination";
 import { AgentImport } from "./AgentImport";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
+import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
+import type { RelaySession } from "../../features/relay/session";
 import "./AgentControls.css";
 
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
@@ -39,7 +41,9 @@ export function AgentControlPanel({
   onCloseTarget,
   onOpenHarnesses,
   headerActions,
+  session,
 }: {
+  session?: RelaySession | undefined;
   headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
@@ -62,6 +66,7 @@ export function AgentControlPanel({
       source?: ImportSource,
     ) => void,
     onImport: (pubkey: string, source?: ImportSource) => void,
+    onExport: (agent: AgentView) => void,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
@@ -105,6 +110,8 @@ export function AgentControlPanel({
     avatar?: string;
   } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [importingSnapshot, setImportingSnapshot] = useState(false);
   const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
     if (editTarget) onCloseTarget?.();
@@ -234,21 +241,32 @@ export function AgentControlPanel({
     />
   ) : null;
   const createButton = (
-    <Button
-      variant="subtle"
-      size="sm"
-      aria-haspopup="dialog"
-      disabled={localPending}
-      onClick={() =>
-        setAdding({
-          destination: importDestination,
-          owner: createOwner ?? "",
-        })
-      }
-    >
-      <PlusIcon size={16} aria-hidden="true" />
-      Create agent
-    </Button>
+    <div className="flex items-center gap-2">
+      {control.create && (
+        <Button
+          variant="subtle"
+          size="sm"
+          onClick={() => setImportingSnapshot(true)}
+        >
+          Import agent snapshot
+        </Button>
+      )}
+      <Button
+        variant="subtle"
+        size="sm"
+        aria-haspopup="dialog"
+        disabled={localPending}
+        onClick={() =>
+          setAdding({
+            destination: importDestination,
+            owner: createOwner ?? "",
+          })
+        }
+      >
+        <PlusIcon size={16} aria-hidden="true" />
+        Create agent
+      </Button>
+    </div>
   );
   return (
     <section
@@ -310,6 +328,7 @@ export function AgentControlPanel({
             });
             setImportSections(["old-buzz"]);
           },
+          (agent) => setExporting(agent.id),
         )
       ) : (
         <div className="agent-grid">
@@ -321,6 +340,7 @@ export function AgentControlPanel({
               editable={[agent]}
               onEdit={edit}
               onDuplicate={duplicate}
+              onExport={(agent) => setExporting(agent.id)}
               onDelete={control.delete ? remove : undefined}
             />
           ))}
@@ -439,6 +459,25 @@ export function AgentControlPanel({
             </Dialog.Popup>
           </Dialog.Portal>
         </Dialog.Root>
+      )}
+      {importingSnapshot && (
+        <AgentSnapshotImport
+          control={control}
+          destination={importDestination}
+          owner={createOwner ?? ""}
+          onClose={() => setImportingSnapshot(false)}
+        />
+      )}
+      {state.data?.agents.map((agent) =>
+        agent.id === exporting ? (
+          <AgentSnapshotExport
+            key={agent.id}
+            agent={agent}
+            session={session}
+            destination={importDestination}
+            onClose={() => setExporting(null)}
+          />
+        ) : null,
       )}
       {adding && (
         <AgentCreateDialog

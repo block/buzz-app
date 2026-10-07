@@ -93,15 +93,24 @@ impl Secret {
         tags: Vec<Vec<String>>,
         previous: Option<u64>,
     ) -> Result<serde_json::Value> {
-        use secp256k1::Keypair;
-        use serde_json::json;
-        use sha2::{Digest, Sha256};
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "System clock is unavailable")?
             .as_secs();
         // NIP-01 ties choose the lower event ID. A replacement must be newer.
         let created_at = previous.map_or(created_at, |at| created_at.max(at.saturating_add(1)));
+        self.sign_event_at(kind, content, tags, created_at)
+    }
+    fn sign_event_at(
+        &self,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+        created_at: u64,
+    ) -> Result<serde_json::Value> {
+        use secp256k1::Keypair;
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
         let serialized =
             serde_json::to_vec(&json!([0, self.pubkey, created_at, kind, tags, content]))
                 .map_err(|_| "Could not encode agent event")?;
@@ -117,6 +126,71 @@ impl Secret {
         Ok(
             json!({"id": format!("{hash:x}"), "pubkey": self.pubkey, "created_at": created_at,
             "kind": kind, "tags": tags, "content": content, "sig": signature}),
+        )
+    }
+
+    /// A single NIP-AE owner-addressed memory event. Never return key material.
+    pub fn memory_event(
+        &self,
+        owner: &str,
+        slug: &str,
+        body: &str,
+        created_at: u64,
+    ) -> Result<serde_json::Value> {
+        use hmac::{Hmac, Mac};
+        use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
+        use nostr::nips::nip44::v2;
+        use nostr::nips::nip44::v2::ConversationKey;
+        use sha2::Sha256;
+        if !crate::config::canonical_key(owner)
+            || !(slug == "core"
+                || (slug.starts_with("mem/")
+                    && slug.len() <= 255
+                    && slug[4..].split('/').all(|part| {
+                        !part.is_empty()
+                            && part.len() <= 64
+                            && part.bytes().enumerate().all(|(i, byte)| {
+                                if i == 0 {
+                                    byte.is_ascii_lowercase() || byte.is_ascii_digit()
+                                } else {
+                                    byte.is_ascii_lowercase()
+                                        || byte.is_ascii_digit()
+                                        || byte == b'_'
+                                        || byte == b'-'
+                                }
+                            })
+                    })))
+            || body.len() > 64 * 1024
+        {
+            return Err("Invalid snapshot memory entry".into());
+        }
+        let private =
+            NostrSecretKey::from_slice(self.bytes.as_ref()).map_err(|_| "Invalid agent key")?;
+        let public = NostrPublicKey::from_hex(owner).map_err(|_| "Invalid memory owner")?;
+        let conversation =
+            ConversationKey::derive(&private, &public).map_err(|_| "Invalid memory owner")?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(conversation.as_bytes())
+            .map_err(|_| "Invalid memory address")?;
+        mac.update(b"agent-memory/v1/d-tag\0");
+        mac.update(slug.as_bytes());
+        let address = format!("{:x}", mac.finalize().into_bytes());
+        let plaintext = if slug == "core" {
+            serde_json::json!({"slug":slug,"profile":body})
+        } else {
+            serde_json::json!({"slug":slug,"value":body})
+        };
+        let mut nonce = [0; 32];
+        getrandom::fill(&mut nonce).map_err(|_| "Could not encrypt snapshot memory")?;
+        let encrypted = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            v2::encrypt_to_bytes_with_nonce(&conversation, plaintext.to_string().as_bytes(), nonce)
+                .map_err(|_| "Could not encrypt snapshot memory")?,
+        );
+        self.sign_event_at(
+            30174,
+            encrypted,
+            vec![vec!["d".into(), address], vec!["p".into(), owner.into()]],
+            created_at,
         )
     }
 
@@ -235,4 +309,65 @@ pub(crate) fn test_attestation(agent: &str) -> String {
         &sig.to_string(),
     ])
     .unwrap()
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use nostr::{
+        key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey},
+        nips::nip44::v2::{self, ConversationKey},
+    };
+    use sha2::Sha256;
+    #[test]
+    fn owner_can_decrypt_new_agent_memory_without_exposing_a_key() {
+        let agent = Secret::generate().unwrap();
+        let owner = Secret::generate().unwrap();
+        let owner_key = NostrSecretKey::from_slice(owner.bytes.as_ref()).unwrap();
+        let agent_key = NostrPublicKey::from_hex(agent.pubkey()).unwrap();
+        let conversation = ConversationKey::derive(&owner_key, &agent_key).unwrap();
+        for (slug, body, field) in [
+            ("core", "remember café", "profile"),
+            ("mem/one", "value", "value"),
+        ] {
+            let event = agent.memory_event(owner.pubkey(), slug, body, 100).unwrap();
+            assert_eq!(event["kind"], 30174);
+            assert_eq!(event["pubkey"], agent.pubkey());
+            assert_eq!(event["tags"][1], serde_json::json!(["p", owner.pubkey()]));
+            let mut mac = Hmac::<Sha256>::new_from_slice(conversation.as_bytes()).unwrap();
+            mac.update(b"agent-memory/v1/d-tag\0");
+            mac.update(slug.as_bytes());
+            assert_eq!(
+                event["tags"][0],
+                serde_json::json!(["d", format!("{:x}", mac.finalize().into_bytes())])
+            );
+            let ciphertext = Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                event["content"].as_str().unwrap(),
+            )
+            .unwrap();
+            let decoded: serde_json::Value =
+                serde_json::from_slice(&v2::decrypt_to_bytes(&conversation, &ciphertext).unwrap())
+                    .unwrap();
+            assert_eq!(decoded[field], body);
+            assert_eq!(decoded["slug"], slug);
+            assert!(!event.to_string().contains(body));
+            assert!(!event.to_string().contains("nsec1"));
+        }
+    }
+    #[test]
+    fn invalid_memory_never_builds_an_event() {
+        let agent = Secret::generate().unwrap();
+        let owner = Secret::generate().unwrap();
+        for slug in ["mem/", "mem/../x", "mem/UPPER", "other"] {
+            assert!(agent
+                .memory_event(owner.pubkey(), slug, "text", 100)
+                .is_err());
+        }
+        assert!(agent
+            .memory_event(owner.pubkey(), "core", &"x".repeat(65537), 100)
+            .is_err());
+    }
 }

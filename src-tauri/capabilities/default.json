@@ -67,6 +67,7 @@
     "allow-agent-control-create-authorize",
     "allow-agent-control-create-commit",
     "allow-agent-control-creation-profile",
+    "allow-agent-control-snapshot-memory-write",
     "allow-agent-control-snapshot",
     "allow-agent-control-log-challenge",
     "allow-agent-control-read-log",

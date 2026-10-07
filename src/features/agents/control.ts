@@ -224,6 +224,10 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?(
+    id: string,
+    entries: readonly { slug: string; body: string }[],
+  ): Promise<{ written: number; errors: string[] }>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -289,6 +293,7 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -548,6 +553,7 @@ export function createAgentControl(
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
   const checkClaudeAuth = host?.checkClaudeAuth;
+  const writeSnapshotMemory = host?.writeSnapshotMemory;
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
@@ -626,6 +632,23 @@ export function createAgentControl(
                 return native.publishProfile(id);
               },
               ready,
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(writeSnapshotMemory
+      ? {
+          writeSnapshotMemory: (
+            id: string,
+            entries: readonly { slug: string; body: string }[],
+          ) =>
+            run(
+              () => writeSnapshotMemory(id, entries),
+              () => {
+                if (state.data) ready(state.data);
+              },
               false,
               undefined,
               true,

@@ -1544,6 +1544,103 @@ async fn publish_acquired(
     .await
 }
 
+/// Restore only owner-addressed snapshot memory to this saved native identity.
+#[tauri::command]
+pub(crate) async fn agent_control_snapshot_memory_write(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    entries: Vec<SnapshotMemoryEntry>,
+) -> Result<MemoryWriteResult, String> {
+    if entries.len() > 128
+        || entries.iter().any(|entry| entry.body.len() > 64 * 1024)
+        || entries.iter().map(|entry| entry.body.len()).sum::<usize>() > 1024 * 1024
+    {
+        return Err("Snapshot memory exceeds the import limit".into());
+    }
+    let mut slugs = BTreeSet::new();
+    if entries.iter().any(|entry| !slugs.insert(&entry.slug)) {
+        return Err("Duplicate snapshot memory slug".into());
+    }
+    let owner = state.inner().clone();
+    let target = id.clone();
+    let (profile, credentials) = run(owner.clone(), move |host| {
+        let profile = host.controller.memory_target(&target)?;
+        Ok((profile, host.credentials.clone()))
+    })
+    .await?;
+    let key = tauri::async_runtime::spawn_blocking(move || {
+        credentials.retry();
+        credentials
+            .read(&profile.credential_id, &profile.pubkey)
+            .map(|key| (profile, key))
+    })
+    .await
+    .map_err(|_| "Native credential operation failed")??;
+    let (profile, key) = key;
+    let key = key.ok_or("Agent key unavailable")?;
+    if profile.pubkey != key.pubkey() {
+        return Err("Agent key changed".into());
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Memory client unavailable")?;
+    let mut written = 0;
+    let mut errors = Vec::new();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "System clock is unavailable")?
+        .as_secs();
+    let owner_key: Vec<String> =
+        serde_json::from_str(&profile.auth).map_err(|_| "Invalid owner authorization")?;
+    if owner_key.len() < 2 {
+        return Err("Invalid owner authorization".into());
+    }
+    for entry in &entries {
+        if let Err(error) = owner.ensure_open().await {
+            errors.push(format!("{}: {error}", entry.slug));
+            break;
+        }
+        // Save/Delete or replacement invalidates custody before the next send.
+        let target = id.clone();
+        let expected = profile.pubkey.clone();
+        if let Err(error) = run(owner.clone(), move |host| {
+            let current = host.controller.memory_target(&target)?;
+            if current.pubkey != expected || current.revision != profile.revision {
+                return Err("Agent identity changed".into());
+            }
+            Ok(())
+        })
+        .await
+        {
+            errors.push(format!("{}: {error}", entry.slug));
+            break;
+        }
+        let result = key.memory_event(&owner_key[1], &entry.slug, &entry.body, now);
+        match result {
+            Ok(event) => match profile_http::publish_memory(&client, &profile, &key, event).await {
+                Ok(()) => written += 1,
+                Err(error) => errors.push(format!("{}: {error}", entry.slug)),
+            },
+            Err(error) => errors.push(format!("{}: {error}", entry.slug)),
+        }
+    }
+    Ok(MemoryWriteResult { written, errors })
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SnapshotMemoryEntry {
+    slug: String,
+    body: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MemoryWriteResult {
+    written: usize,
+    errors: Vec<String>,
+}
+
 mod profile_http;
 
 #[cfg(test)]

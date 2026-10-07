@@ -44,6 +44,7 @@ export function UnifiedInventory({
   client,
   edit,
   duplicate,
+  onExport,
   remove,
   importedId,
   resolveProfile,
@@ -61,6 +62,7 @@ export function UnifiedInventory({
   client?: ClientSnapshot | undefined;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
+  onExport?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   importedId: string | null;
   resolveProfile?: ProfileResolver | undefined;
@@ -310,6 +312,7 @@ export function UnifiedInventory({
       sourceProfiles={sourceProfiles}
       edit={edit}
       duplicate={duplicate}
+      onExport={onExport}
       remove={remove}
       removeRelay={removeRelay}
       archive={

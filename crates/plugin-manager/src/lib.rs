@@ -169,6 +169,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/agents2/manifest.json"))
+            .expect("agents2 manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/responder/manifest.json"))
+            .expect("responder manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
@@ -510,6 +514,8 @@ impl Manager {
                                 | "buzz.inbox"
                                 | "buzz.projects"
                                 | "buzz.agents"
+                                | "buzz.agents2"
+                                | "buzz.responder"
                                 | "buzz.workflows"
                                 | "buzz.sessions"
                                 | "block.hosted-communities"

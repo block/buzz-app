@@ -721,12 +721,26 @@ it("describes click zoom and resets it when the gallery changes image", () => {
   ).toHaveAccessibleDescription("Click the image to zoom.");
 });
 
-it("does not zoom the next gallery image with a press held across navigation", () => {
+it("does not zoom any gallery image with a press held across navigation", () => {
   gallery();
   const image = screen.getByRole("img", { name: "Attachment preview" });
   const stage = image.parentElement;
   if (!stage) throw new Error("Missing stage");
   fireEvent.pointerDown(image, { pointerId: 1, button: 0 });
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("2 / 3")).toBeVisible();
+  fireEvent.pointerUp(stage, { pointerId: 1 });
+  expect(percent()).toBe("100%");
+  // Returning to the original image does not revive the stale press.
+  fireEvent.pointerDown(
+    screen.getByRole("img", { name: "Attachment preview" }),
+    {
+      pointerId: 1,
+      button: 0,
+    },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+  expect(screen.getByText("1 / 3")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(screen.getByText("2 / 3")).toBeVisible();
   fireEvent.pointerUp(stage, { pointerId: 1 });

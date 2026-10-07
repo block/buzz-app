@@ -3,7 +3,14 @@ import { MIN_ZOOM, useImageViewport } from "./use-image-viewport";
 import { useMediaControls } from "./use-media-controls";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowSquareOutIcon,
   CaretLeftIcon,
@@ -54,9 +61,9 @@ export function ImageReviewStage({
         pointer: number;
         origin: Point;
         offset: Point;
-        source: string | undefined;
         panning: boolean;
-        // Cleared by pointer travel, a second contact, or pressing off the image.
+        // Cleared by pointer travel, a second contact, pressing off the image, or a
+        // source change during the press.
         click: boolean;
       }
     | undefined
@@ -69,6 +76,12 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  // A press that outlives its image must not zoom any later one, even when
+  // navigation returns to the same source.
+  useLayoutEffect(() => {
+    void source;
+    if (press.current) press.current.click = false;
+  }, [source]);
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const [downloadErrorSource, setDownloadErrorSource] = useState<string>();
@@ -233,7 +246,6 @@ export function ImageReviewStage({
           pointer: event.pointerId,
           origin: { x: event.clientX, y: event.clientY },
           offset,
-          source,
           panning: pannable,
           click: event.target === image.current,
         };
@@ -256,9 +268,7 @@ export function ImageReviewStage({
         press.current = undefined;
         setDragging(false);
         event.currentTarget.releasePointerCapture(event.pointerId);
-        // A press that outlived its image must not zoom the replacement.
-        if (active.click && active.source === source)
-          toggleZoomAt(event.clientX, event.clientY);
+        if (active.click) toggleZoomAt(event.clientX, event.clientY);
       }}
       onLostPointerCapture={(event) => {
         if (press.current?.pointer !== event.pointerId) return;

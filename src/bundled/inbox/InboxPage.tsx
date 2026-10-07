@@ -280,7 +280,12 @@ export function InboxView({
   const active = useRef(false);
   const busy = useRef(false);
   const failedMutation = useRef<
-    { work: () => Promise<unknown>; valid: () => boolean } | undefined
+    | {
+        work: () => Promise<unknown>;
+        valid: () => boolean;
+        onSuccess: (() => void) | undefined;
+      }
+    | undefined
   >(undefined);
   const intentRevision = useRef(0);
   function cancelRetry() {
@@ -478,21 +483,27 @@ export function InboxView({
       fallbackControl.current?.querySelector<HTMLElement>('[role="combobox"]')
     )?.focus({ preventScroll: true });
   });
-  async function run(work: () => Promise<unknown>, valid?: () => boolean) {
+  async function run(
+    work: () => Promise<unknown>,
+    valid?: () => boolean,
+    onSuccess?: () => void,
+  ) {
     if (!active.current || busy.current) return;
     busy.current = true;
     setPending(true);
     failedMutation.current = undefined;
+    let succeeded = false;
     try {
       if (valid && !valid())
         throw new Error(
           "Inbox action expired. Close and reopen the conversation.",
         );
       await work();
+      succeeded = true;
       if (active.current) setError(undefined);
     } catch (cause) {
       if (active.current) {
-        if (valid?.()) failedMutation.current = { work, valid };
+        if (valid?.()) failedMutation.current = { work, valid, onSuccess };
         setError(
           cause instanceof Error
             ? cause.message
@@ -503,6 +514,8 @@ export function InboxView({
       busy.current = false;
       if (active.current) setPending(false);
     }
+    // Follow-up reads must run after the mutation releases the busy guard, on Retry too.
+    if (succeeded && active.current) onSuccess?.();
   }
   function refresh(retrySync = false) {
     void run(async () => {
@@ -543,20 +556,24 @@ export function InboxView({
       : undefined;
     const open = item.id === selectedId;
     let advanced: InboxItem | undefined;
-    void run(async () => {
-      updateArchive(archiveScope, item, value);
-      setMenu(undefined);
-      if (!leaves) return;
-      if (open && next) {
-        advanced = next;
-        setSelectedTarget(targetOf(next));
-      } else if (open) {
-        setRestoringFocus(true);
-        setSelectedTarget(undefined);
-      } else focusRow.current = next?.id ?? "";
-    }, valid).then(() => {
-      if (advanced && hasUnread(advanced) && canRead) mutate(advanced, false);
-    });
+    void run(
+      async () => {
+        updateArchive(archiveScope, item, value);
+        setMenu(undefined);
+        if (!leaves) return;
+        if (open && next) {
+          advanced = next;
+          setSelectedTarget(targetOf(next));
+        } else if (open) {
+          setRestoringFocus(true);
+          setSelectedTarget(undefined);
+        } else focusRow.current = next?.id ?? "";
+      },
+      valid,
+      () => {
+        if (advanced && hasUnread(advanced) && canRead) mutate(advanced, false);
+      },
+    );
   }
   function mutate(item: InboxItem, unread: boolean) {
     // An open menu is not authority: recheck the current session at action entry.
@@ -635,7 +652,7 @@ export function InboxView({
     setError(failure);
     const mutation = failedMutation.current;
     if (mutation) {
-      void run(mutation.work, mutation.valid);
+      void run(mutation.work, mutation.valid, mutation.onSuccess);
       return;
     }
     refresh(true);

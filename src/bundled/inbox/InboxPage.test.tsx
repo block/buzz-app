@@ -316,6 +316,46 @@ it("keeps the conversation visible and reports a failed archive save", async () 
     screen.getByRole("region", { name: "Inbox detail" }),
   ).toBeInTheDocument();
 });
+it("archive Retry advances detail and saves the next conversation's read frontier", async () => {
+  const h = fixture();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const thread = rows().find((row) =>
+    row.textContent?.includes("A thread update"),
+  );
+  if (!thread) throw new Error("Missing fixture thread row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Archive conversation" }),
+    ).toBeEnabled(),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
+  const save = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("inbox:archives")) throw new Error("disk full");
+      save.call(this, key, value);
+    });
+  fireEvent.click(screen.getByRole("button", { name: "Archive conversation" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not save the Inbox archive",
+  );
+  expect(rows()).toHaveLength(2);
+  expect(thread).toHaveAttribute("data-selected");
+  storage.mockRestore();
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  expect(
+    screen.getByRole("region", { name: "Inbox detail" }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
+  );
+});
+
 function fixture(
   options: {
     failRoster?: boolean;

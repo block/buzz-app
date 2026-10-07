@@ -126,7 +126,8 @@ it("keeps history omitted by cached discovery, reveals it only after signed chan
     );
     update.mockClear();
     await expect(owner.clearCache()).rejects.toThrow("disk unavailable");
-    expect(update).toHaveBeenCalledWith([], []);
+    // Discovery resumed after the revocation, so alpha is verified, not cached.
+    expect(update).toHaveBeenCalledWith(["alpha"], ["alpha"]);
     expect(saved).toHaveLength(1);
     await owner.clearCache();
     expect(saved).toEqual([]);

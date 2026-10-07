@@ -373,6 +373,7 @@ export function TemplateLibrary({
           <TeamShareDialog
             session={session}
             control={control}
+            kit={kit}
             team={sharing}
             onClose={() => setSharing(undefined)}
           />

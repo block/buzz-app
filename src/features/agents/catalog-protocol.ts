@@ -188,6 +188,9 @@ export interface CatalogTeamSource {
   id: string;
   name: string;
   agents: readonly string[];
+  /** From the team's saved portable definition, when it has one. */
+  description?: string | null | undefined;
+  instructions?: string | null | undefined;
 }
 
 export async function teamCatalogContent(
@@ -211,6 +214,23 @@ export async function teamCatalogContent(
     fail(
       `team too large to share: ${team.agents.length} members (limit ${MAX_TEAM_MEMBERS})`,
     );
+  const text: Record<string, string> = {};
+  for (const [field, value, max] of [
+    ["description", team.description, MAX_TEAM_TEXT_BYTES],
+    ["instructions", team.instructions, MAX_MEMBER_PROMPT_BYTES],
+  ] as const) {
+    const shown = optionalText(value);
+    if (!shown) continue;
+    if (bytes(shown) > max)
+      fail(
+        `team too large to share: the team ${field} is ${bytes(shown)} bytes (limit ${max})`,
+      );
+    if (!visibleText(shown, true))
+      fail(
+        `the team ${field} contains prohibited invisible or formatting characters`,
+      );
+    text[field] = shown;
+  }
   const projected = [];
   for (const pubkey of team.agents) {
     const agent = members.find((member) => member.pubkey === pubkey);
@@ -231,6 +251,7 @@ export async function teamCatalogContent(
   const content = JSON.stringify({
     v: TEAM_CATALOG_VERSION,
     name: team.name,
+    ...text,
     members: projected,
   });
   if (bytes(content) > MAX_CONTENT_BYTES) fail("team too large to share");

@@ -97,6 +97,36 @@ describe("team projection", () => {
     expect(plain.members[0]).not.toHaveProperty("session_policy");
   });
 
+  it("carries saved team text and refuses text the parser would reject", async () => {
+    const team = { id: "t1", name: "Crew", agents: [owner] };
+    const body = JSON.parse(
+      await teamCatalogContent(
+        { ...team, description: "Ships.", instructions: "Be brief." },
+        [member],
+      ),
+    );
+    expect(body).toMatchObject({
+      description: "Ships.",
+      instructions: "Be brief.",
+    });
+    const plain = JSON.parse(
+      await teamCatalogContent(
+        { ...team, description: null, instructions: " " },
+        [member],
+      ),
+    );
+    expect(plain).not.toHaveProperty("description");
+    expect(plain).not.toHaveProperty("instructions");
+    await expect(
+      teamCatalogContent({ ...team, description: "a\u202eb" }, [member]),
+    ).rejects.toThrow("the team description contains prohibited");
+    await expect(
+      teamCatalogContent({ ...team, instructions: "x".repeat(16 * 1024 + 1) }, [
+        member,
+      ]),
+    ).rejects.toThrow("team too large to share: the team instructions");
+  });
+
   it("fails rather than publishing a partial team", async () => {
     await expect(
       teamCatalogContent(

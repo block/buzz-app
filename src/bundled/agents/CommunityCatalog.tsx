@@ -18,6 +18,8 @@ import {
   type TeamPublication,
 } from "../../features/agents/catalog-protocol";
 import { importTeamSnapshot } from "../../features/agents/team-import";
+import type { ChannelKit } from "../../features/channel-templates/capability";
+import type { Team } from "../../features/channel-templates/model";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySession } from "../../features/relay/session";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -194,17 +196,36 @@ export function AgentShareSwitch({
   );
 }
 
+/** The team's saved portable metadata, read and validated through the same
+ * owners Export and Deploy use. A team that has a portable definition
+ * refuses to share without it rather than publishing a lossy copy. */
+async function portableTeamText(
+  kit: Pick<ChannelKit, "loadTeam">,
+  control: AgentControl,
+  team: Team,
+) {
+  if (!team.portable) return {};
+  const loaded = await kit.loadTeam(team);
+  if (!control.previewTeam) throw new Error("Team preview is unavailable");
+  const { description, instructions } = (
+    await control.previewTeam(JSON.stringify(loaded))
+  ).team;
+  return { description, instructions };
+}
+
 /** A saved team's catalog switch. Its members are projected from this
  * community's local agent definitions when sharing, never from relay data. */
 export function TeamShareDialog({
   session,
   control,
+  kit,
   team,
   onClose,
 }: {
   session: RelaySession;
   control: AgentControl;
-  team: { id: string; name: string; agents: readonly string[] };
+  kit: Pick<ChannelKit, "loadTeam">;
+  team: Team;
   onClose(): void;
 }) {
   return (
@@ -221,9 +242,9 @@ export function TeamShareDialog({
         d={team.id}
         name={team.name}
         description={teamShareDescription}
-        content={() =>
+        content={async () =>
           teamCatalogContent(
-            team,
+            { ...team, ...(await portableTeamText(kit, control, team)) },
             sameCommunityAgents(
               control.snapshot().data?.agents ?? [],
               session.scope,

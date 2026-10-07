@@ -592,12 +592,14 @@ it.each(["events", "bytes"] as const)(
     h.live.receive([...roots, ...incoming]);
     const candidates = rows(h);
     const newest = candidates[0],
-      older = candidates[1];
-    if (!newest || !older) throw new Error("Missing fixture conversations");
+      older = candidates[1],
+      target = incoming[0];
+    if (!newest || !older || !target)
+      throw new Error("Missing fixture conversations");
     // Already-verified DTOs isolate the shared retention budget from signing/folding.
     const count = budget === "events" ? 2001 : 9;
     const edits = Array.from({ length: count }, (_, index) => ({
-      ...incoming[0],
+      ...target,
       id: (index + 1).toString(16).padStart(64, "0"),
       pubkey: h.alice.pubkey,
       sig: "",
@@ -616,10 +618,10 @@ it.each(["events", "bytes"] as const)(
       viewer: h.viewer.pubkey,
       channels: h.session.channels,
       reader: {
-        read: vi.fn(async (filters: readonly ReadFilter[]) =>
-          edits
-            .filter((event) => matchesEvent(event, filters[0] ?? {}))
-            .slice(0, 500),
+        read: vi.fn(async ([filter]: readonly ReadFilter[]) =>
+          filter
+            ? edits.filter((event) => matchesEvent(event, filter)).slice(0, 500)
+            : [],
         ),
       },
       async addressedRead(_filter, _signal, prepare) {

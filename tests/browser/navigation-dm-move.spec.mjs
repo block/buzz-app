@@ -51,6 +51,7 @@ test("Move conversation saves a DM in a section and restores it there after relo
       exact: true,
     }),
   ).toHaveAttribute("aria-checked", "true");
+  await page.screenshot({ path: test.info().outputPath("dm-move-menu.png") });
 
   const starSaved = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/sidebar-star"),

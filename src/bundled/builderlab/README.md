@@ -29,6 +29,31 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   creations; **Retry community setup** reuses a pending publication without
   registering or attesting again. Personal space skips relay registration.
   Creation never adds channel membership.
+  **Delete agent** confirms owner-signed kind-5 deletion of the selected
+  community's registration, refreshes discovery, then deletes the runtime through
+  Beekeeper. Personal space only deletes from Beekeeper. Failure leaves the row
+  available for manual retry; an already-missing Beekeeper agent counts as success.
+  Account-scoped deletion tombstones (`buzz.builderlab.deletion.v1:`) persist to
+  fence new enrollment after restart or in another community. They contain only
+  server/account scope and agent pubkey. Standard Web Locks, also used by the
+  app's read-state sync, order registration and deletion
+  for the same scope across app windows; deletion waits for an issued registration
+  attempt to settle, even when its caller cancels. Setup requires Web Locks.
+  Successful deletion retires failed or confirmed registration receipts.
+  Deletion does not archive identities, remove channel memberships, erase history,
+  or clean registrations in other communities.
+
+Deletion follow-ups requiring shared relay/outbox support:
+
+- Relay acceptance alone does not prove coordinate absence: clock skew can leave
+  a newer registration advertised after the runtime is deleted. A fresh strong
+  relay-only read is needed; `session.read()` includes local evidence. Failed
+  discovery reads currently stop backend deletion, but are not absence proof.
+- Web Locks do not cover other devices or survive process exit. A request whose
+  delivery becomes unknown may arrive after its lock is released. The tombstone
+  fences later admission, not that issued request; durable reconciliation is
+  needed to compensate late arrival. Unknown registration receipts are retained
+  because the shared outbox cannot safely retire them, and still consume a slot.
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

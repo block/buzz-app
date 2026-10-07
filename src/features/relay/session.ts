@@ -649,7 +649,8 @@ export function createRelaySession(
     notify,
   );
   const communityCatalog = createCommunityCatalog({
-    reader: transport && !options.cachedOnly ? requests.reader : undefined,
+    // Verified reads reconcile fetched heads with the outbox journal.
+    reader: transport && !options.cachedOnly ? verified : undefined,
     viewer: transport?.viewer ?? "",
     outbox: writes?.outbox,
     local: writes?.local,

@@ -45,7 +45,10 @@ export interface Outbox {
   supports(kind: number): boolean;
   ready(): Promise<void>;
   send(
-    input: Pick<EventTemplate, "kind" | "content" | "tags">,
+    input: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+      /** NIP-AP: created_at of the newest observed head this event replaces. */
+      supersedes?: number;
+    },
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
@@ -626,7 +629,12 @@ export function createOutbox(
       await persist(id, "acknowledge");
     },
     send(
-      input: Pick<EventTemplate, "kind" | "content" | "tags">,
+      {
+        supersedes,
+        ...input
+      }: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+        supersedes?: number;
+      },
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) {
@@ -689,8 +697,10 @@ export function createOutbox(
           );
       }
       if (input.kind === 30175 || input.kind === 30178) {
-        // NIP-AP: a catalog replacement supersedes this device's retained head
-        // even within one second, so share then unshare cannot tie.
+        // NIP-AP: max(now, head + 1) over the observed relay head and this
+        // device's retained writes, so a replacement can never lose or tie.
+        if (supersedes !== undefined)
+          createdAt = Math.max(createdAt, supersedes + 1);
         const d = input.tags.find(([name]) => name === "d")?.[1];
         for (const { event } of visible)
           if (

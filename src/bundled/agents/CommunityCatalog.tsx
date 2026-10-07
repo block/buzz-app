@@ -121,7 +121,15 @@ export function CatalogShareSwitch({
               delivery: change.delivery,
             })}
           </p>
-          {change.delivery === "accepted" && (
+          {change.stalled && (
+            <Button
+              size="compact"
+              onClick={() => catalog.retry(change.operation)}
+            >
+              Retry
+            </Button>
+          )}
+          {(change.delivery === "accepted" || change.stalled) && (
             <Button
               size="compact"
               variant="ghost"

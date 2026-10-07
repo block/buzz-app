@@ -235,11 +235,6 @@ export async function teamCatalogContent(
   return content;
 }
 
-/** NIP-AP writing: a replacement must supersede the head despite clock skew. */
-export function catalogCreatedAt(now: number, head?: { created_at: number }) {
-  return Math.max(now, (head?.created_at ?? 0) + 1);
-}
-
 /** The exact owner-to-self envelope the native signer admits. */
 export function catalogTemplate(
   kind: typeof AGENT_CATALOG_KIND | typeof TEAM_CATALOG_KIND,

@@ -28,6 +28,8 @@ export type CatalogShareState = Readonly<{
     operation: string;
     shared: boolean;
     delivery: CatalogDelivery;
+    /** Queued with no attempt in flight, e.g. restored after a restart. */
+    stalled?: true;
     error?: string;
   }>;
 }>;
@@ -46,6 +48,9 @@ function delivery(item: OutgoingEvent): CatalogDelivery {
       : "queued";
 }
 const confirmed = (item: OutgoingEvent) => delivery(item) === "accepted";
+/** NIP-33 head order: newer created_at, then the lower id. */
+const outranks = (a: EventData, b: EventData) =>
+  a.created_at > b.created_at || (a.created_at === b.created_at && a.id < b.id);
 const coordinate = (event: EventData) =>
   `${event.kind}:${event.pubkey}:${catalogD(event as RelayEvent) ?? ""}`;
 const isCatalog = (event: EventData) =>
@@ -79,6 +84,9 @@ export function createCommunityCatalog({
   const demands = new Set<object>();
   const listeners = new Set<() => void>();
   let ownHeads = new Map<string, EventData>();
+  // Relay-confirmed own heads, kept apart from the dismissible journal so
+  // dismissing a notice can never revive the head it replaced.
+  const confirmedHeads = new Map<string, RelayEvent>();
   let changes = new Map<string, OutgoingEvent>();
 
   function localCatalog() {
@@ -89,10 +97,13 @@ export function createCommunityCatalog({
   function build(): CommunityCatalogSnapshot {
     const items = localCatalog();
     // Relay-accepted local heads count immediately; the relay read catches up.
-    const accepted = items
-      .filter(confirmed)
-      .map((item) => (item.signed ?? item.event) as RelayEvent);
-    const heads = catalogHeads([...relayEvents, ...accepted]);
+    for (const item of items.filter(confirmed)) {
+      const event = (item.signed ?? item.event) as RelayEvent;
+      const key = coordinate(event);
+      const known = confirmedHeads.get(key);
+      if (!known || outranks(event, known)) confirmedHeads.set(key, event);
+    }
+    const heads = catalogHeads([...relayEvents, ...confirmedHeads.values()]);
     ownHeads = new Map(
       [...heads].filter(([, event]) => event.pubkey === viewer),
     );
@@ -100,13 +111,15 @@ export function createCommunityCatalog({
     for (const item of items) {
       const key = coordinate(item.event);
       const current = changes.get(key);
-      if (
-        !current ||
-        item.event.created_at > current.event.created_at ||
-        (item.event.created_at === current.event.created_at &&
-          item.event.id < current.event.id)
-      )
+      if (!current || outranks(item.event, current.event))
         changes.set(key, item);
+    }
+    // A change the observed head outranks is history, not a current notice:
+    // its delivery says nothing about what readers now find.
+    for (const [key, item] of changes) {
+      const head = heads.get(key);
+      if (head && head.id !== item.event.id && outranks(head, item.event))
+        changes.delete(key);
     }
     const agents: AgentPublication[] = [];
     const teams: TeamPublication[] = [];
@@ -199,6 +212,9 @@ export function createCommunityCatalog({
               operation: item.event.id,
               shared: isShared(item.event as RelayEvent),
               delivery: delivery(item),
+              ...(item.delivery === "unknown"
+                ? { stalled: true as const }
+                : {}),
               ...(item.error ? { error: item.error } : {}),
             }),
           }
@@ -240,6 +256,10 @@ export function createCommunityCatalog({
       ): string {
         if (closed || !outbox?.supports(kind))
           throw new Error("This community cannot update catalog sharing.");
+        // The replacement must outrank the relay's head, which only a
+        // completed read reveals on a fresh device.
+        if (status !== "ready")
+          throw new Error("The community catalog is still loading. Try again.");
         const key = `${kind}:${viewer}:${d}`;
         const body =
           content ??
@@ -248,7 +268,11 @@ export function createCommunityCatalog({
         if (body === undefined)
           throw new Error("Nothing has been shared from this coordinate.");
         const previous = changes.get(key);
-        const id = outbox.send(catalogTemplate(kind, d, body, shared));
+        const head = ownHeads.get(key);
+        const id = outbox.send({
+          ...catalogTemplate(kind, d, body, shared),
+          ...(head ? { supersedes: head.created_at } : {}),
+        });
         // The new head is newer, so a refused older change is only clutter.
         if (previous && delivery(previous) === "rejected")
           void outbox.dismiss(previous.event.id).catch(() => {});
@@ -266,6 +290,7 @@ export function createCommunityCatalog({
       controller = undefined;
       pending = undefined;
       relayEvents = [];
+      confirmedHeads.clear();
       status = closed || !reader ? "unavailable" : "idle";
       error = undefined;
       publish();
@@ -279,6 +304,7 @@ export function createCommunityCatalog({
       demands.clear();
       controller?.abort();
       relayEvents = [];
+      confirmedHeads.clear();
       status = "unavailable";
       publish();
       listeners.clear();

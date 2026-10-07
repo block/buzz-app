@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { RelayEvent } from "../relay/events.ts";
 import {
   agentCatalogContent,
-  catalogCreatedAt,
   catalogHeads,
   catalogTeamSnapshot,
   catalogTemplate,
@@ -219,11 +218,6 @@ describe("catalog writes", () => {
     expect(catalogTemplate(30178, "t1", "{}", false).tags).toEqual([
       ["d", "t1"],
     ]);
-  });
-
-  it("supersedes a future-dated head", () => {
-    expect(catalogCreatedAt(50, { created_at: 90 })).toBe(91);
-    expect(catalogCreatedAt(50)).toBe(50);
   });
 });
 

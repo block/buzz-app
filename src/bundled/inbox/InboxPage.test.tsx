@@ -55,6 +55,7 @@ afterEach(() => {
 function fixture(
   options: {
     failRoster?: boolean;
+    coldReply?: boolean;
     withDm?: boolean;
     withSenders?: boolean;
     holdProfiles?: boolean;
@@ -88,12 +89,24 @@ function fixture(
   const historyGates = new Map<string, Promise<void>>();
   let addressedGate: Promise<void> | undefined;
   let releaseAddressed = () => {};
+  let responseGate: Promise<void> | undefined;
+  let releaseResponses = () => {};
+  let responseStarted = false;
+  let failResponses = false;
   let failAux = false;
   let auxGate: Promise<void> | undefined;
   let releaseAux = () => {};
   const historyFailures = new Set<string>();
   const answer = (filter: ReadFilter): RelayEvent[] => {
-    const result = events.filter((event) => matchesEvent(event, filter));
+    const result = events.filter(
+      (event) =>
+        matchesEvent(event, filter) &&
+        !(
+          options.coldReply &&
+          event.content === "Already answered" &&
+          filter.since === undefined
+        ),
+    );
     if (filter.depth_limit) {
       return result
         .filter(
@@ -128,7 +141,7 @@ function fixture(
     }
     // The ordinary #p feed has no implicit include_aux. Exact #e pages
     // terminate only on empty even if visibility shortened an earlier page.
-    if (filter["#e"])
+    if (filter["#e"] || (filter["#h"] && filter.since !== undefined))
       return result
         .filter(
           (event) =>
@@ -182,6 +195,13 @@ function fixture(
     ...roots,
     mention,
     reply,
+    ...(options.coldReply
+      ? [
+          message(viewer, "room", "Already answered", 30, [
+            ["e", mention.id, "", "reply"],
+          ]),
+        ]
+      : []),
     ...(options.withDm
       ? [
           roster(relayKey, "dm-room", [viewer.pubkey, alice.pubkey], 10),
@@ -231,6 +251,18 @@ function fixture(
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
       query: async (filters) => {
+        if (
+          filters.some(
+            (filter) =>
+              filter.since !== undefined &&
+              filter["#h"] &&
+              filter.kinds?.includes(9),
+          )
+        ) {
+          responseStarted = true;
+          await responseGate;
+          if (failResponses) throw new Error("reply history offline");
+        }
         if (
           filters.some((filter) => !!filter["#p"] && filter.kinds?.includes(9))
         )
@@ -406,6 +438,19 @@ function fixture(
     readSteps,
     evidenceReads: () => evidenceReads,
     historyRequests,
+    responseStarted: () => responseStarted,
+    failResponses(value = true) {
+      failResponses = value;
+    },
+    holdResponses() {
+      responseGate = new Promise<void>((resolve) => {
+        releaseResponses = resolve;
+      });
+      return () => {
+        responseGate = undefined;
+        releaseResponses();
+      };
+    },
     holdAddressed() {
       addressedGate = new Promise<void>((resolve) => {
         releaseAddressed = resolve;
@@ -680,6 +725,33 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it("does not present cold unanswered rows while later replies are loading or unavailable", async () => {
+  const h = fixture({ coldReply: true });
+  const release = h.holdResponses();
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  await chooseFilter("Unresponded only", "Filters");
+  try {
+    await waitFor(() => expect(h.responseStarted()).toBe(true));
+    expect(rows()).toHaveLength(0);
+    expect(screen.getByText("Checking recent activity…")).toBeVisible();
+    h.failResponses();
+  } finally {
+    release();
+  }
+  await screen.findByText("reply history offline");
+  expect(rows()).toHaveLength(0);
+  expect(
+    screen.queryByText("No unresponded mentions in this view"),
+  ).not.toBeInTheDocument();
+  h.failResponses(false);
+  await userEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await screen.findByText("No unresponded mentions in this view");
+  expect(rows()).toHaveLength(0);
+  expect(h.threadRequests).toEqual([]);
+});
+
 it.each(["All activity", "Mentions"])(
   "Unresponded under %s stays until our reply, independently of reading",
   async (activity) => {

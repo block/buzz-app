@@ -85,6 +85,97 @@ test("Unresponded remains after reading, clears on a real reply, and returns for
   await expect(rows).toHaveCount(1);
 });
 
+// The production broker/session must fetch a response beyond its cold unread
+// sample without relying on opening detail. This is a real finite-read boundary.
+test("cold Unresponded checks later replies before showing older mentions", async ({
+  page,
+  app,
+}) => {
+  const root = app.inboxWindow.root.id;
+  const response = app.append(
+    "primary",
+    channel,
+    "Already answered before this visit",
+    false,
+    true,
+    root,
+  );
+  for (let index = 0; index < 500; index++)
+    app.append(
+      "primary",
+      channel,
+      `Newer unrelated activity ${index}`,
+      false,
+      false,
+    );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const rows = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem");
+  const choose = async (control, name) => {
+    await inbox.getByRole("combobox", { name: control }).click();
+    await page.getByRole("option", { name, exact: true }).click();
+  };
+  await choose("Activity type", "Mentions");
+  await expect(rows).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const session = window.fixtureRelay.snapshot().session;
+        return (
+          session.inboxFeed.snapshot().status === "ready" &&
+          session.unread.inbox().status === "ready"
+        );
+      }),
+    )
+    .toBe(true);
+  app.relay.holdUnread();
+  try {
+    await choose("Filters", "Unresponded only");
+    await expect
+      .poll(() => app.report.unreadHolds.some((hold) => hold.pending))
+      .toBe(true);
+    await expect(inbox.getByText("Checking recent activity…")).toBeVisible();
+    await expect(rows).toHaveCount(0);
+  } finally {
+    app.relay.releaseUnread();
+  }
+  await expect(
+    inbox.getByText("No unresponded mentions in this view"),
+  ).toBeVisible();
+  await expect(rows).toHaveCount(0);
+  await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay
+            .snapshot()
+            .session.inboxFeed.snapshot()
+            .checkedResponses.includes(id),
+        response.id,
+      ),
+    )
+    .toBe(true);
+  app.append(
+    "primary",
+    channel,
+    "Ordinary progress after your answer",
+    true,
+    false,
+    root,
+  );
+  await choose("Activity type", "Threads");
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("Ordinary progress after your answer");
+  await choose("Activity type", "Mentions");
+  await expect(rows).toHaveCount(0);
+});
+
 // A second composition boundary checks verified agent classification while the
 // complete activity/sender matrix stays in the mounted Inbox test.
 test.describe("agent mentions", () => {

@@ -20,6 +20,7 @@ import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { matchesEvent } from "../../src/features/relay/projection.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 // Public nonmember channel for search/preview/join journeys. Real channel ids
@@ -1361,6 +1362,27 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
+      // Response checks walk the selected conversation beyond the initial unread sample.
+      if (
+        filter.since !== undefined &&
+        filter.kinds?.includes(9) &&
+        filter["#h"]?.length
+      ) {
+        const candidates = [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(
+            community === "primary" ? [...threadReplies.values()].flat() : [],
+          );
+        return [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
+          .filter((event) => matchesEvent(event, filter))
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&

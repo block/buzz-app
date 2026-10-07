@@ -101,6 +101,101 @@ it("reads addressed history independently of the retained unread window, never a
     { kinds: [40002, 9], "#p": [h.viewer.pubkey], limit: 50 },
   ]);
 });
+it("checks the viewer's later reply before presenting an older mention as unresponded", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 10);
+  const mention = message(h.alice, "room", "needs your reply", 20, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const response = message(h.viewer, "room", "already answered", 30, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  h.query.mockImplementation((filters) =>
+    filters[0]?.kinds?.includes(9) && filters[0]?.["#e"]?.includes(root.id)
+      ? Promise.resolve(filters[0]?.until === undefined ? [response] : [])
+      : filters[0]?.ids?.includes(root.id)
+        ? Promise.resolve([root])
+        : query(filters),
+  );
+  const work = h.session.inboxFeed.ensure();
+  (await take(h, 9)).resolve([mention]);
+  await work;
+  await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
+  expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
+  expect(h.session.channels.window("room").rows).toEqual([]);
+});
+it.each(["thread", "dm"])(
+  "checks cold later replies for ordinary %s activity",
+  async (kind) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    if (kind === "dm")
+      h.live.receive([metadata(h.relay, "room", "Direct", 11, [["t", "dm"]])]);
+    const root = message(h.viewer, "room", "assignment", 12);
+    const tags = kind === "thread" ? [["e", root.id, "", "reply"]] : [];
+    const incoming = message(h.alice, "room", "ordinary progress", 20, tags);
+    const response = message(h.viewer, "room", "already answered", 30, tags);
+    h.live.receive([root, incoming]);
+    const query = h.query.getMockImplementation();
+    if (!query) throw new Error("Missing fixture query");
+    h.query.mockImplementation((filters) =>
+      filters[0]?.kinds?.includes(9) && filters[0]?.["#h"]?.includes("room")
+        ? Promise.resolve(filters[0]?.until === undefined ? [response] : [])
+        : query(filters),
+    );
+    await h.session.inboxFeed.ensureResponses(rows(h));
+    expect(rows(h)[0]?.unresponded).toBe(false);
+    expect(h.session.inboxFeed.snapshot().checkedResponses).toContain(
+      incoming.id,
+    );
+  },
+);
+it("keeps response checks pending on failure and recovers only after retry completes", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 12);
+  const incoming = message(h.alice, "room", "ordinary progress", 20, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.live.receive([root, incoming]);
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  const gate = deferred<RelayEvent[]>();
+  let started = false;
+  let failing = true;
+  h.query.mockImplementation((filters) => {
+    if (filters[0]?.kinds?.includes(9) && filters[0]?.["#h"]) {
+      started = true;
+      return failing ? gate.promise : Promise.resolve([]);
+    }
+    return query(filters);
+  });
+  const work = h.session.inboxFeed.ensureResponses(rows(h));
+  await vi.waitFor(() => expect(started).toBe(true));
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "loading",
+    checkedResponses: [],
+  });
+  gate.reject(new Error("reply history unavailable"));
+  await work;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "error",
+    checkedResponses: [],
+    error: "reply history unavailable",
+  });
+  failing = false;
+  const retry = h.session.inboxFeed.refresh();
+  (await take(h, 9)).resolve([]);
+  await retry;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    checkedResponses: [incoming.id],
+  });
+});
 it("reconciles live addressed updates and drops membership-revoked history before listeners", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

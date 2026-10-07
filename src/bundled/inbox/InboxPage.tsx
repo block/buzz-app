@@ -284,6 +284,10 @@ export function InboxView({
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
+  useEffect(() => {
+    if (responseFilter === "unresponded" && list.status === "ready")
+      void session.inboxFeed.ensureResponses(items);
+  }, [session, responseFilter, list.status, items]);
   const activityItems = items
     .map((item) => (activity === "mentions" ? item.mention : item))
     .filter(
@@ -381,7 +385,8 @@ export function InboxView({
           ? hasUnread(item) ||
             (item.id === selectedId &&
               item.messageIds.includes(selectedTarget?.messageId ?? ""))
-          : item.unresponded)),
+          : item.unresponded &&
+            item.messageIds.every((id) => feed.checkedResponses.includes(id)))),
   );
   const visible = matching.slice(0, limit);
   const profileKey = [
@@ -542,7 +547,13 @@ export function InboxView({
     refresh(true);
   }
   const canRead = sync.capability === "frontier-sync";
+  const responsesPending =
+    responseFilter === "unresponded" &&
+    activityItems.some((item) =>
+      item.messageIds.some((id) => !feed.checkedResponses.includes(id)),
+    );
   const loading =
+    (responsesPending && feed.status !== "error") ||
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||

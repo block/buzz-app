@@ -2,6 +2,8 @@ import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { RelayReader } from "./reader";
+import type { InboxItem } from "./inbox";
+import { threadReference } from "./thread-reference";
 
 const mentionKinds = [9, 40002];
 const cursorOf = (event: RelayEvent) => ({
@@ -16,6 +18,8 @@ export type InboxFeedSnapshot = Readonly<{
   error?: string | undefined;
   /** Exact addressed targets whose stored edits/deletions are not settled. */
   incomplete: readonly string[];
+  /** Exact activity whose later conversation history has been checked. */
+  checkedResponses: readonly string[];
 }>;
 
 /** The session owns finite, verified, viewer-addressed history. No new live route,
@@ -39,7 +43,10 @@ export function createInboxFeed({
   addressedRead: (
     filter: ReadFilter,
     signal: AbortSignal,
-    prepare: (events: readonly RelayEvent[]) => void,
+    prepare: (
+      events: readonly RelayEvent[],
+      raw?: readonly RelayEvent[],
+    ) => void,
   ) => Promise<readonly RelayEvent[]>;
   notify?: (listener: () => void) => void;
 }) {
@@ -48,9 +55,11 @@ export function createInboxFeed({
   let work: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let requested = false;
+  let responseCandidates: readonly InboxItem[] = [];
   let snapshot: InboxFeedSnapshot = Object.freeze({
     status: "idle",
     incomplete: [],
+    checkedResponses: [],
   });
   const listeners = new Set<() => void>();
   const admitted = (event: RelayEvent) => {
@@ -121,7 +130,53 @@ export function createInboxFeed({
       // Authorized responses can have short pages. Only empty ends the walk.
     }
   }
-  async function refresh() {
+  async function conversation(item: InboxItem, signal: AbortSignal) {
+    const retained = item.messageIds.flatMap((id) => retainedEvent(id) ?? []);
+    if (!retained.length) return [];
+    const rootId =
+      item.rootId ??
+      retained.map(threadReference).find((reference) => reference)?.rootId ??
+      item.messageId;
+    if (item.target.kind !== "channel" && !retainedEvent(rootId))
+      await reader.read([{ kinds: mentionKinds, ids: [rootId], limit: 1 }], {
+        signal,
+      });
+    const filter: ReadFilter = {
+      kinds: mentionKinds,
+      "#h": [item.channelId],
+      ...(item.target.kind === "channel" ? {} : { "#e": [rootId] }),
+      since: Math.min(...retained.map((event) => event.created_at)),
+      limit: 500,
+    };
+    const collected: RelayEvent[] = [];
+    let cursor: ReturnType<typeof cursorOf> | undefined;
+    for (;;) {
+      const page = [
+        ...(await addressedRead(
+          { ...filter, ...(cursor ?? {}) },
+          signal,
+          (visible, raw = visible) => {
+            if (
+              raw.some((event) => !visible.some((row) => row.id === event.id))
+            )
+              throw new Error(
+                "Inbox replies could not be verified for current access. Retry inbox.",
+              );
+          },
+        )),
+      ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
+      const previous = cursor;
+      if (previous && page.some((event) => !older(event, previous)))
+        throw new Error("Inbox replies did not advance. Retry inbox.");
+      collected.push(...page);
+      if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
+        throw new Error("Inbox replies exceed the read budget. Retry inbox.");
+      const last = page.at(-1);
+      if (!last) return collected;
+      cursor = cursorOf(last);
+    }
+  }
+  async function refresh(candidates?: readonly InboxItem[]) {
     if (closed) return;
     if (work) return work;
     requested = true;
@@ -138,20 +193,19 @@ export function createInboxFeed({
           "#p": [viewer],
           limit: 50,
         };
-        const mentions = await addressedRead(
-          mentionFilter,
-          owned.signal,
-          (events) => {
-            if (closed || generation !== epoch || owned.signal.aborted) return;
-            const ids = project(events).map((event) => event.id);
-            if (ids.length)
-              publish({
-                incomplete: Object.freeze([
-                  ...new Set([...snapshot.incomplete, ...ids]),
-                ]),
-              });
-          },
-        );
+        const mentions = candidates
+          ? []
+          : await addressedRead(mentionFilter, owned.signal, (events) => {
+              if (closed || generation !== epoch || owned.signal.aborted)
+                return;
+              const ids = project(events).map((event) => event.id);
+              if (ids.length)
+                publish({
+                  incomplete: Object.freeze([
+                    ...new Set([...snapshot.incomplete, ...ids]),
+                  ]),
+                });
+            });
         if (closed || generation !== epoch) return;
         // Retry older failed targets even when newer addressed rows pushed them
         // beyond the latest page; never clear an unchecked exact ID.
@@ -161,7 +215,22 @@ export function createInboxFeed({
             ...project(mentions).map((event) => event.id),
           ]),
         ];
-        const updates = await overlays(targets, [40003, 5, 9005], owned.signal);
+        const checked = new Set(candidates ? snapshot.checkedResponses : []);
+        for (const item of candidates ?? responseCandidates) {
+          const history = await conversation(item, owned.signal);
+          for (const id of [
+            ...item.messageIds,
+            ...history.map((event) => event.id),
+          ]) {
+            targets.push(id);
+            checked.add(id);
+          }
+        }
+        const updates = await overlays(
+          [...new Set(targets)],
+          [40003, 5, 9005],
+          owned.signal,
+        );
         const edits = updates.filter((event) => event.kind === 40003);
         await overlays(
           [
@@ -177,6 +246,9 @@ export function createInboxFeed({
         publish({
           status: "ready",
           incomplete: [],
+          checkedResponses: Object.freeze(
+            [...checked].filter((id) => retainedEvent(id)),
+          ),
           error: undefined,
         });
       } catch (error) {
@@ -205,7 +277,13 @@ export function createInboxFeed({
     controller = undefined;
     work = undefined;
     // Previously demanded data recovers explicitly or through reconnect.
-    publish({ status: "idle", incomplete, error: undefined });
+    responseCandidates = [];
+    publish({
+      status: "idle",
+      incomplete,
+      checkedResponses: [],
+      error: undefined,
+    });
   }
   const retainedIncomplete = () =>
     Object.freeze(snapshot.incomplete.filter((id) => retainedEvent(id)));
@@ -219,7 +297,21 @@ export function createInboxFeed({
     },
     ensure: () =>
       work ?? (snapshot.status === "idle" ? refresh() : Promise.resolve()),
-    refresh,
+    refresh: () => refresh(),
+    async ensureResponses(items: readonly InboxItem[]): Promise<void> {
+      if (closed || snapshot.status === "error") return;
+      responseCandidates = items;
+      if (work) {
+        const generation = epoch;
+        await work;
+        if (generation !== epoch) return;
+        return this.ensureResponses(items);
+      }
+      const missing = items.filter((item) =>
+        item.messageIds.some((id) => !snapshot.checkedResponses.includes(id)),
+      );
+      if (missing.length) await refresh(missing);
+    },
     stale() {
       epoch++;
       controller?.abort();
@@ -228,6 +320,7 @@ export function createInboxFeed({
       publish({
         status: "idle",
         incomplete: retainedIncomplete(),
+        checkedResponses: [],
         error: undefined,
       });
     },
@@ -246,6 +339,7 @@ export function createInboxFeed({
       snapshot = Object.freeze({
         status: "idle",
         incomplete: [],
+        checkedResponses: [],
       });
       listeners.clear();
     },

@@ -2,7 +2,7 @@
 
 Add Codex as an optional harness when creating or editing a local agent. Reuse
 the user's installed Codex CLI and login, persist the agent's behavior, and run
-it through Buzz ACP. Implement this through six dependent PRs, beginning with
+it through Buzz ACP. Implement this through seven dependent PRs, beginning with
 a shared harness configuration policy that also serves existing integrations.
 
 This is the agreed implementation plan from October 5, 2026. It records planned
@@ -144,12 +144,13 @@ main
         PR 4  Persistence execution and Create and Edit validation
           PR 5  Complete Create and Edit UI
             PR 6  Observed runtime settings
+              PR 7  Settings adapter setup
 ```
 
 Open layers as drafts, link their dependencies, and merge bottom-up. After a
 parent merges, update remaining branches using the correct previous-parent
 boundary and retarget the next PR to main. Build and review incrementally rather
-than completing all six before the first merge. Each PR includes its own tests
+than completing all seven before the first merge. Each PR includes its own tests
 and documentation. Assess the combined feature diff as well as individual PRs.
 
 ### PR 1 Shared harness configuration policy
@@ -341,6 +342,25 @@ Verify not reported before session evidence, then independently reported model
 and effort. Exercise selection rejection, existing fallback behavior, and restart.
 Check packaged-app behavior when its observation transport differs from development.
 
+### PR 7 Settings adapter setup
+
+Added after hands-on testing of the full stack
+([feedback](https://github.com/block/buzz-app/pull/627#issuecomment-6047094351)).
+When readiness reports a missing adapter, Settings offers Install, following the
+Claude Code setup design: Buzz installs a pinned `@agentclientprotocol/codex-acp`
+into app-owned storage and runs it on the managed Node. A user-installed adapter
+still wins; an incompatible one keeps manual recovery. Readiness, discovery,
+validation, and execution share one adapter lookup, so a GUI-launched app needs
+no `PATH` change or symlink. Buzz does not install the Codex CLI. A verified
+binding shows Ready without a success message.
+
+**Automated acceptance:** lookup precedence and managed-Node binding, verified
+activation of the pinned install, IPC grants, and mounted Settings states for
+install, failure, recheck, and Ready.
+
+**Local app acceptance:** with no user-installed adapter, Install from Adapter
+needed in an isolated app identifier, then see Ready without restarting the app.
+
 ## Testing and review workflow
 
 Follow [contributing](contributing.md#interactive-product-iteration) and the
@@ -385,7 +405,7 @@ For the complete feature, explicitly prove:
 - **Compatibility and platforms:** establish the tested CLI/adapter combination
   and supported operating systems before enabling Codex there. Do not import
   the previous Unix-only discovery path while implying Windows support.
-- **Deferred scope:** automatic installation, in-app Codex login, Claude Code
+- **Deferred scope:** automatic Codex CLI installation, in-app Codex login, Claude Code
   support, unrelated provider/API-key work, and broad lifecycle or packaging
   rewrites require separate scope. A concrete compatibility blocker should be
   identified and split into a focused prerequisite, not hidden inside a UI PR.

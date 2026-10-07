@@ -103,10 +103,11 @@ export function createInboxFeed({
     ids: readonly string[],
     kinds: readonly number[],
     signal: AbortSignal,
+    collected: RelayEvent[] = [],
   ) {
     if (!ids.length) return [];
-    const collected: RelayEvent[] = [];
-    const seen = new Set<string>();
+    const offset = collected.length;
+    const seen = new Set(collected.map((event) => event.id));
     // 500 signed event IDs leave room for filter fields below the 64 KiB request cap.
     for (let start = 0; start < ids.length; start += 500) {
       let cursor: ReturnType<typeof cursorOf> | undefined;
@@ -146,7 +147,7 @@ export function createInboxFeed({
         // Authorized responses can have short pages. Only empty ends the walk.
       }
     }
-    return collected;
+    return collected.slice(offset);
   }
   async function conversation(item: InboxItem, signal: AbortSignal) {
     const retained = item.messageIds.flatMap((id) => retainedEvent(id) ?? []);
@@ -312,6 +313,46 @@ export function createInboxFeed({
           ]),
         ];
         const checked = new Set(candidates ? snapshot.checkedResponses : []);
+        const updates: RelayEvent[] = [];
+        const deletions: RelayEvent[] = [];
+        const settle = async (ids: readonly string[], responses = false) => {
+          const edits = await overlays(
+            ids,
+            [40003, 5, 9005],
+            owned.signal,
+            updates,
+          );
+          if (closed || generation !== epoch || owned.signal.aborted)
+            return false;
+          await overlays(
+            [
+              ...new Set([
+                ...retainedEditIds(ids),
+                ...edits
+                  .filter((event) => event.kind === 40003)
+                  .map((event) => event.id),
+              ]),
+            ],
+            [5, 9005],
+            owned.signal,
+            deletions,
+          );
+          if (closed || generation !== epoch || owned.signal.aborted)
+            return false;
+          if (responses) for (const id of ids) checked.add(id);
+          publish({
+            incomplete: Object.freeze(
+              snapshot.incomplete.filter((id) => !ids.includes(id)),
+            ),
+            checkedResponses: Object.freeze(
+              [...checked].filter((id) => retainedEvent(id)),
+            ),
+          });
+          return !closed && generation === epoch && !owned.signal.aborted;
+        };
+        // Retained obligations settle before new history; each overlay stage shares
+        // its aggregate budget across all conversations in this refresh.
+        if (!(await settle(targets))) return;
         const conversations = new Map<string, InboxItem>();
         for (const item of candidates ?? responseCandidates) {
           const event = retainedEvent(item.messageId);
@@ -337,37 +378,18 @@ export function createInboxFeed({
         }
         for (const item of conversations.values()) {
           const history = await conversation(item, owned.signal);
-          for (const id of [
-            ...item.messageIds,
-            ...history.map((event) => event.id),
-          ]) {
-            targets.push(id);
-            checked.add(id);
-          }
-        }
-        const updates = await overlays(
-          [...new Set(targets)],
-          [40003, 5, 9005],
-          owned.signal,
-        );
-        const edits = updates.filter((event) => event.kind === 40003);
-        await overlays(
-          [
+          if (closed || generation !== epoch || owned.signal.aborted) return;
+          const ids = [
             ...new Set([
-              ...retainedEditIds(targets),
-              ...edits.map((event) => event.id),
+              ...item.messageIds,
+              ...history.map((event) => event.id),
             ]),
-          ],
-          [5, 9005],
-          owned.signal,
-        );
+          ];
+          if (!(await settle(ids, true))) return;
+        }
         if (closed || generation !== epoch) return;
         publish({
           status: "ready",
-          incomplete: [],
-          checkedResponses: Object.freeze(
-            [...checked].filter((id) => retainedEvent(id)),
-          ),
           error: undefined,
         });
       } catch (error) {

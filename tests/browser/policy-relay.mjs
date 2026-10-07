@@ -129,8 +129,8 @@ export function policyRelay({
       heldAuthors.clear();
       for (const release of pendingProfiles.splice(0)) release();
     },
-    holdUnread() {
-      heldUnread = true;
+    holdUnread(channel) {
+      heldUnread = channel ?? true;
     },
     releaseUnread() {
       heldUnread = false;
@@ -463,6 +463,7 @@ export function policyRelay({
             : answer(community, filter);
         if (
           heldUnread &&
+          (heldUnread === true || filter["#h"]?.includes(heldUnread)) &&
           filter.kinds?.includes(9) &&
           filter["#h"]?.length &&
           filter.top_level === undefined &&

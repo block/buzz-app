@@ -576,6 +576,73 @@ it.each(["complete", "failure", "retire"])(
     }
   },
 );
+it.each(["events", "bytes"] as const)(
+  "retains the aggregate overlay %s limit across incremental conversations",
+  async (budget) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const roots = [10, 11].map((at) =>
+      message(h.viewer, "room", "assignment", at),
+    );
+    const incoming = roots.map((root, index) =>
+      message(h.alice, "room", "needs input", 20 + index, [
+        ["e", root.id, "", "reply"],
+      ]),
+    );
+    h.live.receive([...roots, ...incoming]);
+    const candidates = rows(h);
+    const newest = candidates[0],
+      older = candidates[1];
+    if (!newest || !older) throw new Error("Missing fixture conversations");
+    // Already-verified DTOs isolate the shared retention budget from signing/folding.
+    const count = budget === "events" ? 2001 : 9;
+    const edits = Array.from({ length: count }, (_, index) => ({
+      ...incoming[0],
+      id: (index + 1).toString(16).padStart(64, "0"),
+      pubkey: h.alice.pubkey,
+      sig: "",
+      kind: 40003,
+      created_at: 5000 - index,
+      content:
+        budget === "bytes" ? "x".repeat(512 * 1024) : `revision ${index}`,
+      tags: [
+        [
+          "e",
+          index < Math.ceil(count / 2) ? newest.messageId : older.messageId,
+        ],
+      ],
+    }));
+    const feed = createInboxFeed({
+      viewer: h.viewer.pubkey,
+      channels: h.session.channels,
+      reader: {
+        read: vi.fn(async (filters: readonly ReadFilter[]) =>
+          edits
+            .filter((event) => matchesEvent(event, filters[0] ?? {}))
+            .slice(0, 500),
+        ),
+      },
+      async addressedRead(_filter, _signal, prepare) {
+        prepare([]);
+        return [];
+      },
+      retainedEvent: (id) =>
+        [...roots, ...incoming].find((event) => event.id === id),
+      retainedEditIds: () => [],
+    });
+    try {
+      await feed.ensureResponses(candidates);
+      expect(feed.snapshot()).toMatchObject({
+        status: "error",
+        error: "Inbox message updates exceed the read budget. Retry inbox.",
+      });
+      expect(feed.snapshot().checkedResponses).toContain(newest.messageId);
+      expect(feed.snapshot().checkedResponses).not.toContain(older.messageId);
+    } finally {
+      feed.dispose();
+    }
+  },
+);
 it("checks one canonical conversation when cold mentions have not regrouped yet", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

@@ -202,6 +202,121 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
   await expect(rows).toHaveCount(0);
 });
 
+// The production broker and app must expose a completed newer conversation while
+// an older canonical window is held. Ordering/failure matrices stay with the feed.
+test("newest verified Unresponded activity is usable while older history loads", async ({
+  page,
+  app,
+}) => {
+  app.histories.get("primary/alpha").push(
+    app.sign({
+      kind: 9,
+      tags: [["h", "alpha"]],
+      content: "Earlier own alpha activity",
+      created_at:
+        Math.max(...app.inboxWindow.replies.map((event) => event.created_at)) +
+        1,
+    }),
+  );
+  const newest = app.append(
+    "primary",
+    "alpha",
+    "Newest needs your reply",
+    false,
+    false,
+    undefined,
+    undefined,
+    [["p", app.viewer]],
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const rows = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const session = window.fixtureRelay.snapshot().session;
+        return (
+          session.inboxFeed.snapshot().status === "ready" &&
+          session.unread.inbox().status === "ready"
+        );
+      }),
+    )
+    .toBe(true);
+  const beforeQueries = app.report.queries.length;
+  const startedAt = performance.now();
+  let releasedAt;
+  app.relay.holdUnread(channel);
+  try {
+    await inbox.getByRole("combobox", { name: "Filters" }).click();
+    await page
+      .getByRole("option", { name: "Unresponded only", exact: true })
+      .click();
+    await expect
+      .poll(() => app.report.unreadHolds.some((hold) => hold.pending))
+      .toBe(true);
+    await expect(rows).toHaveCount(1);
+    await expect(
+      rows.getByText("Newest needs your reply", { exact: true }),
+    ).toBeVisible();
+    await expect(inbox.getByText("Checking recent activity…")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) =>
+            window.fixtureRelay
+              .snapshot()
+              .session.inboxFeed.snapshot()
+              .checkedResponses.includes(id),
+          newest.id,
+        ),
+      )
+      .toBe(true);
+    app.report.unrespondedIncrementalPerformance = {
+      firstVerifiedMs: performance.now() - startedAt,
+      firstVerifiedQueries: app.report.queries.length - beforeQueries,
+      olderHistoryStillPending: true,
+    };
+    await rows.getByRole("button", { name: /^Open / }).click();
+    await expect(
+      inbox
+        .getByRole("region", { name: "Inbox detail" })
+        .getByText("Newest needs your reply", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    releasedAt = performance.now();
+    app.relay.releaseUnread();
+  }
+  await expect(rows).toHaveCount(2);
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  app.report.unrespondedIncrementalPerformance.settleAfterReleaseMs =
+    performance.now() - releasedAt;
+  await inbox
+    .getByRole("region", { name: "Inbox detail" })
+    .getByRole("button", { name: "Close thread" })
+    .click();
+  await inbox.getByRole("combobox", { name: "Filters" }).click();
+  await page.getByRole("option", { name: "All", exact: true }).click();
+  const warmQueries = app.report.queries.length;
+  const warmStartedAt = performance.now();
+  await inbox.getByRole("combobox", { name: "Filters" }).click();
+  await page
+    .getByRole("option", { name: "Unresponded only", exact: true })
+    .click();
+  await expect(rows).toHaveCount(2);
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  expect(
+    app.report.queries
+      .slice(warmQueries)
+      .filter(({ filter }) => filter["#h"] && filter.kinds.includes(9)),
+  ).toHaveLength(0);
+  app.report.unrespondedIncrementalPerformance.warmVisibleMs =
+    performance.now() - warmStartedAt;
+});
+
 // A second composition boundary checks verified agent classification while the
 // complete activity/sender matrix stays in the mounted Inbox test.
 test.describe("agent mentions", () => {

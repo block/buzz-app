@@ -389,7 +389,8 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         .iter()
         .map(|e| e.field.as_str())
         .collect();
-    assert_eq!(fields, ["name", "system_prompt"]);
+    // Inheriting the device default moves this imported (Channel) agent to Thread, so the restart badge includes it.
+    assert_eq!(fields, ["name", "session_policy", "system_prompt"]);
     assert_eq!(
         fs::read_to_string(dir.path().join("starts")).unwrap(),
         first
@@ -1639,7 +1640,7 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     assert_eq!(env["BUZZ_AGENT_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
-    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("channel"));
+    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("thread"));
     assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
     assert_eq!(
         env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
@@ -2869,6 +2870,8 @@ fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
         host: "https://old.example".into(),
         filter: String::new(),
     });
+    // Pin the policy explicitly so the raw and effective configs agree and only the model is under test.
+    a.session_policy = Some(crate::config::SessionPolicy::Channel);
     let first = crate::restart::spawn_config(&a);
     let matching_default = crate::agent_defaults::AgentDefaults {
         harness: "buzz-agent".into(),

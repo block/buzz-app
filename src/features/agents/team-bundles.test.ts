@@ -20,7 +20,7 @@ const snapshot: TeamSnapshot = {
       runtime: "buzz-agent",
     },
     profile: { displayName: name },
-    memory: { level: "none" },
+    memory: { level: "none", entries: [] },
   })),
 };
 it("retains identity requests on partial failure, preserves separate instructions and never starts", async () => {

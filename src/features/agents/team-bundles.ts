@@ -1,34 +1,8 @@
 import type { AgentControl, AgentEdit, AgentView } from "./control";
 
-export interface MemberSnapshot {
-  format: "buzz-agent-snapshot";
-  version: 1;
-  definition: {
-    name: string;
-    sourceIsBuiltin?: boolean;
-    namePool?: string[];
-    systemPrompt?: string | null;
-    runtime?: string | null;
-    model?: string | null;
-    provider?: string | null;
-    sessionPolicy?: "channel" | "thread";
-    respondTo?: "owner-only" | "allowlist" | "anyone" | null;
-    respondToAllowlist?: string[];
-    parallelism?: number | null;
-    idleTimeoutSeconds?: number | null;
-    maxTurnDurationSeconds?: number | null;
-  };
-  profile: {
-    displayName: string;
-    about?: string | null;
-    avatarDataUrl?: string | null;
-    avatarUrl?: string | null;
-  };
-  memory: {
-    level: "none" | "core" | "everything";
-    entries?: { slug: string; body: string }[];
-  };
-}
+import type { AgentSnapshot } from "./snapshot";
+
+export type MemberSnapshot = AgentSnapshot;
 export interface TeamSnapshot {
   format: "buzz-team-snapshot";
   version: 1;

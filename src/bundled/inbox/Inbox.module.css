@@ -92,8 +92,8 @@
   min-height: 0;
 }
 
-/* Both panes share the naturally sized controls/header row, even when the
-   unread toggle wraps beneath the paired selects. */
+/* Both panes share the naturally sized controls/header row, including when
+   toolbar controls wrap. */
 .workspace[data-selected] {
   grid-template-rows: auto minmax(0, 1fr);
 }

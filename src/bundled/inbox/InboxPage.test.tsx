@@ -1789,7 +1789,7 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   ).toBeInTheDocument();
 });
 
-it("shows two accessible filters without removed options, bulk action or coverage boilerplate", async () => {
+it("offers four accessible Inbox filters without bulk read actions or coverage boilerplate", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");

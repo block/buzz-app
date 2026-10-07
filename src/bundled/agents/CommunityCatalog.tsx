@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CatalogKind } from "../../features/agents/catalog";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type {
@@ -76,6 +76,7 @@ export function CatalogShareSwitch({
   name,
   description,
   content,
+  onPendingChange,
 }: {
   catalog: CommunityCatalog;
   kind: CatalogKind;
@@ -84,22 +85,39 @@ export function CatalogShareSwitch({
   description: string;
   /** Projects the current local definition; may refuse with a reason. */
   content(): string | Promise<string>;
+  /** Lets a containing dialog stay open while the projection is pending. */
+  onPendingChange?(pending: boolean): void;
 }) {
   const snapshot = useCommunityCatalog(catalog);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  // A projection that settles after this switch is gone must not publish:
+  // a newer intent for the same coordinate may already have been recorded.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const { shared, change } = catalog.state(kind, d);
   const rejected = change?.delivery === "rejected";
   const checked = change && !rejected ? change.shared : shared;
+  const busy = (next: boolean) => {
+    setPending(next);
+    onPendingChange?.(next);
+  };
   const update = async (next: boolean) => {
     setError(undefined);
-    setPending(true);
+    busy(true);
     try {
-      catalog.publish(kind, d, next, next ? await content() : undefined);
+      const text = next ? await content() : undefined;
+      if (!mounted.current) return;
+      catalog.publish(kind, d, next, text);
     } catch (problem) {
-      setError(message(problem));
+      if (mounted.current) setError(message(problem));
     } finally {
-      setPending(false);
+      if (mounted.current) busy(false);
     }
   };
   return (
@@ -230,15 +248,18 @@ export function TeamShareDialog({
   team: Team;
   onClose(): void;
 }) {
+  const [pending, setPending] = useState(false);
   return (
     <Dialog
       open
+      preventClose={pending}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
       title={`Share ${team.name}`}
     >
       <CatalogShareSwitch
+        onPendingChange={setPending}
         catalog={session.communityCatalog}
         kind={TEAM_CATALOG_KIND}
         d={team.id}

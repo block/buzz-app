@@ -38,10 +38,9 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
     "Inbox",
   );
-  await inbox.getByRole("button", { name: "About Inbox archive" }).hover();
-  await expect(page.getByRole("tooltip")).toHaveText(
-    "Archive choices are saved on this device for this account and community. They don’t sync to your other devices.",
-  );
+  await expect(
+    inbox.getByRole("button", { name: "About Inbox archive" }),
+  ).toHaveCount(0);
   await expect(rows).toHaveCount(1);
   const rowArchive = rows.getByRole("button", { name: /^Archive / });
   await page.mouse.move(0, 0);
@@ -51,7 +50,7 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
 
   await choose(page, inbox, "Activity type", "Mentions");
   await choose(page, inbox, "Sender", "Agents");
-  await choose(page, inbox, "Attention", "Unread only");
+  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Archive conversation" }).click();
@@ -63,8 +62,8 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
     "Agents",
   );
   await expect(
-    inbox.getByRole("combobox", { name: "Attention" }),
-  ).toContainText("Unread only");
+    inbox.getByRole("checkbox", { name: "Unread only" }),
+  ).toBeChecked();
   await page.mouse.move(800, 300);
   await page.screenshot({
     path: testInfo.outputPath("inbox-archived-scope.png"),
@@ -83,8 +82,8 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
     "Agents",
   );
   await expect(
-    inbox.getByRole("combobox", { name: "Attention" }),
-  ).toContainText("Unread only");
+    inbox.getByRole("checkbox", { name: "Unread only" }),
+  ).toBeChecked();
 });
 
 test("Inbox archive survives reload, restores, and reopens on a new mention", async ({
@@ -152,5 +151,42 @@ test("Inbox archive survives reload, restores, and reopens on a new mention", as
   // Retirement persists even after the newer evidence is reloaded.
   await page.reload();
   await openPage(page, "Inbox");
+  await expect(rows).toHaveCount(1);
+});
+
+// Browser coverage proves the real Inbox/thread/composer/outbox wiring and
+// durable preferences across a full app reload, not the lower-layer matrix.
+test("Inbox archive on send persists and archives only checked replies", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const rows = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(1);
+  await rows.getByRole("button", { name: /^Open / }).click();
+  const checkbox = inbox.getByRole("checkbox", { name: "Archive on send" });
+  await expect(checkbox).toBeChecked();
+  await checkbox.uncheck();
+  await page.reload();
+  await openPage(page, "Inbox");
+  await rows.getByRole("button", { name: /^Open / }).click();
+  await expect(checkbox).not.toBeChecked();
+  const editor = inbox.getByRole("textbox");
+  await editor.fill("Keep this conversation");
+  await inbox.getByRole("button", { name: "Send message" }).click();
+  await expect(editor).toHaveText("");
+  await expect(rows).toHaveCount(1);
+  await checkbox.check();
+  await editor.fill("Finish this conversation");
+  await inbox.getByRole("button", { name: "Send message" }).click();
+  await expect(rows).toHaveCount(0);
+  await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
+    0,
+  );
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
 });

@@ -4,6 +4,7 @@ import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
+import { cancelBackgroundUpload } from "./background-upload";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -963,6 +964,7 @@ async function mountUploadComposer(
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
+    onSendComplete?: () => void;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1046,6 +1048,7 @@ async function mountUploadComposer(
       channelId="channel"
       channelName="General"
       {...(options.extensions ? { extensions: options.extensions } : {})}
+      onSendComplete={options.onSendComplete}
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
       {...(options.replyParentId
         ? { replyParentId: options.replyParentId }
@@ -1131,6 +1134,55 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
   expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
+
+it.each([
+  "success",
+  "failure",
+  "followup",
+  "remote-draft",
+  "unmount",
+  "cancel",
+] as const)(
+  "notifies accepted upload completion safely (%s)",
+  async (outcome) => {
+    const completed = vi.fn();
+    const h = await mountUploadComposer({ onSendComplete: completed });
+    await userEvent.type(h.input(), "Original caption");
+    attachByPaste(h.input(), attachmentFile("completion.txt"));
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    expect(completed).not.toHaveBeenCalled();
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+    if (outcome === "followup") await userEvent.type(h.input(), "Next draft");
+    if (outcome === "remote-draft") {
+      localStorage.setItem(
+        `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`,
+        JSON.stringify({ text: "Other window draft", recipients: [] }),
+      );
+    }
+    if (outcome === "unmount") h.unmount();
+    if (outcome === "cancel")
+      act(() => cancelBackgroundUpload(h.owner.session));
+    await act(async () => {
+      if (outcome === "failure")
+        h.uploadCalls[0]?.result.reject(new Error("offline"));
+      else h.uploadCalls[0]?.result.resolve(uploadDescriptor("completion.txt"));
+    });
+    if (outcome === "failure" || outcome === "cancel") {
+      await waitFor(() => expect(h.input()).toHaveValue("Original caption"));
+      expect(h.publish).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    }
+    if (outcome === "success") {
+      expect(completed).toHaveBeenCalledExactlyOnceWith();
+      expect(readView(h.scope, "draft:channel", "")).toMatchObject({
+        text: "",
+      });
+    } else expect(completed).not.toHaveBeenCalled();
+    if (outcome === "followup") expect(h.input()).toHaveValue("Next draft");
+  },
+);
 
 it("restores a failed background upload into the composer with Desktop's toast", async () => {
   const h = await mountUploadComposer();
@@ -3831,6 +3883,40 @@ const editableMessage = (
   ...overrides,
 });
 
+it("keeps optional send actions out of ordinary composers and message edits", () => {
+  const ordinary = mount();
+  expect(
+    screen.queryByRole("checkbox", { name: "Archive on send" }),
+  ).not.toBeInTheDocument();
+  ordinary.unmount();
+  const completed = vi.fn();
+  const h = mount(
+    {
+      sendAction: (
+        <label>
+          <input type="checkbox" defaultChecked />
+          Archive on send
+        </label>
+      ),
+      onSendComplete: completed,
+    },
+    undefined,
+    first.pubkey,
+  );
+  expect(
+    screen.getByRole("checkbox", { name: "Archive on send" }),
+  ).toBeChecked();
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(
+    screen.queryByRole("checkbox", { name: "Archive on send" }),
+  ).not.toBeInTheDocument();
+  h.fill("Edited response");
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.messages.edit).toHaveBeenCalledOnce();
+  expect(completed).not.toHaveBeenCalled();
+});
+
 it("edits in the same composer, cancels without persisting edit text, and restores draft undo history", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
@@ -5566,8 +5652,10 @@ it.each([undefined, "root"])(
   "notifies draft retirement only after accepted %s cleanup persists, retrying without Send",
   async (threadRootId) => {
     const retired = vi.fn();
+    const completed = vi.fn();
     const h = mount({
       ...(threadRootId ? { threadRootId } : {}),
+      onSendComplete: completed,
       onDraftSaved: retired,
     });
     h.fill("Accepted once");
@@ -5586,6 +5674,7 @@ it.each([undefined, "root"])(
       await h.user.click(screen.getByRole("button", { name: "Send message" }));
       expect(h.onSend).toHaveBeenCalledOnce();
       expect(retired).not.toHaveBeenCalled();
+      expect(completed).not.toHaveBeenCalled();
       expect(h.input()).toHaveValue("");
       expect(
         screen.getByRole("button", { name: "Send message" }),
@@ -5601,6 +5690,7 @@ it.each([undefined, "root"])(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
     expect(retired).toHaveBeenCalledExactlyOnceWith();
+    expect(completed).toHaveBeenCalledExactlyOnceWith();
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },

@@ -109,6 +109,7 @@ const noChannelSubscription = () => () => {};
 type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
+  onCleaned?: () => void;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
@@ -195,6 +196,10 @@ export type MessageComposerProps = {
   personalConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
+  /** Optional new-message action beside Send, without replacing session tools. */
+  sendAction?: ReactNode;
+  /** Acceptance plus successful draft cleanup; never edits or failed preparation. */
+  onSendComplete?: (() => void) | undefined;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
@@ -279,6 +284,8 @@ function Composer({
   placeholder,
   onSend,
   onDraftSaved,
+  onSendComplete,
+  sendAction,
   editMessages,
   onOpenLink,
   canOpenLink,
@@ -692,7 +699,10 @@ function Composer({
     }
     dirty.current = result === "failed" && !!pending.next.text.trim();
     // An unsaved prefill stays editable here with the ordinary save warning.
-    if (!dirty.current) onDraftSaved?.();
+    if (!dirty.current) {
+      pending.onCleaned?.();
+      onDraftSaved?.();
+    }
   }
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
@@ -1038,6 +1048,27 @@ function Composer({
     sendAttempt.current = attempt;
     const captured = valueRef.current;
     const capturedAttachments = attachments.store.snapshot();
+    // Capture the caller's destination/preference at admission. Upload publication
+    // and durable draft replacement can complete in either order.
+    const completed = onSendComplete;
+    let published = false;
+    let cleaned = false;
+    let notified = false;
+    let followup: string | undefined;
+    const notifyComplete = () => {
+      if (!published || !cleaned || notified || !live.current) return;
+      // A follow-up typed while uploading must not be hidden by auto-archive.
+      if (
+        dirty.current ||
+        JSON.stringify(valueRef.current) !== followup ||
+        viewRevision(scope, draftKey) === undefined ||
+        viewRevision(scope, draftKey) !== revision.current ||
+        recoveryFor(session).has(recoveryKey)
+      )
+        return;
+      notified = true;
+      completed?.();
+    };
     try {
       if (submission?.receiptOnly) {
         submission.submit(captured);
@@ -1131,6 +1162,7 @@ function Composer({
             )
           : [],
       );
+      followup = JSON.stringify(next);
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
         requireCompletedSessionStart();
@@ -1166,6 +1198,8 @@ function Composer({
           (uploaded) => {
             const sent = publish(uploaded);
             if (live.current) onSend?.(sent);
+            published = true;
+            notifyComplete();
           },
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
@@ -1228,7 +1262,14 @@ function Composer({
           },
         );
       } else id = publish([]);
-      const pending = { next, revision: savedRevision };
+      const pending: AcceptedDraft = {
+        next,
+        revision: savedRevision,
+        onCleaned: () => {
+          cleaned = true;
+          notifyComplete();
+        },
+      };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();
@@ -1247,6 +1288,10 @@ function Composer({
       setError(undefined);
       if (id) onSend?.(id);
       finishDraft(pending);
+      if (id) {
+        published = true;
+        notifyComplete();
+      }
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -1634,6 +1679,7 @@ function Composer({
             </ComposerFormattingTools>
           )}
           {active && !editing.target && trailingTool}
+          {active && !editing.target && sendAction}
           <IconButton
             variant={
               draft.trim() || attachments.items.length ? "primary" : "ghost"

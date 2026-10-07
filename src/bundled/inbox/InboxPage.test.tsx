@@ -194,18 +194,16 @@ it("archives from the row without opening it, remembers filters, and clears an e
       "Archived",
     ),
   );
-  expect(screen.getByRole("combobox", { name: "Attention" })).toHaveTextContent(
-    "Unread only",
-  );
+  expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
   expect(rows()).toHaveLength(1);
   await chooseFilter("DMs");
   await screen.findByText("No archived conversations match Unread only");
   fireEvent.click(
     screen.getByRole("button", { name: "Show all archived conversations" }),
   );
-  expect(screen.getByRole("combobox", { name: "Attention" })).toHaveTextContent(
-    "All messages",
-  );
+  expect(
+    screen.getByRole("checkbox", { name: "Unread only" }),
+  ).not.toBeChecked();
 });
 
 it("defaults saved filters field by field", async () => {
@@ -223,9 +221,9 @@ it("defaults saved filters field by field", async () => {
   expect(
     screen.getByRole("combobox", { name: "Activity type" }),
   ).toHaveTextContent("All activity");
-  expect(screen.getByRole("combobox", { name: "Attention" })).toHaveTextContent(
-    "All messages",
-  );
+  expect(
+    screen.getByRole("checkbox", { name: "Unread only" }),
+  ).not.toBeChecked();
 });
 
 it("keeps an archived thread and its composer mounted when a new mention reopens it", async () => {
@@ -354,6 +352,171 @@ it("archive Retry advances detail and saves the next conversation's read frontie
   await waitFor(() =>
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21),
   );
+});
+
+it.each([false, true])(
+  "archives after accepted send and draft cleanup (DM: %s)",
+  async (dm) => {
+    const h = fixture({ withWriter: true, withDm: dm });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(dm ? 3 : 2));
+    if (dm) await chooseFilter("DMs");
+    const row = rows().find((entry) =>
+      entry.textContent?.includes(dm ? "A direct reply" : "A thread update"),
+    );
+    if (!row) throw Error("Missing send fixture row");
+    const originalPreview = dm ? "A direct reply" : "A thread update";
+    fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+    const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Archive on send" }),
+    ).toBeChecked();
+    act(() => {
+      editor.insertText("Finished response");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("list", { name: "Inbox conversations" }),
+        ).queryByText(originalPreview),
+      ).not.toBeInTheDocument(),
+    );
+    const key = dm ? "draft:dm-room" : `draft:room:thread:${h.root?.id}`;
+    const saved = localStorage.getItem(
+      `buzz-view.v1:${JSON.stringify([h.owner.session.scope, key])}`,
+    );
+    expect(saved ?? "").not.toContain("Finished response");
+    if (dm)
+      expect(
+        screen.queryByRole("region", { name: "Inbox detail" }),
+      ).not.toBeInTheDocument();
+    else
+      expect(
+        screen.getByRole("region", { name: "Inbox detail" }),
+      ).toBeInTheDocument();
+  },
+);
+
+it("persists unchecked Archive on send without archiving a successful reply", async () => {
+  const h = fixture({ withWriter: true });
+  let view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const open = () => {
+    const row = rows().find((entry) =>
+      entry.textContent?.includes("A thread update"),
+    );
+    if (!row) throw Error("Missing thread row");
+    fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  };
+  open();
+  await screen.findByRole("textbox");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Archive on send" }));
+  expect(
+    screen.getByRole("checkbox", { name: "Archive on send" }),
+  ).not.toBeChecked();
+  view.unmount();
+  view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  open();
+  const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+  expect(
+    screen.getByRole("checkbox", { name: "Archive on send" }),
+  ).not.toBeChecked();
+  act(() => {
+    editor.insertText("Keep conversation open");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(editor).toHaveValue(""));
+  expect(rows()).toHaveLength(2);
+  expect(screen.getByRole("textbox")).toBe(editor);
+});
+
+it("does not archive a failed send or discard its draft", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("A thread update"),
+  );
+  if (!row) throw Error("Missing thread row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+  vi.spyOn(h.session.messages, "reply").mockImplementation(() => {
+    throw Error("Send rejected");
+  });
+  act(() => {
+    editor.insertText("Retain failed response");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByText("Send rejected");
+  expect(rows()).toHaveLength(2);
+  expect(screen.getByRole("textbox")).toBe(editor);
+  expect(editor).toHaveValue("Retain failed response");
+});
+
+it("keeps an already archived conversation selected after sending in Archived", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("A thread update"),
+  );
+  if (!row) throw Error("Missing thread row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Archive / }));
+  await chooseFilter("Archived", "Show");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  const [archivedRow] = rows();
+  if (!archivedRow) throw Error("Missing archived row");
+  fireEvent.click(within(archivedRow).getByRole("button", { name: /^Open / }));
+  const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  act(() => {
+    editor.insertText("Archived reply");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(editor).toHaveValue(""));
+  expect(screen.getByRole("textbox")).toBe(editor);
+  expect(rows()).toHaveLength(1);
+});
+
+it("archives an accepted send after the pending Inbox read settles", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const release = h.holdSave();
+  try {
+    const row = rows().find((entry) =>
+      entry.textContent?.includes("A thread update"),
+    );
+    if (!row) throw Error("Missing thread row");
+    fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+    const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+    await waitFor(() => expect(h.saveStarted()).toBe(true));
+    act(() => {
+      editor.insertText("Wait for read");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(editor).toHaveValue(""));
+    expect(rows()).toHaveLength(2);
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(
+    within(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).queryByText("A thread update"),
+  ).not.toBeInTheDocument();
 });
 
 function fixture(
@@ -686,6 +849,7 @@ function fixture(
   const retrySync = vi.fn(() => owner.session.unread.retrySync());
   const observedSession = {
     ...owner.session,
+    messages: { ...owner.session.messages },
     unread: {
       ...owner.session.unread,
       retrySync,
@@ -720,6 +884,7 @@ function fixture(
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
   return {
     owner,
+    session: observedSession,
     relay,
     retrySync,
     readSteps,
@@ -932,6 +1097,19 @@ const rows = () =>
     screen.getByRole("list", { name: "Inbox conversations" }),
   ).queryAllByRole("listitem");
 async function chooseFilter(label: string, control = "Activity type") {
+  if (control === "Attention") {
+    const toggle = screen.getByRole("checkbox", { name: "Unread only" });
+    if (
+      toggle.getAttribute("aria-checked") !== String(label === "Unread only")
+    ) {
+      fireEvent.click(toggle);
+    }
+    expect(toggle).toHaveAttribute(
+      "aria-checked",
+      String(label === "Unread only"),
+    );
+    return;
+  }
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: control }));
   await user.click(await screen.findByRole("option", { name: label }));
@@ -1731,10 +1909,9 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   const show = () => screen.getByRole("combobox", { name: "Show" });
   expect(show()).toHaveTextContent("Inbox");
   expect(screen.queryByRole("group", { name: "Inbox scope" })).toBeNull();
-  fireEvent.focus(screen.getByRole("button", { name: "About Inbox archive" }));
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "Archive choices are saved on this device for this account and community. They don’t sync to your other devices.",
-  );
+  expect(
+    screen.queryByRole("button", { name: "About Inbox archive" }),
+  ).toBeNull();
 
   await chooseFilter("Mentions");
   await chooseFilter("Agents", "Sender");
@@ -1759,9 +1936,7 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
     expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
       "Agents",
     );
-    expect(
-      screen.getByRole("combobox", { name: "Attention" }),
-    ).toHaveTextContent("Unread only");
+    expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
   };
   await chooseFilter("Archived", "Show");
   await waitFor(() => expect(rows()).toHaveLength(1));
@@ -1789,11 +1964,11 @@ it("shows Inbox scope as a filter without resetting attention filters", async ()
   ).toBeInTheDocument();
 });
 
-it("offers four accessible Inbox filters without bulk read actions or coverage boilerplate", async () => {
+it("offers three accessible Inbox pickers and an unread toggle without bulk read actions or coverage boilerplate", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  expect(screen.getAllByRole("combobox")).toHaveLength(4);
+  expect(screen.getAllByRole("combobox")).toHaveLength(3);
   expect(
     screen.getByRole("combobox", { name: "Activity type" }),
   ).toHaveTextContent("All activity");
@@ -1815,9 +1990,9 @@ it("offers four accessible Inbox filters without bulk read actions or coverage b
       /Verified recent conversations|Results are bounded|Feed history reached its result limit|Read-state sync is unavailable on this host/,
     ),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Attention" })).toHaveTextContent(
-    "All messages",
-  );
+  expect(
+    screen.getByRole("checkbox", { name: "Unread only" }),
+  ).not.toBeChecked();
   expect(
     screen.queryByRole("button", { name: "Refresh" }),
   ).not.toBeInTheDocument();

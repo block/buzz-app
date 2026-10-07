@@ -287,10 +287,6 @@ for (const scenario of [
         await page.keyboard.press("Tab");
         await expect(show).toBeFocused();
         await page.keyboard.press("Tab");
-        await expect(
-          inbox.getByRole("button", { name: "About Inbox archive" }),
-        ).toBeFocused();
-        await page.keyboard.press("Tab");
         await expect(activity).toBeFocused();
         await page.keyboard.press("Tab");
         await expect(sender).toBeFocused();

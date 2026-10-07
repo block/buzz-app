@@ -25,6 +25,7 @@ import { messagePreview } from "../../features/notifications/content";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -37,7 +38,6 @@ import {
   ArchiveIcon,
   ArchiveOffIcon,
   BellIcon,
-  QuestionIcon,
 } from "../../shared/design-system/icons";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
@@ -90,7 +90,6 @@ const attentions = [
 const showGroups = [{ label: "", options: shows }] as const;
 const activityGroups = [{ label: "", options: activities }] as const;
 const senderGroups = [{ label: "", options: senders }] as const;
-const attentionGroups = [{ label: "", options: attentions }] as const;
 type Filters = {
   show: ShowFilter;
   activity: ActivityFilter;
@@ -240,6 +239,14 @@ export function InboxView({
     setLimit(50);
     writeView(archiveScope, filtersKey, next);
   }
+  const [archiveOnSend, setArchiveOnSend] = useState(() => {
+    const saved = readView<unknown>(
+      archiveScope,
+      "inbox:archive-on-send",
+      true,
+    );
+    return typeof saved === "boolean" ? saved : true;
+  });
   const [drafts, setDrafts] = useState(false);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
@@ -532,6 +539,22 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
+  const queuedArchive = useRef<InboxItem | undefined>(undefined);
+  useEffect(() => {
+    if (pending || !queuedArchive.current) return;
+    const item = queuedArchive.current;
+    queuedArchive.current = undefined;
+    const current = session.unread
+      .inbox()
+      .items.find(
+        (row) =>
+          row.channelId === item.channelId &&
+          row.messageIds.includes(item.messageId),
+      );
+    if (current) archiveCurrent.current(current, true);
+  }, [pending, session]);
+  const archiveCurrent = useRef(archive);
+  archiveCurrent.current = archive;
   function archive(item: InboxItem, value: boolean) {
     cancelRetry();
     const valid = () => {
@@ -549,7 +572,7 @@ export function InboxView({
     };
     // Rows stay put in Inbox + archived; otherwise they leave this view, so
     // an open viewer advances to the next conversation instead of closing.
-    const leaves = show !== "all";
+    const leaves = show === "inbox" ? value : show === "archived" && !value;
     const index = visible.findIndex((row) => row.id === item.id);
     const next = leaves
       ? (visible[index + 1] ?? visible[index - 1])
@@ -747,14 +770,6 @@ export function InboxView({
                     setFilter({ show: value as ShowFilter });
                   }}
                 />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label="About Inbox archive"
-                  title="Archive choices are saved on this device for this account and community. They don’t sync to your other devices."
-                >
-                  <QuestionIcon size="1rem" aria-hidden="true" />
-                </Button>
                 <Select
                   label="Activity type"
                   variant="compact"
@@ -774,13 +789,11 @@ export function InboxView({
                   }
                 />
               </div>
-              <Select
-                label="Attention"
-                variant="compact"
-                value={filters.attention}
-                groups={attentionGroups}
-                onValueChange={(value) =>
-                  setFilter({ attention: value as AttentionFilter })
+              <Checkbox
+                label="Unread only"
+                checked={unreadOnly}
+                onCheckedChange={(checked) =>
+                  setFilter({ attention: checked ? "unread" : "all" })
                 }
               />
             </div>
@@ -1089,6 +1102,40 @@ export function InboxView({
                   ? feed.status === "error"
                     ? "error"
                     : "loading"
+                  : undefined
+              }
+              sendAction={
+                <Checkbox
+                  label="Archive on send"
+                  checked={archiveOnSend}
+                  onCheckedChange={(checked) => {
+                    if (
+                      writeView(archiveScope, "inbox:archive-on-send", checked)
+                    )
+                      setArchiveOnSend(checked);
+                    else setError("Could not save Archive on send preference.");
+                  }}
+                />
+              }
+              onSendComplete={
+                archiveOnSend
+                  ? () => {
+                      // Publication can replace Inbox row objects; resolve the captured
+                      // destination against current evidence, never the next selection.
+                      const current = session.unread
+                        .inbox()
+                        .items.find(
+                          (row) =>
+                            row.channelId === selectedTarget.channelId &&
+                            row.messageIds.includes(selectedTarget.messageId),
+                        );
+                      if (current) {
+                        // Accepted uploads can finish while an unrelated Inbox
+                        // read/save is settling. Preserve the intent until it releases.
+                        if (busy.current) queuedArchive.current = current;
+                        else archiveCurrent.current(current, true);
+                      }
+                    }
                   : undefined
               }
               archiveAction={{

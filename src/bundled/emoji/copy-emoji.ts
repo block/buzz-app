@@ -1,4 +1,7 @@
-import { serializeSelection } from "../../features/messages/selection-copy";
+import {
+  serializeSelection,
+  unselectable,
+} from "../../features/messages/selection-copy";
 
 /** Preserve event-local shortcodes when copying selected custom emoji images. */
 export function copyEmoji(event: ClipboardEvent) {
@@ -17,18 +20,28 @@ export function copyEmoji(event: ClipboardEvent) {
     return;
   const selection = document.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-  const fragments = Array.from({ length: selection.rangeCount }, (_, index) =>
-    selection.getRangeAt(index).cloneContents(),
+  const ranges = Array.from({ length: selection.rangeCount }, (_, index) =>
+    selection.getRangeAt(index),
   );
-  if (
-    !fragments.some((fragment) =>
-      fragment.querySelector("img[data-copy-emoji]"),
-    )
-  )
-    return;
+  // Emoji inside excluded chrome leave the engine's own copy in place.
+  if (!ranges.some(copiesEmoji)) return;
   event.clipboardData.setData(
     "text/plain",
     serializeSelection(selection, "text"),
   );
   event.preventDefault();
+}
+
+// Check the live range: detached clones have no computed `user-select`.
+function copiesEmoji(range: Range): boolean {
+  const root = range.commonAncestorContainer;
+  const scope = root instanceof Element ? root : root.parentElement;
+  return [...(scope?.querySelectorAll("img[data-copy-emoji]") ?? [])].some(
+    (emoji) => {
+      if (!range.intersectsNode(emoji)) return false;
+      for (let node: Element | null = emoji; node; node = node.parentElement)
+        if (unselectable(node)) return false;
+      return true;
+    },
+  );
 }

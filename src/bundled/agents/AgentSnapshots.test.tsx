@@ -68,6 +68,76 @@ function choose(fileToRead: File) {
   });
 }
 
+it.each(["json", "png"] as const)(
+  "previews received %s bytes in the existing import dialog without a file picker or creation",
+  async (format) => {
+    const h = importControl();
+    const close = vi.fn();
+    const receivedBytes = encodeAgentSnapshot(
+      buildAgentSnapshot(controlFixture().agent),
+      format,
+    );
+    render(
+      <AgentSnapshotImport
+        control={h.control}
+        destination="https://relay.example.test"
+        owner={"ef".repeat(32)}
+        receivedBytes={receivedBytes}
+        onClose={close}
+      />,
+    );
+    expect(await screen.findByText("Help with the project.")).toBeVisible();
+    expect(screen.queryByLabelText("Agent snapshot")).not.toBeInTheDocument();
+    expect(h.create).not.toHaveBeenCalled();
+    expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(close).toHaveBeenCalledOnce();
+    expect(h.create).not.toHaveBeenCalled();
+  },
+);
+
+it("refuses malformed received bytes before import and cannot create", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={new TextEncoder().encode("not a snapshot")}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Invalid snapshot JSON.",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(screen.queryByLabelText("Agent snapshot")).not.toBeInTheDocument();
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it("imports received bytes only after the explicit Import click", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(
+        buildAgentSnapshot(controlFixture().agent, "core", [
+          { slug: "core", body: "private fixture memory" },
+        ]),
+        "json",
+      )}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByText("Help with the project.")).toBeVisible();
+  expect(h.create).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledOnce());
+});
+
 it("uploads an embedded reference avatar before native creation and saves its local URL", async () => {
   const h = importControl();
   vi.mocked(uploadAvatar).mockResolvedValueOnce(

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { AgentControl, AgentView } from "../../features/agents/control";
@@ -178,14 +178,16 @@ export function AgentSnapshotImport({
   control,
   destination,
   owner,
+  receivedBytes,
   onClose,
 }: {
   control: AgentControl;
   destination: string;
   owner: string;
+  /** Received attachment bytes are previewed only; importing still requires an explicit click. */
+  receivedBytes?: Uint8Array;
   onClose(): void;
 }) {
-  const input = useRef<HTMLInputElement>(null);
   const requestId = useRef(crypto.randomUUID());
   const [snapshot, setSnapshot] = useState<AgentSnapshot>();
   const [fileError, setFileError] = useState("");
@@ -193,6 +195,19 @@ export function AgentSnapshotImport({
   const [result, setResult] = useState("");
   const [createdId, setCreatedId] = useState<string>();
   const [profilePublished, setProfilePublished] = useState(false);
+  useEffect(() => {
+    if (!receivedBytes) return;
+    requestId.current = crypto.randomUUID();
+    try {
+      setSnapshot(parseAgentSnapshot(receivedBytes));
+      setFileError("");
+    } catch (error) {
+      setSnapshot(undefined);
+      setFileError(
+        error instanceof Error ? error.message : "Invalid snapshot JSON.",
+      );
+    }
+  }, [receivedBytes]);
   const read = async (file?: File) => {
     setFileError("");
     setSnapshot(undefined);
@@ -369,14 +384,15 @@ export function AgentSnapshotImport({
         </>
       ) : (
         <div className="space-y-4">
-          <input
-            ref={input}
-            type="file"
-            disabled={busy}
-            accept=".json,.png,.agent.json,.agent.png,application/json,image/png"
-            aria-label="Agent snapshot"
-            onChange={(event) => void read(event.target.files?.[0])}
-          />
+          {!receivedBytes && (
+            <input
+              type="file"
+              disabled={busy}
+              accept=".json,.png,.agent.json,.agent.png,application/json,image/png"
+              aria-label="Agent snapshot"
+              onChange={(event) => void read(event.target.files?.[0])}
+            />
+          )}
           {snapshot && (
             <>
               <h3>{snapshot.profile.displayName}</h3>

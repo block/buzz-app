@@ -24,6 +24,10 @@ import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import agents2Manifest from "./agents2/manifest.json";
+import * as agents2 from "./agents2";
+import responderManifest from "./responder/manifest.json";
+import * as responder from "./responder";
 import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
@@ -140,6 +144,16 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...agents2Manifest, apiVersion: 1 },
+    module: agents2,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...responderManifest, apiVersion: 1 },
+    module: responder,
     enabledByDefault: true,
   },
   {

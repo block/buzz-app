@@ -1,0 +1,130 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: var(--space-2);
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+}
+.card {
+  position: relative;
+  aspect-ratio: 10 / 11;
+  perspective: 60rem;
+  border-radius: var(--radius-container);
+}
+.flip {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 0.45s ease;
+}
+.card:hover .flip,
+.card:has(.open:focus-visible) .flip {
+  transform: rotateY(180deg);
+}
+.front,
+.back,
+.newCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-3);
+  text-align: center;
+  border-radius: var(--radius-container);
+  background: var(--surface-inset);
+}
+.front,
+.back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  overflow: hidden;
+}
+.back {
+  transform: rotateY(180deg);
+  /* A preview face: the whole card opens the agent. */
+  pointer-events: none;
+}
+.open {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: var(--radius-container);
+  background: transparent;
+  cursor: pointer;
+}
+.open:focus-visible {
+  outline: 2px solid var(--border-focus);
+}
+.portrait {
+  width: 4.5rem;
+  height: 4.5rem;
+  margin-bottom: var(--space-2);
+}
+.newCard {
+  position: relative;
+  overflow: hidden;
+}
+.collage {
+  position: absolute;
+  inset: 0;
+  font-size: 2rem;
+  opacity: 0.5;
+}
+.collage span {
+  position: absolute;
+}
+.collage [data-index="0"] {
+  top: 8%;
+  left: 8%;
+}
+.collage [data-index="1"] {
+  top: 6%;
+  right: 12%;
+}
+.collage [data-index="2"] {
+  top: 40%;
+  left: -4%;
+}
+.collage [data-index="3"] {
+  bottom: 8%;
+  left: 18%;
+}
+.collage [data-index="4"] {
+  bottom: 6%;
+  right: 6%;
+}
+.collage [data-index="5"] {
+  top: 44%;
+  right: -2%;
+}
+.newCard > :not(.collage) {
+  position: relative;
+}
+.detail {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--space-6);
+  height: 100%;
+  padding: var(--space-6);
+}
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: stretch;
+}
+.portraitLarge {
+  width: 6rem;
+  height: 6rem;
+}
+.tabs {
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flip {
+    transition: none;
+  }
+}

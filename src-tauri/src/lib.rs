@@ -16,6 +16,7 @@ use browser::{
 };
 mod agent_models;
 mod agents;
+mod app_agents;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -457,6 +458,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_wait,
         oauth_callback_cancel,
         agent_control_create_prepare,
+        app_agents::app_agent_list,
+        app_agents::app_agent_create_prepare,
+        app_agents::app_agent_create_commit,
+        app_agents::app_agent_delete,
+        app_agents::app_agent_publish,
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
@@ -560,6 +566,12 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
+            app.manage(app_agents::AppAgentHost::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _, _)| root.with_file_name("agents2").join("identities.json"))
+                    .map_err(Clone::clone),
+            ));
             app.manage(AgentHost::initialize(paths, resources));
             Ok(())
         });

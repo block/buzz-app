@@ -1,0 +1,38 @@
+import { useSyncExternalStore } from "react";
+import type { Agents2 } from "./service";
+
+const noSubscribe = () => () => {};
+const none = () => undefined;
+
+/** The selected community's Agents2 agents and the registered types. */
+export function useAgents2(agents2: Agents2) {
+  const snapshot = useSyncExternalStore(
+    agents2.subscribe,
+    agents2.snapshot,
+    agents2.snapshot,
+  );
+  const types = useSyncExternalStore(
+    agents2.subscribe,
+    agents2.types,
+    agents2.types,
+  );
+  return { snapshot, types };
+}
+
+/** The Agents2 agent at `pubkey` with its type, when both are present. */
+export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
+  const subscribe = agents2?.subscribe ?? noSubscribe;
+  const agent = useSyncExternalStore(
+    subscribe,
+    agents2 ? () => agents2.find(pubkey) : none,
+    agents2 ? () => agents2.find(pubkey) : none,
+  );
+  const type = useSyncExternalStore(
+    subscribe,
+    agents2 && agent
+      ? () => agents2.types().find((type) => type.key === agent.type)
+      : none,
+    none,
+  );
+  return agent && type ? { agent, type } : undefined;
+}

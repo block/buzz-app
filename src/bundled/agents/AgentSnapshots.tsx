@@ -64,6 +64,28 @@ export function AgentSnapshotExport({
     : null;
   const currentKey = useRef(reviewKey);
   const changedDuringExport = useRef(false);
+  const retired = useRef(false);
+  const activeMemoryView = useRef<
+    ReturnType<RelaySession["agentMemories"]["open"]> | undefined
+  >(undefined);
+  const disposeMemoryView = (
+    view: ReturnType<RelaySession["agentMemories"]["open"]>,
+  ) => {
+    if (activeMemoryView.current !== view) return;
+    activeMemoryView.current = undefined;
+    view.dispose();
+  };
+  useLayoutEffect(() => {
+    retired.current = false;
+    return () => {
+      retired.current = true;
+      const view = activeMemoryView.current;
+      if (view) {
+        activeMemoryView.current = undefined;
+        view.dispose();
+      }
+    };
+  }, []);
   useLayoutEffect(() => {
     if (currentKey.current !== reviewKey) {
       currentKey.current = reviewKey;
@@ -97,6 +119,7 @@ export function AgentSnapshotExport({
         )
           throw new Error("Memory reads require the source agent's community.");
         const view = session.agentMemories.open(agent.pubkey);
+        activeMemoryView.current = view;
         try {
           await view.refresh();
           const state = view.snapshot();
@@ -113,7 +136,7 @@ export function AgentSnapshotExport({
             body,
           }));
         } finally {
-          view.dispose();
+          disposeMemoryView(view);
         }
       }
       const snapshot = {
@@ -157,7 +180,11 @@ export function AgentSnapshotExport({
       }
       // A refresh while memory or artwork was loading must not share a newly
       // unreviewed source under an earlier approval.
-      if (changedDuringExport.current || currentKey.current !== approvedKey) {
+      if (
+        retired.current ||
+        changedDuringExport.current ||
+        currentKey.current !== approvedKey
+      ) {
         throw new Error(
           "Agent configuration changed. Review it again before exporting.",
         );
@@ -170,9 +197,10 @@ export function AgentSnapshotExport({
       );
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Export failed.");
+      if (!retired.current)
+        setError(cause instanceof Error ? cause.message : "Export failed.");
     } finally {
-      setPending(false);
+      if (!retired.current) setPending(false);
     }
   };
   return (

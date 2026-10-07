@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -408,7 +409,9 @@ it("aborts a pending export if the source changes and then returns to its old va
     />,
   );
   mounted.rerender(<AgentSnapshotExport {...props} />);
-  release();
+  await act(async () => {
+    release();
+  });
   await waitFor(() => expect(dispose).toHaveBeenCalledOnce());
   expect(download).not.toHaveBeenCalled();
   expect(props.onClose).not.toHaveBeenCalled();
@@ -418,6 +421,141 @@ it("aborts a pending export if the source changes and then returns to its old va
       .some((node) => node.textContent?.includes("configuration changed")),
   ).toBe(true);
   expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
+it("retires an in-flight memory export on unmount and leaves a replacement export open", async () => {
+  const source = portableAgent();
+  let release!: () => void;
+  const dispose = vi.fn();
+  const refresh = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const session = {
+    agentMemories: {
+      open: vi.fn(() => ({
+        refresh,
+        dispose,
+        snapshot: () => ({
+          status: "ready",
+          listing: {
+            partial: false,
+            entries: [{ slug: "core", body: "inert memory" }],
+          },
+        }),
+      })),
+    },
+  } as never;
+  const download = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = download;
+      static revokeObjectURL = vi.fn();
+    },
+  );
+  const closeOld = vi.fn();
+  const mounted = render(
+    <AgentSnapshotExport
+      agent={source}
+      session={session}
+      destination="https://relay.example.test"
+      onClose={closeOld}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Memories"), {
+    target: { value: "core" },
+  });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I reviewed the portable configuration/,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I confirm that I want to include memory/,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  mounted.unmount(); // Inventory removed the old source while the read was pending.
+  expect(dispose).toHaveBeenCalledOnce();
+  const closeNew = vi.fn();
+  render(
+    <AgentSnapshotExport
+      agent={{ ...source, id: "replacement", name: "Replacement" }}
+      destination="https://relay.example.test"
+      onClose={closeNew}
+    />,
+  );
+  await act(async () => {
+    release();
+  });
+  await waitFor(() =>
+    expect(screen.getByText("Export Replacement")).toBeVisible(),
+  );
+  expect(download).not.toHaveBeenCalled();
+  expect(closeOld).not.toHaveBeenCalled();
+  expect(closeNew).not.toHaveBeenCalled();
+});
+
+it("retires an in-flight artwork export on unmount without downloading or closing its replacement", async () => {
+  const source = portableAgent();
+  source.picture = "https://images.example.test/inert.png";
+  let release!: () => void;
+  class HeldImage {
+    crossOrigin = "";
+    src = "";
+    decode() {
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+  }
+  vi.stubGlobal("Image", HeldImage);
+  const download = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = download;
+      static revokeObjectURL = vi.fn();
+    },
+  );
+  const closeOld = vi.fn();
+  const mounted = render(
+    <AgentSnapshotExport
+      agent={source}
+      destination="https://relay.example.test"
+      onClose={closeOld}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I reviewed the portable configuration/,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(release).toBeDefined());
+  mounted.unmount();
+  const closeNew = vi.fn();
+  render(
+    <AgentSnapshotExport
+      agent={{ ...source, id: "replacement", name: "Replacement" }}
+      destination="https://relay.example.test"
+      onClose={closeNew}
+    />,
+  );
+  await act(async () => {
+    release();
+  }); // A missing canvas takes the existing placeholder path after decode.
+  await waitFor(() =>
+    expect(screen.getByText("Export Replacement")).toBeVisible(),
+  );
+  expect(download).not.toHaveBeenCalled();
+  expect(closeOld).not.toHaveBeenCalled();
+  expect(closeNew).not.toHaveBeenCalled();
 });
 
 it("reviews the exact portable configuration including avatar URL and effective selectors", () => {

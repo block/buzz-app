@@ -299,7 +299,7 @@ fn unique_json(text: &str) -> Result<Value> {
         .map_err(|_| "Invalid memory body".into())
 }
 
-fn slug(s: &str) -> bool {
+pub(crate) fn slug(s: &str) -> bool {
     if s == "core" {
         return true;
     }

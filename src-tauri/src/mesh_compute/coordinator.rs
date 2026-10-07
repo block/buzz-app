@@ -440,7 +440,7 @@ mod tests {
             .finalize(&relay)
             .unwrap()];
         let owners = vec![owner.owner_id()];
-        assert!(retained_targets(&[old.clone()], &membership, &owners).is_empty());
+        assert!(retained_targets(std::slice::from_ref(&old), &membership, &owners).is_empty());
         recover_routes(
             &membership,
             &[old],

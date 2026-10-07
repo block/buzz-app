@@ -1132,22 +1132,42 @@ it("first verified admission marks exact target incomplete before unread subscri
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const old = addressed(h, "OLD BODY", 20);
+  const closure = deferred<RelayEvent[]>();
+  let closureStarted = false;
+  let closureSettled = false;
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  h.query.mockImplementation((filters) => {
+    if (filters[0]?.["#e"]?.includes(old.id)) {
+      closureStarted = true;
+      return closure.promise.then((events) => {
+        closureSettled = true;
+        return events;
+      });
+    }
+    return query(filters);
+  });
   const sequence: {
     preview: string | undefined;
     status: string;
     incomplete: readonly string[];
+    settled: boolean;
   }[] = [];
   const observe = () =>
     sequence.push({
       preview: rows(h)[0]?.preview,
       status: h.session.inboxFeed.snapshot().status,
       incomplete: h.session.inboxFeed.snapshot().incomplete,
+      settled: closureSettled,
     });
   const stop = h.session.unread.subscribeInbox(observe);
   const stopFeed = h.session.inboxFeed.subscribe(observe);
+  const work = h.session.inboxFeed.ensure();
   try {
-    const work = h.session.inboxFeed.ensure();
     (await take(h, 9)).resolve([old]);
+    await vi.waitFor(() => expect(closureStarted).toBe(true));
+    expect(h.session.inboxFeed.snapshot().incomplete).toContain(old.id);
+    closure.resolve([]);
     await work;
     expect(sequence.filter(({ preview }) => preview === "OLD BODY")).toEqual(
       expect.arrayContaining([
@@ -1159,10 +1179,8 @@ it("first verified admission marks exact target incomplete before unread subscri
     );
     expect(
       sequence.filter(
-        ({ preview, incomplete, status }) =>
-          preview === "OLD BODY" &&
-          !incomplete.includes(old.id) &&
-          status !== "ready",
+        ({ preview, incomplete, settled }) =>
+          preview === "OLD BODY" && !incomplete.includes(old.id) && !settled,
       ),
     ).toEqual([]);
     expect(h.session.inboxFeed.snapshot()).toMatchObject({
@@ -1170,6 +1188,8 @@ it("first verified admission marks exact target incomplete before unread subscri
       incomplete: [],
     });
   } finally {
+    closure.resolve([]);
+    await work;
     stop();
     stopFeed();
   }

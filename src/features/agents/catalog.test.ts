@@ -34,10 +34,12 @@ function client(
     timeoutMs: 1_000,
   });
   const base = server.reader(as);
+  const link = { down: false };
   const catalog = createCommunityCatalog({
     // Mirrors the session's verified reader, which reconciles the journal.
     reader: {
       async read(...args: Parameters<typeof base.read>) {
+        if (link.down) throw new Error("offline");
         const events = await base.read(...args);
         writes.observe(events);
         return events;
@@ -48,7 +50,7 @@ function client(
     local: writes.local,
   });
   owners.push(catalog, { dispose: () => writes.dispose() });
-  return { writes, catalog: catalog.queries, owner: catalog };
+  return { writes, catalog: catalog.queries, owner: catalog, link };
 }
 async function settled(writes: ReturnType<typeof createOutbox>, id: string) {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -327,6 +329,30 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     expect(listed(a.catalog)).toEqual([]);
     await b.catalog.refresh();
     expect(listed(b.catalog)).toEqual([]);
+  });
+
+  it("a disconnect after dismissing an unshare never revives the share", async () => {
+    const server = relay();
+    const a = client(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    await settled(a.writes, a.catalog.publish(kind, "x", true, body));
+    const unshare = await settled(
+      a.writes,
+      a.catalog.publish(kind, "x", false),
+    );
+    await a.catalog.dismiss(unshare.event.id);
+    a.link.down = true;
+    a.owner.clear();
+    expect(a.catalog.state(kind, "x").shared).toBe(false);
+    expect(listed(a.catalog)).toEqual([]);
+    await a.catalog.refresh().catch(() => {});
+    expect(a.catalog.state(kind, "x").shared).toBe(false);
+    expect(listed(a.catalog)).toEqual([]);
+    a.link.down = false;
+    await a.catalog.refresh();
+    expect(a.catalog.state(kind, "x").shared).toBe(false);
+    expect(listed(a.catalog)).toEqual([]);
   });
 
   it("refuses rather than publishing an unshare the head would outrank", async () => {

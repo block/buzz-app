@@ -290,7 +290,8 @@ export function createCommunityCatalog({
       controller = undefined;
       pending = undefined;
       relayEvents = [];
-      confirmedHeads.clear();
+      // A disconnect doesn't undo what the relay confirmed; keeping these
+      // stops the journal from reviving a share a dismissed unshare replaced.
       status = closed || !reader ? "unavailable" : "idle";
       error = undefined;
       publish();

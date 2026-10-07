@@ -5,7 +5,8 @@ const keyword = "buzz_team_snapshot\0";
 const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const placeholder =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAaX1ZFcAAAAASUVORK5CYII=";
-const MAX_JSON = 8 * 1024 * 1024;
+export const MAX_TEAM_SNAPSHOT_JSON_BYTES = 8 * 1024 * 1024;
+export const MAX_TEAM_SNAPSHOT_PNG_BYTES = 16 * 1024 * 1024;
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -26,7 +27,7 @@ export function encodeTeam(
   format: "json" | "png",
 ): Blob {
   const json = new TextEncoder().encode(JSON.stringify(snapshot, null, 2));
-  if (json.length > MAX_JSON)
+  if (json.length > MAX_TEAM_SNAPSHOT_JSON_BYTES)
     throw new Error("Team snapshot exceeds the size limit");
   if (format === "json") return new Blob([json], { type: "application/json" });
   const payload = new TextEncoder().encode(keyword + btoa(binary(json)));
@@ -38,7 +39,7 @@ export function encodeTeam(
   view.setUint32(chunk.length - 4, crc32(chunk.subarray(4, chunk.length - 4)));
   const image = Uint8Array.from(atob(placeholder), (c) => c.charCodeAt(0));
   const chunks = pngChunks(image);
-  return new Blob(
+  const result = new Blob(
     [
       signature,
       ...chunks.flatMap((item) =>
@@ -47,16 +48,19 @@ export function encodeTeam(
     ],
     { type: "image/png" },
   );
+  if (result.size > MAX_TEAM_SNAPSHOT_PNG_BYTES)
+    throw new Error("Team snapshot exceeds the size limit");
+  return result;
 }
 /** Decode only the portable manifest. Native preview remains the validation authority. */
 export function decodeTeamFile(bytes: Uint8Array): string {
   const png = signature.every((byte, index) => bytes[index] === byte);
   if (!png) {
-    if (bytes.length > MAX_JSON)
+    if (bytes.length > MAX_TEAM_SNAPSHOT_JSON_BYTES)
       throw new Error("Team snapshot exceeds the size limit");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
-  if (bytes.length > 16 * 1024 * 1024)
+  if (bytes.length > MAX_TEAM_SNAPSHOT_PNG_BYTES)
     throw new Error("Team snapshot exceeds the size limit");
   const matches = pngChunks(bytes).filter(
     (chunk) =>
@@ -80,10 +84,10 @@ export function decodeTeamFile(bytes: Uint8Array): string {
   const encoded = new TextDecoder()
     .decode(chunk.payload.subarray(keyword.length))
     .trim();
-  if (encoded.length > Math.ceil(MAX_JSON / 3) * 4)
+  if (encoded.length > Math.ceil(MAX_TEAM_SNAPSHOT_JSON_BYTES / 3) * 4)
     throw new Error("Team snapshot exceeds the size limit");
   const decoded = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
-  if (decoded.length > MAX_JSON)
+  if (decoded.length > MAX_TEAM_SNAPSHOT_JSON_BYTES)
     throw new Error("Team snapshot exceeds the size limit");
   return new TextDecoder("utf-8", { fatal: true }).decode(decoded);
 }

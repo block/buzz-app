@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { decodeTeamFile, encodeTeam } from "./team-encoding";
+import {
+  decodeTeamFile,
+  encodeTeam,
+  MAX_TEAM_SNAPSHOT_JSON_BYTES,
+  MAX_TEAM_SNAPSHOT_PNG_BYTES,
+} from "./team-encoding";
 import type { TeamSnapshot } from "./team-bundles";
 const snapshot: TeamSnapshot = {
   format: "buzz-team-snapshot",
@@ -34,9 +39,9 @@ it("rejects corrupted embedded PNG manifest", async () => {
   expect(() => decodeTeamFile(bytes)).toThrow("checksum");
 });
 it("rejects oversized JSON before parsing", () => {
-  expect(() => decodeTeamFile(new Uint8Array(8 * 1024 * 1024 + 1))).toThrow(
-    "size limit",
-  );
+  expect(() =>
+    decodeTeamFile(new Uint8Array(MAX_TEAM_SNAPSHOT_JSON_BYTES + 1)),
+  ).toThrow("size limit");
 });
 it("does not mistake an ordinary PNG for a team", async () => {
   const bytes = Uint8Array.from(
@@ -47,3 +52,44 @@ it("does not mistake an ordinary PNG for a team", async () => {
   );
   expect(() => decodeTeamFile(bytes)).toThrow("buzz_team_snapshot");
 });
+
+it("accepts JSON at the complete-file limit and rejects PNG above its own limit", () => {
+  const json = new TextEncoder().encode(
+    " ".repeat(MAX_TEAM_SNAPSHOT_JSON_BYTES),
+  );
+  expect(decodeTeamFile(json).length).toBe(MAX_TEAM_SNAPSHOT_JSON_BYTES);
+  const png = new Uint8Array(MAX_TEAM_SNAPSHOT_PNG_BYTES + 1);
+  png.set([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(() => decodeTeamFile(png)).toThrow("size limit");
+});
+for (const format of ["json", "png"] as const) {
+  it(`an export at the JSON limit remains importable as ${format}`, async () => {
+    const empty = { ...snapshot, team: { ...snapshot.team, instructions: "" } };
+    const overhead = new TextEncoder().encode(
+      JSON.stringify(empty, null, 2),
+    ).length;
+    const atLimit = {
+      ...empty,
+      team: {
+        ...empty.team,
+        instructions: "x".repeat(MAX_TEAM_SNAPSHOT_JSON_BYTES - overhead),
+      },
+    };
+    const exportFile = encodeTeam(atLimit, format);
+    expect(exportFile.size).toBeLessThanOrEqual(
+      format === "json"
+        ? MAX_TEAM_SNAPSHOT_JSON_BYTES
+        : MAX_TEAM_SNAPSHOT_PNG_BYTES,
+    );
+    expect(
+      JSON.parse(
+        decodeTeamFile(new Uint8Array(await exportFile.arrayBuffer())),
+      ),
+    ).toEqual(atLimit);
+    const over = {
+      ...atLimit,
+      team: { ...atLimit.team, instructions: `${atLimit.team.instructions}x` },
+    };
+    expect(() => encodeTeam(over, format)).toThrow("size limit");
+  });
+}

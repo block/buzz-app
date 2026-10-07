@@ -67,6 +67,25 @@ pub(crate) async fn app_agent_create_prepare(
     Ok(pubkey)
 }
 
+/// Has the signed-in owner attest only the pending key, for its prepared owner.
+/// Agents2 never goes through the harness agent host for this.
+#[tauri::command]
+pub(crate) async fn app_agent_create_authorize(
+    state: tauri::State<'_, AppAgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    pubkey: String,
+) -> Result<Vec<String>, String> {
+    let owner = state
+        .1
+        .lock()
+        .await
+        .as_ref()
+        .filter(|prepared| prepared.pubkey() == pubkey)
+        .map(|prepared| prepared.owner().to_owned())
+        .ok_or("Create request expired; try again")?;
+    identity.inner().authorize_agent(owner, pubkey).await
+}
+
 /// Saves the pending key with its owner attestation.
 #[tauri::command]
 pub(crate) async fn app_agent_create_commit(

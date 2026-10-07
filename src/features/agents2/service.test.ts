@@ -8,14 +8,6 @@ import type { AgentIdentity, AgentsNative } from "./native";
 import { Agents2Service, type AgentType, type Delivery } from "./service";
 import { memoryStorage } from "./test-fakes";
 
-vi.mock("../communities/api", () => ({
-  communityRequest: vi.fn(
-    async (_id: string, _route: string, body: unknown) => ({
-      auth: ["auth", (body as { owner: string }).owner, "", "sig"],
-    }),
-  ),
-}));
-
 const viewer = "a".repeat(64);
 const other = "b".repeat(64);
 const bot = "c".repeat(64);
@@ -64,6 +56,7 @@ function fakeNative() {
   const native = {
     list: vi.fn(async () => [...identities]),
     prepare: vi.fn(async () => bot),
+    authorize: vi.fn(async () => ["auth", viewer, "", "sig"]),
     commit: vi.fn(async (pubkey: string) => {
       const identity = {
         pubkey,

@@ -460,6 +460,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_create_prepare,
         app_agents::app_agent_list,
         app_agents::app_agent_create_prepare,
+        app_agents::app_agent_create_authorize,
         app_agents::app_agent_create_commit,
         app_agents::app_agent_delete,
         app_agents::app_agent_publish,

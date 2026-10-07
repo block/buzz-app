@@ -16,6 +16,8 @@ export type AgentEventTemplate = Readonly<{
 export type AgentsNative = {
   list(): Promise<readonly AgentIdentity[]>;
   prepare(destination: string, owner: string): Promise<string>;
+  /** The signed-in owner's NIP-OA attestation for the pending key only. */
+  authorize(pubkey: string): Promise<string[]>;
   commit(pubkey: string, auth: readonly string[]): Promise<AgentIdentity>;
   remove(pubkey: string): Promise<void>;
   /** Signs one event as the agent (kinds 0, 5, 7, 9, 40003 only) with its owner
@@ -29,6 +31,7 @@ export const nativeAgents = (): AgentsNative | undefined =>
         list: () => invoke("app_agent_list"),
         prepare: (destination, owner) =>
           invoke("app_agent_create_prepare", { destination, owner }),
+        authorize: (pubkey) => invoke("app_agent_create_authorize", { pubkey }),
         commit: (pubkey, auth) =>
           invoke("app_agent_create_commit", { pubkey, auth }),
         remove: (pubkey) => invoke("app_agent_delete", { pubkey }),

@@ -9,7 +9,6 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
-import { communityRequest } from "../communities/api";
 import { relayOrigin } from "../communities/destination";
 import type { RelayEvent } from "../relay/events";
 import type { LiveBatch } from "../relay/incoming";
@@ -284,11 +283,7 @@ export class Agents2Service extends Service implements Agents2 {
     for (const [slug, value] of Object.entries(defaults.attention ?? {}))
       record = setAttention(record, slug, value);
     const pubkey = await native.prepare(destination, binding.viewer);
-    const { auth } = await communityRequest<{ auth: string[] }>(
-      destination,
-      "authorize-agent",
-      { pubkey, owner: binding.viewer },
-    );
+    const auth = await native.authorize(pubkey);
     const identity = await native.commit(pubkey, auth);
     this.identities = [
       ...this.identities.filter((saved) => saved.pubkey !== pubkey),

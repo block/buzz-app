@@ -61,23 +61,24 @@ export function ActivityAccessory({
     profiles.snapshot,
     profiles.snapshot,
   );
-  if (!keys) return null;
-  // Keep the announcement outside collapsed details; only the visually deduplicated
-  // agent typing is represented here, while public human typing remains separate.
+  // Keep the live region mounted from idle through completion, so the first
+  // working transition changes an established region rather than inserting one.
   const workingNames = keys
-    .split(":")
-    .filter(
-      (agent) =>
-        turns.some(
-          (turn) => turn.agent === agent && turn.state === "working",
-        ) || typing.some((entry) => entry.agent === agent),
-    )
-    .map((agent) =>
-      resolveName(
-        agent,
-        identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
-      ),
-    );
+    ? keys
+        .split(":")
+        .filter(
+          (agent) =>
+            turns.some(
+              (turn) => turn.agent === agent && turn.state === "working",
+            ) || typing.some((entry) => entry.agent === agent),
+        )
+        .map((agent) =>
+          resolveName(
+            agent,
+            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
+          ),
+        )
+    : [];
   const agents = (
     <div className={styles.agents}>
       {keys.split(":").map((agent) => {
@@ -134,35 +135,39 @@ export function ActivityAccessory({
     </div>
   );
   return (
-    <section
-      className={styles.root}
-      data-buzz-ui=""
-      aria-label={
-        threadRootId
-          ? "Agent activity in this thread"
-          : "Agent activity in this channel"
-      }
-    >
-      {workingNames.length > 0 && (
-        <span className="sr-only" role="status">
-          {workingNames.join(", ")}
-          {workingNames.length === 1 ? " is working" : " are working"}
-        </span>
+    <>
+      {/* The accessible announcement survives while the visual rows are absent. */}
+      <span className="sr-only" role="status" data-agent-working-status="">
+        {workingNames.join(", ")}
+        {workingNames.length > 0 &&
+          (workingNames.length === 1 ? " is working" : " are working")}
+      </span>
+      {keys && (
+        <section
+          className={styles.root}
+          data-buzz-ui=""
+          aria-label={
+            threadRootId
+              ? "Agent activity in this thread"
+              : "Agent activity in this channel"
+          }
+        >
+          {threadRootId ? (
+            agents
+          ) : (
+            // Observer turns have no thread identity. Keep all of them accessible
+            // without presenting a second full list as conversation-local work.
+            <details key={channelId}>
+              <summary className={`text-body-sm ${styles.summary}`}>
+                Channel-wide activity · {keys.split(":").length}{" "}
+                {keys.includes(":") ? "agents" : "agent"}
+              </summary>
+              {agents}
+            </details>
+          )}
+        </section>
       )}
-      {threadRootId ? (
-        agents
-      ) : (
-        // Observer turns have no thread identity. Keep all of them accessible
-        // without presenting a second full list as conversation-local work.
-        <details key={channelId}>
-          <summary className={`text-body-sm ${styles.summary}`}>
-            Channel-wide activity · {keys.split(":").length}{" "}
-            {keys.includes(":") ? "agents" : "agent"}
-          </summary>
-          {agents}
-        </details>
-      )}
-    </section>
+    </>
   );
 }
 

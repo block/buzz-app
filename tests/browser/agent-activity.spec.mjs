@@ -1035,7 +1035,7 @@ test.describe("thread activity", () => {
       exact: true,
     });
     const indicator = thread.getByRole("status", { name: "Typing activity" });
-    const workingStatus = region.getByRole("status");
+    const workingStatus = thread.locator("[data-agent-working-status]");
     const openThread = async (root) => {
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -1068,6 +1068,8 @@ test.describe("thread activity", () => {
       );
     };
     await openThread(roots[0]);
+    await expect(workingStatus).toBeAttached();
+    await expect(workingStatus).toBeEmpty();
     for (const [index, key] of keys.entries()) {
       app.serveProfile(key, { name: `Worker ${index + 1}`, is_agent: true });
       app.observer(
@@ -1152,13 +1154,17 @@ test.describe("thread activity", () => {
     await expect(region.getByRole("button")).toHaveCount(1);
     publish(keys[1], roots[0], 9);
     await expect(region).toHaveCount(0);
-    await expect(workingStatus).toHaveCount(0);
+    await expect(workingStatus).toBeAttached();
+    await expect(workingStatus).toBeEmpty();
     await expect(indicator).toHaveCount(0);
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
     // Channel uses the same rows behind an existing visible disclosure.
-    const channelStatus = channelActivity(page).getByRole("status");
+    const channelStatus = page
+      .getByRole("form", { name: "Send a message to Alpha", exact: true })
+      .locator("..")
+      .locator("[data-agent-working-status]");
     const channelTyping = page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .locator("..")

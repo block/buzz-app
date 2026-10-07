@@ -111,17 +111,15 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   const channel = screen.getByRole("region", {
     name: "Agent activity in this channel",
   });
+  const channelStatus = screen.getAllByRole("status")[0];
+  const threadStatus = screen.getAllByRole("status")[1];
   const thread = screen.getByRole("region", {
     name: "Agent activity in this thread",
   });
   const summary = within(channel).getByText("Channel-wide activity · 2 agents");
-  expect(within(channel).getByRole("status")).toHaveTextContent(
-    "Agent aaaaaaaa is working",
-  );
-  expect(within(thread).getByRole("status")).toHaveTextContent(
-    "Agent aaaaaaaa is working",
-  );
-  expect(within(channel).getByRole("status")).toHaveClass("sr-only");
+  expect(channelStatus).toHaveTextContent("Agent aaaaaaaa is working");
+  expect(threadStatus).toHaveTextContent("Agent aaaaaaaa is working");
+  expect(channelStatus).toHaveClass("sr-only");
   expect(channel.querySelector("details [role=status]")).toBeNull();
   expect(channel.querySelector("details")).not.toHaveAttribute("open");
   expect(
@@ -160,13 +158,46 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   expect(
     screen.queryByRole("region", { name: "Agent activity in this channel" }),
   ).not.toBeInTheDocument();
-  expect(within(channel).queryByRole("status")).not.toBeInTheDocument();
-  expect(within(thread).getByRole("status")).toHaveTextContent(
-    "Agent aaaaaaaa is working",
-  );
+  expect(channelStatus).toBeInTheDocument();
+  expect(channelStatus).toBeEmptyDOMElement();
+  expect(threadStatus).toHaveTextContent("Agent aaaaaaaa is working");
   mounted.unmount();
   expect(f.observe).toHaveBeenCalledTimes(1); // Disclosure never owns capture.
 });
+
+it.each([
+  ["channel", undefined],
+  ["thread", root],
+])(
+  "retains an established %s working status through idle and renewed typing",
+  (_scope, threadRootId) => {
+    const f = fixture();
+    f.turn();
+    f.turn(agent, "one", "alpha", "turn_completed"); // Recognized, but idle.
+    const mounted = render(f.view("alpha", threadRootId));
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
+    act(() => f.typing(threadRootId));
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("Agent aaaaaaaa is working");
+    expect(screen.getByRole("region")).toBeInTheDocument();
+    act(() => f.owner.state({ status: "retrying", routes: [] }));
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
+    act(() =>
+      f.owner.state({
+        status: "connected",
+        routes: [{ id: "observer", status: "live", replay: "unknown" }],
+      }),
+    );
+    act(() => f.typing(threadRootId));
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("Agent aaaaaaaa is working");
+    mounted.unmount();
+  },
+);
 
 it("retains expanded state on updates, resets across channels, and follows exact thread scope", async () => {
   const f = fixture();

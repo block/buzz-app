@@ -7,6 +7,7 @@ import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
 import { threadBinding } from "./thread-window";
 import { matchesEvent } from "./projection";
+import { createRelayReader } from "./reader";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -172,30 +173,35 @@ it("batches history and edit-deletion targets within the real reader's request b
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const root = message(h.viewer, "room", "assignment", 12);
-  const history = Array.from({ length: 1000 }, (_, index) =>
-    message(h.alice, "room", `progress ${index}`, 20 + index, [
-      ["e", root.id, "", "reply"],
-    ]),
-  );
-  const edits = history.map((event) =>
-    signed(h.alice, {
-      kind: 40003,
-      created_at: 1100,
-      content: "edited progress",
-      tags: [
-        ["h", "room"],
-        ["e", event.id],
-      ],
-    }),
-  );
-  const deletions = edits.map((event) =>
-    signed(h.alice, {
-      kind: 5,
-      created_at: 1200,
-      content: "",
-      tags: [["e", event.id]],
-    }),
-  );
+  const first = message(h.alice, "room", "progress 0", 20, [
+    ["e", root.id, "", "reply"],
+  ]);
+  // The transport's signature-verified DTO boundary suffices for request sizing.
+  // Signed overlay admission and deleted-edit previews are covered below.
+  const history = Array.from({ length: 1000 }, (_, index) => ({
+    ...first,
+    id: (index + 1).toString(16).padStart(64, "0"),
+    created_at: 20 + index,
+  }));
+  const edits = history.map((event, index) => ({
+    ...event,
+    id: (index + 1001).toString(16).padStart(64, "0"),
+    kind: 40003,
+    created_at: 1100,
+    content: "edited progress",
+    tags: [
+      ["h", "room"],
+      ["e", event.id],
+    ],
+  }));
+  const deletions = edits.map((event, index) => ({
+    ...event,
+    id: (index + 2001).toString(16).padStart(64, "0"),
+    kind: 5,
+    created_at: 1200,
+    content: "",
+    tags: [["e", event.id]],
+  }));
   const events = [root, ...history, ...edits, ...deletions];
   h.query.mockImplementation(async ([filter]) =>
     events
@@ -210,32 +216,54 @@ it("batches history and edit-deletion targets within the real reader's request b
       )
       .slice(0, filter?.limit),
   );
-  const first = history[0];
-  if (!first) throw new Error("Missing history fixture");
   h.live.receive([root, first]);
-  await h.session.inboxFeed.ensureResponses(rows(h));
-  expect(h.session.inboxFeed.snapshot()).toMatchObject({
-    status: "ready",
-    incomplete: [],
-    error: undefined,
+  const requests = createRelayReader({
+    viewer: h.viewer.pubkey,
+    relayAuthor: h.relay.pubkey,
+    query: h.query,
   });
-  expect(h.session.inboxFeed.snapshot().checkedResponses).toHaveLength(1000);
-  expect(rows(h)[0]?.preview).toBe(first.content); // Deleted edits cannot supply a preview.
-  for (const kinds of [
-    [40003, 5, 9005],
-    [5, 9005],
-  ]) {
-    const requests = h.query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.kinds?.join() === kinds.join());
-    expect(new Set(requests.flatMap((filter) => filter["#e"] ?? []))).toEqual(
-      new Set(
-        (kinds.includes(40003) ? history : edits).map((event) => event.id),
-      ),
-    );
-    expect(requests.every((filter) => byteSize([filter]) < 64 * 1024)).toBe(
-      true,
-    );
+  const feed = createInboxFeed({
+    viewer: h.viewer.pubkey,
+    channels: h.session.channels,
+    reader: requests.reader,
+    async addressedRead(filter, signal, prepare) {
+      const events = await requests.reader.read([filter], { signal });
+      prepare(events);
+      return events;
+    },
+    retainedEvent: (id) =>
+      id === first.id ? first : events.find((event) => event.id === id),
+    retainedEditIds: () => [],
+  });
+  try {
+    await feed.ensureResponses(rows(h));
+    expect(feed.snapshot()).toMatchObject({
+      status: "ready",
+      incomplete: [],
+      error: undefined,
+    });
+    expect(feed.snapshot().checkedResponses).toHaveLength(1001);
+    for (const kinds of [
+      [40003, 5, 9005],
+      [5, 9005],
+    ]) {
+      const requests = h.query.mock.calls
+        .flatMap(([filters]) => filters)
+        .filter((filter) => filter.kinds?.join() === kinds.join());
+      expect(new Set(requests.flatMap((filter) => filter["#e"] ?? []))).toEqual(
+        new Set(
+          (kinds.includes(40003) ? [first, ...history] : edits).map(
+            (event) => event.id,
+          ),
+        ),
+      );
+      expect(requests.every((filter) => byteSize([filter]) < 64 * 1024)).toBe(
+        true,
+      );
+    }
+  } finally {
+    feed.dispose();
+    requests.dispose();
   }
 });
 it.each(["complete", "paged", "cold ancestors", "missing bounds"])(

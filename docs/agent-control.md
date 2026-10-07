@@ -179,7 +179,7 @@ settings changed (see [saving](#global-agent-defaults-and-saving)). Dirty
 drafts resist backdrop/Escape; explicit Cancel/Close discards. Page
 navigation/reload still discards page-local drafts.
 
-**Browse models** requests the current Databricks catalog on explicit button
+For Buzz Agent, **Browse models** requests the current Databricks catalog on explicit button
 activation, including when typing has already opened the local popup. Typing,
 focus and ArrowDown navigation never start a model-host request. Existing
 app-isolated credentials are used/refreshed first; only an authentication failure
@@ -248,11 +248,53 @@ flag exclusions and the supported deployment boundary.
 Individual-agent configuration stays on the Agents page; Settings → Agents owns
 installation guidance and device-wide defaults.
 
+### Shared configuration policy
+
+The native `agent-controller::HarnessConfigurationPolicy` is projected through
+each `harnessOptions[].configurationPolicy`. Create/Edit and Agent defaults
+consume that policy for provider discovery, authentication ownership, model
+requirements, and selector environment keys. Provider-specific credential fields
+remain with their provider owners; authentication ownership is not a claim that
+every provider requires an API key.
+
+| Harness | Authentication owner | Provider configuration | Model selection |
+| --- | --- | --- | --- |
+| Buzz Agent | Selected provider | Scalar selector | Existing defaults and overrides |
+| Goose | Harness, with provider-specific overrides | Scalar selector | Existing defaults and overrides |
+| Pi | Harness, with provider-specific overrides | Discovered provider selector | A selected provider requires a model |
+| Custom executable | External executable | External configuration | Existing saved value |
+
+Policy does not migrate saved records or change validation timing. Pi selection
+checks stay at discovery/launch and default-save admission. Custom provider
+values remain readable and editable, but an unmapped provider is still refused
+at launch. Worker selector keys are shared with native launch resolution;
+environment values never appear in the policy. Older hosts without the policy
+retain the existing editor behavior.
+
+`supportedModes` is currently empty for every integration. Legacy blank-field
+inheritance is not managed Default intent. Admission and persistence of explicit
+Default/Advanced modes belong to the later Codex persistence layer. Likewise,
+`effortDiscovery: "unknown"` means no model-specific capability evidence is
+available; it does not mean effort is unsupported. The existing Agent defaults
+effort suggestions remain editable suggestions, not allowed-value validation.
+
+This is PR 1 of the [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
+Codex registration, binding, discovery, connection validation, and mode controls
+are separate layers.
+
+For native acceptance, use the Buzz community in the ordinary development app.
+Open Create, Edit, and Agent defaults for Buzz Agent, Goose, and Pi. Check
+provider/setup fields and harness switching, preserve saved/custom values, and
+save/reopen a disposable configuration. Existing agent settings must not change
+merely from opening the forms. Mounted form tests cover these controls;
+controller tests cover stored-record preservation, selector precedence, and
+launch rejection; a Tauri IPC test checks the actual serialized snapshot.
+
 ### Harnesses
 
 The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
-**Claude Code**. Claude Code supports installation only in this slice; it is
-not yet a choice when creating an agent. **Add harness** opens the Tier 2 Hermes chooser and setup details.
+**Claude Code**. Claude Code is also a choice in Create/Edit once its tools are
+installed. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected:
 
 - **Buzz Agent** is bundled and shows **Ready**.
@@ -317,10 +359,31 @@ Hermes also appears in the main list once its executable is detected:
   after installation. Only its `loggedIn` boolean is exposed; account metadata
   is discarded. Ready rows hide setup guidance; failed installs retain their
   error and log. This confirms local sign-in, not inference. The ACP adapter bundles its own Claude
-  runtime; the separate CLI provides the sign-in command. This PR does not
-  launch Claude agents, discover models or restart agents.
-  Native reports this setup separately through `claudeSetup`, outside
-  `harnessOptions`, so it cannot become a creation or default-harness choice.
+  runtime; the separate CLI provides the sign-in command. Native retains
+  `claudeSetup` for Settings and reports the selected adapter in `harnessOptions`
+  for Create/Edit. Picker availability confirms installed tools, not sign-in or
+  inference. Claude is not a device-wide default-harness choice yet.
+
+  **Create agent → Harness → Claude Code** uses Claude's own model and sign-in.
+  Provider, model browsing and Test connection are not offered in this slice.
+  Saved model/provider fields remain visible for recovery; choose **Use Claude
+  Code defaults** before saving or starting those agents. Start uses the saved
+  absolute adapter path with empty default arguments. Managed adapters use the
+  pinned managed Node; external adapters prefer a runnable Node beside the adapter,
+  then native discovery. Node and adapter directories precede the existing
+  controlled tools PATH, after bundled Buzz tools. Shell provider credentials
+  are not inherited. Explicit Advanced environment values remain write-only.
+  Buzz points `CLAUDE_CODE_EXECUTABLE` at the selected runnable CLI unless Advanced
+  environment explicitly overrides it. An explicit override skips CLI discovery;
+  Node is still required. This avoids relying on the SDK's optional
+  native-binary download. Windows `.cmd`/`.bat` login launchers cannot be used by
+  the JavaScript SDK, so those installations use the SDK's bundled native runtime
+  and must include its platform optional dependency.
+  The pinned `buzz-acp` owns Claude system-prompt append, channel/thread sessions,
+  permissions, cancellation and cleanup. Create, Start/Stop/Restart and retry use
+  the existing native controller, without another identity or lifecycle owner.
+  See [View a Claude Code session](view-claude-session.md) for local transcripts
+  and tool activity.
 
 Tier 2 definitions live in [`harness-presets.json`](../crates/agent-controller/src/harness-presets.json),
 owned by the controller and read by both Rust and TypeScript. Native discovery
@@ -610,8 +673,14 @@ Settings says **Shell setup not verified**; Buzz does not check it before Start.
   bundled `goose-acp` executable, and offers common Goose providers plus a custom
   ID. Switching into Goose supplies no subcommand arguments and clears the
   previous provider/model; selecting a Goose provider clears the
-  previous model. For Goose, an explicit Browse asks Goose ACP for the selected
-  provider's supported-model list and searches it in the existing picker. The
+  previous model. For Goose, selecting a provider from the dropdown asks Goose
+  ACP for its supported-model list. Opening an existing editor does not start
+  discovery or sign-in; Browse remains available. The picker
+  shows loading and authentication failures; failures require explicit Retry.
+  Provider changes cancel the previous lookup and discard stale results.
+  Credential/context edits retire discovery and wait for Browse or Retry, so
+  typing credentials never repeatedly launches sign-in. Custom provider IDs
+  still require Browse, so typing an ID does not start a lookup per keystroke. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
   after discovery. The picker shows at most ten matches while filtering the full
   list. Saved write-only `GOOSE_PROVIDER` overrides remain native; native uses

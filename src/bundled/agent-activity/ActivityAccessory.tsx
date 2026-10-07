@@ -35,6 +35,8 @@ export function ActivityAccessory({
     (turn) =>
       !threadRootId && turn.channelId === channelId && turn.state !== "ended",
   );
+  // TypingIndicator suppresses this same exact-scope, canOpen-filtered set in
+  // composers. Keep its projection synchronized when changing row eligibility.
   const typing = snapshot.typing.filter(
     (entry) =>
       entry.channelId === channelId && entry.threadRootId === threadRootId,
@@ -59,7 +61,24 @@ export function ActivityAccessory({
     profiles.snapshot,
     profiles.snapshot,
   );
-  if (!keys) return null;
+  // Keep the live region mounted from idle through completion, so the first
+  // working transition changes an established region rather than inserting one.
+  const workingNames = keys
+    ? keys
+        .split(":")
+        .filter(
+          (agent) =>
+            turns.some(
+              (turn) => turn.agent === agent && turn.state === "working",
+            ) || typing.some((entry) => entry.agent === agent),
+        )
+        .map((agent) =>
+          resolveName(
+            agent,
+            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
+          ),
+        )
+    : [];
   const agents = (
     <div className={styles.agents}>
       {keys.split(":").map((agent) => {
@@ -116,29 +135,39 @@ export function ActivityAccessory({
     </div>
   );
   return (
-    <section
-      className={styles.root}
-      data-buzz-ui=""
-      aria-label={
-        threadRootId
-          ? "Agent activity in this thread"
-          : "Agent activity in this channel"
-      }
-    >
-      {threadRootId ? (
-        agents
-      ) : (
-        // Observer turns have no thread identity. Keep all of them accessible
-        // without presenting a second full list as conversation-local work.
-        <details key={channelId}>
-          <summary className={`text-body-sm ${styles.summary}`}>
-            Channel-wide activity · {keys.split(":").length}{" "}
-            {keys.includes(":") ? "agents" : "agent"}
-          </summary>
-          {agents}
-        </details>
+    <>
+      {/* The accessible announcement survives while the visual rows are absent. */}
+      <span className="sr-only" role="status" data-agent-working-status="">
+        {workingNames.join(", ")}
+        {workingNames.length > 0 &&
+          (workingNames.length === 1 ? " is working" : " are working")}
+      </span>
+      {keys && (
+        <section
+          className={styles.root}
+          data-buzz-ui=""
+          aria-label={
+            threadRootId
+              ? "Agent activity in this thread"
+              : "Agent activity in this channel"
+          }
+        >
+          {threadRootId ? (
+            agents
+          ) : (
+            // Observer turns have no thread identity. Keep all of them accessible
+            // without presenting a second full list as conversation-local work.
+            <details key={channelId}>
+              <summary className={`text-body-sm ${styles.summary}`}>
+                Channel-wide activity · {keys.split(":").length}{" "}
+                {keys.includes(":") ? "agents" : "agent"}
+              </summary>
+              {agents}
+            </details>
+          )}
+        </section>
       )}
-    </section>
+    </>
   );
 }
 

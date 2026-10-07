@@ -14,7 +14,7 @@ import { createServer, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { afterEach, expect, it, vi } from "vitest";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { AgentCard } from "../../bundled/agents/AgentCard";
 import { controlFixture } from "../agents/control-testing";
 import { keypair } from "../relay/testing";

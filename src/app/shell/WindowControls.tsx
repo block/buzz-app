@@ -8,6 +8,13 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 
+declare global {
+  interface Window {
+    /** Native document-start policy; absent in browser previews. */
+    __BUZZ_WINDOW_CONTROLS__?: { minimize: boolean; maximize: boolean };
+  }
+}
+
 export function hasIntegratedWindowControls() {
   return isTauri() && /^(Linux|Win)/i.test(navigator.platform);
 }
@@ -34,20 +41,24 @@ export function WindowControls() {
           {error}
         </span>
       )}
-      <IconButton
-        aria-label="Minimize window"
-        title="Minimize window"
-        size="toolbar"
-        icon={<MinusIcon size={16} />}
-        onClick={() => void run(() => getCurrentWindow().minimize())}
-      />
-      <IconButton
-        aria-label="Maximize or restore window"
-        title="Maximize or restore window"
-        size="toolbar"
-        icon={<ArrowsOutIcon size={16} />}
-        onClick={() => void run(() => getCurrentWindow().toggleMaximize())}
-      />
+      {window.__BUZZ_WINDOW_CONTROLS__?.minimize !== false && (
+        <IconButton
+          aria-label="Minimize window"
+          title="Minimize window"
+          size="toolbar"
+          icon={<MinusIcon size={16} />}
+          onClick={() => void run(() => getCurrentWindow().minimize())}
+        />
+      )}
+      {window.__BUZZ_WINDOW_CONTROLS__?.maximize !== false && (
+        <IconButton
+          aria-label="Maximize or restore window"
+          title="Maximize or restore window"
+          size="toolbar"
+          icon={<ArrowsOutIcon size={16} />}
+          onClick={() => void run(() => getCurrentWindow().toggleMaximize())}
+        />
+      )}
       <IconButton
         aria-label="Close window"
         title="Close window"

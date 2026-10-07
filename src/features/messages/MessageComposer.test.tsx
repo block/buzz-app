@@ -5216,6 +5216,30 @@ it("retires composer transients and revoked insert commands without replacing th
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("adds an HTTP link in the dialog and reports unsafe destinations accurately", () => {
+  const h = mount();
+  h.fill("docs");
+  const editor = h.input();
+  act(() => editor.setSelectionRange(0, 4));
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  expect(screen.getByRole("dialog", { name: "Add link" })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+    target: { value: "http://user:pw@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Use an HTTP(S) URL or a valid buzz:// link.",
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+    target: { value: "http://example.com/docs" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(editor).toHaveValue("docs");
+  expect(h.input().innerHTML).toContain("http://example.com/docs");
+});
+
 it("restores the retained editor when the Link dialog closes normally", async () => {
   const h = mount();
   const editor = h.input();

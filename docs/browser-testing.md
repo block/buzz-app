@@ -7,7 +7,7 @@ pushes: an isolated serial measurement job runs alongside twelve functional jobs
 (six file-level shards per engine, two workers per runner). Both engines remain
 mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
 `CI required` fails if any lane or shard fails, is cancelled, or is skipped.
-Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
+Owner-specific tests are colocated in `src/`, `browser-host/` and `scripts/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
 
 ## Run

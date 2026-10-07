@@ -171,7 +171,7 @@ so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
 account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`dev/builderlab.mjs`), which keep the session
+broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
 over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
 `https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
@@ -569,6 +569,8 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+For kind 30177 publication, follow the
+[managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
 The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
 Shared message UI opens exact public-key targets through ordinary page callbacks;
@@ -676,7 +678,7 @@ Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets an
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
 It does not fetch titles. Messages currently recognize
-credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;

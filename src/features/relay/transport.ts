@@ -362,7 +362,7 @@ export async function registerBrokerCommunity(
   }
 }
 
-/** Dev-only: a same-origin broker (see dev/relay-broker.mjs) holds the key and signs reads. */
+/** Dev-only: a same-origin broker (see browser-host/relay-broker.mjs) holds the key and signs reads. */
 export async function connectBrokerTransport(
   base = "",
   signal?: AbortSignal,

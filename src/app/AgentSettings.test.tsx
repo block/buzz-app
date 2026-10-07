@@ -723,7 +723,7 @@ it.each([false, true] as const)(
   },
 );
 
-it("offers manual Claude setup on unsupported devices without treating setup as an agent choice", async () => {
+it("offers manual Claude setup and disables creation when its tools are missing", async () => {
   const user = userEvent.setup();
   const { control, fixture } = setupHarnesses("ready", {
     claude: {
@@ -745,6 +745,15 @@ it("offers manual Claude setup on unsupported devices without treating setup as 
     row.getByText(/npm install -g @agentclientprotocol\/claude-agent-acp/),
   ).toBeVisible();
   // Exercise creation's real picker with the same native snapshot as Settings.
+  fixture.data.harnessOptions?.push({
+    command: "claude-agent-acp",
+    label: "Claude Code",
+    available: false,
+    status: "cli-needed",
+    providers: [],
+    defaultArgs: [],
+  });
+  await control.refresh();
   cleanup();
   render(
     <AgentHarnessEditor
@@ -757,7 +766,9 @@ it("offers manual Claude setup on unsupported devices without treating setup as 
   expect(
     await screen.findByRole("option", { name: "Buzz Agent" }),
   ).toBeVisible();
-  expect(screen.queryByRole("option", { name: /Claude/ })).toBeNull();
+  expect(
+    screen.getByRole("option", { name: "Claude Code (install first)" }),
+  ).toHaveAttribute("aria-disabled", "true");
   expect(control.snapshot().data?.claudeSetup?.status).toBe("cli-needed");
 });
 

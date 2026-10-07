@@ -22,6 +22,7 @@ import {
   MessageManagement,
   MessageManagementItems,
   MessageManagementStatus,
+  MessageReadStateItem,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
@@ -36,8 +37,11 @@ import {
   signed,
 } from "../relay/testing";
 import type { ReadStateSigning } from "../relay/read-state-host";
-// @ts-expect-error Exercise the production codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Exercise the production codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import type { RelayEvent } from "../relay/events";
 
 composerDOMFixture();
@@ -201,6 +205,7 @@ async function fixture(
             <MenuRoot>
               <MenuTrigger>Message actions</MenuTrigger>
               <MenuPopup>
+                <MessageReadStateItem row={row} session={owner.session} />
                 <MessageManagementItems row={row} session={owner.session} />
               </MenuPopup>
             </MenuRoot>
@@ -756,7 +761,7 @@ async function heldUnreadAction(action: "read" | "unread") {
       <MenuRoot>
         <MenuTrigger>Read actions</MenuTrigger>
         <MenuPopup>
-          <MessageManagementItems row={row} session={current} />
+          <MessageReadStateItem row={row} session={current} />
         </MenuPopup>
       </MenuRoot>
     </MessageManagement>

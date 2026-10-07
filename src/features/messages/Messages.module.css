@@ -1244,6 +1244,9 @@ button.mediaPreview {
   object-fit: contain;
   transform-origin: center;
 }
+.imageReviewStage:not(.imageReviewPannable) > img[data-review-media] {
+  cursor: zoom-in;
+}
 .imageReviewPannable {
   cursor: grab;
 }
@@ -1646,6 +1649,9 @@ button.mediaPreview {
   gap: var(--space-half);
   padding: var(--space-half);
   margin-inline-start: auto;
+  /* Controls are not conversation text: a selection that spans rows passes
+     through this bar, and engines copy button labels the user never saw. */
+  user-select: none;
 }
 .quickReactionGlyph {
   pointer-events: none;
@@ -1653,6 +1659,9 @@ button.mediaPreview {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+.quickReactionGlyph[data-emoji]::before {
+  content: attr(data-emoji);
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -1848,6 +1857,8 @@ html[data-keyboard-input] .quickReactionGlyph {
   align-items: flex-start;
 }
 .continuationTime {
+  /* Revealed on hover only; keep it out of selections like the action bar. */
+  user-select: none;
   position: relative;
   z-index: 1;
   background: var(--surface-panel);

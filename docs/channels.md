@@ -244,7 +244,7 @@ cross-device save guarantees. Retaining the shared record preserves compatibilit
 with existing desktop writers; convergence across unseen heads would require a
 separately designed reconciliation lifecycle or atomic relay support.
 
-`dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
+`browser-host/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
 through the real mutation helper: another section saves and confirms between a
 read and publication, then the stale whole-record replacement wins and also
 confirms. This is contract coverage, not a concurrency fix.
@@ -949,7 +949,7 @@ checks/readback reduce uncertainty but do not provide atomic conflict rejection.
 Preventing these races requires separately scoped relay support.
 
 Regression coverage lives in `administration.test.ts`,
-`MemberAdministration.test.tsx`, `native.test.ts`, and `dev/relay-broker-api.test.mjs`;
+`MemberAdministration.test.tsx`, `native.test.ts`, and `browser-host/relay-broker-api.test.mjs`;
 existing `ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
 writes/recovery and a real-app read/confirmation/cancel exercise do not establish
 native or deployed destructive-write acceptance. Those checks and human tryout
@@ -1135,7 +1135,7 @@ back to an offset without a same-message guarantee.
 Channels supports plain-text Markdown authoring with a shared durable outbox and bounded history.
 Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
 tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
-Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
+Only credential-free HTTP(S) links are active; raw HTML is ignored and inline remote images
 are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
 event-local and are not substituted inside links or code.
 Authenticated live traffic reconciles through the same session. Channel creation is not

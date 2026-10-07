@@ -5,10 +5,6 @@ import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts"
 import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
-import {
-  assertSidebarMuteIntent,
-  mutateSidebarMute,
-} from "./sidebar-mutes.mjs";
 import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
@@ -47,7 +43,9 @@ import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   assertSidebarStarIntent,
   mutateSidebarStar,
-} from "./sidebar-stars.mjs";
+  assertSidebarMuteIntent,
+  mutateSidebarMute,
+} from "./sidebar-toggle.mjs";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,

@@ -25,8 +25,10 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
   await expect(
     page.getByRole("region", { name: "Agents", exact: true }),
   ).not.toBeInViewport();
+  // Reveal without Playwright scrolling the offscreen library into view.
+  await page.getByText(/^Other agents \(/).evaluate((el) => el.click());
   const avatar = page
-    .getByRole("region", { name: "Library identities", exact: true })
+    .getByRole("region", { name: "Agent library", exact: true })
     .getByRole("img", { name: /^A Brain identity/ })
     .first();
   const image = avatar.locator("img");
@@ -78,6 +80,9 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
   await page
     .getByRole("button", { name: "Refresh agents", exact: true })
     .click();
+  await page.getByText(/^Other agents \(/).evaluate((el) => {
+    if (!el.parentElement.open) el.click();
+  });
   await expect(avatar).toContainText("A");
   await expect(image).toHaveCSS("opacity", "0");
   expect(await avatar.boundingBox()).toEqual(original);
@@ -90,6 +95,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
   await page
     .getByRole("button", { name: "Refresh agents", exact: true })
     .click();
+  await page.getByText(/^Other agents \(/).evaluate((el) => el.click());
   await expect
     .poll(() => image.evaluate((el) => el.naturalWidth))
     .toBeGreaterThan(0);

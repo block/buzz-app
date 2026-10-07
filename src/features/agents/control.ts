@@ -252,6 +252,8 @@ export interface AgentControlState {
   claudeInstall?: HarnessInstallState;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
+  /** Accepted process actions, keyed by native ID across all control surfaces. */
+  actionVersions?: Readonly<Record<string, number>>;
   pendingCredentialWrite?: boolean;
   mentionError?: string | null;
   stopping?: boolean;
@@ -487,12 +489,16 @@ export function createAgentControl(
   const action: AgentControlHost["action"] = (id, command, replayFloor) => {
     if (command === "stop") stopped++;
     return run(
-      (native) =>
-        native.action(
+      (native) => {
+        update({
+          actionVersions: { ...state.actionVersions, [id]: generation },
+        });
+        return native.action(
           id,
           command,
           ...(replayFloor === undefined ? [] : [replayFloor]),
-        ),
+        );
+      },
       ready,
       command === "stop" && canStopAgent(state, id),
       command === "stop" ? undefined : id,

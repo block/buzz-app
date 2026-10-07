@@ -1,0 +1,31 @@
+import { hasEventProof, type EventData } from "./events";
+
+/** Presentation only. Never substitutes for the signer, recipients or permission checks.
+ * Authority must be the configured community's explicit NIP-11 self, not its contact key. */
+export function workflowOwner(
+  event: EventData,
+  authority: string | undefined,
+): string | undefined {
+  if (!authority || event.pubkey !== authority || event.kind !== 9) return;
+  const markers = event.tags.filter(([name]) => name === "buzz:workflow");
+  const owners = event.tags.filter(([name]) => name === "buzz:workflow-owner");
+  const owner = owners[0]?.[1];
+  if (
+    markers.length !== 1 ||
+    markers[0]?.length !== 2 ||
+    markers[0][1] !== "true" ||
+    owners.length !== 1 ||
+    owners[0]?.length !== 2 ||
+    !owner ||
+    !/^[0-9a-f]{64}$/.test(owner)
+  )
+    return;
+  // Local intent and caller-owned copies cannot inherit admission-time proof.
+  // No signature work occurs while refolding retained history.
+  return hasEventProof(event) ? owner : undefined;
+}
+
+/** Compact surfaces still identify automation, never the owner as the sender. */
+export function workflowLabel(ownerName: string): string {
+  return `Workflow · owned by ${ownerName}`;
+}

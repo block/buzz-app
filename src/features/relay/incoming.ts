@@ -4,6 +4,7 @@ export type IncomingMessage = Readonly<{
   messageId: string;
   createdAt: number;
   authorId: string;
+  workflowOwnerId?: string | undefined;
   /** At most 4,096 source characters for a preview, not the complete message. */
   previewContent: string;
 }>;

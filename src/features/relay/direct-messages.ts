@@ -1,3 +1,4 @@
+import { validDirectMessageParticipants } from "./direct-message-policy";
 import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
 import type { ReadTransport } from "./transport";
@@ -65,14 +66,7 @@ export function createDirectMessages(
     async open(pubkeys: readonly string[], signal: AbortSignal) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
-      if (
-        !pubkeys.length ||
-        pubkeys.length > 8 ||
-        new Set(pubkeys).size !== pubkeys.length ||
-        pubkeys.some(
-          (key) => !/^[0-9a-f]{64}$/.test(key) || key === transport.viewer,
-        )
-      )
+      if (!validDirectMessageParticipants(pubkeys, transport.viewer))
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();

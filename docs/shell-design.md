@@ -30,10 +30,12 @@ semantic tokens, UI authoring rules and the local component reference.
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
   activation/re-enable order. Sidebar navigation lists only pages registered with
-  `primary: true` (Inbox, Bestie, Projects, Agents and Workflows among the bundled
+  `primary: true` (Inbox, Bestie, Projects, Agents, Sessions and Workflows among the bundled
   plugins); page search lists every active page. Inbox and Bestie are placeholder
-  pages of their own plugins, so disabling Bestie removes its row. Channels and Sessions are vended without rows: Messages opens by default,
-  from any channel row and from search; Sessions opens from Messages and search.
+  pages of their own plugins, so disabling Bestie removes its row. Channels is
+  vended without a row: Messages opens by default, from any channel row and from
+  search. Sessions opens from its page row, Messages and search; disabling the
+  Sessions plugin removes its row.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
@@ -110,6 +112,31 @@ The main capability includes scoped
 HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
+
+The main desktop window uses Tauri's window-state plugin to save its size,
+position, maximized and fullscreen state on normal app exit and restore them on
+launch on macOS, Windows and Linux. State is local to the app's OS configuration
+directory (`.window-state.json`); missing or unreadable state falls back to the
+configured 1200×800 window. Visibility and decorations are not restored, so a
+macOS window hidden by Close reopens visibly after Quit/relaunch and platform
+chrome stays configuration-owned. Close/reopen without quitting on macOS still
+uses the existing window. Before requesting placement or restoring maximized/fullscreen
+mode, Buzz reads the plugin's saved geometry and checks that both ends of the 48px
+client header are inside connected monitor work areas,
+allowing a header to span adjacent displays and ignoring invisible frame borders. An
+unreachable header falls back to the top of the primary work area (or the first
+available monitor), shrinking an oversized client to fit. This covers partial
+overlap after removing a monitor and fully off-screen saves; both use the same
+fallback instead of leaving placement to the OS. Saved zero-sized geometry is
+ignored. Validation uses requested geometry, not immediate getter results: native
+setters may apply asynchronously (Linux/macOS), so getters can still report the
+startup frame. The plugin remains the only state-file writer and owns mode
+restoration. Linux placement remains subject to the window manager/compositor
+(notably Wayland).
+The plugin stores physical pixels, so changing display scaling can change the
+window's apparent size. On macOS, quitting in fullscreen can preserve the
+fullscreen-sized frame instead of the earlier normal size; leaving fullscreen
+after relaunch may therefore produce a screen-sized window.
 
 The top-right group contains enabled plugin launchers, a page finder, and the local
 avatar. Search, sidebar and history controls use unfilled ghost icon buttons with

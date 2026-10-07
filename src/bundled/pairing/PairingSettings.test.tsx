@@ -1,0 +1,432 @@
+// @vitest-environment jsdom
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { PairingSettings } from "./PairingSettings";
+import type { ClientSnapshot } from "../../features/communities/service";
+import type {
+  PairingNative,
+  PairingStatus,
+} from "../../features/pairing/client";
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+it.each([
+  { live: "1", tauri: true, available: false },
+  { live: "0", tauri: true, available: true },
+  { live: "0", tauri: false, available: false },
+])(
+  "uses native identity availability (live: $live, tauri: $tauri)",
+  ({ live, tauri, available }) => {
+    vi.stubGlobal("isTauri", tauri);
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    vi.stubEnv("VITE_BUZZ_LIVE", live);
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const native = {
+      account: vi.fn(async () => "a".repeat(64)),
+      start: vi.fn(async () => {}),
+      status: vi.fn(async (): Promise<PairingStatus> => ({ phase: "idle" })),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+    } satisfies PairingNative;
+    const snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      viewer: "a".repeat(64),
+      selected: null,
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    render(
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        native={native}
+      />,
+    );
+    if (available) {
+      expect(
+        screen.queryByText(/unavailable with the development broker/),
+      ).toBeNull();
+      expect(screen.getByLabelText("Community address")).toBeTruthy();
+    } else {
+      expect(screen.getByRole("status").textContent).toContain(
+        tauri
+          ? "unavailable with the development broker"
+          : "Open the Buzz desktop app",
+      );
+      expect(screen.queryByLabelText("Community address")).toBeNull();
+    }
+    expect(native.account).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
+  },
+);
+it.each([true, false])(
+  "renews a committed manual destination and pairs another phone (known viewer: %s)",
+  async (knownViewer) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const viewer = "a".repeat(64);
+    const snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      ...(knownViewer ? { viewer } : {}),
+      selected: null,
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    let status: PairingStatus = { phase: "idle" };
+    const native = {
+      account: vi.fn(async () => viewer),
+      start: vi.fn<PairingNative["start"]>(async () => {
+        status = { phase: "qr", svg: "<svg/>" };
+      }),
+      status: vi.fn(async () => status),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+    } satisfies PairingNative;
+    render(
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        available
+        native={native}
+      />,
+    );
+    if (!knownViewer)
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Use existing Buzz account" }),
+        );
+      });
+    const input = screen.getByLabelText("Community address");
+    fireEvent.change(input, { target: { value: "https://community.example" } });
+    expect(native.start).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.blur(input);
+    });
+    expect(native.start).toHaveBeenCalledTimes(1);
+    status = { phase: "expired" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(native.start).toHaveBeenCalledTimes(2);
+    expect(native.start.mock.calls[1]).toEqual([
+      expect.any(String),
+      viewer,
+      "https://community.example",
+    ]);
+    status = { phase: "complete" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Pair another phone" }),
+      );
+    });
+    expect(native.start).toHaveBeenCalledTimes(3);
+    expect(native.start.mock.calls[2]).toEqual([
+      expect.any(String),
+      viewer,
+      "https://community.example",
+    ]);
+  },
+);
+
+it.each(["uncertain", "cancelled"] as const)(
+  "keeps %s terminal until a deliberate new attempt",
+  async (phase) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const viewer = "a".repeat(64);
+    let snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      viewer,
+      selected: "https://community.example",
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    let status: PairingStatus = { phase: "idle" };
+    const native = {
+      account: vi.fn(async () => viewer),
+      start: vi.fn<PairingNative["start"]>(async () => {
+        status = { phase: "qr", svg: "<svg/>" };
+      }),
+      status: vi.fn(async () => status),
+      cancel: vi.fn(
+        async (): Promise<PairingStatus> => ({ phase: "cancelled" }),
+      ),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+    } satisfies PairingNative;
+    let mounted!: ReturnType<typeof render>;
+    const view = () => (
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        available
+        native={native}
+      />
+    );
+    await act(async () => {
+      mounted = render(
+        <PairingSettings
+          communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+          active={() => true}
+          available
+          native={native}
+        />,
+      );
+    });
+    expect(native.start).toHaveBeenCalledTimes(1);
+    status = { phase: "transferring" };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    status = { phase };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    if (phase === "uncertain")
+      expect(
+        screen.getByRole("heading", { name: "Check your phone" }),
+      ).toBeTruthy();
+    expect(
+      screen.queryByAltText("Scan this QR code with Buzz on your phone"),
+    ).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(240000);
+    });
+    expect(native.start).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: phase === "uncertain" ? "Start a new pairing" : "Try again",
+        }),
+      );
+    });
+    expect(native.start).toHaveBeenCalledTimes(2);
+    snapshot = {
+      ...snapshot,
+      viewer: "b".repeat(64),
+      selected: "https://other.example",
+    };
+    await act(async () => {
+      mounted.rerender(view());
+    });
+    expect(native.start).toHaveBeenCalledTimes(3);
+    expect(native.start.mock.calls[2]).toEqual([
+      expect.any(String),
+      "b".repeat(64),
+      "https://other.example",
+    ]);
+  },
+);
+
+it("rejects a legacy mismatch and requires explicit retry", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const viewer = "a".repeat(64);
+  const snapshot: ClientSnapshot = {
+    status: "ready",
+    relayAvailable: true,
+    viewer,
+    selected: "https://community.example",
+    profile: { name: "", picture: "" },
+    memberships: [],
+  };
+  let status: PairingStatus = {
+    phase: "code",
+    code: "123456",
+    codeEntry: false,
+  };
+  const native = {
+    account: vi.fn(async () => viewer),
+    start: vi.fn(async () => {}),
+    status: vi.fn(async () => status),
+    confirm: vi.fn(async () => {}),
+    deny: vi.fn(async () => {
+      status = { phase: "error", message: "Codes did not match." };
+    }),
+    cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
+  } satisfies PairingNative;
+  render(
+    <PairingSettings
+      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+      active={() => true}
+      available
+      native={native}
+    />,
+  );
+  await act(async () => {});
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await vi.advanceTimersByTimeAsync(400);
+  });
+  expect(native.deny).toHaveBeenCalledTimes(1);
+  expect(native.confirm).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Codes did not match",
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(240000);
+  });
+  expect(native.start).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  });
+  expect(native.start).toHaveBeenCalledTimes(2);
+});
+
+it("keeps rejection progress truthful until native denial finishes", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const viewer = "a".repeat(64);
+  const snapshot: ClientSnapshot = {
+    status: "ready",
+    relayAvailable: true,
+    viewer,
+    selected: "https://community.example",
+    profile: { name: "", picture: "" },
+    memberships: [],
+  };
+  let status: PairingStatus = {
+    phase: "code",
+    code: "123456",
+    codeEntry: false,
+  };
+  const native = {
+    account: vi.fn(async () => viewer),
+    start: vi.fn(async () => {}),
+    status: vi.fn(async () => status),
+    confirm: vi.fn(async () => {}),
+    deny: vi.fn(async () => {}),
+    cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
+  } satisfies PairingNative;
+  render(
+    <PairingSettings
+      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+      active={() => true}
+      available
+      native={native}
+    />,
+  );
+  try {
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(native.deny).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status").textContent).toContain(
+      "Cancelling pairing",
+    );
+    expect(screen.queryByText("Creating pairing code…")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(native.status).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("status").textContent).toContain(
+      "Cancelling pairing",
+    );
+    expect(screen.queryByRole("button", { name: "Codes match" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  } finally {
+    status = { phase: "error", message: "Pairing was canceled." };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Pairing was canceled.",
+    );
+  }
+});
+
+it.each([
+  ["cancelled", "Pairing was canceled.", "Try again"],
+  ["uncertain", "Check your phone", "Start a new pairing"],
+] as const)(
+  "explains code-entry %s cancellation before retry",
+  async (outcome, text, retry) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const viewer = "a".repeat(64);
+    const snapshot: ClientSnapshot = {
+      status: "ready",
+      relayAvailable: true,
+      viewer,
+      selected: "https://community.example",
+      profile: { name: "", picture: "" },
+      memberships: [],
+    };
+    const native = {
+      account: vi.fn(async () => viewer),
+      start: vi.fn(async () => {}),
+      status: vi.fn(
+        async (): Promise<PairingStatus> => ({
+          phase: "code",
+          code: "123456",
+          codeEntry: true,
+        }),
+      ),
+      confirm: vi.fn(async () => {}),
+      deny: vi.fn(async () => {}),
+      cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: outcome })),
+    } satisfies PairingNative;
+    render(
+      <PairingSettings
+        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        active={() => true}
+        available
+        native={native}
+      />,
+    );
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    expect(native.cancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status").textContent).toContain(text);
+    expect(screen.getByRole("button", { name: retry })).toBeTruthy();
+  },
+);

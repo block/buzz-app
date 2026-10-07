@@ -42,6 +42,13 @@ export type ReadFilter = Readonly<{
   thread_cursor?: number;
   thread_cursor_id?: string;
 }>;
+// Identity-only evidence for immutable records owned by this admission boundary.
+// Neither a caller-provided nostr-tools symbol nor a copied record is proof.
+const admitted = new WeakSet<object>();
+export function hasEventProof(event: EventData): boolean {
+  return admitted.has(event);
+}
+
 export function eventDto(value: unknown): RelayEvent {
   return checkedEvent(value, verifyEvent);
 }
@@ -113,7 +120,9 @@ function checkedEvent(
   if (!verify(owned)) throw invalid();
   for (const tag of owned.tags) Object.freeze(tag);
   Object.freeze(owned.tags);
-  return Object.freeze(owned);
+  Object.freeze(owned);
+  admitted.add(owned);
+  return owned;
 }
 
 export const tag = (event: RelayEvent, name: string) =>

@@ -1891,6 +1891,10 @@ test("direct-message transport signs only bounded participants and binds the ret
       [recipients[0], recipients[0]],
       Array(9).fill(recipients[0]),
       ["invalid"],
+      ["A".repeat(64)],
+      [123],
+      null,
+      "a".repeat(64),
     ]) {
       expect((await h.post("direct-message", { pubkeys })).status).toBe(400);
     }
@@ -1989,6 +1993,30 @@ test("status signing and publication preserve scoped replacements and explicit c
     expect(
       (await h.post("publish", finalizeEvent(future, secret))).status,
     ).toBe(400);
+    for (const input of [
+      { content: "😀".repeat(51) },
+      { content: "one\ntwo" },
+      {
+        content: "x",
+        tags: [
+          ["d", "general"],
+          ["emoji", " "],
+        ],
+      },
+      {
+        content: "x",
+        tags: [
+          ["d", "general"],
+          ["emoji", "😀".repeat(51)],
+        ],
+      },
+    ]) {
+      const template = { ...future, created_at: 1700000000, ...input };
+      expect((await h.post("sign", template)).status).toBe(400);
+      expect(
+        (await h.post("publish", finalizeEvent(template, secret))).status,
+      ).toBe(400);
+    }
     expect(h.publications).toHaveLength(2);
   } finally {
     await h.close();

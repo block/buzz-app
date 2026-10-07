@@ -502,7 +502,6 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn claude_install_rejects_native_stub_before_activation_and_keeps_pi_releases() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let app_data = dir.path();
         let setup = HarnessSetup::default();
@@ -511,10 +510,7 @@ mod tests {
         std::fs::create_dir_all(node_root.join("bin")).unwrap();
         std::fs::create_dir_all(node_root.join("lib/node_modules/npm/bin")).unwrap();
         std::fs::write(node_root.join("lib/node_modules/npm/bin/npm-cli.js"), "").unwrap();
-        let write_executable = |path: &Path, source: &str| {
-            std::fs::write(path, source).unwrap();
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        };
+        use crate::test_executable::write_executable;
         let node = node_root.join("bin/node");
         // A local npm boundary fixture creates the requested package's launcher.
         // Claude's native package can leave a failing stub despite npm success.
@@ -545,7 +541,7 @@ chmod 755 "$prefix/bin/$name"
         std::fs::create_dir_all(&pi_release).unwrap();
         std::fs::write(pi_release.join("pi"), "existing Pi").unwrap();
         let log_path = app_data.join("install.log");
-        write_executable(&node, &npm(1));
+        write_executable(&node, npm(1));
         let error = install(
             &setup,
             app_data,
@@ -563,7 +559,7 @@ chmod 755 "$prefix/bin/$name"
             std::fs::read_dir(tools.join("releases")).unwrap().count(),
             1
         );
-        write_executable(&node, &npm(0));
+        write_executable(&node, npm(0));
         assert!(install(
             &setup,
             app_data,

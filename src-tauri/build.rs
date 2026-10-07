@@ -33,6 +33,12 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "pairing_account",
+            "pairing_start",
+            "pairing_status",
+            "pairing_confirm",
+            "pairing_deny",
+            "pairing_cancel",
             "identity_restore",
             "identity_import",
             "identity_create",

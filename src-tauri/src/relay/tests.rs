@@ -2155,12 +2155,14 @@ async fn preference_batches_reject_invalid_ciphertext_after_signature_verificati
 }
 
 #[test]
-fn canvas_signing_shape_matches_broker_contract() {
+fn canvas_signing_shape_matches_shared_contract() {
     let cases: serde_json::Value = serde_json::from_str(include_str!(
         "../../../src/features/channel-templates/canvas-signing-contract.json"
     ))
     .unwrap();
-    for case in cases.as_array().unwrap() {
+    let cases = cases.as_array().unwrap();
+    assert!(!cases.is_empty(), "shared Canvas signing corpus is empty");
+    for case in cases {
         // Tag shape plus EventTemplate deserialization, not IPC wiring, broker
         // freshness, the native signing budget or publication.
         let event = serde_json::from_value::<EventTemplate>(serde_json::json!({

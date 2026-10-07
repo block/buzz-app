@@ -142,6 +142,10 @@ it("expands multiple teams and individual agents by exact key without namesake c
   );
 });
 
+it("keeps the shared Canvas signing corpus nonempty", () => {
+  expect(canvasCases.length).toBeGreaterThan(0);
+});
+
 // Shape only: the broker additionally checks freshness; Rust also deserializes
 // EventTemplate and bounds the signed serialization. See contributing.md.
 it.each(canvasCases)("Canvas signing shape: $name", ({ accepted, tags }) => {

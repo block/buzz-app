@@ -1,3 +1,4 @@
+import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
@@ -306,6 +307,7 @@ export function foldMessages(
     const attachmentNames = new Map<string, string>();
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
+    const authorId = messageAuthor(event, signingAuthority);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -326,7 +328,9 @@ export function foldMessages(
               }
             : undefined;
         })(),
-        authorId: messageAuthor(event, signingAuthority),
+        authorId,
+        ...(authorId !== event.pubkey ? { signerId: event.pubkey } : {}),
+        workflowOwnerId: workflowOwner(event, signingAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,

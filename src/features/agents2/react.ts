@@ -1,4 +1,6 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import type { ChannelQueries } from "../relay/contracts";
+import type { ChannelChoice } from "./AttentionPanel";
 import type { Agents2 } from "./service";
 
 const noSubscribe = () => () => {};
@@ -35,4 +37,25 @@ export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
     none,
   );
   return agent && type ? { agent, type } : undefined;
+}
+
+const noList = () => undefined;
+/** Channels a watch can be scoped to, by name, from the viewer's joined roster. */
+export function useChannelChoices(
+  queries: ChannelQueries | undefined,
+): readonly ChannelChoice[] {
+  useEffect(() => queries?.ensureList(), [queries]);
+  const list = useSyncExternalStore(
+    queries?.subscribeList ?? noSubscribe,
+    queries?.list ?? noList,
+    queries?.list ?? noList,
+  );
+  return useMemo(
+    () =>
+      (list?.channels ?? [])
+        .filter((channel) => !channel.readOnly)
+        .map(({ id, name }) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [list],
+  );
 }

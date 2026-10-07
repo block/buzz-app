@@ -55,7 +55,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
-import { useAgent2 } from "../../features/agents2/react";
+import { AttentionPanel } from "../../features/agents2/AttentionPanel";
+import { useAgent2, useChannelChoices } from "../../features/agents2/react";
 import type { Agents2 } from "../../features/agents2/service";
 
 const emptyState: AgentControlState = {
@@ -174,11 +175,20 @@ function ProfileDetails({
     emptyControlSnapshot,
   );
   const [tab, setTab] = useState<
-    "info" | "runtime" | "channels" | "memories" | `plugin:${string}`
+    | "info"
+    | "runtime"
+    | "channels"
+    | "memories"
+    | "attention"
+    | `plugin:${string}`
   >("info");
   // An Agents2 agent's sections come from its type, not the harness.
   const plugin = useAgent2(agents2, pubkey);
   const pluginTabs = plugin?.type.tabs ?? [];
+  // The app wakes every Agents2 agent, so it owns their Attention tab.
+  const channelChoices = useChannelChoices(
+    plugin ? session.channels : undefined,
+  );
   const PluginTab = pluginTabs.find(
     (item) => `plugin:${item.id}` === tab,
   )?.component;
@@ -253,7 +263,8 @@ function ProfileDetails({
   const selectedTab =
     (tab === "memories" && (!isOwner || plugin)) ||
     (tab === "runtime" && !canViewRuntime) ||
-    (tab.startsWith("plugin:") && !PluginTab)
+    (tab.startsWith("plugin:") && !PluginTab) ||
+    (tab === "attention" && !plugin)
       ? "info"
       : tab;
   useEffect(() => {
@@ -420,6 +431,9 @@ function ProfileDetails({
               value: `plugin:${item.id}` as const,
               label: item.title,
             })),
+            ...(plugin
+              ? [{ value: "attention" as const, label: "Attention" }]
+              : []),
             ...(canViewRuntime
               ? [{ value: "runtime" as const, label: "Runtime" }]
               : []),
@@ -436,6 +450,12 @@ function ProfileDetails({
                 <PluginTab
                   agent={plugin.agent}
                   save={(change) => agents2.save(plugin.agent.pubkey, change)}
+                />
+              ) : selected === "attention" && plugin && agents2 ? (
+                <AttentionPanel
+                  agent={plugin.agent}
+                  save={(change) => agents2.save(plugin.agent.pubkey, change)}
+                  channels={channelChoices}
                 />
               ) : selected === "info" ? (
                 <>

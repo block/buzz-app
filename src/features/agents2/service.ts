@@ -1,8 +1,9 @@
 // Agents2: agents that are plugins from the start. A plugin registers an agent
-// type (its card back, its view tabs and its `run`); each agent made from it has
-// its own native-held key, an `agent-attention/v1` configuration and a config blob
-// the type owns. The app delivers matching live events to `run` from the stream
-// the owner already receives, so no plugin opens a socket or a REQ.
+// type (its summary line, peek view, settings tabs and `run`); each agent made
+// from it has its own native-held key, an `agent-attention/v1` configuration
+// and a config blob the type owns. The app delivers matching live events to
+// `run` from the stream the owner already receives, so no plugin opens a socket
+// or a REQ.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
 import {
@@ -57,7 +58,7 @@ export type AgentChange<Config = unknown> = Readonly<{
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
 }>;
-/** What the card back and each tab receive. */
+/** What the peek view and each tab receive. */
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   save(change: AgentChange<Config>): Promise<void>;
@@ -112,9 +113,11 @@ export type AgentType<Config = unknown> = {
     config: Config;
     attention?: Readonly<Record<string, AttentionValue>>;
   }>;
-  /** The card's back face, shown on hover in the agents grid. */
-  Back?: ComponentType<AgentViewProps<Config>>;
-  /** The agent's view tabs, in order. */
+  /** One short line under the agent's name, e.g. its model; defaults to the title. */
+  summary?(agent: Agent<Config>): string;
+  /** A read-only glance shown when the agent is selected in the grid. */
+  Peek?: ComponentType<AgentViewProps<Config>>;
+  /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */

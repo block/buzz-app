@@ -404,13 +404,15 @@ feedback on them. Broader agent architecture proposals are outside the V1 scope.
 ## Raw Agent Activity plugin
 
 **Agent Activity** is an independently toggleable bundled plugin. Compact
-avatar/name/status rows sit below messages and above both channel and thread
-composers. Each agent appears once per composer: public typing is omitted only
-when the activity row represents that exact identity and conversation scope.
-Human typing and agent typing without an available activity row remain unchanged.
-Sidebar and thread-summary working dots are unchanged. Observer turns have no
-thread identity, so thread typing never hides channel telemetry for that agent,
-including simultaneous work and unknown statuses.
+avatar/name/status rows sit below messages and above the thread composer. The
+channel composer instead shows a collapsed **Channel-wide activity** summary
+with an agent count. Expand it to inspect all channel activity, including work
+in threads and unknown statuses; it does not imply another job is running in
+the channel conversation. Sidebar and thread-summary working dots are unchanged.
+Observer turns have no thread identity, so thread typing never hides channel
+telemetry for that agent, including simultaneous work. Channel navigation resets
+the disclosure; ordinary activity updates preserve its open state while activity
+remains. When the last evidence disappears, the disclosure unmounts and resets.
 Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
 opens that exact agent's **channel activity** in the right panel, including work
 in other threads. Optional names and avatars reuse shared background profile

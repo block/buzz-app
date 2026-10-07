@@ -17,6 +17,12 @@ const channelActivity = (page) =>
     name: "Agent activity in this channel",
     exact: true,
   });
+const expandChannelActivity = async (page) => {
+  const disclosure = channelActivity(page).locator("details");
+  await expect(disclosure).toBeVisible();
+  if (!(await disclosure.evaluate((element) => element.open)))
+    await disclosure.locator("summary").click();
+};
 const agentEntry = (page, agent) =>
   channelActivity(page).getByRole("button", {
     name: new RegExp(
@@ -88,7 +94,7 @@ test("mention picker demands the relay's protected archive snapshot", async ({
   ).toBe(true);
 });
 
-// The composer rows retain every channel launcher. Profile activity
+// The composer disclosure retains every channel launcher. Profile activity
 // remains the durable fallback after fresh evidence disappears (covered below).
 test("channel activity consumes telemetry, isolates mixed batches, selects agents, and retains history on disable", async ({
   page,
@@ -151,6 +157,8 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     );
 
     await expect(region).toBeVisible();
+    await expect(firstEntry).toBeHidden();
+    await expandChannelActivity(page);
     await expect(firstEntry).toBeVisible();
     expect(firstAuthors).not.toContain(first);
     expect(firstAuthors).not.toContain(second);
@@ -317,6 +325,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     .getByRole("button", { name: "Back", exact: true })
     .click();
   await page.locator('[data-channel-id="alpha"]').click();
+  await expandChannelActivity(page);
   await expect(agentEntry(page, first)).toBeVisible();
   await expect(agentEntry(page, second)).toHaveCount(0);
   await agentEntry(page, first).click();
@@ -337,6 +346,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     },
     firstKey,
   );
+  await expandChannelActivity(page);
   await expect(agentEntry(page, first)).toContainText("status unknown");
   await expect(
     agentEntry(page, first).locator(".navigation-item-trailing svg"),
@@ -374,6 +384,7 @@ for (const mode of ["light", "dark"]) {
       }),
       agentKey,
     );
+    await expandChannelActivity(page);
     const entry = agentEntry(page, agent);
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -832,7 +843,7 @@ test.describe("thread activity", () => {
     // Owner telemetry recognizes the agent without claiming a working channel turn.
     app.observer(activity("turn_liveness", "alpha", "previous"), key);
     await expect(channelActivity(page)).toBeVisible();
-    await expect(agentEntry(page, agent)).toBeVisible();
+    await expect(agentEntry(page, agent)).toBeHidden();
     app.observer(activity("turn_completed", "alpha", "previous"), key);
     await expect(agentEntry(page, agent)).toHaveCount(0);
     const unrecognized = generateSecretKey();
@@ -910,7 +921,9 @@ test.describe("thread activity", () => {
     app.observer(activity("turn_liveness", "alpha", "parallel-one"), key);
     app.observer(activity("turn_liveness", "alpha", "parallel-two"), key);
     sendTyping(root.id);
-    await expect(agentEntry(page, agent)).toBeVisible();
+    const summary = channelActivity(page).locator("summary");
+    await expect(summary).toHaveText("Channel-wide activity · 1 agent");
+    await expect(agentEntry(page, agent)).toBeHidden();
     await expect(entry).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(
@@ -919,9 +932,18 @@ test.describe("thread activity", () => {
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-above-composer.png"),
     });
+    // Native disclosure semantics and keyboard operation need real browsers.
+    await summary.focus();
+    await summary.press("Enter");
+    await expect(agentEntry(page, agent)).toBeVisible();
     await agentEntry(page, agent).hover();
     await expect(page.getByRole("tooltip")).toContainText("2 working turn(s)");
     await page.mouse.move(0, 0);
+    await summary.focus();
+    await summary.press("Space");
+    await expect(agentEntry(page, agent)).toBeHidden();
+    await page.mouse.move(0, 0);
+    // A closing tooltip retains its desktop position until its exit completes.
     await expect(
       page.getByRole("tooltip", { includeHidden: true }),
     ).toHaveCount(0);
@@ -969,6 +991,7 @@ test.describe("thread activity", () => {
       expect.objectContaining({ width: 26, height: 15 }),
     );
     await expect(channelActivity(page)).toBeVisible();
+    await expandChannelActivity(page);
     const channelBox = await channelActivity(page)
       .getByRole("button")
       .first()
@@ -1054,7 +1077,9 @@ test.describe("thread activity", () => {
         key,
       );
     }
-    await expect(channelActivity(page).getByRole("button")).toHaveCount(2);
+    await expect(channelActivity(page).locator("summary")).toHaveText(
+      "Channel-wide activity · 2 agents",
+    );
     for (const [index, key] of keys.entries())
       app.observer(
         activity("turn_completed", "alpha", `recognize-${index}`),
@@ -1135,7 +1160,7 @@ test.describe("thread activity", () => {
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
-    // Channel uses the same existing rows without a disclosure.
+    // Channel uses the same rows behind an existing visible disclosure.
     const channelStatus = page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .locator("..")
@@ -1145,17 +1170,22 @@ test.describe("thread activity", () => {
       .locator("..")
       .getByRole("status", { name: "Typing activity" });
     publish(keys[0]);
-    await expect(channelActivity(page).getByRole("button")).toHaveCount(1);
+    await expect(channelActivity(page).locator("summary")).toHaveText(
+      "Channel-wide activity · 1 agent",
+    );
     await expect(channelStatus).toContainText("Worker 1 is working");
     await expect(channelTyping).toHaveCount(0);
     publish(keys[1]);
-    await expect(channelActivity(page).getByRole("button")).toHaveCount(2);
+    await expect(channelActivity(page).locator("summary")).toHaveText(
+      "Channel-wide activity · 2 agents",
+    );
     await expect(channelStatus).toContainText(
       /Worker [12], Worker [12] are working/,
     );
-    await expect(channelActivity(page).locator("details, summary")).toHaveCount(
-      0,
+    await expect(channelActivity(page).locator("details")).not.toHaveAttribute(
+      "open",
     );
+    await expandChannelActivity(page);
     await expect(channelActivity(page).getByRole("button")).toHaveCount(2);
     await expect(channelTyping).toHaveCount(0);
     publish(human);
@@ -1203,6 +1233,7 @@ test.describe("host archive durability", () => {
       }),
       key,
     );
+    await expandChannelActivity(page);
     await agentEntry(page, agent).click();
     const panel = activityPanel(page);
     await expect(

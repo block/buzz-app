@@ -15,7 +15,7 @@ import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
 import { outsideMentionDetail } from "./mention-candidates";
-import { matchName } from "../../features/search/match";
+import { matchPerson } from "../../features/search/person-match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import "../../shared/design-system/styles/scrollbars.css";
@@ -144,14 +144,9 @@ export function MentionPicker({
       (choice) => personKey(choice.recipient.pubkey) === highlight.active,
     )?.label ??
     teams.choices.find((team) => teamKey(team.id) === highlight.active)?.name;
-  // Mentions rank names by word starts, so underline only word-start
-  // matches. matchName also splits words at punctuation, rankMentions only
-  // at spaces; the underline can mark a little more than the rank used.
-  const needle = search.trim().toLowerCase();
-  const matched = (label: string) => {
-    const match = needle ? matchName(label, needle) : undefined;
-    return match && match.rank <= 2 ? match.positions : undefined;
-  };
+  // Underline with the same rule that ranks mentions.
+  const matched = (label: string) =>
+    search.trim() ? matchPerson(label, search)?.positions : undefined;
   return (
     <PopoverRoot
       open={open && !disabled}

@@ -13,6 +13,7 @@ import type { AgentControl } from "../../features/agents/control";
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  parseAgentSnapshot,
 } from "../../features/agents/snapshot";
 import { AgentSnapshotExport, AgentSnapshotImport } from "./AgentSnapshots";
 import { uploadAvatar } from "../../features/profiles/avatar-upload";
@@ -24,8 +25,6 @@ vi.mock("../../features/profiles/avatar-upload", () => ({
 const portableAgent = () => {
   const { agent } = controlFixture();
   agent.harness.command = "buzz-agent";
-  agent.acpCommand = null;
-  agent.mcpCommand = null;
   agent.sessionPolicy = "thread";
   agent.harness.environmentKeys = [];
   return agent;
@@ -170,7 +169,6 @@ it("uploads an embedded reference avatar before native creation and saves its lo
     expect.objectContaining({ type: "image/png" }),
     "https://relay.example.test",
     expect.any(AbortSignal),
-    true,
   );
   expect(h.create.mock.calls[0]?.[3]).toEqual(
     expect.objectContaining({
@@ -255,6 +253,62 @@ it("does not publish memory if identity creation fails", async () => {
     ).toBe(true),
   );
   expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
+});
+
+it.each([1, 4])(
+  "imports reference worker count %i through native edit and portable re-export",
+  async (workers) => {
+    const h = importControl();
+    const reference = buildAgentSnapshot(portableAgent());
+    reference.definition.parallelism = workers;
+    render(
+      <AgentSnapshotImport
+        control={h.control}
+        destination="https://relay.example.test"
+        owner={"ef".repeat(32)}
+        receivedBytes={encodeAgentSnapshot(reference, "json")}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+    const edit = h.create.mock.calls[0]?.[3] as {
+      environment: Record<string, string>;
+    };
+    expect(edit.environment).toEqual({ BUZZ_ACP_AGENTS: String(workers) });
+    // The controller's native projection test checks this saved edit reaches
+    // AgentView.launchParallelism; no environment value is exposed to JS.
+    const native = portableAgent();
+    native.harness.environmentKeys = Object.keys(edit.environment);
+    native.launchParallelism = Number(edit.environment.BUZZ_ACP_AGENTS);
+    const exported = parseAgentSnapshot(
+      encodeAgentSnapshot(buildAgentSnapshot(native), "png"),
+    );
+    expect(exported.definition.parallelism).toBe(workers);
+  },
+);
+
+it("reviews the exact portable configuration including avatar URL and effective selectors", () => {
+  const agent = portableAgent();
+  agent.picture =
+    "https://images.example.test/INERT_PRIVATE_ARTIFACT/avatar.png";
+  agent.harness.model = "";
+  agent.harness.provider = "";
+  agent.launchModel = "resolved-model";
+  agent.launchProvider = "resolved-provider";
+  agent.launchParallelism = 4;
+  render(
+    <AgentSnapshotExport
+      agent={agent}
+      destination="https://relay.example.test"
+      onClose={() => {}}
+    />,
+  );
+  const serialized = screen.getByText(/INERT_PRIVATE_ARTIFACT/).textContent;
+  expect(JSON.parse(serialized ?? "")).toEqual(buildAgentSnapshot(agent));
+  expect(serialized).toContain("resolved-model");
+  expect(serialized).toContain("resolved-provider");
+  expect(serialized).toContain('"parallelism": 4');
 });
 
 it("exports without reading memory by default and requires confirmation to read memory", async () => {

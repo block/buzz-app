@@ -8,8 +8,6 @@ import {
 const portableAgent = () => {
   const { agent } = controlFixture();
   agent.harness.command = "buzz-agent";
-  agent.acpCommand = null;
-  agent.mcpCommand = null;
   agent.sessionPolicy = "thread";
   agent.harness.environmentKeys = [];
   return agent;
@@ -23,8 +21,6 @@ it.each(["json", "png"] as const)(
   (format) => {
     const { agent } = controlFixture();
     Object.assign(agent.harness, { command: "buzz-agent" });
-    agent.acpCommand = null;
-    agent.mcpCommand = null;
     agent.sessionPolicy = "thread";
     agent.harness.environmentKeys = [];
     agent.systemPrompt = "Handle café carefully.";
@@ -159,6 +155,48 @@ it.each(["json", "png"] as const)(
     expect(manifest.definition.sessionPolicy).toBeUndefined(); // reference omission means channel
   },
 );
+
+it.each([1, 4])(
+  "round trips reference parallelism %i through projected native saved settings",
+  (workers) => {
+    const reference = buildAgentSnapshot(portableAgent());
+    reference.definition.parallelism = workers;
+    // AgentEdit.environment persists the imported count. The native snapshot
+    // exposes its effective numeric count, not its write-only environment value.
+    const native = portableAgent();
+    native.harness.environmentKeys = ["BUZZ_ACP_AGENTS"];
+    native.launchParallelism = workers;
+    for (const format of ["json", "png"] as const) {
+      const first = parseAgentSnapshot(encodeAgentSnapshot(reference, format));
+      expect(first.definition.parallelism).toBe(workers);
+      const exported = buildAgentSnapshot(native);
+      const second = parseAgentSnapshot(encodeAgentSnapshot(exported, format));
+      expect(second.definition.parallelism).toBe(first.definition.parallelism);
+      expect(second.definition.model).toBe(first.definition.model);
+      expect(second.definition.provider).toBe(first.definition.provider);
+    }
+    native.harness.environmentKeys.push("PRIVATE_SETTING");
+    expect(() => buildAgentSnapshot(native)).toThrow(
+      /cannot be exported faithfully/,
+    );
+  },
+);
+
+it("uses effective nonsecret selectors rather than saved inherited blanks", () => {
+  const agent = portableAgent();
+  agent.harness.model = "";
+  agent.harness.provider = "";
+  agent.launchModel = "source-model";
+  agent.launchProvider = "source-provider";
+  expect(buildAgentSnapshot(agent).definition).toMatchObject({
+    model: "source-model",
+    provider: "source-provider",
+  });
+  agent.launchModelEnv = "BUZZ_AGENT_MODEL";
+  expect(() => buildAgentSnapshot(agent)).toThrow(
+    /cannot be exported faithfully/,
+  );
+});
 
 it("blocks credential-like allowed values and unsupported source behavior at export", () => {
   const agent = portableAgent();

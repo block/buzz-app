@@ -77,6 +77,9 @@ pub struct AgentView {
     /// agent defaults or build defaults; `None` when an environment override decides it.
     pub launch_model: Option<String>,
     pub launch_provider: Option<String>,
+    /// Effective listener worker count when saved/imported/default settings set it.
+    /// Numeric projection only; other environment values never leave native.
+    pub launch_parallelism: Option<u32>,
     /// Environment key deciding that selector. Its value never leaves native.
     pub launch_model_env: Option<&'static str>,
     pub launch_provider_env: Option<&'static str>,
@@ -206,6 +209,15 @@ impl Agent {
             mcp_command: None,
             launch_model: launch.model,
             launch_provider: launch.provider,
+            launch_parallelism: effective
+                .environment
+                .get("BUZZ_ACP_AGENTS")
+                .and_then(|value| value.parse::<u32>().ok())
+                .or_else(|| {
+                    self.imported["record"]["parallelism"]
+                        .as_u64()
+                        .and_then(|count| u32::try_from(count).ok())
+                }),
             launch_model_env: launch.model_env,
             launch_provider_env: launch.provider_env,
             restart_diff: Vec::new(),

@@ -43,8 +43,17 @@ export function AgentSnapshotExport({
   const [reviewed, setReviewed] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  let review: AgentSnapshot | undefined;
+  let reviewError = "";
+  try {
+    review = buildAgentSnapshot(agent, "none", [], defaultSessionPolicy);
+  } catch (cause) {
+    reviewError =
+      cause instanceof Error ? cause.message : "Export unavailable.";
+  }
   const exportFile = async () => {
-    if (pending || !reviewed || (level !== "none" && !confirmed)) return;
+    if (pending || !reviewed || !review || (level !== "none" && !confirmed))
+      return;
     setPending(true);
     setError("");
     try {
@@ -75,12 +84,18 @@ export function AgentSnapshotExport({
           view.dispose();
         }
       }
-      const snapshot = buildAgentSnapshot(
-        agent,
-        level,
-        entries,
-        defaultSessionPolicy,
-      );
+      const snapshot = {
+        ...review,
+        memory: {
+          level,
+          entries: entries.filter(
+            ({ slug }) => level === "everything" || slug === "core",
+          ),
+        },
+      };
+      // Memory is added only after consent; validate the complete artifact as
+      // well as the configuration that was reviewed before sharing it.
+      parseAgentSnapshot(new TextEncoder().encode(JSON.stringify(snapshot)));
       let artwork: Uint8Array | undefined;
       if (format === "png" && agent.picture) {
         try {
@@ -136,7 +151,12 @@ export function AgentSnapshotExport({
           </Button>
           <Button
             variant="primary"
-            disabled={pending || !reviewed || (level !== "none" && !confirmed)}
+            disabled={
+              pending ||
+              !review ||
+              !reviewed ||
+              (level !== "none" && !confirmed)
+            }
             onClick={() => void exportFile()}
           >
             Export
@@ -181,26 +201,15 @@ export function AgentSnapshotExport({
           </select>
         </label>
         <p>
-          Portable configuration includes the agent name, instructions, model
-          and provider. Review the actual values before sharing: free text can
-          contain secrets that automated checks cannot detect.
+          Portable configuration includes the agent name, instructions, model,
+          provider, worker count and avatar URL when present. Review the actual
+          values before sharing: free text can contain secrets that automated
+          checks cannot detect.
         </p>
         <details>
           <summary>Review portable configuration</summary>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
-            {JSON.stringify(
-              {
-                name: agent.name,
-                systemPrompt: agent.systemPrompt,
-                model: agent.harness.model,
-                provider: agent.harness.provider,
-                runtime: agent.harness.command,
-                respondTo: agent.respondTo,
-                sessionPolicy: agent.sessionPolicy ?? defaultSessionPolicy,
-              },
-              null,
-              2,
-            )}
+            {JSON.stringify(review, null, 2)}
           </pre>
         </details>
         <label>
@@ -236,6 +245,7 @@ export function AgentSnapshotExport({
             </label>
           </>
         )}
+        {reviewError && <p role="alert">{reviewError}</p>}
         {error && <p role="alert">{error}</p>}
       </div>
     </Dialog>
@@ -336,7 +346,6 @@ export function AgentSnapshotImport({
           new File([bytes], "snapshot-avatar", { type: mime }),
           destination,
           new AbortController().signal,
-          true,
         );
       }
       const agent = await control.create(

@@ -66,6 +66,8 @@ export interface AgentView {
    * defaults. Null when none applies or an environment override decides it. */
   launchModel: string | null;
   launchProvider: string | null;
+  /** Next-start listener workers, including native defaults/overrides; never a raw env value. */
+  launchParallelism?: number | null;
   /** Environment key deciding that selector; its value stays native. */
   launchModelEnv: string | null;
   launchProviderEnv: string | null;

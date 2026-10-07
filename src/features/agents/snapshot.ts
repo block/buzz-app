@@ -233,9 +233,14 @@ export function buildAgentSnapshot(
     agent.launchModelEnv ||
     agent.launchProviderEnv ||
     agent.backend ||
-    agent.acpCommand ||
-    agent.mcpCommand ||
-    agent.harness.environmentKeys.length > 0 ||
+    agent.harness.databricks ||
+    agent.harness.environmentKeys.some((key) => key !== "BUZZ_ACP_AGENTS") ||
+    (agent.harness.environmentKeys.includes("BUZZ_ACP_AGENTS") &&
+      agent.launchParallelism == null) ||
+    (agent.launchParallelism != null &&
+      (!Number.isInteger(agent.launchParallelism) ||
+        agent.launchParallelism < 1 ||
+        agent.launchParallelism > 32)) ||
     (agent.sessionPolicy === null && !defaultSessionPolicy)
   ) {
     throw new Error(
@@ -245,8 +250,8 @@ export function buildAgentSnapshot(
   for (const value of [
     agent.name,
     agent.systemPrompt,
-    agent.harness.model,
-    agent.harness.provider,
+    agent.launchModel ?? "",
+    agent.launchProvider ?? "",
     agent.picture ?? "",
   ]) {
     if (credentialLike(value))
@@ -266,8 +271,11 @@ export function buildAgentSnapshot(
     definition: {
       name: agent.name,
       systemPrompt: agent.systemPrompt,
-      ...(agent.harness.model ? { model: agent.harness.model } : {}),
-      ...(agent.harness.provider ? { provider: agent.harness.provider } : {}),
+      ...(agent.launchModel ? { model: agent.launchModel } : {}),
+      ...(agent.launchProvider ? { provider: agent.launchProvider } : {}),
+      ...(agent.launchParallelism != null
+        ? { parallelism: agent.launchParallelism }
+        : {}),
       runtime: "buzz-agent",
       respondTo: "owner-only",
       sessionPolicy: agent.sessionPolicy ?? defaultSessionPolicy ?? "thread",

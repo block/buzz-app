@@ -26,6 +26,32 @@ fn edit(harness: &str, model: &str, effort: &str) -> AgentDefaultsEdit {
 }
 
 #[test]
+fn saved_worker_count_projects_to_portable_next_launch_count() {
+    let mut agent = fixture();
+    agent.harness.command = "buzz-agent".into();
+    agent.imported = Value::Null;
+    let defaults = AgentDefaults::default();
+    assert_eq!(agent.view(&defaults).launch_parallelism, None);
+    for count in [1, 4] {
+        agent
+            .environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        let saved: crate::config::Agent =
+            serde_json::from_value(serde_json::to_value(&agent).unwrap()).unwrap();
+        saved.validate().unwrap();
+        assert_eq!(saved.view(&defaults).launch_parallelism, Some(count));
+    }
+    agent.environment.remove("BUZZ_ACP_AGENTS");
+    agent.imported = serde_json::json!({"record":{"parallelism":4}});
+    assert_eq!(agent.view(&defaults).launch_parallelism, Some(4));
+    let mut inherited = defaults;
+    inherited
+        .environment
+        .insert("BUZZ_ACP_AGENTS".into(), "1".into());
+    assert_eq!(agent.view(&inherited).launch_parallelism, Some(1));
+}
+
+#[test]
 fn blank_fields_inherit_for_the_same_harness_and_agent_values_win() {
     let mut agent = fixture();
     agent.harness.command = "buzz-agent".into();

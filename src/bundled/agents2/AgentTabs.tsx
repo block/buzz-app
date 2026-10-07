@@ -1,45 +1,58 @@
 import { useState } from "react";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
+import {
+  AttentionPanel,
+  type ChannelChoice,
+} from "../../features/agents2/AttentionPanel";
 import type {
   Agent,
   Agents2,
   RegisteredAgentType,
 } from "../../features/agents2/service";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 
-/** The type's own tabs for one agent. Shared by the Agents2 page and the profile panel. */
+// Plugin tab ids are prefixed so none can collide with the host's.
+const ATTENTION = "host:attention";
+const tabValue = (id: string) => `plugin:${id}`;
+
+/** The type's own tabs for one agent, then the app's Attention tab, which every
+ * type shares because the app is what wakes the agent. */
 export function AgentTabs({
   agents2,
   agent,
   type,
+  channels,
 }: {
   agents2: Agents2;
   agent: Agent;
-  type: RegisteredAgentType;
+  type: RegisteredAgentType | undefined;
+  channels: readonly ChannelChoice[];
 }) {
-  const tabs = type.tabs ?? [];
-  const [tab, setTab] = useState(tabs[0]?.id ?? "");
-  const selected = tabs.find((item) => item.id === tab) ?? tabs[0];
-  if (!selected)
-    return (
-      <p className="text-body-sm text-secondary">
-        {type.title} has no settings.
-      </p>
-    );
+  const tabs = type?.tabs ?? [];
+  const [tab, setTab] = useState(tabs[0] ? tabValue(tabs[0].id) : ATTENTION);
+  const save = (change: Parameters<Agents2["save"]>[1]) =>
+    agents2.save(agent.pubkey, change);
+  const items = [
+    ...tabs.map((item) => ({ value: tabValue(item.id), label: item.title })),
+    { value: ATTENTION, label: "Attention" },
+  ];
   return (
     <Tabs
-      value={selected.id}
+      value={items.some((item) => item.value === tab) ? tab : ATTENTION}
       onValueChange={setTab}
-      items={tabs.map((item) => ({ value: item.id, label: item.title }))}
+      items={items}
       label={`${agent.name} sections`}
       variant="panel"
       renderPanel={(value) => {
-        const Component = tabs.find((item) => item.id === value)?.component;
-        return Component ? (
-          <Component
-            agent={agent}
-            save={(change) => agents2.save(agent.pubkey, change)}
-          />
-        ) : null;
+        if (value === ATTENTION)
+          return (
+            <div className="pt-4">
+              <AttentionPanel agent={agent} save={save} channels={channels} />
+            </div>
+          );
+        const Component = tabs.find(
+          (item) => tabValue(item.id) === value,
+        )?.component;
+        return Component ? <Component agent={agent} save={save} /> : null;
       }}
     />
   );

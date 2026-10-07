@@ -2,7 +2,6 @@
 // configured text when it is mentioned or one of its watches fires.
 import { useState } from "react";
 import type { PluginModule } from "../../plugins/api";
-import { AttentionEditor } from "../../features/agents2/AttentionEditor";
 import type { AgentViewProps } from "../../features/agents2/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -26,24 +25,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       },
     }),
-    Back: ({ agent }) => (
+    summary: (agent) => `Replies “${agent.config.reply}”`,
+    Peek: ({ agent }) => (
       <div className="grid gap-1">
-        <p className="text-label">Replies</p>
-        <p className="text-body-sm text-secondary">“{agent.config.reply}”</p>
-        <p className="text-body-sm text-secondary">
-          {
-            Object.values(agent.attention).filter(
-              (object) => object.value.type !== "interest",
-            ).length
-          }{" "}
-          watches
+        <p className="m-0 text-caption text-secondary">Replies with</p>
+        <p className="m-0 whitespace-pre-wrap text-body-sm">
+          {agent.config.reply.trim() || "Nothing yet; it stays quiet."}
         </p>
       </div>
     ),
-    tabs: [
-      { id: "reply", title: "Reply", component: ReplyTab },
-      { id: "attention", title: "Attention", component: AttentionEditor },
-    ],
+    tabs: [{ id: "reply", title: "Reply", component: ReplyTab }],
     run: async ({ trigger, agent, config }) => {
       if (trigger.type === "timer") return;
       const { event } = trigger;

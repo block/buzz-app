@@ -1,4 +1,5 @@
 /** Portable buzz-agent-snapshot v1. No saved identity or local execution state crosses this boundary. */
+import { harnessKind } from "./harness-presets";
 import type { AgentEdit, AgentView, ControlSnapshot } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
 
@@ -333,69 +334,114 @@ export function buildAgentSnapshot(
 export type SnapshotImportOptions = Pick<
   ControlSnapshot,
   "defaultWorkspace" | "harnessOptions"
->;
+> & {
+  /** Catalog-only portable transport. Never use a publisher's executable path. */
+  transportAlias?: string;
+  /** Team creation persists definition-only settings in native imported.record. */
+  teamMember?: boolean;
+};
 
 /** The portable definition is the only authority for both standalone and team creation.
  * Absent session policy means channel (reference v1 behavior); absent worker count
  * leaves the destination default untouched. Explicit counts override that default.
- * Explicit empty selectors clear inherited model/provider values. The native edit
- * has no nullable selectors or profile-about field: reject unsupported values.
+ * Explicit empty selectors clear inherited model/provider values. Native selection
+ * comes exclusively from available local options, not a publisher command.
  */
 export function snapshotImportEdit(
   snapshot: AgentSnapshot,
   options: SnapshotImportOptions,
 ): AgentEdit {
-  const limitations = snapshotLimitations(snapshot);
+  if (options.transportAlias && options.transportAlias !== "buzz-acp")
+    throw new Error(
+      `Import is blocked: unsupported ACP transport ${options.transportAlias}.`,
+    );
+  const limitations = snapshotLimitations(
+    snapshot,
+    options.teamMember ?? false,
+  );
   if (limitations.length)
     throw new Error(`Import is blocked: ${limitations.join("; ")}.`);
+  const runtime = snapshot.definition.runtime ?? "buzz-agent";
   const selected = options.harnessOptions?.find(
-    (option) => option.available !== false && option.command === "buzz-agent",
+    (option) =>
+      option.available !== false && harnessKind(option.command) === runtime,
   );
   if (!selected)
-    throw new Error("Buzz Agent is unavailable. Install it in Settings first.");
+    throw new Error(`${runtime} is unavailable. Install it in Settings first.`);
+  const model = snapshot.definition.model ?? "";
+  const provider = snapshot.definition.provider ?? "";
+  // The native integration owns selector semantics. An external harness cannot
+  // receive provider overrides through AgentEdit; Pi requires a model with one.
+  const policy = selected.configurationPolicy;
+  if (
+    (policy?.provider === "external" ||
+      (!policy && ["claude", "hermes"].includes(runtime))) &&
+    provider
+  )
+    throw new Error("Import is blocked: external harness provider selector.");
+  if (
+    (policy?.model === "withProvider" || (!policy && runtime === "pi")) &&
+    provider &&
+    !model
+  )
+    throw new Error("Import is blocked: Pi provider requires a model.");
   return {
     name: snapshot.profile.displayName,
     systemPrompt: snapshot.definition.systemPrompt ?? "",
     sessionPolicy: snapshot.definition.sessionPolicy ?? "channel",
     workspace: options.defaultWorkspace ?? "",
     harness: {
-      command: "buzz-agent",
+      command: selected.command,
       args: selected.defaultArgs ?? [],
-      model: snapshot.definition.model ?? "",
-      provider: snapshot.definition.provider ?? "",
+      model,
+      provider,
       databricks: null,
     },
     environment:
-      snapshot.definition.parallelism === undefined
+      options.teamMember || snapshot.definition.parallelism === undefined
         ? {}
         : { BUZZ_ACP_AGENTS: String(snapshot.definition.parallelism) },
-    ...(snapshot.profile.avatarUrl
-      ? { picture: snapshot.profile.avatarUrl }
-      : {}),
+    ...(options.teamMember && snapshot.profile.avatarDataUrl
+      ? { picture: snapshot.profile.avatarDataUrl }
+      : snapshot.profile.avatarUrl
+        ? { picture: snapshot.profile.avatarUrl }
+        : {}),
   };
 }
 
 /** A valid v1 manifest can describe settings that native AgentEdit cannot persist. */
-export function snapshotLimitations(snapshot: AgentSnapshot): string[] {
+export function snapshotLimitations(
+  snapshot: AgentSnapshot,
+  teamMember = false,
+): string[] {
   const d = snapshot.definition;
   return [
     ...(d.name !== snapshot.profile.displayName
       ? ["definition and profile names disagree"]
       : []),
-    ...(d.runtime !== undefined && d.runtime !== "buzz-agent"
+    ...(d.runtime !== undefined &&
+    !["buzz-agent", "goose", "pi", "claude", "hermes"].includes(d.runtime)
       ? ["runtime (unsupported)"]
       : []),
-    ...(d.respondTo && d.respondTo !== "owner-only" ? ["response policy"] : []),
-    ...(d.respondToAllowlist?.length ? ["source response allowlist"] : []),
+    ...(!teamMember && d.respondTo && d.respondTo !== "owner-only"
+      ? ["response policy"]
+      : []),
+    ...(!teamMember && d.respondToAllowlist?.length
+      ? ["source response allowlist"]
+      : []),
     // Native listener workers accept 1..=32; a larger reference request cannot
     // be silently clamped without changing the agent's behavior.
     ...(d.parallelism !== undefined && d.parallelism > 32
       ? ["parallelism (native supports 1–32 workers)"]
       : []),
-    ...(d.namePool?.length ? ["name pool"] : []),
-    ...(d.idleTimeoutSeconds !== undefined ? ["idle timeout"] : []),
-    ...(d.maxTurnDurationSeconds !== undefined ? ["turn timeout"] : []),
-    ...(snapshot.profile.about ? ["profile about"] : []),
+    ...(!teamMember && d.namePool?.length ? ["name pool"] : []),
+    ...(!teamMember && d.idleTimeoutSeconds !== undefined
+      ? ["idle timeout"]
+      : []),
+    ...(!teamMember && d.maxTurnDurationSeconds !== undefined
+      ? ["turn timeout"]
+      : []),
+    ...(!teamMember && snapshot.profile.about ? ["profile about"] : []),
   ];
 }
 

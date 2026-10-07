@@ -87,6 +87,130 @@ it.each(["json", "png"] as const)(
   },
 );
 
+it.each([
+  ["claude", "/local/claude-agent-acp"],
+  ["hermes", "/local/hermes-acp"],
+  ["pi", "/local/buzz-pi-acp"],
+  ["goose", "/local/goose-acp"],
+] as const)(
+  "resolves %s through an available native harness, never a publisher path",
+  (runtime, command) => {
+    const source = buildAgentSnapshot(portableAgent());
+    const snapshot = parse({
+      ...source,
+      definition: { name: source.definition.name, runtime },
+    });
+    const options = {
+      ...destination,
+      harnessOptions: [
+        { command, label: runtime, providers: [], defaultArgs: ["--native"] },
+      ],
+    };
+    expect(snapshotImportEdit(snapshot, options).harness).toMatchObject({
+      command,
+      args: ["--native"],
+    });
+    expect(() =>
+      snapshotImportEdit(snapshot, {
+        ...options,
+        harnessOptions: [
+          { command, label: runtime, providers: [], available: false },
+        ],
+      }),
+    ).toThrow("unavailable");
+    expect(() =>
+      snapshotImportEdit(snapshot, {
+        ...options,
+        transportAlias: "buzz-other-acp",
+      }),
+    ).toThrow("unsupported ACP transport");
+  },
+);
+
+it("rejects unsupported selector and worker semantics before native creation", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const options = {
+    ...destination,
+    harnessOptions: [
+      {
+        command: "claude-agent-acp",
+        label: "Claude",
+        providers: [],
+        configurationPolicy: {
+          authentication: "external" as const,
+          provider: "external" as const,
+          supportedModes: [] as [],
+          model: "optional" as const,
+          effortDiscovery: "unknown" as const,
+          selectorEnvironment: null,
+        },
+      },
+    ],
+  };
+  expect(() =>
+    snapshotImportEdit(
+      parse({
+        ...source,
+        definition: {
+          name: source.definition.name,
+          runtime: "claude",
+          provider: "openai",
+        },
+      }),
+      options,
+    ),
+  ).toThrow("external harness provider selector");
+  const standalone = snapshotImportEdit(
+    parse({
+      ...source,
+      definition: {
+        name: source.definition.name,
+        runtime: "claude",
+        parallelism: 4,
+      },
+    }),
+    options,
+  );
+  expect(standalone.environment).toEqual({ BUZZ_ACP_AGENTS: "4" });
+  const team = snapshotImportEdit(
+    parse({
+      ...source,
+      definition: {
+        name: source.definition.name,
+        runtime: "claude",
+        parallelism: 4,
+        respondTo: "allowlist",
+        respondToAllowlist: ["source"],
+      },
+      profile: {
+        displayName: source.profile.displayName,
+        about: "About",
+        avatarDataUrl: "data:image/png;base64,AAAA",
+      },
+    }),
+    { ...options, teamMember: true },
+  );
+  expect(team.environment).toEqual({});
+  expect(team.picture).toBe("data:image/png;base64,AAAA");
+  const pi = {
+    ...options,
+    harnessOptions: [{ command: "buzz-pi-acp", label: "Pi", providers: [] }],
+  };
+  expect(() =>
+    snapshotImportEdit(
+      parse({
+        ...source,
+        definition: {
+          name: source.definition.name,
+          runtime: "pi",
+          provider: "openai",
+        },
+      }),
+      pi,
+    ),
+  ).toThrow("Pi provider requires a model");
+});
+
 it("rejects unsupported explicit values instead of silently downgrading", () => {
   const source = buildAgentSnapshot(portableAgent());
   for (const definition of [

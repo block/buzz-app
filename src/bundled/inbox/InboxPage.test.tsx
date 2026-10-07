@@ -704,7 +704,7 @@ it.each(["another scope", "invalid selection"])(
       "Everyone",
     );
     expect(screen.getByRole("combobox", { name: "Filters" })).toHaveTextContent(
-      "All",
+      "Filters",
     );
     await chooseFilter("Unread only", "Filters");
     expect(readView(h.owner.session.scope, "inbox:filters", null)).toEqual({

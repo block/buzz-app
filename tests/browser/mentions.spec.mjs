@@ -729,7 +729,9 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     await page.screenshot({
       path: test.info().outputPath("recipient-qualifiers-touch.png"),
     });
-    await input.evaluate((el) => el.setSelectionRange(7, 13));
+    await input.evaluate((el) =>
+      el.setSelectionRange(el.value.indexOf("@", 1), el.value.trimEnd().length),
+    );
     await input.press("Backspace");
     await expect(chips).toHaveText([labels[0]]);
     await choose(keys[1]);

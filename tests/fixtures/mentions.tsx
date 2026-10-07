@@ -55,6 +55,16 @@ const admission = new URLSearchParams(location.search).has(
 const dm = new URLSearchParams(location.search).has("dm");
 const naming = new URLSearchParams(location.search).has("identity-names");
 let colliding = false;
+const secondProfile = () =>
+  profile(
+    second,
+    {
+      name: naming && !colliding ? "Other Honey" : "Honey",
+      is_agent: true,
+      picture: "https://avatars.test/app-icon.png",
+    },
+    time,
+  );
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
 const channels = new URLSearchParams(location.search).has("channels");
@@ -177,11 +187,7 @@ const owner = createRelaySession(
             name: delayed ? "Mary Jane" : "Honey",
             picture: "https://avatars.test/bestie.png",
           }),
-          profile(second, {
-            name: "Honey",
-            is_agent: true,
-            picture: "https://avatars.test/app-icon.png",
-          }),
+          secondProfile(),
           ...(admission ? [profile(outsider, { name: "Outside Person" })] : []),
           ...extraChannels,
           ...publications,
@@ -326,6 +332,8 @@ Object.assign(window, {
   mentionFixture: {
     async collide(value: boolean) {
       colliding = value;
+      ++time;
+      incoming([secondProfile()]);
       await owner.session.agentLibrary.refresh();
     },
     qualifier: (key: string) => names?.lookup(key)?.qualifier,

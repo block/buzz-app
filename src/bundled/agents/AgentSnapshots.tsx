@@ -10,6 +10,8 @@ import {
   encodeAgentSnapshot,
   MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
+  snapshotImportEdit,
+  snapshotLimitations,
   type AgentSnapshot,
   type MemoryLevel,
 } from "../../features/agents/snapshot";
@@ -405,17 +407,8 @@ export function AgentSnapshotImport({
     setBusy(true);
     setFileError("");
     try {
-      const selected = control
-        .snapshot()
-        .data?.harnessOptions?.find(
-          (option) =>
-            option.available !== false && option.command === "buzz-agent",
-        );
-      if (!selected)
-        throw new Error(
-          "Buzz Agent is unavailable. Install it in Settings first.",
-        );
-      let picture = snapshot.profile.avatarUrl;
+      const edit = snapshotImportEdit(snapshot, control.snapshot().data ?? {});
+      let picture = edit.picture;
       if (snapshot.profile.avatarDataUrl) {
         const [header, encoded] = snapshot.profile.avatarDataUrl.split(",", 2);
         const mime = header?.slice("data:".length).split(";", 1)[0];
@@ -433,24 +426,7 @@ export function AgentSnapshotImport({
         requestId.current,
         destination,
         owner,
-        {
-          name: snapshot.profile.displayName,
-          systemPrompt: snapshot.definition.systemPrompt ?? "",
-          sessionPolicy: snapshot.definition.sessionPolicy ?? "channel",
-          workspace: control.snapshot().data?.defaultWorkspace ?? "",
-          harness: {
-            command: "buzz-agent",
-            args: selected.defaultArgs ?? [],
-            model: snapshot.definition.model ?? "",
-            provider: snapshot.definition.provider ?? "",
-            databricks: null,
-          },
-          environment:
-            snapshot.definition.parallelism === undefined
-              ? {}
-              : { BUZZ_ACP_AGENTS: String(snapshot.definition.parallelism) },
-          ...(picture ? { picture } : {}),
-        },
+        { ...edit, ...(picture ? { picture } : {}) },
       );
       setCreatedId(agent.id);
       setResult(
@@ -651,26 +627,4 @@ export function AgentSnapshotImport({
       )}
     </Dialog>
   );
-}
-
-/** A valid v1 manifest may describe settings that native AgentEdit cannot persist. */
-function snapshotLimitations(snapshot: AgentSnapshot): string[] {
-  const d = snapshot.definition;
-  return [
-    ...(d.name !== snapshot.profile.displayName
-      ? ["definition and profile names disagree"]
-      : []),
-    ...(d.runtime !== "buzz-agent" ? ["runtime (missing or unsupported)"] : []),
-    ...(d.respondTo && d.respondTo !== "owner-only" ? ["response policy"] : []),
-    ...(d.respondToAllowlist?.length ? ["source response allowlist"] : []),
-    // AgentEdit persists the editable worker override; RuntimeBundle applies it
-    // after imported settings, and buzz-acp consumes BUZZ_ACP_AGENTS (1..=32).
-    ...(d.parallelism !== undefined && d.parallelism > 32
-      ? ["parallelism (native supports 1–32 workers)"]
-      : []),
-    ...(d.namePool?.length ? ["name pool"] : []),
-    ...(d.idleTimeoutSeconds !== undefined ? ["idle timeout"] : []),
-    ...(d.maxTurnDurationSeconds !== undefined ? ["turn timeout"] : []),
-    ...(snapshot.profile.about ? ["profile about"] : []),
-  ];
 }

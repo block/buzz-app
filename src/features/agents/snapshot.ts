@@ -1,5 +1,5 @@
 /** Portable buzz-agent-snapshot v1. No saved identity or local execution state crosses this boundary. */
-import type { AgentView } from "./control";
+import type { AgentEdit, AgentView, ControlSnapshot } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
 
 export const MAX_AGENT_SNAPSHOT_FILE_BYTES = 4 * 1024 * 1024;
@@ -290,6 +290,75 @@ export function buildAgentSnapshot(
   };
   parseAgentSnapshot(encoder.encode(JSON.stringify(snapshot)));
   return snapshot;
+}
+
+export type SnapshotImportOptions = Pick<
+  ControlSnapshot,
+  "defaultWorkspace" | "harnessOptions"
+>;
+
+/** The portable definition is the only authority for both standalone and team creation.
+ * Absent session policy means channel (reference v1 behavior); absent worker count
+ * leaves the destination default untouched. Explicit counts override that default.
+ * Explicit empty selectors clear inherited model/provider values. The native edit
+ * has no nullable selectors or profile-about field: reject unsupported values.
+ */
+export function snapshotImportEdit(
+  snapshot: AgentSnapshot,
+  options: SnapshotImportOptions,
+): AgentEdit {
+  const limitations = snapshotLimitations(snapshot);
+  if (limitations.length)
+    throw new Error(`Import is blocked: ${limitations.join("; ")}.`);
+  const selected = options.harnessOptions?.find(
+    (option) => option.available !== false && option.command === "buzz-agent",
+  );
+  if (!selected)
+    throw new Error("Buzz Agent is unavailable. Install it in Settings first.");
+  return {
+    name: snapshot.profile.displayName,
+    systemPrompt: snapshot.definition.systemPrompt ?? "",
+    sessionPolicy: snapshot.definition.sessionPolicy ?? "channel",
+    workspace: options.defaultWorkspace ?? "",
+    harness: {
+      command: "buzz-agent",
+      args: selected.defaultArgs ?? [],
+      model: snapshot.definition.model ?? "",
+      provider: snapshot.definition.provider ?? "",
+      databricks: null,
+    },
+    environment:
+      snapshot.definition.parallelism === undefined
+        ? {}
+        : { BUZZ_ACP_AGENTS: String(snapshot.definition.parallelism) },
+    ...(snapshot.profile.avatarUrl
+      ? { picture: snapshot.profile.avatarUrl }
+      : {}),
+  };
+}
+
+/** A valid v1 manifest can describe settings that native AgentEdit cannot persist. */
+export function snapshotLimitations(snapshot: AgentSnapshot): string[] {
+  const d = snapshot.definition;
+  return [
+    ...(d.name !== snapshot.profile.displayName
+      ? ["definition and profile names disagree"]
+      : []),
+    ...(d.runtime !== undefined && d.runtime !== "buzz-agent"
+      ? ["runtime (unsupported)"]
+      : []),
+    ...(d.respondTo && d.respondTo !== "owner-only" ? ["response policy"] : []),
+    ...(d.respondToAllowlist?.length ? ["source response allowlist"] : []),
+    // Native listener workers accept 1..=32; a larger reference request cannot
+    // be silently clamped without changing the agent's behavior.
+    ...(d.parallelism !== undefined && d.parallelism > 32
+      ? ["parallelism (native supports 1–32 workers)"]
+      : []),
+    ...(d.namePool?.length ? ["name pool"] : []),
+    ...(d.idleTimeoutSeconds !== undefined ? ["idle timeout"] : []),
+    ...(d.maxTurnDurationSeconds !== undefined ? ["turn timeout"] : []),
+    ...(snapshot.profile.about ? ["profile about"] : []),
+  ];
 }
 
 function u32(bytes: Uint8Array, at: number) {

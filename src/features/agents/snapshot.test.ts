@@ -5,6 +5,8 @@ import {
   encodeAgentSnapshot,
   MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
+  snapshotImportEdit,
+  snapshotLimitations,
 } from "./snapshot";
 const portableAgent = () => {
   const { agent } = controlFixture();
@@ -16,6 +18,94 @@ const portableAgent = () => {
 const utf8 = new TextEncoder();
 const parse = (value: unknown) =>
   parseAgentSnapshot(utf8.encode(JSON.stringify(value)));
+
+const destination = {
+  defaultWorkspace: "/new-machine/agents",
+  harnessOptions: [
+    {
+      command: "buzz-agent",
+      label: "Buzz Agent",
+      defaultArgs: ["--local"],
+      providers: [],
+    },
+  ],
+};
+
+it.each(["json", "png"] as const)(
+  "maps omitted and explicit portable settings from %s for native creation",
+  (format) => {
+    const source = buildAgentSnapshot(portableAgent());
+    const withSettings = parse({
+      ...source,
+      definition: {
+        name: "Portable",
+        systemPrompt: "Keep the contract.",
+        model: "",
+        provider: "provider-a",
+        parallelism: 4,
+        sessionPolicy: "thread",
+        runtime: "buzz-agent",
+      },
+      profile: {
+        displayName: "Portable",
+        avatarUrl: "https://example.test/a.png",
+      },
+    });
+    const wire = parseAgentSnapshot(encodeAgentSnapshot(withSettings, format));
+    const edit = snapshotImportEdit(wire, destination);
+    expect(edit).toMatchObject({
+      name: "Portable",
+      sessionPolicy: "thread",
+      workspace: "/new-machine/agents",
+      harness: {
+        command: "buzz-agent",
+        args: ["--local"],
+        model: "",
+        provider: "provider-a",
+      },
+      environment: { BUZZ_ACP_AGENTS: "4" },
+      picture: "https://example.test/a.png",
+    });
+    expect(edit).not.toHaveProperty("pubkey");
+    const omitted = parse({
+      ...wire,
+      definition: { name: "Portable" },
+      profile: { displayName: "Portable" },
+    });
+    expect(snapshotImportEdit(omitted, destination)).toMatchObject({
+      systemPrompt: "",
+      sessionPolicy: "channel",
+      environment: {},
+      harness: { model: "", provider: "" },
+    });
+    expect(snapshotImportEdit(omitted, destination)).not.toHaveProperty(
+      "picture",
+    );
+    expect(snapshotLimitations(omitted)).toEqual([]);
+  },
+);
+
+it("rejects unsupported explicit values instead of silently downgrading", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  for (const definition of [
+    { runtime: "other" },
+    { respondTo: "anyone" },
+    { parallelism: 33 },
+    { idleTimeoutSeconds: 0 },
+    { namePool: ["other"] },
+  ]) {
+    const snapshot = parse({
+      ...source,
+      definition: { ...source.definition, ...definition },
+    });
+    expect(() => snapshotImportEdit(snapshot, destination)).toThrow(
+      "Import is blocked",
+    );
+  }
+  expect(() => snapshotImportEdit(source, { harnessOptions: [] })).toThrow(
+    "unavailable",
+  );
+});
 
 it.each(["json", "png"] as const)(
   "uses the shared %s file cap for send eligibility and import",

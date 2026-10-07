@@ -220,7 +220,7 @@ it("batches history and edit-deletion targets within the real reader's request b
     error: undefined,
   });
   expect(h.session.inboxFeed.snapshot().checkedResponses).toHaveLength(1000);
-  expect(rows(h)[0]?.preview).toBe("progress 999"); // Deleted edits cannot supply a preview.
+  expect(rows(h)[0]?.preview).toBe(first.content); // Deleted edits cannot supply a preview.
   for (const kinds of [
     [40003, 5, 9005],
     [5, 9005],
@@ -1600,11 +1600,15 @@ it("a signed short-page walk settles edits and checks their deletion dependencie
 // DTOs model the already-verified reader boundary here; signed admission, edits,
 // and short-page closure remain covered through the real session above.
 it.each(["events", "bytes"] as const)(
-  "walks advancing auxiliary pages with a discriminating %s budget outcome",
+  "bounds aggregate %s across advancing auxiliary pages and target batches",
   async (budget) => {
     const h = setup();
     h.admit([h.viewer.pubkey, h.alice.pubkey]);
     const target = addressed(h, "original", 20);
+    const targets = Array.from({ length: 501 }, (_, index) => ({
+      ...target,
+      id: (index + 3000).toString(16).padStart(64, "0"),
+    }));
     const count = budget === "events" ? 2001 : 9;
     const edits: RelayEvent[] = Array.from({ length: count }, (_, i) => ({
       ...target,
@@ -1614,7 +1618,7 @@ it.each(["events", "bytes"] as const)(
       content: budget === "bytes" ? "x".repeat(512 * 1024) : `revision ${i}`,
       tags: [
         ["h", "room"],
-        ["e", target.id],
+        ["e", targets[i < Math.ceil(count / 2) ? 0 : 500]?.id ?? ""],
       ],
     }));
     expect(edits.length > 2000).toBe(budget === "events");
@@ -1624,12 +1628,14 @@ it.each(["events", "bytes"] as const)(
     const reader = {
       read: vi.fn(async (filters: readonly ReadFilter[]) => {
         const filter = filters[0];
-        if (!filter?.["#e"]?.includes(target.id)) return [];
+        if (!filter?.["#e"]?.some((id) => targets.some((row) => row.id === id)))
+          return [];
         pages.push(filter);
         return edits
           .filter(
             (edit) =>
-              filter.until === undefined || edit.created_at < filter.until,
+              filter["#e"]?.includes(edit.tags[1]?.[1] ?? "") &&
+              (filter.until === undefined || edit.created_at < filter.until),
           )
           .slice(0, pageSize);
       }),
@@ -1639,18 +1645,18 @@ it.each(["events", "bytes"] as const)(
       channels: h.session.channels,
       reader,
       async addressedRead(_filter, _signal, prepare) {
-        prepare([target]);
-        return [target];
+        prepare(targets);
+        return targets;
       },
-      retainedEvent: (id) => (id === target.id ? target : undefined),
+      retainedEvent: (id) => targets.find((row) => row.id === id),
       retainedEditIds: () => [],
     });
     try {
       await feed.ensure();
-      expect(pages.length).toBe(budget === "events" ? 5 : 3);
+      expect(pages.length).toBe(budget === "events" ? 6 : 4);
       expect(feed.snapshot()).toMatchObject({
         status: "error",
-        incomplete: [target.id],
+        incomplete: targets.map((row) => row.id),
         error: "Inbox message updates exceed the read budget. Retry inbox.",
       });
       // Failure must be retryable; no blanket pagination rejection may pass.
@@ -1659,7 +1665,7 @@ it.each(["events", "bytes"] as const)(
       if (!first) throw Error("Missing budget fixture edit");
       edits.splice(0, edits.length, { ...first, content: "bounded retry" });
       await feed.refresh();
-      expect(pages).toHaveLength(2);
+      expect(pages).toHaveLength(3);
       expect(feed.snapshot()).toMatchObject({
         status: "ready",
         incomplete: [],

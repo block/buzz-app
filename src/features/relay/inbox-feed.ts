@@ -106,34 +106,47 @@ export function createInboxFeed({
   ) {
     if (!ids.length) return [];
     const collected: RelayEvent[] = [];
-    let cursor: ReturnType<typeof cursorOf> | undefined;
-    for (;;) {
-      const page = [
-        ...(await reader.read(
-          [
-            {
-              kinds,
-              "#e": ids,
-              limit: 500,
-              ...(cursor ?? {}),
-            },
-          ],
-          { signal },
-        )),
-      ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
-      const previous = cursor;
-      if (previous && page.some((event) => !older(event, previous)))
-        throw new Error("Inbox message updates did not advance. Retry inbox.");
-      collected.push(...page);
-      if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
-        throw new Error(
-          "Inbox message updates exceed the read budget. Retry inbox.",
+    const seen = new Set<string>();
+    // 500 signed event IDs leave room for filter fields below the 64 KiB request cap.
+    for (let start = 0; start < ids.length; start += 500) {
+      let cursor: ReturnType<typeof cursorOf> | undefined;
+      for (;;) {
+        const page = [
+          ...(await reader.read(
+            [
+              {
+                kinds,
+                "#e": ids.slice(start, start + 500),
+                limit: 500,
+                ...(cursor ?? {}),
+              },
+            ],
+            { signal },
+          )),
+        ].sort(
+          (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
         );
-      const last = page.at(-1);
-      if (!last) return collected;
-      cursor = cursorOf(last);
-      // Authorized responses can have short pages. Only empty ends the walk.
+        const previous = cursor;
+        if (previous && page.some((event) => !older(event, previous)))
+          throw new Error(
+            "Inbox message updates did not advance. Retry inbox.",
+          );
+        for (const event of page) {
+          if (seen.has(event.id)) continue;
+          seen.add(event.id);
+          collected.push(event);
+        }
+        if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
+          throw new Error(
+            "Inbox message updates exceed the read budget. Retry inbox.",
+          );
+        const last = page.at(-1);
+        if (!last) break;
+        cursor = cursorOf(last);
+        // Authorized responses can have short pages. Only empty ends the walk.
+      }
     }
+    return collected;
   }
   async function conversation(item: InboxItem, signal: AbortSignal) {
     const retained = item.messageIds.flatMap((id) => retainedEvent(id) ?? []);
@@ -216,6 +229,17 @@ export function createInboxFeed({
               if (!bound) throw new MissingThreadBounds();
               bounds = threadBounds(bound); // Reader verified signer and request binding.
             }
+            if (closed || signal.aborted) return;
+            publish({
+              incomplete: Object.freeze([
+                ...new Set([
+                  ...snapshot.incomplete,
+                  ...visible
+                    .filter((event) => mentionKinds.includes(event.kind))
+                    .map((event) => event.id),
+                ]),
+              ]),
+            });
           },
         )),
       ]

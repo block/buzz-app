@@ -196,6 +196,75 @@ it("keeps response checks pending on failure and recovers only after retry compl
     checkedResponses: [incoming.id],
   });
 });
+it("checks one canonical conversation when cold mentions have not regrouped yet", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 12);
+  const incoming = [20, 21, 22].map((at) =>
+    message(h.alice, "room", "needs input", at, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  const response = message(h.viewer, "room", "already answered", 30, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  h.query.mockImplementation((filters) => {
+    const filter = filters[0];
+    if (filter?.ids?.includes(root.id)) return Promise.resolve([root]);
+    if (filter?.since !== undefined)
+      return Promise.resolve(
+        filter.until === undefined ? [...incoming, response] : [],
+      );
+    return query(filters);
+  });
+  h.live.receive(incoming);
+  expect(rows(h)).toHaveLength(3);
+  await h.session.inboxFeed.ensureResponses(rows(h));
+  expect(rows(h)).toHaveLength(1);
+  expect(rows(h)[0]?.unresponded).toBe(false);
+  expect(
+    h.query.mock.calls.filter(([filters]) => filters[0]?.since !== undefined),
+  ).toHaveLength(2);
+});
+it("cache clearing retires a held response check without starting stale demand again", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 12);
+  const incoming = message(h.alice, "room", "needs input", 20, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const response = message(h.viewer, "room", "answered", 30, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const gate = deferred<RelayEvent[]>();
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  let started = false;
+  h.query.mockImplementation((filters) => {
+    if (filters[0]?.since !== undefined) {
+      started = true;
+      return gate.promise;
+    }
+    return query(filters);
+  });
+  h.live.receive([root, incoming]);
+  const work = h.session.inboxFeed.ensureResponses(rows(h));
+  const joined = h.session.inboxFeed.ensureResponses(rows(h));
+  await vi.waitFor(() => expect(started).toBe(true));
+  const count = h.query.mock.calls.length;
+  await h.clearCache();
+  gate.resolve([response]);
+  await Promise.all([work, joined]);
+  expect(rows(h)).toEqual([]);
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "idle",
+    checkedResponses: [],
+  });
+  expect(h.query.mock.calls).toHaveLength(count);
+});
 it("reconciles live addressed updates and drops membership-revoked history before listeners", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

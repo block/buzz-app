@@ -137,7 +137,7 @@ export function createInboxFeed({
       item.rootId ??
       retained.map(threadReference).find((reference) => reference)?.rootId ??
       item.messageId;
-    if (item.target.kind !== "channel" && !retainedEvent(rootId))
+    if (item.target.kind !== "channel" && !item.rootId)
       await reader.read([{ kinds: mentionKinds, ids: [rootId], limit: 1 }], {
         signal,
       });
@@ -216,7 +216,30 @@ export function createInboxFeed({
           ]),
         ];
         const checked = new Set(candidates ? snapshot.checkedResponses : []);
+        const conversations = new Map<string, InboxItem>();
         for (const item of candidates ?? responseCandidates) {
+          const event = retainedEvent(item.messageId);
+          const root =
+            item.target.kind === "channel"
+              ? item.channelId
+              : (item.rootId ??
+                (event && threadReference(event)?.rootId) ??
+                item.messageId);
+          const key = `${item.channelId}:${root}`;
+          const previous = conversations.get(key);
+          conversations.set(
+            key,
+            previous
+              ? {
+                  ...previous,
+                  messageIds: [
+                    ...new Set([...previous.messageIds, ...item.messageIds]),
+                  ],
+                }
+              : item,
+          );
+        }
+        for (const item of conversations.values()) {
           const history = await conversation(item, owned.signal);
           for (const id of [
             ...item.messageIds,
@@ -308,7 +331,9 @@ export function createInboxFeed({
         return this.ensureResponses(items);
       }
       const missing = items.filter((item) =>
-        item.messageIds.some((id) => !snapshot.checkedResponses.includes(id)),
+        item.messageIds.some(
+          (id) => retainedEvent(id) && !snapshot.checkedResponses.includes(id),
+        ),
       );
       if (missing.length) await refresh(missing);
     },

@@ -284,25 +284,25 @@ export function InboxView({
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
-  useEffect(() => {
-    if (responseFilter === "unresponded" && list.status === "ready")
-      void session.inboxFeed.ensureResponses(items);
-  }, [session, responseFilter, list.status, items]);
-  const activityItems = items
-    .map((item) => (activity === "mentions" ? item.mention : item))
-    .filter(
-      (item): item is InboxItem =>
-        !!item &&
-        matchesActivity(
-          item,
-          activity,
-          list.channels.some(
-            (channel) =>
-              channel.id === item.channelId && channel.channelType === "dm",
-          ),
-        ),
-    )
-    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+  const activityItems = useMemo(
+    () =>
+      items
+        .map((item) => (activity === "mentions" ? item.mention : item))
+        .filter(
+          (item): item is InboxItem =>
+            !!item &&
+            matchesActivity(
+              item,
+              activity,
+              list.channels.some(
+                (channel) =>
+                  channel.id === item.channelId && channel.channelType === "dm",
+              ),
+            ),
+        )
+        .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)),
+    [items, activity, list.channels],
+  );
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
   const selected = items.find(
@@ -352,41 +352,58 @@ export function InboxView({
   );
   // Classification covers every evaluated author, independently of bounded demand.
   // Winning events can change without changing folded display values.
-  useSyncExternalStore(session.profiles.subscribe, () =>
+  const profileRevision = useSyncExternalStore(session.profiles.subscribe, () =>
     activityItems
       .map(({ authorId }) => session.profiles.event?.(authorId)?.id ?? "")
       .join(":"),
   );
-  const agentIds = new Set(choices.identities.map((agent) => agent.pubkey));
-  const senderKind = (authorId: string) => {
-    if (agentIds.has(authorId) || cachedProfiles.get(authorId)?.isAgent)
-      return "agent";
-    // foldProfiles supplies a fallback for malformed kind 0; require a valid
-    // signed, parsed object before treating absent agent hints as human display evidence.
-    const event = session.profiles.event?.(authorId);
-    if (event) {
-      try {
-        const body: unknown = JSON.parse(event.content);
-        if (body !== null && typeof body === "object" && !Array.isArray(body))
-          return "human";
-      } catch {
-        /* Missing or malformed profile is unknown. */
+  const responseCandidates = useMemo(() => {
+    void profileRevision;
+    const agentIds = new Set(choices.identities.map((agent) => agent.pubkey));
+    const senderKind = (authorId: string) => {
+      if (agentIds.has(authorId) || cachedProfiles.get(authorId)?.isAgent)
+        return "agent";
+      // foldProfiles supplies a fallback for malformed kind 0; require a valid
+      // signed, parsed object before treating absent agent hints as human display evidence.
+      const event = session.profiles.event?.(authorId);
+      if (event) {
+        try {
+          const body: unknown = JSON.parse(event.content);
+          if (body !== null && typeof body === "object" && !Array.isArray(body))
+            return "human";
+        } catch {
+          /* Missing or malformed profile is unknown. */
+        }
       }
-    }
-    return "unknown";
-  };
-  const matching = activityItems.filter(
-    (item) =>
-      (senderFilter === "everyone" ||
+      return "unknown";
+    };
+    return activityItems.filter(
+      (item) =>
+        senderFilter === "everyone" ||
         senderKind(item.authorId) ===
-          (senderFilter === "agents" ? "agent" : "human")) &&
-      (responseFilter === "all" ||
-        (responseFilter === "unread"
-          ? hasUnread(item) ||
-            (item.id === selectedId &&
-              item.messageIds.includes(selectedTarget?.messageId ?? ""))
-          : item.unresponded &&
-            item.messageIds.every((id) => feed.checkedResponses.includes(id)))),
+          (senderFilter === "agents" ? "agent" : "human"),
+    );
+  }, [
+    activityItems,
+    senderFilter,
+    choices.identities,
+    cachedProfiles,
+    session,
+    profileRevision,
+  ]);
+  useEffect(() => {
+    if (responseFilter === "unresponded" && list.status === "ready")
+      void session.inboxFeed.ensureResponses(responseCandidates);
+  }, [session, responseFilter, list.status, responseCandidates]);
+  const matching = responseCandidates.filter(
+    (item) =>
+      responseFilter === "all" ||
+      (responseFilter === "unread"
+        ? hasUnread(item) ||
+          (item.id === selectedId &&
+            item.messageIds.includes(selectedTarget?.messageId ?? ""))
+        : item.unresponded &&
+          item.messageIds.every((id) => feed.checkedResponses.includes(id))),
   );
   const visible = matching.slice(0, limit);
   const profileKey = [
@@ -549,7 +566,7 @@ export function InboxView({
   const canRead = sync.capability === "frontier-sync";
   const responsesPending =
     responseFilter === "unresponded" &&
-    activityItems.some((item) =>
+    responseCandidates.some((item) =>
       item.messageIds.some((id) => !feed.checkedResponses.includes(id)),
     );
   const loading =

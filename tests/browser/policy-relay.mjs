@@ -507,6 +507,7 @@ export function policyRelay({
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
+          filter.since === undefined &&
           holdOlder
         )
           return new Promise((resolve, reject) => {

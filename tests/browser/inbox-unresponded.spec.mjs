@@ -119,7 +119,8 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
     await page.getByRole("option", { name, exact: true }).click();
   };
   await choose("Activity type", "Mentions");
-  await expect(rows).toHaveCount(1);
+  // The cold sample omits the root too; exact history checking regroups these.
+  await expect(rows).toHaveCount(app.inboxWindow.replies.length);
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -132,6 +133,8 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
     )
     .toBe(true);
   app.relay.holdUnread();
+  const beforeQueries = app.report.queries.length;
+  let releasedAt;
   try {
     await choose("Filters", "Unresponded only");
     await expect
@@ -140,6 +143,7 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
     await expect(inbox.getByText("Checking recent activity…")).toBeVisible();
     await expect(rows).toHaveCount(0);
   } finally {
+    releasedAt = performance.now();
     app.relay.releaseUnread();
   }
   await expect(
@@ -161,7 +165,16 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
       ),
     )
     .toBe(true);
-  app.append(
+  const checks = app.report.queries
+    .slice(beforeQueries)
+    .filter(({ filter }) => filter.since !== undefined);
+  expect(checks).toHaveLength(2); // One root, one page, then its terminal page.
+  app.report.unrespondedPerformance = {
+    checkedRoots: 1,
+    responseReads: checks.length,
+    settleMs: performance.now() - releasedAt,
+  };
+  const progress = app.append(
     "primary",
     channel,
     "Ordinary progress after your answer",
@@ -171,7 +184,20 @@ test("cold Unresponded checks later replies before showing older mentions", asyn
   );
   await choose("Activity type", "Threads");
   await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText("Ordinary progress after your answer");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay
+            .snapshot()
+            .session.unread.inbox()
+            .items.some(
+              (item) => item.messageIds.includes(id) && item.unresponded,
+            ),
+        progress.id,
+      ),
+    )
+    .toBe(true);
   await choose("Activity type", "Mentions");
   await expect(rows).toHaveCount(0);
 });

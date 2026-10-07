@@ -33,13 +33,13 @@ export default defineConfig(async ({ command, mode }) => {
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
-      (await import("./dev/developer-settings.ts")).developerSettingsPlugin(
+      (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(
         process.cwd(),
       ),
     );
   if (live)
     plugins.push(
-      (await import("./dev/relay-broker.mjs")).relayBrokerPlugin({
+      (await import("./browser-host/relay-broker.mjs")).relayBrokerPlugin({
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,

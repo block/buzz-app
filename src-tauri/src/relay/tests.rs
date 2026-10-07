@@ -1299,7 +1299,7 @@ async fn sidebar_signer_matches_projection_lengths_and_preserves_unknown_sort_en
         host.decode_sidebar(vec![event]).await.unwrap()["channel-sections"],
         existing
     );
-    // Same preservation vector as dev/sidebar-sort.test.mjs: unrelated modes,
+    // Same preservation vector as browser-host/sidebar-sort.test.mjs: unrelated modes,
     // section keys and top-level metadata survive an override update.
     let sort = serde_json::json!({"version":1,"future":{"x":1},"groups":{
         "channels":"recent","section:elsewhere":"recent","future":"next-mode","section:work":"recent"

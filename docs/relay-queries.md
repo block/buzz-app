@@ -629,7 +629,7 @@ check. It is not an event/query cache or authorization proof; WebSocket and othe
 `eventDto` callers remain uncached. `event-proof.test.ts` covers tampering,
 connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
 to the dev broker's native-config import graph: new runtime imports there must
-retain explicit extensions and pass `dev/vite-config.test.mjs`.
+retain explicit extensions and pass `browser-host/vite-config.test.mjs`.
 
 ## WebSocket-first publication
 
@@ -676,7 +676,7 @@ command receipt text stays ephemeral; it is never journaled or replaced by an ec
   appropriate existing protocols. Presence polling/lease semantics are not changed
   by this publication slice; moving a periodic query onto WS would not make it reactive.
 
-`live.test.ts`, `broker-live.test.ts` and `dev/relay-broker-live.test.mjs` cover
+`live.test.ts`, `broker-live.test.ts` and `browser-host/relay-broker-live.test.mjs` cover
 AUTH/OK correlation, admission, bounded failures, no replay, in-place interests,
 owner fencing, real broker/session-outbox reconciliation, workflow receipts and
 encrypted read-state publication with ephemeral keys and injected sockets. These

@@ -1,7 +1,7 @@
 # Source attribution
 
-The relay read model in `src/features/relay` and development read broker in `dev`
-are adapted from the supplied Astra example. The channel layout
+The relay read model in `src/features/relay` and development read broker in
+`browser-host` are adapted from the supplied Astra example. The channel layout
 and virtualizer behavior are adapted from that example's Channels view.
 
 Astra's presentation is derived from Block Buzz `prototypes/project-cube-orbit`,

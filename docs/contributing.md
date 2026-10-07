@@ -205,7 +205,7 @@ Browser and desktop share the React application, community sessions, durable
 outbox, protocol models and live scheduler. **The goal is one code path per feature
 in development and release:** desktop development uses the same shared frontend
 and Rust host as packaged desktop, not a Node implementation of the feature.
-`dev/` supplies browser-development host support and broker tests, not a second
+`browser-host/` supplies browser-development host support and broker tests, not a second
 owner of feature logic. **Preserve supported browser capabilities:** reduce
 duplicate implementations, not available workflows. Reuse shared feature owners
 rather than add parallel Node feature logic; native-only capabilities do not
@@ -255,7 +255,7 @@ app as incidental cleanup. See [identity custody and acceptance](identity.md).
   parity. Document intentional or unresolved differences with separate expected
   outcomes; neither implementation automatically defines intended policy.
   Changing outcomes is a behavior decision, not a refactor. Do not add a second
-  source of feature policy in `dev/`.
+  source of feature policy in `browser-host/`.
 
 ### Review and evidence
 
@@ -309,8 +309,9 @@ regression coverage follows. Native acceptance alone does not prove a browser
 replacement works. Capability retirement is a separate explicit product decision,
 not part of this cleanup; do not weaken a callable endpoint to reduce line count.
 
-Developer tools (`developer-settings.ts`, `live-setup-probe.mjs`) are not Rust
-feature mirrors. Legacy library and hosted-community helpers (`agent-library.mjs`,
+Developer tools live in `scripts/` (`developer-settings.ts`,
+`live-setup-probe.mjs`), separate from `browser-host/`; they are not Rust feature
+mirrors. Legacy library and hosted-community helpers (`agent-library.mjs`,
 `builderlab.mjs`) are not automatically replaced by native identity. A transport
 replacement or new backend needs a separate design decision. This cleanup changes
 no runtime defaults or credentials.
@@ -624,11 +625,12 @@ default resource path. Keep the manifest aligned when upgrading Tauri.
 Keep component and service tests beside their owner, including integration tests
 that belong to one subsystem. Use Vitest for these tests (`*.test.ts`,
 `*.test.tsx`, or existing `*.test.mjs`); JavaScript tests do not need a TypeScript
-rewrite just to move. `vitest.config.ts` discovers tests under `src/` and `dev/`.
+rewrite just to move. `vitest.config.ts` discovers tests under `src/`,
+`browser-host/` and `scripts/`. Tooling tests stay beside their scripts.
 
 - `src/app/pages.integration.test.mjs` exercises the actual bundled app composition;
   `src/plugins/runtime.test.mjs` covers plugin activation and disposal.
-- `dev/relay-broker.test.mjs` lives beside the Node-only development broker. Other
+- `browser-host/relay-broker.test.mjs` lives beside the Node-only development broker. Other
   broker integration tests remain with the community/relay behavior they exercise.
 - `tests/integration/` is for cross-system journeys. The plugin CLI test keeps
   Node's runner because it builds the Rust CLI, scaffolds a separate project, runs

@@ -244,7 +244,7 @@ cross-device save guarantees. Retaining the shared record preserves compatibilit
 with existing desktop writers; convergence across unseen heads would require a
 separately designed reconciliation lifecycle or atomic relay support.
 
-`dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
+`browser-host/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
 through the real mutation helper: another section saves and confirms between a
 read and publication, then the stale whole-record replacement wins and also
 confirms. This is contract coverage, not a concurrency fix.
@@ -949,7 +949,7 @@ checks/readback reduce uncertainty but do not provide atomic conflict rejection.
 Preventing these races requires separately scoped relay support.
 
 Regression coverage lives in `administration.test.ts`,
-`MemberAdministration.test.tsx`, `native.test.ts`, and `dev/relay-broker-api.test.mjs`;
+`MemberAdministration.test.tsx`, `native.test.ts`, and `browser-host/relay-broker-api.test.mjs`;
 existing `ChannelMembersDialog.test.tsx` invitation coverage remains. Synthetic confirmed
 writes/recovery and a real-app read/confirmation/cancel exercise do not establish
 native or deployed destructive-write acceptance. Those checks and human tryout

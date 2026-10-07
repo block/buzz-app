@@ -171,7 +171,7 @@ so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
 account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`dev/builderlab.mjs`), which keep the session
+broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
 over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
 `https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which

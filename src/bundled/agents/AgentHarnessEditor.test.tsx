@@ -253,7 +253,7 @@ it.each([
     defaultArgs: ["--claude-default"],
   },
 ])(
-  "uses native-shaped $label preset defaults when leaving Buzz Agent",
+  "uses native-shaped defaults between Buzz Agent and $label",
   async ({ label, command, defaultArgs }) => {
     const externalPolicy = {
       authentication: "external" as const,
@@ -274,34 +274,49 @@ it.each([
       const [draft, setDraft] = useState(current);
       current = draft;
       return (
-        <AgentHarnessEditor
-          draft={draft}
-          options={[
-            {
-              command: "buzz-agent",
-              label: "Buzz Agent",
-              providers: [{ value: "databricks_v2", label: "Databricks v2" }],
-              defaultArgs: [],
-              configurationPolicy: {
-                ...externalPolicy,
-                authentication: "provider",
-                provider: "selector",
-                selectorEnvironment: {
-                  model: "BUZZ_AGENT_MODEL",
-                  provider: "BUZZ_AGENT_PROVIDER",
+        <>
+          <AgentHarnessEditor
+            draft={draft}
+            options={[
+              {
+                command: "buzz-agent",
+                label: "Buzz Agent",
+                providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+                defaultArgs: [],
+                configurationPolicy: {
+                  ...externalPolicy,
+                  authentication: "provider",
+                  provider: "selector",
+                  selectorEnvironment: {
+                    model: "BUZZ_AGENT_MODEL",
+                    provider: "BUZZ_AGENT_PROVIDER",
+                  },
                 },
               },
-            },
-            {
-              command,
-              label,
-              providers: [],
-              defaultArgs,
-              configurationPolicy: externalPolicy,
-            },
-          ]}
-          onChange={(patch) => setDraft((draft) => ({ ...draft, ...patch }))}
-        />
+              {
+                command,
+                label,
+                providers: [],
+                defaultArgs,
+                configurationPolicy: externalPolicy,
+              },
+            ]}
+            onChange={(patch) => setDraft((draft) => ({ ...draft, ...patch }))}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              setDraft((draft) => ({
+                ...draft,
+                args: '["custom-preset-argument"]',
+                provider: "old-provider",
+                model: "old-model",
+              }))
+            }
+          >
+            Set incompatible preset values
+          </button>
+        </>
       );
     }
 
@@ -313,6 +328,17 @@ it.each([
       command,
       args: JSON.stringify(defaultArgs),
       provider: "",
+      model: "",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Set incompatible preset values" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
+    expect(current).toMatchObject({
+      command: "buzz-agent",
+      args: "[]",
+      provider: "databricks_v2",
       model: "",
     });
   },

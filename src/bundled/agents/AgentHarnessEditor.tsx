@@ -87,7 +87,9 @@ export function AgentHarnessEditor({
                 : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
           onChange({
             command,
-            ...(pickedOption && option && (enteringExternal || external)
+            ...(pickedOption &&
+            option &&
+            (enteringExternal || external || isPreset)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
                   provider: enteringExternal

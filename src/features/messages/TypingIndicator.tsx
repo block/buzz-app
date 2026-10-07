@@ -1,21 +1,31 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
+import { activityTarget } from "../agents/activity-target";
 import type { RelaySession } from "../relay/session";
 import styles from "./TypingIndicator.module.css";
+
+const noSubscribe = () => () => {};
+const noActivity = () => undefined;
 
 /** Shared presentation only. Mounting more consumers creates no relay work. */
 export function TypingIndicator({
   session,
   channelId,
   threadRootId,
+  canOpenActivity,
 }: {
   session: RelaySession;
   channelId: string;
   threadRootId?: string | undefined;
+  canOpenActivity?: ((target: string) => boolean) | undefined;
 }) {
   const entries = useSyncExternalStore(
     session.typing.subscribe,
     session.typing.snapshot,
+  );
+  const activity = useSyncExternalStore(
+    session.agentActivity?.subscribe ?? noSubscribe,
+    session.agentActivity?.snapshot ?? noActivity,
   );
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
@@ -24,7 +34,17 @@ export function TypingIndicator({
   );
   const matching = entries.filter(
     (entry) =>
-      entry.channelId === channelId && entry.threadRootId === threadRootId,
+      entry.channelId === channelId &&
+      entry.threadRootId === threadRootId &&
+      // The existing activity accessory already presents these exact identities.
+      // Keep public typing when that activity action is unavailable or disabled.
+      !activity?.typing.some(
+        (agent) =>
+          agent.channelId === channelId &&
+          agent.threadRootId === threadRootId &&
+          agent.agent === entry.pubkey &&
+          canOpenActivity?.(activityTarget(agent.agent, channelId)),
+      ),
   );
   if (!matching.length) return null;
   // Reuse already available names; optional typing must not trigger profile reads.

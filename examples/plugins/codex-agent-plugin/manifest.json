@@ -1,0 +1,10 @@
+{
+  "id": "buzz.codex-agent-plugin",
+  "name": "Codex agent",
+  "apiVersion": 1,
+  "host": {
+    "commands": [
+      { "id": "app-server", "program": "codex", "args": ["app-server"] }
+    ]
+  }
+}

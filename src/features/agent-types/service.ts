@@ -88,11 +88,15 @@ export type AgentDelivery<Config> = Readonly<{
   event: RelayEvent;
   /** The live route's channel; absent when the wire scope was ambiguous or global. */
   channelId?: string;
+  /** Host-resolved context boundary; DMs always use channel context. */
+  conversation?: Readonly<{ channelName: string; threadRootId?: string }>;
   agent: AgentIdentity;
   config: Config;
   /** Shows this run's steps and streamed text in the owner's window while it runs.
    * Nothing sent here reaches the relay; publish what other people should see. */
   live: AgentRunLive;
+  /** Discards waiting deliveries in this conversation, including the host queue. */
+  cancelQueued(): void;
   /** Aborts on timeout, when the agent is stopped, edited or deleted, when its plugin
    * is disabled or replaced, and when the owner's connection is replaced. */
   signal: AbortSignal;
@@ -121,6 +125,12 @@ export type AgentType<Config = unknown> = {
     agent: Pick<AgentIdentity, "pubkey" | "owner">,
   ): AgentFilter | readonly AgentFilter[];
   run(delivery: AgentDelivery<Config>): void | Promise<void>;
+  /** Owner controls bypass ordinary admission (two steering requests and one stop in flight).
+   * The same run callback handles them. Other authors cannot invoke this path. */
+  control?(
+    event: RelayEvent,
+    agent: AgentIdentity,
+  ): "steer" | "stop" | undefined;
   /** Per-run deadline in milliseconds; defaults to 30 seconds. */
   timeoutMs?: number;
   /** How many runs one agent may have in progress at once, from 1 to 16. Defaults
@@ -130,7 +140,9 @@ export type AgentType<Config = unknown> = {
   secrets?: readonly AgentSecret[];
   /** Asks the owner for a directory under `Configure`, and gives `run` files and
    * commands there as `agent.workspace`. */
-  workspace?: boolean;
+  workspace?: boolean | "required";
+  /** Offers the saved Conversation context setting and resolves it on deliveries. */
+  conversationContext?: boolean;
 };
 export type RegisteredAgentType = Contribution<AgentType>;
 /** One agent's runs in this window since the app opened. */
@@ -203,7 +215,7 @@ export function parseSubscription(value: unknown): readonly AgentFilter[] {
 type Binding = {
   scope: string;
   viewer: string;
-  session: unknown;
+  session: ReturnType<RelayData["snapshot"]>["session"];
   signal: AbortSignal;
   close(): void;
 };
@@ -219,6 +231,9 @@ type Instance = {
   queue: Job[];
   seen: Set<string>;
   running: number;
+  controls: number;
+  stopping: boolean;
+  sessionPolicy: "channel" | "thread";
   windowStart: number;
   admitted: number;
 };
@@ -370,6 +385,14 @@ export class AgentTypesService extends Service implements AgentTypes {
   // The listening set: enabled agents in this community whose type is active. An
   // agent whose record, type revision or connection changed is rebuilt, which
   // aborts its in-flight run and recomputes its subscription from the saved config.
+  private sessionPolicy(agent: AgentView, type: AgentType) {
+    return type.conversationContext
+      ? (agent.sessionPolicy ??
+          this.control.snapshot().data?.defaultSettings?.sessionPolicy ??
+          "channel")
+      : "thread";
+  }
+
   private reconcile() {
     const types = new Map(
       this.contributions.snapshot().map((type) => [type.key, type]),
@@ -393,7 +416,8 @@ export class AgentTypesService extends Service implements AgentTypes {
         prior?.type === type &&
         prior.binding === binding &&
         prior.agent.revision === agent.revision &&
-        prior.agent.name === agent.name
+        prior.agent.name === agent.name &&
+        prior.sessionPolicy === this.sessionPolicy(agent, type)
       ) {
         next.set(agent.id, prior);
         continue;
@@ -416,7 +440,13 @@ export class AgentTypesService extends Service implements AgentTypes {
     }
     for (const [id, instance] of this.instances) {
       if (next.get(id) === instance) continue;
-      instance.controller.abort();
+      const replacement = next.get(id);
+      instance.controller.abort(
+        replacement?.binding === instance.binding &&
+          replacement.type === instance.type
+          ? "settings-changed"
+          : undefined,
+      );
       // Stopped, deleted, or its type went away: no subscription is in force.
       if (!next.has(id) && counters[id]?.subscription) {
         const { subscription: _, ...kept } = counters[id];
@@ -514,6 +544,9 @@ export class AgentTypesService extends Service implements AgentTypes {
         queue: [],
         seen,
         running: 0,
+        controls: 0,
+        stopping: false,
+        sessionPolicy: this.sessionPolicy(agent, type),
         windowStart: 0,
         admitted: 0,
       };
@@ -539,10 +572,61 @@ export class AgentTypesService extends Service implements AgentTypes {
         instance.seen.add(event.id);
         if (instance.seen.size > SEEN_LIMIT)
           instance.seen.delete(instance.seen.values().next().value as string);
+        let control: "steer" | "stop" | undefined;
+        try {
+          control = instance.type.control?.(event, instance.identity);
+        } catch (error) {
+          this.count(id, (now) => ({
+            ...now,
+            errors: now.errors + 1,
+            lastError: message(error),
+          }));
+          continue;
+        }
         const now = Date.now();
         if (now - instance.windowStart >= RATE_WINDOW_MS) {
           instance.windowStart = now;
           instance.admitted = 0;
+        }
+        if (control && event.pubkey !== instance.identity.owner) {
+          // Denials share ordinary admission's rate budget, never control slots.
+          if (batch.channelId && instance.admitted < RATE_LIMIT) {
+            instance.admitted++;
+            void instance.identity
+              .publish({
+                kind: 9,
+                content:
+                  "Only the agent owner can steer, stop, or reset this agent. Send a regular mention to queue a request.",
+                tags: [
+                  ["h", batch.channelId],
+                  [
+                    "e",
+                    threadReference(event)?.rootId ?? event.id,
+                    "",
+                    "reply",
+                  ],
+                ],
+              })
+              .catch(() => {});
+          }
+          this.count(id, (now) => ({ ...now, dropped: now.dropped + 1 }));
+          continue;
+        }
+        if (control) {
+          if (control === "stop" ? instance.stopping : instance.controls >= 2) {
+            this.count(id, (now) => ({ ...now, dropped: now.dropped + 1 }));
+            continue;
+          }
+          if (control === "stop") instance.stopping = true;
+          else instance.controls++;
+          void this.execute(instance, {
+            event,
+            ...(batch.channelId ? { channelId: batch.channelId } : {}),
+          }).finally(() => {
+            if (control === "stop") instance.stopping = false;
+            else instance.controls--;
+          });
+          continue;
         }
         if (
           instance.queue.length >= QUEUE_LIMIT ||
@@ -580,6 +664,19 @@ export class AgentTypesService extends Service implements AgentTypes {
 
   private async execute(instance: Instance, job: Job) {
     const id = instance.agent.id;
+    const channel = instance.binding.session.channels
+      .list()
+      .channels.find((item) => item.id === job.channelId);
+    const root =
+      instance.sessionPolicy === "thread" && channel?.channelType !== "dm"
+        ? (threadReference(job.event)?.rootId ?? job.event.id)
+        : undefined;
+    const conversation = job.channelId
+      ? Object.freeze({
+          channelName: channel?.name ?? job.channelId,
+          ...(root ? { threadRootId: root } : {}),
+        })
+      : undefined;
     const signal = AbortSignal.any([
       instance.controller.signal,
       AbortSignal.timeout(instance.type.timeoutMs ?? 30_000),
@@ -611,9 +708,19 @@ export class AgentTypesService extends Service implements AgentTypes {
             Object.freeze({
               event: job.event,
               ...(job.channelId ? { channelId: job.channelId } : {}),
+              ...(conversation ? { conversation } : {}),
               agent: instance.identity,
               config: instance.agent.plugin?.config,
               live: view?.live ?? noLive,
+              cancelQueued: () => {
+                instance.queue = instance.queue.filter(
+                  (queued) =>
+                    queued.channelId !== job.channelId ||
+                    (root !== undefined &&
+                      (threadReference(queued.event)?.rootId ??
+                        queued.event.id) !== root),
+                );
+              },
               signal,
             }),
           ),
@@ -626,7 +733,33 @@ export class AgentTypesService extends Service implements AgentTypes {
       ]);
     } catch (error) {
       // Cancellation by stop, edit, disable or session swap is not an agent fault.
-      if (instance.controller.signal.aborted) return;
+      if (instance.controller.signal.aborted) {
+        const replacement = this.instances.get(id);
+        if (
+          instance.controller.signal.reason === "settings-changed" &&
+          replacement?.binding === instance.binding &&
+          job.channelId
+        ) {
+          // The old plugin stays revoked. The current identity owns this host notice.
+          await replacement.identity
+            .publish({
+              kind: 9,
+              content:
+                "This request was interrupted because the agent settings changed. Send another mention to continue with the updated settings.",
+              tags: [
+                ["h", job.channelId],
+                [
+                  "e",
+                  threadReference(job.event)?.rootId ?? job.event.id,
+                  "",
+                  "reply",
+                ],
+              ],
+            })
+            .catch(() => {});
+        }
+        return;
+      }
       console.error(`Agent run failed: ${instance.agent.name}`, error);
       this.count(id, (now) => ({
         ...now,

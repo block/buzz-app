@@ -13,7 +13,18 @@ export type HostResponse = Readonly<{
   headers: Readonly<Record<string, string>>;
   body: string;
 }>;
+/** A declared host command with newline-framed input/output. Desktop macOS/Linux. */
+export type HostProcess = Readonly<{
+  send(text: string): Promise<void>;
+  close(): void;
+}>;
+export type ProcessOptions = Readonly<{
+  signal: AbortSignal;
+  onLine(text: string): void;
+  onClose(error: Error): void;
+}>;
 export interface Host {
+  connectCommand(id: string, options: ProcessOptions): Promise<HostProcess>;
   runCommand(id: string): Promise<string | null>;
   request(input: HostRequest): Promise<HostResponse>;
   /** `request` shaped like the platform `fetch`, with the response body streamed as
@@ -38,6 +49,65 @@ declare module "@deepseek-ai/cordis" {
 export class HostService extends Service implements Host {
   constructor(context: Context) {
     super(context, "host");
+  }
+
+  async connectCommand(
+    commandId: string,
+    options: ProcessOptions,
+  ): Promise<HostProcess> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Plugin processes require an installed desktop plugin");
+    options.signal.throwIfAborted();
+    const connectionId = crypto.randomUUID();
+    const address = { id: owner.id, revision: owner.revision, connectionId };
+    let closed = false;
+    const stop = () =>
+      void invoke("plugin_host_process_close", address).catch(() => {});
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      void release();
+      options.signal.removeEventListener("abort", close);
+      stop();
+      options.onClose(new Error("Plugin process closed"));
+    };
+    const release = this.ctx.effect(() => close);
+    options.signal.addEventListener("abort", close, { once: true });
+    const events = new Channel<
+      { type: "line"; text: string } | { type: "exit"; error: string }
+    >();
+    events.onmessage = (event) => {
+      if (closed) return;
+      if (event.type === "line") options.onLine(event.text);
+      else {
+        closed = true;
+        void release();
+        options.signal.removeEventListener("abort", close);
+        options.onClose(new Error(event.error));
+      }
+    };
+    try {
+      await invoke("plugin_host_process_open", {
+        ...address,
+        commandId,
+        onEvent: events,
+      });
+      if (closed || options.signal.aborted) {
+        stop();
+        throw new Error("Plugin process closed during startup");
+      }
+    } catch (error) {
+      close();
+      throw error;
+    }
+    return {
+      send: (text) =>
+        closed
+          ? Promise.reject(new Error("Plugin process closed"))
+          : invoke("plugin_host_process_send", { ...address, text }),
+      close,
+    };
   }
 
   async runCommand(id: string): Promise<string | null> {

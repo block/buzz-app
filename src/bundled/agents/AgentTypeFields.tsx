@@ -6,6 +6,7 @@ import type {
 } from "../../features/agent-types/service";
 import type { AgentView } from "../../features/agents/control";
 import { Field } from "../../shared/design-system/ui/Field";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { AgentDraft } from "./agent-edit";
 import { SecretField } from "./ProviderApiKeyField";
@@ -41,6 +42,8 @@ export function agentTypeError(
   const type = types.find((type) => type.key === draft.plugin?.type);
   if (!type)
     return "This agent's type is unavailable. Enable its plugin, then try again.";
+  if (type.workspace === "required" && !draft.workspace.trim())
+    return "Choose a workspace for this agent.";
   const missing = type.secrets?.find(({ name, optional }) => {
     const typed = draft.environment[name];
     return (
@@ -67,11 +70,13 @@ export function AgentTypeFields({
   types,
   disabled,
   agent,
+  defaultSessionPolicy = "channel",
   onChange,
 }: {
   draft: AgentDraft;
   types: readonly RegisteredAgentType[];
   disabled: boolean;
+  defaultSessionPolicy?: "channel" | "thread" | undefined;
   /** The saved agent on its own screen; absent in Create agent. */
   agent?: Pick<AgentView, "id" | "pubkey" | "name" | "harness"> | undefined;
   onChange(patch: Partial<AgentDraft>): void;
@@ -118,10 +123,42 @@ export function AgentTypeFields({
               }
             />
           ))}
+          {type.conversationContext && (
+            <Select
+              label="Conversation context"
+              variant="field"
+              disabled={disabled}
+              value={draft.sessionPolicy ?? ""}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    {
+                      value: "",
+                      label: `Use agent defaults (${defaultSessionPolicy === "thread" ? "Each thread" : "Entire channel"})`,
+                    },
+                    { value: "channel", label: "Entire channel" },
+                    { value: "thread", label: "Each thread" },
+                  ],
+                },
+              ]}
+              onValueChange={(value) =>
+                onChange({
+                  sessionPolicy:
+                    value === "channel" || value === "thread" ? value : null,
+                })
+              }
+              description="Entire channel shares one conversation across threads. Each thread keeps a separate conversation; direct messages remain shared."
+            />
+          )}
           {type.workspace ? (
             <Field
               label="Workspace"
-              description="Optional. The agent can read and write files in this folder and run commands that start there. Commands are not limited to it."
+              description={
+                type.workspace === "required"
+                  ? "The folder where this agent works."
+                  : "Optional. The agent can read and write files in this folder and run commands that start there. Commands are not limited to it."
+              }
             >
               <Input
                 disabled={disabled}

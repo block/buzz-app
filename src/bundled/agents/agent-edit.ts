@@ -105,7 +105,7 @@ export function agentEdit(
       name: draft.name,
       ...(draft.picture === undefined ? {} : { picture: draft.picture }),
       systemPrompt: "",
-      sessionPolicy: null,
+      sessionPolicy: draft.sessionPolicy,
       workspace: draft.workspace.trim(),
       harness: { command: "", args: [], model: "", provider: "" },
       environment: { ...draft.environment },

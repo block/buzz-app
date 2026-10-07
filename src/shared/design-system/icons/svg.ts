@@ -27,3 +27,6 @@ export const pickerIcons = {
   flag: flag,
   asterisk: asterisk,
 };
+
+export { default as openaiMark } from "@tabler/icons/outline/brand-openai.svg?raw";
+export { default as chevronDown } from "@tabler/icons/outline/chevron-down.svg?raw";

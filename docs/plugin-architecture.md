@@ -355,6 +355,20 @@ streams are open at once across all plugins. Because the calling plugin is read
 from `ctx`, pass a library `(input, init) => ctx.host.fetch(input, init)` rather
 than the detached method.
 
+`ctx.host.connectCommand(id, { signal, onLine, onClose })` opens a declared
+command as a duplex line protocol on macOS/Linux. It resolves to `{ send, close }`;
+`send(line)` writes one UTF-8 frame and `onLine` receives stdout frames. Program and
+arguments still come from the installed manifest. Frames are bounded to 8 MiB,
+with 32 waiting writes, 16 processes across plugins and a 30-minute lifetime.
+Aborting, disposing the calling plugin (including after an update), or closing
+the connection closes stdin, drains stdout during up to three seconds of graceful
+shutdown, then kills the remaining process group. This lets protocol servers
+clean up tools that own separate process groups. Native also revokes processes on disable,
+reload and recovery, and enforces plugin/revision ownership
+on send and close. Stderr is discarded; protocol failure is delivered to `onClose`.
+Windows and browser hosts reject this operation. The Codex example uses this API
+for `codex app-server`, with its own workspace sandbox and approval policy.
+
 The import preview lists declarations and marks added or changed access on updates.
 The install/update action accepts that displayed version; an enabled update may run
 immediately. These declarations help review and catch mistakes. Plugins share the
@@ -943,6 +957,21 @@ The community applies its normal rules to the agent as author: it must be a memb
 of a private channel to post there. Creating an agent does not join it to any
 channel, so an agent can be delivered events from channels it cannot post to.
 
+**Conversation context.** A type with `conversationContext: true` offers the
+existing saved agent `sessionPolicy` setting in Create/Edit. The host resolves its
+value (including Agent defaults and the DM exception) into `delivery.conversation`:
+`channelName` and, for thread context only, `threadRootId`. Types use this boundary
+for their own sessions. Codex uses it for session reuse and `thread/name/set`.
+Types without this opt-in keep thread-scoped queue cancellation.
+
+**Owner controls.** A type may classify an event with
+`control(event, agent): "steer" | "stop" | undefined`. Matching subscription events
+from the agent owner bypass the ordinary delivery queue, with two steering slots
+and one independent stop slot. Other authors cannot invoke those controls.
+`delivery.cancelQueued()` drops waiting host deliveries only for the current
+resolved conversation context. Types remain responsible for cancelling their active work
+and any internal queue. The Codex example maps these to `/steer` and `/stop`.
+
 **Live runs.** `live` shows a run's progress in the window that is running it, and
 nowhere else: nothing sent to it reaches the relay.
 
@@ -997,7 +1026,8 @@ from forms and snapshots but not from other enabled plugins. The stronger design
 keeps the value in native: the type names the secret and the request header it
 belongs in, and `ctx.host.fetch` adds that header to the outgoing request.
 
-**Workspace.** A type that sets `workspace: true` gets a Workspace field under its
+**Workspace.** A type that sets `workspace: true` gets an optional Workspace field;
+`workspace: "required"` also prevents saving an empty workspace. Both render under its
 `Configure`. The owner may enter one absolute directory, saved in the agent
 record's existing `workspace` field, not in the plugin's config. `run` then
 receives `agent.workspace`; it is absent when the owner entered none.

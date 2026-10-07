@@ -1,0 +1,7 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "paths": { "@buzz/author": ["../../../src/plugins/author.ts"] }
+  },
+  "include": ["src", "../../../src/**/*.d.ts"]
+}

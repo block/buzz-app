@@ -10,6 +10,10 @@ mod agents;
 mod deep_links;
 mod dock;
 mod host_command;
+mod host_process;
+use host_process::{
+    plugin_host_process_close, plugin_host_process_open, plugin_host_process_send, HostProcesses,
+};
 mod host_request;
 mod identity;
 mod notifications;
@@ -329,10 +333,12 @@ async fn plugin_catalog(
 }
 #[tauri::command]
 async fn plugin_change(
+    processes: tauri::State<'_, HostProcesses>,
     manager: tauri::State<'_, PluginManager>,
     action: String,
     id: String,
 ) -> Result<InstallationResult, String> {
+    processes.revoke(Some(&id));
     with_manager(manager, move |m| {
         m.change(&action, &id).map(|catalog| ready(&m, catalog))
     })
@@ -340,9 +346,11 @@ async fn plugin_change(
 }
 #[tauri::command]
 async fn plugin_reload(
+    processes: tauri::State<'_, HostProcesses>,
     manager: tauri::State<'_, PluginManager>,
     id: String,
 ) -> Result<InstallationResult, String> {
+    processes.revoke(Some(&id));
     with_manager(manager, move |m| {
         m.reload(&id).map(|catalog| ready(&m, catalog))
     })
@@ -358,8 +366,10 @@ async fn plugin_module(
 }
 #[tauri::command]
 async fn plugin_recover(
+    processes: tauri::State<'_, HostProcesses>,
     manager: tauri::State<'_, PluginManager>,
 ) -> Result<InstallationResult, String> {
+    processes.revoke(None);
     with_manager(manager, |m| m.recover().map(|catalog| ready(&m, catalog))).await
 }
 /// Tauri's restart ignores `prevent_exit`, so confirm the same agent teardown
@@ -418,6 +428,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_module,
         plugin_recover,
         plugin_host_run_command,
+        plugin_host_process_open,
+        plugin_host_process_send,
+        plugin_host_process_close,
         plugin_host_request,
         plugin_host_fetch,
         plugin_host_fetch_cancel,
@@ -541,6 +554,7 @@ pub fn run() {
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
         .manage(HostStreams::default())
+        .manage(HostProcesses::default())
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

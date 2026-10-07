@@ -50,6 +50,14 @@ function fakeRelay() {
   const makeSession = () => {
     const live = new Set<LiveListener>();
     const session = {
+      channels: {
+        list: () => ({
+          channels: [
+            { id: "c1", name: "engineering" },
+            { id: "dm", name: "Direct message", channelType: "dm" },
+          ],
+        }),
+      },
       subscribeLive(listener: LiveListener) {
         live.add(listener);
         return () => live.delete(listener);
@@ -240,7 +248,17 @@ it("recomputes the subscription on save and cuts off the replaced instance", asy
   await expect(
     deliveries[0]?.agent.publish({ kind: 9, content: "late" }),
   ).rejects.toThrow();
-  expect(native.publishAs).not.toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(native.publishAs).toHaveBeenCalledWith("bot-1", {
+      kind: 9,
+      content: expect.stringContaining("settings changed"),
+      tags: [
+        ["h", "c1"],
+        ["e", event("s1").id, "", "reply"],
+      ],
+    }),
+  );
+  expect(native.publishAs).toHaveBeenCalledTimes(1);
   expect(service.activity()["bot-1"]?.subscription).toEqual([{ kinds: [9] }]);
   fake.emit({ events: [event("s2")], channelId: "c2" });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
@@ -481,3 +499,94 @@ it("rejects a type whose concurrency or secrets are malformed", async () => {
     expect(() => register(extra)).toThrow();
   await ctx.fiber.dispose();
 });
+
+it.each([
+  { policy: "thread", channelId: "c1", separateThreads: true },
+  { policy: "channel", channelId: "c1", separateThreads: false },
+  { policy: "thread", channelId: "dm", separateThreads: false },
+  { policy: null, channelId: "c1", separateThreads: false },
+] as const)(
+  "resolves $policy context in $channelId and admits stop while work/steering are full",
+  async ({ policy, channelId, separateThreads }) => {
+    const { fake, native, run, register } = setup([
+      agent({ word: "ready" }, { sessionPolicy: policy }),
+    ]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seen: string[] = [];
+    const jobs = (
+      id: string,
+      content: string,
+      pubkey = viewer,
+      root = "d".repeat(64),
+    ) => ({
+      ...event(id, pubkey, content),
+      tags: [
+        ["h", channelId],
+        ["e", root, "", "reply"],
+      ],
+    });
+    run.mockImplementation(async (delivery) => {
+      seen.push(delivery.event.content);
+      if (delivery.event.content === "/stop") {
+        delivery.cancelQueued();
+        return;
+      }
+      if (["working", "/steer"].includes(delivery.event.content)) await gate;
+    });
+    register({
+      concurrency: 1,
+      conversationContext: true,
+      control: (event) =>
+        event.content === "/stop"
+          ? "stop"
+          : event.content === "/steer"
+            ? "steer"
+            : undefined,
+    });
+    try {
+      fake.emit({ channelId, events: [jobs("work", "working")] });
+      await vi.waitFor(() => expect(seen).toEqual(["working"]));
+      expect(run.mock.calls[0]?.[0].conversation).toEqual({
+        channelName: channelId === "dm" ? "Direct message" : "engineering",
+        ...(separateThreads ? { threadRootId: "d".repeat(64) } : {}),
+      });
+      fake.emit({
+        channelId,
+        events: [
+          jobs("steer1", "/steer"),
+          jobs("steer2", "/steer"),
+          jobs("steer3", "/steer"),
+          jobs("same", "cancelled"),
+          jobs("other", "other conversation", viewer, "e".repeat(64)),
+          jobs("bad", "/stop", other),
+        ],
+      });
+      fake.emit({ channelId, events: [jobs("stop", "/stop")] });
+      await vi.waitFor(() =>
+        expect(seen).toEqual(["working", "/steer", "/steer", "/stop"]),
+      );
+      expect(native.publishAs).toHaveBeenCalledWith("bot-1", {
+        kind: 9,
+        content: expect.stringContaining("Only the agent owner"),
+        tags: [
+          ["h", channelId],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      });
+    } finally {
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(seen).toEqual([
+        "working",
+        "/steer",
+        "/steer",
+        "/stop",
+        ...(separateThreads ? ["other conversation"] : []),
+      ]),
+    );
+  },
+);

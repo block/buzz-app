@@ -199,6 +199,9 @@ export function AgentEditor({
               </div>
               {agent.plugin ? (
                 <AgentTypeFields
+                  defaultSessionPolicy={
+                    state.data?.defaultSettings?.sessionPolicy
+                  }
                   draft={current}
                   types={types}
                   disabled={state.busy}

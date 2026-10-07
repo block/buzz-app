@@ -177,3 +177,56 @@ it("cancels the native stream when the caller aborts or stops reading", async ()
   early.abort(new Error("too slow"));
   await expect(pending).rejects.toThrow("too slow");
 });
+
+it("closes a process opened after abort and rejects subsequent input", async () => {
+  const { plugin } = pluginContext();
+  let release!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "plugin_host_process_open" ? opened : undefined,
+  );
+  const controller = new AbortController();
+  const onClose = vi.fn();
+  const connecting = plugin.host.connectCommand("app-server", {
+    signal: controller.signal,
+    onLine() {},
+    onClose,
+  });
+  const rejected = expect(connecting).rejects.toThrow(/closed/);
+  controller.abort();
+  release();
+  await rejected;
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith(
+    "plugin_host_process_close",
+    expect.objectContaining({ id: "example.plugin", revision: "abc" }),
+  );
+});
+
+it("releases process effects after close and exit while disposal still closes active connections", async () => {
+  const { root, plugin } = pluginContext();
+  const channels: Events[] = [];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_process_open")
+      channels.push((args as { onEvent: Events }).onEvent);
+  });
+  const baseline = root.fiber.getEffects().length;
+  const onClose = vi.fn();
+  const options = {
+    signal: new AbortController().signal,
+    onLine() {},
+    onClose,
+  };
+  const first = await plugin.host.connectCommand("app-server", options);
+  expect(root.fiber.getEffects()).toHaveLength(baseline + 1);
+  first.close();
+  expect(root.fiber.getEffects()).toHaveLength(baseline);
+  await plugin.host.connectCommand("app-server", options);
+  channels[1]?.onmessage({ type: "exit", error: "exited" });
+  expect(root.fiber.getEffects()).toHaveLength(baseline);
+  await plugin.host.connectCommand("app-server", options);
+  await root.fiber.dispose();
+  expect(onClose).toHaveBeenCalledTimes(3);
+});

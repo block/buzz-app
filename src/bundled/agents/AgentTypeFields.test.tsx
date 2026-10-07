@@ -49,15 +49,18 @@ const saved = (environmentKeys: string[]) =>
 function Form({
   agent,
   onDraft,
+  context = false,
 }: {
   agent?: AgentView;
+  context?: boolean;
   onDraft(draft: AgentDraft): void;
 }) {
   const [current, setCurrent] = useState(draft);
   return (
     <AgentTypeFields
       draft={current}
-      types={[type]}
+      types={[{ ...type, conversationContext: context }]}
+      defaultSessionPolicy="thread"
       disabled={false}
       agent={agent}
       onChange={(patch) => {
@@ -102,4 +105,19 @@ it("leaves a saved secret as it is unless a new value is typed", async () => {
   await userEvent.type(key, "x");
   await userEvent.clear(key);
   expect(onDraft.mock.lastCall?.[0].environment).toEqual({});
+});
+
+it("saves a plugin agent's conversation context using the existing agent setting", async () => {
+  const user = userEvent.setup();
+  const onDraft = vi.fn<(draft: AgentDraft) => void>();
+  render(<Form context onDraft={onDraft} />);
+  const select = screen.getByRole("combobox", { name: "Conversation context" });
+  expect(select).toHaveTextContent("Use agent defaults (Each thread)");
+  await user.click(select);
+  await user.click(
+    await screen.findByRole("option", { name: "Entire channel" }),
+  );
+  const changed = onDraft.mock.lastCall?.[0] as AgentDraft;
+  expect(changed.sessionPolicy).toBe("channel");
+  expect(agentEdit(changed).sessionPolicy).toBe("channel");
 });

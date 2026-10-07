@@ -328,6 +328,9 @@ export function AgentCreateDialog({
             )}
             {draft.plugin ? (
               <AgentTypeFields
+                defaultSessionPolicy={
+                  state.data?.defaultSettings?.sessionPolicy
+                }
                 draft={draft}
                 types={types}
                 disabled={blocked || !!saved}

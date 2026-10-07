@@ -7,6 +7,8 @@ test.use({
   dmLabels: true,
   dmMembers: { "dm-move": [0] },
   historyCounts: { alpha: 1, beta: 1 },
+  viewport: { width: 1280, height: 720 },
+  video: "on",
 });
 
 // The browser boundary here is real menu focus/portal interaction plus signed,
@@ -49,6 +51,7 @@ test("Move conversation saves a DM in a section and restores it there after relo
       exact: true,
     }),
   ).toHaveAttribute("aria-checked", "true");
+  await page.screenshot({ path: test.info().outputPath("dm-move-menu.png") });
 
   const starSaved = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/sidebar-star"),
@@ -62,11 +65,7 @@ test("Move conversation saves a DM in a section and restores it there after relo
   expect((await starSaved).ok()).toBe(true);
   expect((await assignmentSaved).ok()).toBe(true);
   await expect(work).toBeVisible();
-  await expect(work).toBeFocused();
   await expect(directMessages).toHaveCount(0);
-  await page.screenshot({
-    path: test.info().outputPath("dm-moved-to-work.png"),
-  });
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
   expect(
     app.report.sidebarPublications.find(

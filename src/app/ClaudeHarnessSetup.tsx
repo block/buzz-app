@@ -86,7 +86,8 @@ export function ClaudeHarnessSetup({
               disabled={
                 state.status !== "ready" ||
                 state.busy ||
-                state.piInstall?.installing
+                state.piInstall?.installing ||
+                state.codexInstall?.installing
               }
               onClick={() => void control.installClaude?.().catch(() => {})}
             >

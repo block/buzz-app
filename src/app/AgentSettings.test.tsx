@@ -488,7 +488,11 @@ it("offers the Codex ACP adapter Install only when the adapter is missing, then 
   expect(
     await screen.findByText("Installing Node.js and the Codex ACP adapter…"),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
+  // Loading stays focusable for keyboard users but cannot start another install.
+  const installing = screen.getByRole("button", { name: "Install" });
+  expect(installing).toHaveAttribute("aria-disabled", "true");
+  await user.click(installing);
+  expect(install).toHaveBeenCalledTimes(2);
   complete({ ...failed, ready: true, error: null, output: "" });
   const row = screen.getByText("Codex").closest("li");
   if (!row) throw new Error("Missing Codex row");

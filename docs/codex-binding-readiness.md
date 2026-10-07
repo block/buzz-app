@@ -31,19 +31,24 @@ Harness command share one adapter lookup, as Claude Code does. A user-installed
 `codex-acp` wins; Buzz searches `~/.local/bin`, the app's `PATH`,
 `/opt/homebrew/bin`, then `/usr/local/bin`. Otherwise Buzz uses the app-owned
 adapter at `<app data>/codex-tools/bin/codex-acp`, but only when its pinned
-managed Node is also installed. An app-owned adapter always runs on that Node.
-The Codex CLI is never installed by Buzz; it is resolved from the same user
-directories.
+managed Node is also installed. An app-owned adapter always runs on that Node;
+the CLI keeps its own interpreter. Buzz never installs the Codex CLI. The CLI is
+resolved from the same user directories.
 
 When readiness reports **Adapter needed**, Settings offers **Install** on macOS
 and Linux. It reuses the checksum-verified managed Node and installs
 `@agentclientprotocol/codex-acp@2.1.1` into a new `codex-tools/releases`
-directory. The launcher must pass `--version` before activation. A failed
+directory. As with Claude Code, npm also installs the adapter's bundled platform
+binaries, including about 330 MB for its own Codex CLI. Buzz never runs that CLI
+because it always sets `CODEX_PATH`. The launcher must pass `--version` before
+activation. A failed
 install keeps the previous release and shows the private install log. Success
 rechecks readiness, so no `PATH` change or symlink is needed. Install shares the
 native install/quit owner with Pi and Claude Code. If a user-installed adapter
 exists, Install refuses and the user updates it in their terminal. An
-incompatible user adapter therefore keeps the manual recovery message.
+incompatible user adapter therefore keeps the manual recovery message. Adding
+or removing a user adapter changes the selected binding. Saved Codex agents then
+report that their saved adapter no longer matches it.
 
 `HarnessIntegration::Codex` is the policy authority. An editable command basename
 does not grant Codex policy or full-access behavior. The Codex policy admits no

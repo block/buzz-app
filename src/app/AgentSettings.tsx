@@ -293,8 +293,7 @@ export function AgentSettings({
                               state.status !== "ready" ||
                               state.busy ||
                               installingPi ||
-                              state.claudeInstall?.installing ||
-                              codexInstall?.installing
+                              state.claudeInstall?.installing
                             }
                             onClick={() => {
                               void control

@@ -240,5 +240,9 @@ fn app_owned_adapter_is_a_fallback_bound_to_its_pinned_node() {
         CodexContext::new(&shim, &user.join("codex"), &workspace, &BTreeMap::new()).unwrap();
     assert_eq!(context.adapter, script.canonicalize().unwrap());
     assert_eq!(context.interpreter, Some(node.canonicalize().unwrap()));
+    assert_eq!(
+        context.cli_interpreter,
+        Some(user.join("node").canonicalize().unwrap())
+    );
     context.verify_adapter(&shim.to_string_lossy()).unwrap();
 }

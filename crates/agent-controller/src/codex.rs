@@ -195,17 +195,20 @@ impl CodexContext {
         if !workspace.is_dir() {
             return Err("Codex workspace is not a directory".into());
         }
-        let mut directories: Vec<_> = managed_node(adapter)
-            .and_then(|node| node.parent().map(Path::to_path_buf))
-            .into_iter()
-            .collect();
+        let mut directories = Vec::new();
         for path in [adapter, cli] {
             if let Some(parent) = path.parent().filter(|path| path.is_absolute()) {
                 directories.push(parent.to_path_buf());
             }
         }
         directories.extend(default_directories());
-        let adapter_command = bind(adapter, &directories, "Codex ACP adapter")?;
+        // An app-owned adapter runs on its pinned Node; the CLI keeps its own.
+        let adapter_directories: Vec<_> = managed_node(adapter)
+            .and_then(|node| node.parent().map(Path::to_path_buf))
+            .into_iter()
+            .chain(directories.iter().cloned())
+            .collect();
+        let adapter_command = bind(adapter, &adapter_directories, "Codex ACP adapter")?;
         let cli_command = bind(cli, &directories, "Codex CLI")?;
         if let Some(path) = &adapter_command.script {
             let value = path.as_os_str().to_string_lossy();

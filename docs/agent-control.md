@@ -292,7 +292,9 @@ adapter, verifies the existing CLI login, and reports fixed recovery categories;
 ordinary control snapshots do not launch these probes. A successful check is
 binding evidence only. Later Codex discovery, validation, and execution must
 revalidate the context because authentication and configuration files can change
-without changing their paths. See [Codex binding readiness](codex-binding-readiness.md).
+without changing their paths. **Adapter needed** offers an app-owned Install of
+the ACP adapter only, following Claude Code's setup. See
+[Codex binding readiness](codex-binding-readiness.md).
 
 The shared policy is PR 1 and binding readiness is PR 2 of the
 [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
@@ -357,10 +359,7 @@ Hermes also appears in the main list once its executable is detected:
   The result and private log survive leaving Settings, and completion refreshes
   native detection. Complete external installations take precedence and remain
   untouched. Windows and unsupported architectures retain manual setup with
-  Node.js 22 or newer. Codex's **Adapter needed** state offers the same
-  app-owned Install for its ACP adapter only; see
-  [Codex binding readiness](codex-binding-readiness.md#adapter-lookup-and-install).
-  The fallback commands are:
+  Node.js 22 or newer. The fallback commands are:
 
   ```sh
   npm install -g @anthropic-ai/claude-code@2.1.289

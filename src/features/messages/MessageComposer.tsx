@@ -199,7 +199,7 @@ export type MessageComposerProps = {
   /** Optional new-message action beside Send, without replacing session tools. */
   sendAction?: ReactNode;
   /** Acceptance plus successful draft cleanup; never edits or failed preparation. */
-  onSendComplete?: (() => void) | undefined;
+  onSendComplete?: ((stillCurrent: () => boolean) => void) | undefined;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
@@ -1055,20 +1055,19 @@ function Composer({
     let cleaned = false;
     let notified = false;
     let followup: string | undefined;
+    // The caller may defer its action; validity stays with the draft owner.
+    const stillCurrent = () =>
+      live.current &&
+      !dirty.current &&
+      attachments.store.snapshot().length === 0 &&
+      JSON.stringify(valueRef.current) === followup &&
+      viewRevision(scope, draftKey) !== undefined &&
+      viewRevision(scope, draftKey) === revision.current &&
+      !recoveryFor(session).has(recoveryKey);
     const notifyComplete = () => {
-      if (!published || !cleaned || notified || !live.current) return;
-      // A follow-up draft while uploading must not be hidden by auto-archive.
-      if (
-        dirty.current ||
-        attachments.store.snapshot().length > 0 ||
-        JSON.stringify(valueRef.current) !== followup ||
-        viewRevision(scope, draftKey) === undefined ||
-        viewRevision(scope, draftKey) !== revision.current ||
-        recoveryFor(session).has(recoveryKey)
-      )
-        return;
+      if (!published || !cleaned || notified || !stillCurrent()) return;
       notified = true;
-      completed?.();
+      completed?.(stillCurrent);
     };
     try {
       if (submission?.receiptOnly) {

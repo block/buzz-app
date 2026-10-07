@@ -539,11 +539,14 @@ export function InboxView({
       if (retrySync && active.current) await session.unread.retrySync();
     });
   }
-  const queuedArchive = useRef<InboxItem | undefined>(undefined);
+  const queuedArchive = useRef<
+    { item: InboxItem; stillCurrent: () => boolean } | undefined
+  >(undefined);
   useEffect(() => {
     if (pending || !queuedArchive.current) return;
-    const item = queuedArchive.current;
+    const { item, stillCurrent } = queuedArchive.current;
     queuedArchive.current = undefined;
+    if (!stillCurrent()) return;
     const current = session.unread
       .inbox()
       .items.find(
@@ -1119,7 +1122,7 @@ export function InboxView({
               }
               onSendComplete={
                 archiveOnSend
-                  ? () => {
+                  ? (stillCurrent) => {
                       // Publication can replace Inbox row objects; resolve the captured
                       // destination against current evidence, never the next selection.
                       const current = session.unread
@@ -1132,7 +1135,11 @@ export function InboxView({
                       if (current) {
                         // Accepted uploads can finish while an unrelated Inbox
                         // read/save is settling. Preserve the intent until it releases.
-                        if (busy.current) queuedArchive.current = current;
+                        if (busy.current)
+                          queuedArchive.current = {
+                            item: current,
+                            stillCurrent,
+                          };
                         else archiveCurrent.current(current, true);
                       }
                     }

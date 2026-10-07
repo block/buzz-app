@@ -1182,7 +1182,7 @@ it.each([
       await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
     }
     if (outcome === "success") {
-      expect(completed).toHaveBeenCalledExactlyOnceWith();
+      expect(completed).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
       expect(readView(h.scope, "draft:channel", "")).toMatchObject({
         text: "",
       });
@@ -5701,7 +5701,7 @@ it.each([undefined, "root"])(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
     expect(retired).toHaveBeenCalledExactlyOnceWith();
-    expect(completed).toHaveBeenCalledExactlyOnceWith();
+    expect(completed).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },

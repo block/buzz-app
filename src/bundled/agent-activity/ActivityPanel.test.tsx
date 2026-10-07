@@ -192,6 +192,7 @@ it("hides Pi's startup banner and shows session config and edit diffs", async ()
             oldText: "keep\nold line\nend",
             newText: "keep\nnew line\nend",
           },
+          { type: "diff", path: "/new.md", newText: "fresh\n" },
         ],
       }),
     ),
@@ -214,4 +215,102 @@ it("hides Pi's startup banner and shows session config and edit diffs", async ()
   expect(within(panel).getByText("- old line")).toBeVisible();
   expect(within(panel).getByText("+ new line")).toBeVisible();
   expect(within(panel).queryByText(/keep$/)).toBeNull();
+  // A final newline is not shown as an added empty line.
+  expect(within(panel).getByText("+ fresh")).toBeVisible();
+  expect(within(panel).queryByText("+")).toBeNull();
+});
+
+it("keeps capture and completeness notices visible in Transcript", () => {
+  const { session, send } = fixture();
+  send([
+    frame("t", "turn_started", {}),
+    frame(
+      "t",
+      "acp_read",
+      update("agent_message_chunk", {
+        content: { type: "text", text: "done" },
+      }),
+    ),
+    frame("t", "turn_completed"),
+  ]);
+  const snapshot = {
+    ...session.agentActivity.snapshot(),
+    capture: "error" as const,
+    historySkipped: 3,
+    trimmed: 4,
+  };
+  render(
+    <ActivityDetails
+      session={{
+        ...session,
+        agentActivity: { ...session.agentActivity, snapshot: () => snapshot },
+      }}
+      selection={{ agent, channelId: "alpha" }}
+    />,
+  );
+  const panel = screen.getByRole("region", { name: "Agent activity" });
+  expect(
+    within(panel).getByRole("tab", { name: "Transcript", selected: true }),
+  ).toBeVisible();
+  expect(within(panel).getByText("done")).toBeVisible();
+  expect(within(panel).getByText(/could not be saved/)).toBeVisible();
+  expect(
+    within(panel).getByText(/^3 saved records could not be decoded/),
+  ).toBeVisible();
+  expect(within(panel).getByText(/^Live display limited: 4 /)).toBeVisible();
+});
+
+it("counts working turns only in the selected thread", async () => {
+  const { session, send } = fixture();
+  send([
+    frame("a", "turn_started", { threadRootEventId: root }),
+    frame("a", "acp_write", prompt("thread a")),
+    frame("a", "turn_completed"),
+    frame("b", "turn_started", { threadRootEventId: "d".repeat(64) }),
+    frame("b", "acp_write", prompt("thread b")),
+  ]);
+  render(
+    <ActivityDetails
+      session={session}
+      selection={{ agent, channelId: "alpha", threadRootId: root }}
+    />,
+  );
+  const user = userEvent.setup();
+  const panel = screen.getByRole("region", { name: "Agent activity" });
+  expect(within(panel).getByText("thread a")).toBeVisible();
+  // The sibling thread's working turn is not attributed to this thread.
+  expect(within(panel).getByText("No fresh working evidence.")).toBeVisible();
+  await user.click(
+    within(panel).getByRole("combobox", { name: "Conversation" }),
+  );
+  await user.click(
+    await screen.findByRole("option", { name: /^#alpha · whole channel/ }),
+  );
+  expect(within(panel).getByText("1 observed working turn(s).")).toBeVisible();
+});
+
+it("keeps focus on a reply link while activity updates", () => {
+  const { session, send } = fixture();
+  send([
+    frame("t", "turn_started", {}),
+    frame(
+      "t",
+      "acp_read",
+      update("agent_message_chunk", {
+        content: { type: "text", text: "See [docs](https://example.com/)." },
+      }),
+    ),
+  ]);
+  render(
+    <ActivityDetails
+      session={session}
+      selection={{ agent, channelId: "alpha" }}
+    />,
+  );
+  const panel = screen.getByRole("region", { name: "Agent activity" });
+  const link = within(panel).getByRole("link", { name: "docs" });
+  act(() => link.focus());
+  send([frame("other", "turn_started", {})]);
+  expect(within(panel).getByRole("link", { name: "docs" })).toBe(link);
+  expect(link).toHaveFocus();
 });

@@ -129,10 +129,6 @@ export function ActivityDetails({
         : previous.filter((id) => ids.has(id)),
     );
   }, [records]);
-  const turns = snapshot.turns.filter(
-    (turn) =>
-      turn.agent === agent && (!channelId || turn.channelId === channelId),
-  );
   const [view, setView] = useState<"transcript" | "raw">("transcript");
   // Threads are discovered from loaded turns and labelled by their first turn.
   const threads = useMemo(() => {
@@ -166,6 +162,15 @@ export function ActivityDetails({
       }),
     [snapshot.records, agent, channelId, threadRootId],
   );
+  // A thread counts only its own known turns, not its channel's other conversations.
+  const shown =
+    threadRootId && new Set(transcript.turns.map((turn) => turn.turnId));
+  const turns = snapshot.turns.filter(
+    (turn) =>
+      turn.agent === agent &&
+      (!channelId || turn.channelId === channelId) &&
+      (!shown || shown.has(turn.turnId)),
+  );
   const agentLabel = (key: string) =>
     resolveName(
       key,
@@ -192,18 +197,9 @@ export function ActivityDetails({
       Load older activity
     </Button>
   );
-  const diagnostics = (
+  // Capture and completeness notices; both views show them.
+  const notices = (
     <>
-      <p className="text-body-sm text-secondary">
-        Owner-only activity. Capture is controlled in Settings → Agents,
-        independently of this plugin. Saved records are history, not current
-        working status. This is not a complete ACP recording; the agent must
-        publish telemetry.
-      </p>
-      <p role="status">
-        Feed: {snapshot.status}. Quiet or disconnected means unknown, not
-        stopped.
-      </p>
       {snapshot.capture === "off" && (
         <p role="status">
           Saving activity is off. Live records are not being saved; existing
@@ -219,6 +215,33 @@ export function ActivityDetails({
           and retry the connection.
         </p>
       )}
+      {!!snapshot.historySkipped && (
+        <p role="alert">
+          {snapshot.historySkipped} saved records could not be decoded on this
+          page.
+        </p>
+      )}
+      {snapshot.trimmed > 0 && (
+        <p role="status">
+          Live display limited: {snapshot.trimmed} records or turn states left
+          the RAM window. Saved history is paged separately.
+        </p>
+      )}
+    </>
+  );
+  const diagnostics = (
+    <>
+      <p className="text-body-sm text-secondary">
+        Owner-only activity. Capture is controlled in Settings → Agents,
+        independently of this plugin. Saved records are history, not current
+        working status. This is not a complete ACP recording; the agent must
+        publish telemetry.
+      </p>
+      <p role="status">
+        Feed: {snapshot.status}. Quiet or disconnected means unknown, not
+        stopped.
+      </p>
+      {notices}
       <p role="status">
         {snapshot.history === "loading"
           ? "Loading saved history…"
@@ -229,12 +252,6 @@ export function ActivityDetails({
               : "Saved history loaded."}
       </p>
       {history}
-      {!!snapshot.historySkipped && (
-        <p role="alert">
-          {snapshot.historySkipped} saved records could not be decoded on this
-          page.
-        </p>
-      )}
       {snapshot.historyOlder && (
         <p role="status">
           Showing an older saved page. Newer saved pages are not shown; live
@@ -245,21 +262,12 @@ export function ActivityDetails({
     </>
   );
   const footer = (
-    <>
-      {snapshot.trimmed > 0 && (
-        <p role="status">
-          Live display limited: {snapshot.trimmed} records or turn states left
-          the RAM window. Saved history is paged separately.
-        </p>
-      )}
-      <p className="text-body-sm text-secondary">
-        The live display keeps up to 200 records / 2 MiB plus one saved page.
-        Use Load older activity to browse earlier pages, even when a page
-        contains no entries for this channel. Retention and capture are
-        controlled in Settings → Agents; disabling this plugin only clears its
-        live display.
-      </p>
-    </>
+    <p className="text-body-sm text-secondary">
+      The live display keeps up to 200 records / 2 MiB plus one saved page. Use
+      Load older activity to browse earlier pages, even when a page contains no
+      entries for this channel. Retention and capture are controlled in Settings
+      → Agents; disabling this plugin only clears its live display.
+    </p>
   );
   const raw = (
     <div className="flex min-w-0 flex-col gap-4">
@@ -317,6 +325,7 @@ export function ActivityDetails({
       state={(turnId) => state.get(turnId)}
       before={
         <>
+          {notices}
           {snapshot.history === "loading" && (
             <p role="status" className="text-body-sm text-secondary">
               Loading saved history…

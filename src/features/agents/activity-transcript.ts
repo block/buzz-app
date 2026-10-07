@@ -151,6 +151,9 @@ const display = (value: unknown) =>
     : typeof value === "string"
       ? value
       : JSON.stringify(value, null, 2);
+/** Text content is Markdown; a block that is one fenced code block shows its body. */
+const unfence = (text: string) =>
+  /^```[^\n]*\n([\s\S]*?)\n?```\s*$/.exec(text)?.[1] ?? text;
 function toolContent(update: Json) {
   const content = Array.isArray(update.content) ? update.content : [];
   const diffs: ToolDiff[] = [];
@@ -167,7 +170,7 @@ function toolContent(update: Json) {
           : {}),
       });
     else if (block?.type === "text" && str(block.text))
-      text.push(block.text as string);
+      text.push(unfence(block.text as string));
   }
   return {
     diffs,
@@ -184,7 +187,10 @@ function configLabels(options: unknown) {
     const choice = Array.isArray(option?.options)
       ? option.options.map(object).find((entry) => entry?.value === current)
       : undefined;
-    return [str(choice?.name) || current];
+    const label = str(choice?.name) || current;
+    // Name the setting unless the adapter's label already does ("Thinking: high").
+    const name = str(option?.name);
+    return [name && !label.startsWith(name) ? `${name}: ${label}` : label];
   });
 }
 
@@ -508,9 +514,19 @@ export function activityTranscript(
       });
   }
 
+  // Harnesses capture config when creating a session and reuse sessions without
+  // another capture, so a later turn shows its session's last observed config.
+  const drafts = [...turns.values()].sort((a, b) => a.startedAt - b.startedAt);
+  const configs = new Map<string, string[]>();
+  for (const draft of drafts) {
+    if (!draft.sessionId) continue;
+    if (draft.config.length) configs.set(draft.sessionId, draft.config);
+    else draft.config = configs.get(draft.sessionId) ?? [];
+  }
+
   let unknownThread = 0;
   const visible: TranscriptTurn[] = [];
-  for (const draft of turns.values()) {
+  for (const draft of drafts) {
     const {
       tools: _tools,
       plan: _plan,
@@ -527,6 +543,5 @@ export function activityTranscript(
     }
     visible.push(turn);
   }
-  visible.sort((a, b) => a.startedAt - b.startedAt);
   return { turns: visible, unknownThread };
 }

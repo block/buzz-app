@@ -136,11 +136,18 @@ it("projects one thread turn into prompt, thought, tool, permission and reply", 
           configOptions: [
             {
               category: "model",
+              name: "Model",
               currentValue: "m1",
-              options: [{ value: "m1", name: "Model One" }],
+              options: [{ value: "m1", name: "Opus" }],
             },
-            { category: "thought_level", currentValue: "high" },
-            { category: "mode" },
+            {
+              category: "thought_level",
+              name: "Thinking",
+              currentValue: "high",
+              options: [{ value: "high", name: "Thinking: high" }],
+            },
+            { category: "mode", currentValue: "auto" },
+            { category: "mode", name: "Unset" },
           ],
         },
         2,
@@ -272,7 +279,7 @@ it("projects one thread turn into prompt, thought, tool, permission and reply", 
     triggeringEventIds: [message],
     sessionId: "S",
     newSession: true,
-    config: ["Model One", "high"],
+    config: ["Model: Opus", "Thinking: high", "auto"],
     startedAt: base,
     endedAt: base + 14_000,
     stopReason: "end_turn",
@@ -441,6 +448,10 @@ it("records errors, elided payloads, plan revisions and steering prompts", () =>
               { type: "diff", path: "/a.md", oldText: "x\ny", newText: "x\nz" },
               { type: "diff", path: "/b.md", oldText: null, newText: "new" },
               { type: "terminal", terminalId: "t1" },
+              {
+                type: "content",
+                content: { type: "text", text: "```console\nExit code 1\n```" },
+              },
             ],
           }),
           4,
@@ -468,12 +479,55 @@ it("records errors, elided payloads, plan revisions and steering prompts", () =>
       kind: "edit",
       status: "failed",
       paths: ["/a.md"],
-      output: "",
+      output: "Exit code 1",
       diffs: [
         { path: "/a.md", oldText: "x\ny", newText: "x\nz" },
         { path: "/b.md", newText: "new" },
       ],
     },
+  ]);
+});
+
+it("carries a session's config into its later turns only", () => {
+  serial = 0;
+  const at = (
+    turnId: string,
+    kind: string,
+    payload: object,
+    offset: number,
+    sessionId: string | null,
+  ) => ({ ...event(turnId, kind, payload, offset), sessionId });
+  const captured = {
+    configOptions: [
+      {
+        category: "model",
+        name: "Model",
+        currentValue: "a",
+        options: [{ value: "a", name: "A" }],
+      },
+    ],
+  };
+  const resolved = (sessionId: string) => ({ sessionId, isNewSession: true });
+  const { turns } = activityTranscript(
+    [
+      record([
+        at("before", "turn_started", {}, 1, "S1"),
+        // The capture precedes session_resolved, so its frame has no session.
+        at("first", "turn_started", {}, 2, null),
+        at("first", "session_config_captured", captured, 2, null),
+        at("first", "session_resolved", resolved("S1"), 2, null),
+        at("reused", "turn_started", {}, 3, "S1"),
+        at("replaced", "turn_started", {}, 4, null),
+        at("replaced", "session_resolved", resolved("S2"), 4, null),
+      ]),
+    ],
+    { agent },
+  );
+  expect(turns.map((turn) => [turn.turnId, turn.config])).toEqual([
+    ["before", []],
+    ["first", ["Model: A"]],
+    ["reused", ["Model: A"]],
+    ["replaced", []],
   ]);
 });
 

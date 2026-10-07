@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   ToolDiff,
@@ -258,6 +258,20 @@ function Item({
   }
 }
 
+// Module-scoped so rerenders keep rendered links (and their focus) in place.
+const REMARK = [remarkGfm];
+const MARKDOWN: Components = {
+  a: ({ href, children }) =>
+    href ? (
+      <a href={href} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    ) : (
+      <>{children}</>
+    ),
+  img: ({ alt }) => alt ?? null,
+};
+
 /** Agent replies are Markdown; remote images stay unloaded. */
 function Reply({ text }: { text: string }) {
   const bounded = useMemo(
@@ -267,30 +281,19 @@ function Reply({ text }: { text: string }) {
   if (!bounded) return <div className={styles.plain}>{text}</div>;
   return (
     <div className={styles.markdown}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children }) =>
-            href ? (
-              <a href={href} target="_blank" rel="noreferrer">
-                {children}
-              </a>
-            ) : (
-              <>{children}</>
-            ),
-          img: ({ alt }) => alt ?? null,
-        }}
-      >
+      <Markdown remarkPlugins={REMARK} components={MARKDOWN}>
         {text}
       </Markdown>
     </div>
   );
 }
 
+/** A file's lines; a final newline does not start another line. */
+const lines = (text: string) => text.replace(/\n$/, "").split("\n");
 /** One hunk between the unchanged leading and trailing lines. */
 function Diff({ diff }: { diff: ToolDiff }) {
-  const before = diff.oldText === undefined ? [] : diff.oldText.split("\n");
-  const after = diff.newText.split("\n");
+  const before = diff.oldText === undefined ? [] : lines(diff.oldText);
+  const after = lines(diff.newText);
   let head = 0;
   while (
     head < before.length &&

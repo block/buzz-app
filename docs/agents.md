@@ -468,9 +468,10 @@ from the `<buzz-event>` framing, other sections collapsed), the session's system
 prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
 their tool call with the auto-approval outcome, plans, mode changes, the session's
 selected config values (e.g. model), context usage, stop reason and errors. Tool
-names and inputs differ by adapter (Pi, Codex, Claude Code), so tool rows show the
+names and inputs differ by adapter (Pi, Goose, Codex, Claude Code), so tool rows show the
 adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
-`locations` and content (text, and `diff` as removed/added lines) are interpreted.
+`locations` and content (text, with a wholly fenced Markdown block shown as its body,
+and `diff` as removed/added lines) are interpreted.
 Adapter-specific `_meta` such as exit codes stays in **Raw**. The one adapter
 special case: pi-acp repeats its `session/new` startup banner
 (`_meta.piAcp.startupInfo`) as an agent message, which the transcript omits. JSON-RPC ids are matched per pool slot and
@@ -487,8 +488,9 @@ the payload's `threadRootEventId` (harness 2026-10-01 and later) or, for older
 harnesses, the prompt `<context>` block's `Thread root:`. Turns whose thread cannot
 be recovered appear only in the whole channel and are counted, never guessed. The
 whole channel labels each turn as channel conversation, a thread or unknown. Each
-turn starts with a **Turn** line (start time and the session's selected config,
-e.g. model); its status line notes when the turn started a new ACP session.
+turn starts with a **Turn** line (start time and the session's selected config as
+`Name: choice`, e.g. `Effort: Medium`, or the adapter's label when it already names
+the setting); its status line notes when the turn started a new ACP session.
 
 The transcript covers only loaded records: the live window plus one saved page.
 

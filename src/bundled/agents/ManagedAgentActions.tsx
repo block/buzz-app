@@ -35,6 +35,9 @@ export function ManagedAgentActions({
   const [settingUp, setSettingUp] = useState(false);
   const { checking, notice, act } = action;
   const startBlock = agentLaunchBlock(state, agent);
+  const sharedCompute =
+    agent.harness.command === "buzz-agent" &&
+    agent.harness.provider === "relay-mesh";
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1">
@@ -48,6 +51,13 @@ export function ManagedAgentActions({
           {agentProcessLabel(agent)}
         </p>
       </div>
+      {sharedCompute && (
+        <p className="m-0 text-body-sm text-secondary">
+          {agent.status === "running"
+            ? "Runner started in this app · shared compute"
+            : "Enable Shared compute in this agent’s community before starting. Buzz connects to the mesh when the agent starts."}
+        </p>
+      )}
       {imported && !agent.enabled && (
         <p role="status" className="m-0 text-body-sm">
           Imported, not started.{" "}

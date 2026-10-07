@@ -112,6 +112,9 @@ export function AgentCard({
     identities.length === 1 ? identities[0]?.pubkey : undefined,
   );
   const managed = editable.length === 1 ? editable[0] : undefined;
+  const sharedCompute =
+    managed?.harness.command === "buzz-agent" &&
+    managed.harness.provider === "relay-mesh";
   const status = managed?.status;
   const settled =
     status === "running" ? presence === "online" : presence !== "online";
@@ -183,6 +186,9 @@ export function AgentCard({
         <span className="inline-block max-w-full rounded-full border border-primary px-2 text-caption text-secondary">
           Archived
         </span>
+      )}
+      {sharedCompute && (
+        <p className="m-0 text-caption text-secondary">Shared compute</p>
       )}
       {tile && model && (
         <p

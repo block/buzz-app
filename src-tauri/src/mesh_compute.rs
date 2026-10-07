@@ -231,13 +231,12 @@ async fn start_prepared(
             discovery_began.elapsed().as_millis()
         ),
     );
-    start_with_evidence(app, host, identity, lease, owners, targets, evidence, false).await
+    start_with_evidence(app, identity, lease, owners, targets, evidence, false).await
 }
 
 #[cfg(feature = "mesh")]
 async fn start_with_evidence(
     app: &tauri::AppHandle,
-    host: &MeshHost,
     identity: &crate::identity::IdentityHost,
     lease: &str,
     mut owners: Vec<String>,
@@ -245,6 +244,7 @@ async fn start_with_evidence(
     evidence: Vec<nostr::event::Event>,
     recovering_admission: bool,
 ) -> Result<(), String> {
+    let host = app.state::<MeshHost>();
     let community = host.lease.community(lease)?;
     let viewer = identity.viewer().await?;
     let sharing = host

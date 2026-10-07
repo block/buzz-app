@@ -139,7 +139,6 @@ async fn reconcile(
             |targets| {
                 super::start_with_evidence(
                     app,
-                    &host,
                     &identity,
                     &lease,
                     retained.clone(),

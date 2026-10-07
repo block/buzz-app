@@ -1129,8 +1129,13 @@ Plugin disable/disposal stops processes; ordinary page navigation does not.
 Authoritative membership is read independently of optional advertisements. Older
 rosters cannot revoke newer admitted membership. Confirmed removal rebuilds from
 retained, signed owner bindings without requiring a successful status read; no
-new owner is admitted on that partial evidence. Viewer removal stops consumers
-and compute. Peer join failure keeps the healthy node running. Mesh v0.78.1 still
+new owner is admitted on that partial evidence. Fresh routes are filtered to that
+retained admission; if discovery fails, a consumer restarts without expired routes
+and the existing coordinator can discover routes on its next tick. Viewer removal
+requests compute shutdown independently of agent-cleanup errors. A revoked binding
+still requires consumer retirement before another selection; a pristine first
+selection preserves queued launch restores. Peer join failure keeps the healthy
+node running. Repeated queued/in-flight join tokens coalesce until completion. Mesh v0.78.1 still
 serializes Shutdown behind an in-flight Join: status remains available, queued
 joins are discarded on stop, and the UI reports finishing the peer connection.
 The shutdown budget is 120 seconds for that outstanding join plus the usual

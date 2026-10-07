@@ -45,7 +45,8 @@ struct Root {
 pub(crate) struct Spools {
     receiving: Mutex<HashMap<String, Entry>>,
     slots: Arc<Semaphore>,
-    root: std::result::Result<Root, String>,
+    parent: Result<PathBuf>,
+    root: Mutex<Option<Root>>,
 }
 
 pub(super) fn private_tempdir_in(parent: &Path) -> std::io::Result<tempfile::TempDir> {
@@ -111,13 +112,12 @@ fn root(parent: &Path) -> std::io::Result<Root> {
 
 impl Spools {
     pub(crate) fn new(parent: Result<PathBuf>) -> Self {
+        let initial_root = parent.as_ref().ok().and_then(|path| root(path).ok());
         Self {
             receiving: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(SLOTS)),
-            root: parent.and_then(|path| {
-                root(&path)
-                    .map_err(|_| "Media preparation could not access temporary storage".into())
-            }),
+            parent,
+            root: Mutex::new(initial_root),
         }
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
@@ -154,7 +154,18 @@ impl Spools {
             .clone()
             .try_acquire_owned()
             .map_err(|_| "Uploads are busy")?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let mut owned_root = self
+            .root
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owned_root.is_none() {
+            let parent = self.parent.as_ref().map_err(Clone::clone)?;
+            *owned_root = Some(
+                root(parent).map_err(|_| "Media preparation could not access temporary storage")?,
+            );
+        }
+        let root_path = owned_root.as_ref().unwrap().directory.path().to_owned();
+        drop(owned_root);
         let entry = Arc::new(Mutex::new(None));
         let mut cancelled = {
             let mut entries = self.lock();
@@ -169,7 +180,7 @@ impl Spools {
             let mut receiving = entry
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let directory = private_tempdir_in(root.directory.path())
+            let directory = private_tempdir_in(&root_path)
                 .map_err(|_| "Media preparation could not access temporary storage")?;
             let file = File::options()
                 .create_new(true)
@@ -266,8 +277,19 @@ impl Spools {
         drop(entry.file);
         Ok((entry.spool, entry.cancelled))
     }
-    pub(super) fn cancel(&self, id: &str) {
+    pub(super) fn discard(&self, id: &str) {
         let removed = self.lock().remove(id);
+        drop(removed);
+    }
+    pub(super) fn cancel(&self, uploads: &Uploads, id: &str) {
+        // Registration and cancellation share the map lock. A begin that arrives
+        // afterward consumes the pending cancel; an existing owner is signalled
+        // before its receiving entry is removed.
+        let removed = {
+            let mut entries = self.lock();
+            uploads.cancel(id);
+            entries.remove(id)
+        };
         drop(removed);
     }
     pub(crate) fn cancel_all(&self, uploads: &Uploads) {
@@ -401,8 +423,7 @@ mod tests {
         uploads.finish("partial");
         spools.begin(&uploads, "cancel", 3).unwrap();
         let path = spool_path(&spools, "cancel");
-        spools.cancel("cancel");
-        uploads.cancel("cancel");
+        spools.cancel(&uploads, "cancel");
         assert!(!path.exists());
         assert!(spools.append("cancel", 0, b"abc").is_err());
         uploads.cancel("before");
@@ -451,8 +472,7 @@ mod tests {
                     assert_eq!(std::fs::read(other.source()).unwrap(), b"abc");
                     spools.begin(&uploads, "new", 3).unwrap();
                     spools.reap(&uploads);
-                    spools.cancel("busy");
-                    uploads.cancel("busy");
+                    spools.cancel(&uploads, "busy");
                     assert!(spools.entry("busy").is_err());
                 })
                 .join()
@@ -523,7 +543,7 @@ mod tests {
         #[cfg(windows)]
         drop(held);
         assert!(removal.is_err(), "fixture must actually reject removal");
-        assert!(spools.root.is_ok());
+        assert!(spools.root.lock().unwrap().is_some());
         admission.unwrap();
         spools.append("new", 0, b"abc").unwrap();
         assert_eq!(
@@ -544,6 +564,54 @@ mod tests {
             .contains("temporary storage"));
         assert_eq!(spools.slots.available_permits(), SLOTS);
         assert!(uploads.lock().active.is_empty());
+    }
+    #[test]
+    fn failed_root_initialization_recovers_on_same_instance_without_reclaiming_live_owner() {
+        let parent = tempfile::tempdir().unwrap();
+        let storage = parent.path().join("storage");
+        std::fs::write(&storage, b"unavailable").unwrap();
+        let spools = Spools::new(Ok(storage.clone()));
+        let uploads = Uploads::default();
+        assert!(spools.begin(&uploads, "failed", 3).is_err());
+        assert_eq!(spools.slots.available_permits(), SLOTS);
+        assert!(uploads.lock().active.is_empty());
+        std::fs::remove_file(&storage).unwrap();
+        let live = root(&storage).unwrap();
+        let live_path = live.directory.path().to_owned();
+        spools.begin(&uploads, "recovered", 3).unwrap();
+        assert!(live_path.exists());
+        spools.append("recovered", 0, b"abc").unwrap();
+        let (spool, _) = spools.take("recovered").unwrap();
+        assert_eq!(std::fs::read(spool.source()).unwrap(), b"abc");
+        assert_eq!(spool.hash, format!("{:x}", Sha256::digest(b"abc")));
+        assert_eq!(spools.slots.available_permits(), SLOTS - 1);
+        drop(spool);
+        uploads.finish("recovered");
+        assert_eq!(spools.slots.available_permits(), SLOTS);
+        assert!(live_path.exists());
+    }
+    #[test]
+    fn cancellation_overtakes_begin_waiting_for_root_without_stranding_slot() {
+        let (_parent, spools, uploads) = fixture();
+        let root = spools.root.lock().unwrap();
+        std::thread::scope(|scope| {
+            let (started, entering) = std::sync::mpsc::channel();
+            let spools_ref = &spools;
+            let uploads_ref = &uploads;
+            let begin = scope.spawn(move || {
+                started.send(()).unwrap();
+                spools_ref.begin(uploads_ref, "pending", 3)
+            });
+            entering.recv().unwrap();
+            // Hold root initialization until the cancellation has been recorded.
+            // The pending begin cannot register while this guard is held.
+            spools.cancel(&uploads, "pending");
+            drop(root);
+            assert_eq!(begin.join().unwrap().unwrap_err(), "Upload cancelled");
+        });
+        assert_eq!(spools.slots.available_permits(), SLOTS);
+        assert!(uploads.lock().active.is_empty());
+        assert!(spools.entry("pending").is_err());
     }
     fn assert_write_failure_cleans_partial_file(file: impl FnOnce(&Path) -> File) {
         let (_parent, spools, uploads) = fixture();

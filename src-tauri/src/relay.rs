@@ -958,8 +958,7 @@ pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
         let uploads = app.state::<Uploads>();
         let result = chunk.and_then(|(offset, bytes)| spools.append(&id, offset, &bytes));
         if result.is_err() {
-            spools.cancel(&id);
-            uploads.cancel(&id);
+            spools.cancel(&uploads, &id);
         }
         result
     })
@@ -1003,7 +1002,7 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
         .await
     }
     .await;
-    spools.cancel(id);
+    spools.discard(id);
     uploads.finish(id);
     result
 }
@@ -1068,8 +1067,7 @@ pub(crate) fn relay_upload_cancel(
 ) -> Result<()> {
     let id = upload_id(Some(&id))?;
     // Never free a processing slot until the running future has stopped.
-    spools.cancel(id);
-    uploads.cancel(id);
+    spools.cancel(&uploads, id);
     Ok(())
 }
 

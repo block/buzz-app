@@ -41,7 +41,8 @@ stack is enabled. Original source remains available at its original commits.
 | `community_compute_*`, `crates/community-compute`, compute host/consumer/worker | Superseded by `crates/mesh-compute` and `src-tauri/src/mesh_compute*`; no parallel runtime added. |
 | Broker compute-status/identity routes and compute-pair packaging | Not imported; current native identity, publication and runtime packaging remain unchanged. |
 | Compute settings plugin, map and sharing views | Current `src/bundled/mesh-compute` remains the settings owner. |
-| Activity widget, demo credits/wallet, extra permissions and dependencies | Not part of this tile integration; no new commands, windows, wallet or dependencies. |
+| Activity visualization | Restored directly from `b4a910e7` in the follow-up below; embedded in the current Shared compute page. |
+| Floating native window, demo credits/wallet, extra permissions and dependencies | Not imported; no new commands, windows, wallet or dependencies. |
 | Navigation, settings, relay, plugin manager, icon and native wiring | Keep current mesh branch wiring; older compute contracts are not registered. |
 
 All six Thomas-branch commits absent from the mesh base retain their original
@@ -55,3 +56,54 @@ Start/Stop, namesakes, failed start recovery, and provider labeling. These are
 synthetic host checks, not native mesh execution or live community acceptance.
 No browser journeys are added or removed. Native launch, inference/reply,
 packaging and human UI acceptance remain separate checks.
+
+## Follow-up: restore the actual animated visualization
+
+The first merge adapted agent-card text but omitted the animated tile the human
+actually meant. This follow-up restores **Thomas's actual**
+`public/compute-widget.js` and HTML from `b4a910e7`, whose source blob is
+`eb002cfd23298246e1ba9dcb253ad29be6e1a516`, rather than recreating its design.
+The drawing functions, poses, four designs and reduced-motion behavior are reused.
+Original Apache-2.0 source attribution is retained. The original source was added
+in Thomas's `a1bed81a`; that commit and the later branch head already remain
+ancestors through merge `590a4ab2`.
+
+Adaptation is limited to the integration boundary:
+
+- Embed the tile in an `allow-scripts` sandbox on Shared compute; no native IPC,
+  account access, runtime ownership, dragging, or separate floating window.
+- The existing page's status refresh supplies telemetry. Polling continues while
+  the runtime is ready and ends when the page unmounts or the runtime stops.
+- The same existing `mesh_compute_status` read projects allowlisted scalar usage.
+  An accepted worker launch advances an epoch; samples cannot cross that epoch.
+- Thomas's usage projection is adapted from his original Rust source. Fields are
+  independently nullable. Known peers are not necessarily serving/connected peers;
+  routing-observed completion tokens are not local-machine contribution, and the
+  SDK throughput field is a completed-attempt average, not live decoding speed.
+- Keyboard design switching is scoped to the iframe. Numeric synthetic previews
+  and native dragging are disabled. Stale inputs clear counters after five seconds.
+- No new dependency, IPC command, persistence record or sharing authority is added.
+
+The donor renderer regression is restored and adapted to parent-fed status.
+Existing Sharing browser coverage now also checks real canvas pixels, iframe
+telemetry and design switching in Chromium and WebKit; no new browser cases were
+added or removed. Rust tests cover null/partial projection and worker epochs.
+Native compilation is not packaged/live acceptance; real inference and human
+visual approval remain outstanding.
+
+## Shared compute presentation
+
+The sharing presentation now follows the supplied design: one header-level
+Share compute switch, the original bee tile beside Hardware / AI memory / Model
+cards, and the four activity cards above the existing community-agent and
+community-mesh sections. Model selection, Auto reset, download progress, errors,
+consent and shutdown recovery still use the existing Mesh owners and controls.
+The layout is adapted to the app's shared design tokens and responsive widths;
+it is not an import of Thomas's superseded native compute stack.
+
+Completed requests and **Other sharing nodes** remain `—`: the current SDK
+projection does not establish those quantities. Known peer counts are used only
+by the visualization, not misrepresented as serving contributors. Tokens are
+routing-observed session completions, not proof of this machine's contribution.
+The human approved the screenshot preview; native/live inference and packaged
+acceptance remain separate from that visual approval.

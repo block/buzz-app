@@ -196,7 +196,7 @@ it("renders Running without a Disconnect control and separates refresh errors", 
   dispose();
 });
 
-it("polls transient states serially, stops at Running, and cancels on unmount", async () => {
+it("polls transient and ready activity states serially, stops when stopped, and cancels on unmount", async () => {
   vi.useFakeTimers();
   let state = "starting";
   native.invoke.mockImplementation((command) =>
@@ -248,7 +248,7 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(native.invoke).toHaveBeenCalledTimes(count);
+    expect(native.invoke).toHaveBeenCalledTimes(count + 1);
     state = "stopping";
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -559,7 +559,13 @@ it("keeps SDK download progress live after management readiness and cancels on u
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(native.invoke).toHaveBeenCalledTimes(count);
+    expect(native.invoke).toHaveBeenCalledTimes(count + 1);
+    cleanup();
+    const finalCount = native.invoke.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(native.invoke).toHaveBeenCalledTimes(finalCount);
   } finally {
     cleanup();
     dispose();

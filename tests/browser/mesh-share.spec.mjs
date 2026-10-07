@@ -3,6 +3,10 @@ import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Playwright's service-worker blocker accesses navigator.serviceWorker in every
+// frame, which throws in an opaque sandbox. This fixture registers no workers.
+test.use({ serviceWorkers: "allow" });
+
 // Browser-only boundary: the real sharing page, model Select popup and narrow
 // geometry. Synthetic IPC does not certify SDK serving or live agent replies.
 test("sharing page presents the ladder and supports share/stop at desktop and narrow widths", async ({
@@ -20,9 +24,39 @@ test("sharing page presents the ladder and supports share/stop at desktop and na
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mesh-share.html`,
     );
+    await expect(page.getByText("Qwen 27B", { exact: true })).toBeVisible();
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("data-color-mode", "dark"),
+    );
     await expect(
-      page.getByText("Auto — Qwen 27B (Q4_K_M) for this device"),
+      page.getByRole("heading", { name: "Shared-compute activity" }),
     ).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("shared-compute-preview.png"),
+      fullPage: true,
+    });
+    // Browser-only boundary: sandboxed canvas loads, accepts parent telemetry,
+    // draws real pixels and owns its keyboard without touching the model picker.
+    const tile = page.frameLocator(
+      'iframe[title="Shared-compute bee visualization"]',
+    );
+    await expect(tile.locator("canvas")).toHaveAttribute("data-total", "120");
+    await expect
+      .poll(() =>
+        tile.locator("canvas").evaluate((canvas) =>
+          canvas
+            .getContext("2d")
+            .getImageData(0, 0, canvas.width, canvas.height)
+            .data.some((value, index) => index % 4 !== 3 && value > 0),
+        ),
+      )
+      .toBe(true);
+    await tile.locator("canvas").click();
+    await page.keyboard.press("ArrowRight");
+    await expect(tile.locator("canvas")).toHaveAttribute(
+      "data-design",
+      "orbit",
+    );
     await page.getByRole("button", { name: "Advanced", exact: true }).click();
     await expect(
       page.getByRole("combobox", { name: "Model to share" }),

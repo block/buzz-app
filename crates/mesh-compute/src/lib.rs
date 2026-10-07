@@ -57,3 +57,6 @@ pub mod publication;
 pub mod catalog;
 #[cfg(feature = "mesh")]
 mod progress;
+
+#[cfg(feature = "mesh")]
+pub mod usage;

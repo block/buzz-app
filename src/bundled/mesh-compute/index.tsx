@@ -9,10 +9,10 @@ import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
 import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
-import { ShareHex, type ShareHexState } from "./ShareHex";
+import { ComputeActivity, type ActivityStatus } from "./ComputeActivity";
 import styles from "./Compute.module.css";
 
-type MeshStatus = {
+type MeshStatus = ActivityStatus & {
   available: boolean;
   modelReady?: boolean;
   finishingJoin?: boolean;
@@ -343,26 +343,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const phase = status?.lifecycle?.state;
     // Saved consent and live intent, not runtime health.
     const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
-    // Serving proof, not consent: only a ready runtime with a loaded model glows.
-    const preparing =
-      phase === "ready" && status?.sharing && !status.modelReady;
-    const hexState: ShareHexState =
-      phase === "ready" && status?.sharing && status.modelReady
-        ? "sharing"
-        : busy || phase === "starting" || phase === "stopping" || preparing
-          ? "working"
-          : "idle";
     useEffect(() => {
       if (
         busy ||
-        error ||
+        (error && status?.lifecycle?.state !== "ready") ||
         (status?.lifecycle?.state !== "starting" &&
           status?.lifecycle?.state !== "stopping" &&
-          !(
-            status?.lifecycle?.state === "ready" &&
-            status.sharing &&
-            !status.modelReady
-          ))
+          status?.lifecycle?.state !== "ready")
       )
         return;
       let active = true;
@@ -373,8 +360,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
               setStatus(result);
           },
           (reason) => {
-            if (active && !disposed && snapshot === ctx.relay.snapshot())
+            if (active && !disposed && snapshot === ctx.relay.snapshot()) {
+              setStatus({ ...status, usage: null });
               setError(String(reason));
+            }
           },
         );
       }, 1000);
@@ -431,39 +420,56 @@ export const apply: PluginModule["apply"] = (ctx) => {
         {isTauri() && status?.available && !otherCommunity && (
           <section aria-label="Share compute" className={styles.sharing}>
             <div className={styles.sharingHeader}>
-              <ShareHex state={hexState} />
-              <div>
-                <h2 className="m-0 text-body">
-                  {hexState === "sharing"
-                    ? "You’re sharing compute"
-                    : "Share your compute"}
-                </h2>
-                <p className="m-0 text-body-sm text-secondary">
-                  Let {community?.name ?? "this community"} run prompts on this
-                  machine. Auto picks the best model for your hardware; Advanced
-                  lets you choose. Sharing resumes when you reopen Buzz.
-                </p>
+              <h2 className="m-0 text-title">Shared compute</h2>
+              <div className={styles.shareControl}>
+                <span
+                  className={styles.statusDot}
+                  data-active={shareOn}
+                  aria-hidden="true"
+                />
+                <span>Share compute</span>
+                <Switch
+                  aria-label="Share this machine"
+                  checked={shareOn}
+                  disabled={
+                    busy ||
+                    !leaseReady ||
+                    // Only a shutdown must finish first. Off may cancel a serve that
+                    // is still starting (e.g. a long download), and On may replace a
+                    // consumer that is still connecting; native enforces the same.
+                    phase === "stopping" ||
+                    snapshot.status !== "ready" ||
+                    // Turning on: never replace an unrecovered failed runtime.
+                    (!shareOn &&
+                      (phase === "failed" || (!auto && !model.trim())))
+                  }
+                  onCheckedChange={(next) => {
+                    if (next) void share();
+                    else void share(!status.sharing);
+                  }}
+                />
               </div>
             </div>
-            <Switch
-              label="Share this machine"
-              checked={shareOn}
-              disabled={
-                busy ||
-                !leaseReady ||
-                // Only a shutdown must finish first. Off may cancel a serve that
-                // is still starting (e.g. a long download), and On may replace a
-                // consumer that is still connecting; native enforces the same.
-                phase === "stopping" ||
-                snapshot.status !== "ready" ||
-                // Turning on: never replace an unrecovered failed runtime.
-                (!shareOn && (phase === "failed" || (!auto && !model.trim())))
-              }
-              onCheckedChange={(next) => {
-                if (next) void share();
-                else void share(!status.sharing);
-              }}
-            />
+            <ComputeActivity status={status}>
+              <ShareModelPicker
+                model={model}
+                auto={auto}
+                onRecommendation={setRecommended}
+                runningModel={status.sharing ?? null}
+                onReset={() => void reset()}
+                resetDisabled={busy || snapshot.status !== "ready"}
+                onChange={(value) => {
+                  setModel(value);
+                  setAuto(false);
+                }}
+                disabled={
+                  busy ||
+                  phase === "starting" ||
+                  phase === "stopping" ||
+                  Boolean(status.sharing)
+                }
+              />
+            </ComputeActivity>
             <p role="status" className="text-body-sm">
               {leaseReady
                 ? shareStatus(status, phase, community?.name)
@@ -472,24 +478,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
             {status.sharing && status.download && !status.download.done && (
               <DownloadProgress download={status.download} />
             )}
-            <ShareModelPicker
-              model={model}
-              auto={auto}
-              onRecommendation={setRecommended}
-              runningModel={status.sharing ?? null}
-              onReset={() => void reset()}
-              resetDisabled={busy || snapshot.status !== "ready"}
-              onChange={(value) => {
-                setModel(value);
-                setAuto(false);
-              }}
-              disabled={
-                busy ||
-                phase === "starting" ||
-                phase === "stopping" ||
-                Boolean(status.sharing)
-              }
-            />
+            <details>
+              <summary className="text-body text-secondary">
+                Sharing details
+              </summary>
+              <p className="text-body-sm text-secondary">
+                Let {community?.name ?? "this community"} run prompts on this
+                machine. Sharing resumes when you reopen Buzz.
+              </p>
+            </details>
           </section>
         )}
         {community &&

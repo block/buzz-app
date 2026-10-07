@@ -24,7 +24,7 @@ export function ConsumerComputeView({
     <FullPageSurface aria-label="Compute consumer">
       <div className="h-full overflow-auto p-panel-inset text-body">
         <div className={styles.content}>
-          <h1 className="m-0 text-title text-primary">Shared compute</h1>
+          <h1 className="sr-only">Shared compute</h1>
           {communityName && (
             <p className="text-body text-secondary">
               Shared compute for <strong>{communityName}</strong>

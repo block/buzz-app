@@ -473,6 +473,45 @@ it("completes with Space only for one exact name, and with Tab", async () => {
   expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
 });
 
+it("Space waits for a longer name after any word break", async () => {
+  const t = setup();
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  const averyChen = { pubkey: "b".repeat(64), name: "Avery-Chen" };
+  t.directMessages.people.mockImplementation(async (_query, page) => {
+    if (page === 1) return { people: [avery], hasMore: true };
+    if (page === 2) return { people: [averyChen], hasMore: false };
+    throw new Error("relay down");
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Avery" });
+  await t.user.type(recipient(), "avery");
+  await screen.findByRole("option", { name: "Avery-Chen" });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("avery ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+});
+
+it("Space does not pick while the rest of the list failed to load", async () => {
+  const t = setup();
+  const kim = { pubkey: "a".repeat(64), name: "Kim" };
+  t.directMessages.people.mockImplementation(async (_query, page) => {
+    if (page === 1) return { people: [kim], hasMore: true };
+    throw new Error("relay down");
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Kim" });
+  await t.user.type(recipient(), "kim");
+  await screen.findByRole("option", { name: "Kim" });
+  await screen.findByRole("button", { name: /retry|try again/i });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("kim ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Kim" }),
+  ).not.toBeInTheDocument();
+});
+
 it("reveals the highlighted person on every arrow key and when the list reopens", async () => {
   const t = setup();
   const scrolled = vi.mocked(Element.prototype.scrollIntoView);

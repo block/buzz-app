@@ -3,7 +3,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
-import { matchPerson, normalizeName } from "../search/person-match";
+import {
+  extendsName,
+  matchPerson,
+  normalizeName,
+} from "../search/person-match";
 import { pickerText, readSearchUsage, recordChoice } from "../search/usage";
 import { useSearchHighlight } from "../search/use-search-highlight";
 import { publicKeyLabels } from "../../shared/identity/public-key";
@@ -195,12 +199,13 @@ export function RecipientPicker({
   });
   // Space completes like an @ mention: only for one exact name, and only when
   // no longer name continues it ("Avery" waits while "Avery Chen" exists).
-  // A search still running could find that longer name, so Space waits too.
+  // A search still running, failed, or with more pages could hold that longer
+  // name or a namesake, so Space waits for the full list.
   const exactRecipient = () => {
     const typedName = normalizeName(query);
-    if (!typedName || !listed || directory.loading) return;
+    if (!typedName || !listed || directory.loading || directory.error) return;
     const names = eligible.map((person) => normalizeName(person.name));
-    if (names.some((name) => name.startsWith(`${typedName} `))) return;
+    if (names.some((name) => extendsName(name, typedName))) return;
     const exact = eligible.filter((_, index) => names[index] === typedName);
     return exact.length === 1 ? exact[0] : undefined;
   };

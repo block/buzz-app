@@ -209,6 +209,7 @@ it.each(["canonical", "legacy"])(
     if (!query) throw new Error("Missing fixture query");
     h.query.mockImplementation(async (filters) => {
       const filter = filters[0];
+      if (filter?.["#p"]) return [];
       if (filter?.ids)
         return filter.ids.includes(parent.id) ? [parent] : [root];
       if (filter?.kinds?.includes(9) && filter["#e"]) {
@@ -249,7 +250,7 @@ it.each(["canonical", "legacy"])(
     expect(h.session.inboxFeed.snapshot()).toMatchObject({ status: "error" });
     expect(h.session.inboxFeed.snapshot().incomplete).toContain(parent.id);
     recovery = true;
-    await h.session.inboxFeed.ensureResponses(rows(h));
+    await h.session.inboxFeed.refresh();
     expect(h.session.inboxFeed.snapshot()).toMatchObject({
       status: "ready",
       incomplete: [],

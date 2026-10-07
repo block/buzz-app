@@ -151,6 +151,35 @@ export function createInboxFeed({
   async function conversation(item: InboxItem, signal: AbortSignal) {
     const retained = item.messageIds.flatMap((id) => retainedEvent(id) ?? []);
     if (!retained.length) return [];
+    const ancestry: RelayEvent[] = [];
+    const readHistory = (
+      filter: ReadFilter,
+      prepare?: (raw: readonly RelayEvent[]) => void,
+    ) =>
+      addressedRead(filter, signal, (visible, raw = visible) => {
+        if (
+          raw.some(
+            (event) =>
+              mentionKinds.includes(event.kind) &&
+              !visible.some((row) => row.id === event.id),
+          )
+        )
+          throw new Error(
+            "Inbox replies could not be verified for current access. Retry inbox.",
+          );
+        prepare?.(raw);
+        if (closed || signal.aborted) return;
+        publish({
+          incomplete: Object.freeze([
+            ...new Set([
+              ...snapshot.incomplete,
+              ...visible
+                .filter((event) => mentionKinds.includes(event.kind))
+                .map((event) => event.id),
+            ]),
+          ]),
+        });
+      });
     let rootId =
       item.rootId ??
       retained.map(threadReference).find((reference) => reference)?.rootId ??
@@ -163,21 +192,17 @@ export function createInboxFeed({
         if (visited.has(rootId) || visited.size === 32)
           throw new Error("Inbox reply ancestry is unavailable. Retry inbox.");
         visited.add(rootId);
-        const root =
-          retainedEvent(rootId) ??
-          (
-            await reader.read(
-              [
-                {
-                  kinds: mentionKinds,
-                  "#h": [item.channelId],
-                  ids: [rootId],
-                  limit: 1,
-                },
-              ],
-              { signal },
-            )
-          )[0];
+        let root = retainedEvent(rootId);
+        if (!root) {
+          const page = await readHistory({
+            kinds: mentionKinds,
+            "#h": [item.channelId],
+            ids: [rootId],
+            limit: 1,
+          });
+          ancestry.push(...page);
+          root = page[0];
+        }
         if (
           !root ||
           root.id !== rootId ||
@@ -191,9 +216,13 @@ export function createInboxFeed({
         rootId = reference.rootId;
       }
     } else if (item.target.kind !== "channel" && !item.rootId)
-      await reader.read([{ kinds: mentionKinds, ids: [rootId], limit: 1 }], {
-        signal,
-      });
+      ancestry.push(
+        ...(await readHistory({
+          kinds: mentionKinds,
+          ids: [rootId],
+          limit: 1,
+        })),
+      );
     const filter: ReadFilter = {
       kinds: mentionKinds,
       "#h": [item.channelId],
@@ -210,38 +239,13 @@ export function createInboxFeed({
     for (;;) {
       let bounds: ReturnType<typeof threadBounds> | undefined;
       const page = [
-        ...(await addressedRead(
-          { ...filter, ...(cursor ?? {}) },
-          signal,
-          (visible, raw = visible) => {
-            if (
-              raw.some(
-                (event) =>
-                  mentionKinds.includes(event.kind) &&
-                  !visible.some((row) => row.id === event.id),
-              )
-            )
-              throw new Error(
-                "Inbox replies could not be verified for current access. Retry inbox.",
-              );
-            if (canonical) {
-              const bound = raw.find((event) => event.kind === 39007);
-              if (!bound) throw new MissingThreadBounds();
-              bounds = threadBounds(bound); // Reader verified signer and request binding.
-            }
-            if (closed || signal.aborted) return;
-            publish({
-              incomplete: Object.freeze([
-                ...new Set([
-                  ...snapshot.incomplete,
-                  ...visible
-                    .filter((event) => mentionKinds.includes(event.kind))
-                    .map((event) => event.id),
-                ]),
-              ]),
-            });
-          },
-        )),
+        ...(await readHistory({ ...filter, ...(cursor ?? {}) }, (raw) => {
+          if (canonical) {
+            const bound = raw.find((event) => event.kind === 39007);
+            if (!bound) throw new MissingThreadBounds();
+            bounds = threadBounds(bound); // Reader verified signer and request binding.
+          }
+        })),
       ]
         .filter((event) => mentionKinds.includes(event.kind))
         .sort(
@@ -254,7 +258,7 @@ export function createInboxFeed({
       if (collected.length > 2000 || byteSize(collected) > 4 * 1024 * 1024)
         throw new Error("Inbox replies exceed the read budget. Retry inbox.");
       if (bounds) {
-        if (!bounds.hasMore) return collected;
+        if (!bounds.hasMore) return [...ancestry, ...collected];
         if (!page.length || !bounds.cursor)
           throw new Error("Inbox replies are unavailable. Retry inbox.");
         cursor = {
@@ -263,7 +267,7 @@ export function createInboxFeed({
         };
       } else {
         const last = page.at(-1);
-        if (!last) return collected;
+        if (!last) return [...ancestry, ...collected];
         cursor = cursorOf(last);
       }
     }

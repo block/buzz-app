@@ -167,16 +167,16 @@ impl RuntimeBundle {
         let pi = crate::pi::verify_launch(pi, preflight)?;
         let claude = (codex.is_none()
             && crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
-            .then(|| {
-                claude_tools(
-                    &worker,
-                    agent
-                        .environment
-                        .get("CLAUDE_CODE_EXECUTABLE")
-                        .map(String::as_str),
-                )
-            })
-            .transpose()?;
+        .then(|| {
+            claude_tools(
+                &worker,
+                agent
+                    .environment
+                    .get("CLAUDE_CODE_EXECUTABLE")
+                    .map(String::as_str),
+            )
+        })
+        .transpose()?;
         let (args, environment, tools_path) = if let Some(args) = codex_args {
             (args, None, None)
         } else if let Some(pi) = &pi {

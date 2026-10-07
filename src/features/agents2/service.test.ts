@@ -138,6 +138,10 @@ async function setup({
   };
 }
 
+/** Lets every pending promise chain finish: a macrotask runs only after the
+ * microtask queue is empty, so this does not depend on how fast runners are. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 beforeEach(() => vi.useRealTimers());
 afterEach(() => vi.useRealTimers());
 
@@ -259,13 +263,13 @@ it("keeps queued work across a disconnect and runs it once on reconnect", async 
   connect(false);
   expect(service.find(bot)).toBeUndefined();
   release();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await settle();
   expect(run).toHaveBeenCalledTimes(1);
   await service.save(bot, { config: { reply: "new" } });
   connect(true);
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   expect(run.mock.calls[1]?.[0].config).toEqual({ reply: "new" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await settle();
   expect(run).toHaveBeenCalledTimes(2);
 });
 
@@ -288,7 +292,7 @@ it("aborts the in-flight run, and drops what is queued, when the agent is remove
   await vi.waitFor(() => expect(held).toBeDefined());
   await service.remove(bot);
   expect(held?.signal.aborted).toBe(true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await settle();
   expect(run).toHaveBeenCalledTimes(1);
 });
 
@@ -346,7 +350,7 @@ it("does not let one owner's agents wake each other by replying", async () => {
       }),
     ],
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await settle();
   expect(run).toHaveBeenCalledTimes(1);
   // A fresh mention from the sibling still does.
   emit({

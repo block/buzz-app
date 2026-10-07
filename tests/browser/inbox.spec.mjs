@@ -137,29 +137,29 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     const toolbar = inbox.locator('[class*="toolbar"]').first();
     const layout = await toolbar.evaluate((element) => {
       const [activity, sender] = element.querySelectorAll('[role="combobox"]');
-      const unread = element.querySelectorAll('[role="combobox"]')[2];
-      if (!activity || !sender || !unread) return;
+      const filters = element.querySelectorAll('[role="combobox"]')[2];
+      if (!activity || !sender || !filters) return;
       const a = activity.getBoundingClientRect();
       const s = sender.getBoundingClientRect();
-      const u = unread.getBoundingClientRect();
+      const f = filters.getBoundingClientRect();
       const t = element.getBoundingClientRect();
       return {
         pairGap: s.left - a.right,
         pairY: s.top - a.top,
-        unreadY: u.top - a.top,
+        filtersY: f.top - a.top,
         left: t.left,
         right: t.right,
         bottom: t.bottom,
-        unreadRight: u.right,
-        unreadBottom: u.bottom,
+        filtersRight: f.right,
+        filtersBottom: f.bottom,
       };
     });
     expect(layout?.pairY).toBe(0);
     expect(layout?.pairGap).toBeCloseTo(8, 0);
-    expect(layout?.unreadRight).toBeLessThanOrEqual(layout.right);
-    expect(layout?.unreadBottom).toBeLessThanOrEqual(layout.bottom);
-    expect(layout?.unreadY).toBeGreaterThanOrEqual(0);
-    if (width === 390) expect(layout?.unreadY).toBeGreaterThan(0);
+    expect(layout?.filtersRight).toBeLessThanOrEqual(layout.right);
+    expect(layout?.filtersBottom).toBeLessThanOrEqual(layout.bottom);
+    expect(layout?.filtersY).toBeGreaterThanOrEqual(0);
+    if (width === 390) expect(layout?.filtersY).toBeGreaterThan(0);
     await expect(
       inbox.getByText("Unread reply 1", { exact: true }),
     ).toBeVisible();

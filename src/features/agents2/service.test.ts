@@ -27,13 +27,14 @@ const event = (id: string, patch: Partial<RelayEvent> = {}) =>
 
 function fakeRelay() {
   const live = new Set<LiveListener>();
+  const changes = new Set<() => void>();
   const session = {
     subscribeLive(listener: LiveListener) {
       live.add(listener);
       return () => live.delete(listener);
     },
   } as unknown as RelaySession;
-  const snapshot: RelaySnapshot = {
+  let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
     viewer,
@@ -41,11 +42,22 @@ function fakeRelay() {
     scope: `https://relay.example.test:${viewer}`,
     session,
   };
+  const connected_ = snapshot;
   return {
     relay: {
       snapshot: () => snapshot,
-      subscribe: () => () => {},
+      subscribe: (listener: () => void) => {
+        changes.add(listener);
+        return () => changes.delete(listener);
+      },
     } as unknown as RelayData,
+    /** Drops the connection, or restores it with a new session. */
+    connect(connected: boolean) {
+      snapshot = connected
+        ? { ...connected_, session: { ...session } as RelaySession }
+        : ({ status: "loading", generation: 2 } as RelaySnapshot);
+      for (const listener of changes) listener();
+    },
     emit: (batch: LiveBatch) => {
       for (const listener of live) listener(batch);
     },
@@ -115,7 +127,15 @@ async function setup({
   };
   plugin.agents2.register(type);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
-  return { service, native, storage, run, emit: fake.emit, ctx };
+  return {
+    service,
+    native,
+    storage,
+    run,
+    emit: fake.emit,
+    connect: fake.connect,
+    ctx,
+  };
 }
 
 beforeEach(() => vi.useRealTimers());
@@ -220,6 +240,33 @@ it("keeps the in-flight run and the queue across edits; each job reads the agent
   const queued = run.mock.calls[1]?.[0];
   expect(queued?.config).toEqual({ reply: "new" });
   expect(queued?.agent.name).toBe("Echo two");
+});
+
+it("keeps queued work across a disconnect and runs it once on reconnect", async () => {
+  const { service, run, emit, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  run.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  emit({
+    events: [
+      event("1", { tags: [["p", bot]] }),
+      event("2", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  connect(false);
+  expect(service.find(bot)).toBeUndefined();
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { config: { reply: "new" } });
+  connect(true);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].config).toEqual({ reply: "new" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(run).toHaveBeenCalledTimes(2);
 });
 
 it("aborts the in-flight run, and drops what is queued, when the agent is removed", async () => {
@@ -360,6 +407,34 @@ it("forgets records whose key is gone when identities load", async () => {
     "Echo",
   ]);
   expect(storage.getItem("buzz.agents2.v1")).not.toContain(sibling);
+});
+
+it("keeps an agent created while identities are still loading", async () => {
+  const storage = memoryStorage();
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const native = fakeNative();
+  let release: (value: AgentIdentity[]) => void = () => {};
+  native.list.mockImplementationOnce(
+    () => new Promise<AgentIdentity[]>((resolve) => (release = resolve)),
+  );
+  const service = new Agents2Service(ctx, fakeRelay().relay, native, storage);
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "example", revision: "one" }) })
+    .agents2.register<Config>({
+      id: "echo",
+      title: "Echo",
+      defaults: () => ({ config: { reply: "ok" } }),
+    });
+  await vi.waitFor(() => expect(native.list).toHaveBeenCalled());
+  await service.create({ type: "example/echo", name: "Echo" });
+  release([]);
+  await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
+  expect(service.find(bot)?.name).toBe("Echo");
+  expect(storage.getItem("buzz.agents2.v1")).toContain(bot);
 });
 
 it("fires a due timer once, then again an interval after it ran", async () => {

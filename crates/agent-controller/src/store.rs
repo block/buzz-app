@@ -409,6 +409,106 @@ impl Store {
             system_prompt: agent.system_prompt,
         })
     }
+    pub(crate) fn team_instructions(
+        &mut self,
+        id: &str,
+        revision: u64,
+        instructions: &str,
+        team: &str,
+    ) -> Result<bool> {
+        let instructions = crate::import::team_text(&json!(instructions))?.to_owned();
+        if team.is_empty() || team.len() > 120 {
+            return Err("Invalid team binding".into());
+        }
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Agent settings changed. Refresh before deploying the team".into());
+        }
+        let mut bindings: Vec<String> =
+            serde_json::from_value(agent.imported["teamBindings"].clone()).unwrap_or_default();
+        let changed = agent.imported["teamInstructions"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            != instructions;
+        if changed
+            && bindings.is_empty()
+            && agent.imported.get("teamBindings").is_none()
+            && agent.imported["teamInstructions"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty())
+        {
+            return Err("This agent has unassigned shared instructions; deploy a team with matching instructions before changing them".into());
+        }
+        if changed && bindings.iter().any(|binding| binding != team) {
+            return Err("This agent is deployed with another team's instructions; use an independent imported copy".into());
+        }
+        if agent.imported.is_null() {
+            agent.imported = json!({});
+        }
+        if !bindings.iter().any(|binding| binding == team) {
+            if bindings.len() >= 100 {
+                return Err("Too many team bindings for this agent".into());
+            }
+            bindings.push(team.into());
+            agent.imported["teamBindings"] = json!(bindings);
+        }
+        agent.imported["teamInstructions"] = json!(instructions);
+        if !changed {
+            self.write(&doc)?;
+            return Ok(false);
+        }
+        agent.revision = agent
+            .revision
+            .checked_add(1)
+            .ok_or("Agent revision exhausted")?;
+        self.write(&doc)?;
+        Ok(true)
+    }
+    /// Only known live/tombstoned catalog records release a binding. Missing
+    /// records may be pending imports and must not be interpreted as deletion.
+    pub(crate) fn reconcile_team_bindings(
+        &mut self,
+        relay: &str,
+        owner: &str,
+        teams: &std::collections::BTreeMap<String, Vec<String>>,
+    ) -> Result<()> {
+        let mut doc = self.read()?;
+        for agent in &mut doc.agents {
+            if agent.relay_url != relay {
+                continue;
+            }
+            let authorized = agent
+                .auth_tag
+                .as_deref()
+                .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
+                .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
+            if !authorized {
+                continue;
+            }
+            let Some(raw) = agent.imported.get("teamBindings") else {
+                continue;
+            };
+            let bindings: Vec<String> =
+                serde_json::from_value(raw.clone()).map_err(|_| "Invalid saved team bindings")?;
+            let retained: Vec<_> = bindings
+                .iter()
+                .filter(|team| {
+                    teams
+                        .get(*team)
+                        .is_none_or(|members| members.contains(&agent.pubkey))
+                })
+                .cloned()
+                .collect();
+            agent.imported["teamBindings"] = json!(retained);
+        }
+        self.write(&doc)
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc

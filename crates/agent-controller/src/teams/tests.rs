@@ -1,0 +1,529 @@
+use super::*;
+use crate::{AgentEdit, Credentials, LegacySource, NewAgent, Secret, Store};
+use std::{collections::BTreeMap, sync::Arc};
+
+struct NoCredentials;
+impl Credentials for NoCredentials {
+    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+        panic!("preview/export must not read keys")
+    }
+    fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret> {
+        panic!("bundles must not import legacy identities")
+    }
+    fn add(&self, _: &str, _: &Secret) -> Result<()> {
+        panic!("controller tests do not persist keys")
+    }
+    fn delete(&self, _: &str, _: &str) -> Result<()> {
+        panic!("bundles must not delete keys")
+    }
+}
+fn controller(root: &std::path::Path) -> Controller {
+    Controller::new(
+        Store::open(root.join("store")).unwrap(),
+        Arc::new(NoCredentials),
+        Err("No fixture runtime".into()),
+        root.join("ownership"),
+    )
+}
+fn member() -> MemberSnapshot {
+    snapshot_member(&crate::store::tests::fixture()).unwrap()
+}
+fn edit(root: &std::path::Path) -> AgentEdit {
+    AgentEdit {
+        name: "Fixture".into(),
+        system_prompt: "INDIVIDUAL_MARKER".into(),
+        picture: None,
+        session_policy: Some(Some(SessionPolicy::Thread)),
+        workspace: root.display().to_string(),
+        harness: crate::store::tests::fixture().harness,
+        environment: BTreeMap::new(),
+    }
+}
+fn owner() -> String {
+    let tag: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(&"ab".repeat(32))).unwrap();
+    tag[1].clone()
+}
+#[test]
+fn independent_imports_keep_prompts_separate_and_receipts_survive_reload() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let owner = owner();
+    let first = NewAgent::prepare("https://relay.example/", &owner).unwrap();
+    let second = NewAgent::prepare("wss://relay.example", &owner).unwrap();
+    let mut snapshot = member();
+    snapshot.definition.source_is_builtin = true;
+    snapshot.profile.about = Some("Fixture profile".into());
+    snapshot.definition.respond_to = Some("allowlist".into());
+    snapshot.definition.respond_to_allowlist = vec!["ab".repeat(32)];
+    for (request, prepared) in [("request-one", &first), ("request-two", &second)] {
+        control
+            .create_bundle_member(
+                prepared,
+                edit(root.path()),
+                &crate::secret::test_attestation(prepared.key.pubkey()),
+                request,
+                &BundleMember {
+                    team: "team-a".into(),
+                    member: snapshot.clone(),
+                    instructions: "TEAM_MARKER".into(),
+                    keep_allowlist: false,
+                },
+            )
+            .unwrap();
+    }
+    assert_ne!(first.key.pubkey(), second.key.pubkey());
+    let agents = control.store.agents().unwrap();
+    assert_eq!(agents.len(), 2);
+    for agent in agents {
+        assert_eq!(agent.system_prompt, "INDIVIDUAL_MARKER");
+        assert_eq!(agent.imported["teamInstructions"], "TEAM_MARKER");
+        assert_eq!(agent.respond_to(false).unwrap(), "owner-only");
+        assert_eq!(agent.imported["record"]["respond_to_allowlist"], json!([]));
+        assert!(!agent.enabled);
+        assert!(!agent.starts_on_launch());
+        assert_eq!(agent.selected_session_policy(), Some(SessionPolicy::Thread));
+    }
+    let exported = control
+        .export_team(
+            TeamMeta {
+                name: "Roundtrip".into(),
+                description: None,
+                instructions: None,
+            },
+            &[first.key.pubkey().to_owned()],
+            "wss://relay.example",
+        )
+        .unwrap();
+    assert!(exported.members[0].definition.source_is_builtin);
+    assert_eq!(
+        exported.members[0].profile.about.as_deref(),
+        Some("Fixture profile")
+    );
+    drop(control);
+    let mut control = controller(root.path());
+    assert_eq!(
+        control
+            .created_request("request-one", "https://RELAY.example/", &owner)
+            .unwrap()
+            .unwrap()
+            .id,
+        first.id
+    );
+    assert!(control
+        .created_request("request-one", "wss://other.example", &owner)
+        .is_err());
+    assert!(control
+        .created_request("request-one", "wss://relay.example", &"ab".repeat(32))
+        .is_err());
+    // A retry with a new prepared identity still recovers the original saved receipt.
+    control
+        .create_bundle_member(
+            &second,
+            edit(root.path()),
+            &crate::secret::test_attestation(second.key.pubkey()),
+            "request-one",
+            &BundleMember {
+                team: "team-a".into(),
+                member: snapshot.clone(),
+                instructions: "TEAM_MARKER".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(control.store.agents().unwrap().len(), 2);
+}
+#[test]
+fn export_is_portable_and_preview_does_not_create_or_start_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let source = crate::store::tests::fixture();
+    control.store.insert(vec![source.clone()]).unwrap();
+    let exported = control
+        .export_team(
+            TeamMeta {
+                name: "Fixture team".into(),
+                description: Some("Safe fixtures".into()),
+                instructions: Some("TEAM_MARKER".into()),
+            },
+            &[source.pubkey.clone()],
+            &source.relay_url,
+        )
+        .unwrap();
+    let bytes = serde_json::to_vec(&exported).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    for private in [
+        &source.pubkey,
+        &source.credential_id,
+        &source.workspace,
+        "secret-env-value",
+        "private-attestation",
+        "futureTopLevel",
+    ] {
+        assert!(!text.contains(private), "leaked {private}");
+    }
+    let decoded = TeamSnapshot::decode(&bytes).unwrap();
+    assert_eq!(decoded.team.instructions.as_deref(), Some("TEAM_MARKER"));
+    assert_eq!(
+        decoded.members[0].definition.system_prompt.as_deref(),
+        Some(source.system_prompt.as_str())
+    );
+    assert_eq!(decoded.members[0].memory.level, "none");
+    assert_eq!(control.store.agents().unwrap().len(), 1);
+    assert!(!control.store.agents().unwrap()[0].enabled);
+}
+#[test]
+fn memory_preview_bounds_slugs_duplicates_and_selected_level() {
+    let mut memory = Memory {
+        level: "core".into(),
+        entries: vec![MemoryEntry {
+            slug: "core".into(),
+            body: "safe fixture".into(),
+        }],
+    };
+    memory.validate().unwrap();
+    memory.entries.push(memory.entries[0].clone());
+    assert!(memory.validate().is_err());
+    memory.entries.pop();
+    memory.entries[0].slug = "mem/note".into();
+    assert!(memory.validate().is_err());
+    memory.level = "everything".into();
+    memory.validate().unwrap();
+    for slug in ["mem/../note", "mem/Note", "mem/", "mem/a//b", "private"] {
+        memory.entries[0].slug = slug.into();
+        assert!(memory.validate().is_err(), "{slug}");
+    }
+    memory.entries[0].slug = "core".into();
+    memory.entries[0].body = "x".repeat(1024 * 1024);
+    assert!(memory.validate().is_err());
+}
+
+#[test]
+fn malformed_snapshots_are_rejected_before_creation() {
+    let mut snapshot = TeamSnapshot {
+        format: "buzz-team-snapshot".into(),
+        version: 1,
+        team: TeamMeta {
+            name: "Fixture".into(),
+            description: None,
+            instructions: None,
+        },
+        members: vec![member()],
+    };
+    snapshot.validate().unwrap();
+    snapshot.members[0].memory.entries.push(MemoryEntry {
+        slug: "core".into(),
+        body: "Fixture".into(),
+    });
+    assert!(snapshot.validate().is_err());
+    snapshot.members[0].memory.entries.clear();
+    snapshot.members[0].definition.runtime = Some("/private/local/executable".into());
+    assert!(snapshot.validate().is_err());
+    snapshot.members[0].definition.runtime = None;
+    snapshot.team.instructions = Some("bad\0instructions".into());
+    assert!(snapshot.validate().is_err());
+}
+
+#[test]
+fn deployment_instruction_updates_preserve_identity_and_individual_settings() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example/", &owner()).unwrap();
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "request",
+            &BundleMember {
+                team: "team-a".into(),
+                member: member(),
+                instructions: "OLD_TEAM".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let before = control.store.agents().unwrap().remove(0);
+    for instructions in ["", "UNRELATED"] {
+        assert!(control
+            .apply_team_instructions(
+                &before.id,
+                before.revision,
+                instructions,
+                &owner(),
+                ("team-b", "https://relay.example")
+            )
+            .is_err());
+    }
+    assert_eq!(
+        control.store.agents().unwrap()[0].imported["teamInstructions"],
+        "OLD_TEAM"
+    );
+    assert!(!control
+        .apply_team_instructions(
+            &before.id,
+            before.revision,
+            "OLD_TEAM",
+            &owner(),
+            ("team-a", "https://relay.example")
+        )
+        .unwrap());
+
+    assert!(control
+        .apply_team_instructions(
+            &before.id,
+            before.revision,
+            "NEW_TEAM",
+            &"ab".repeat(32),
+            ("team-a", "https://relay.example")
+        )
+        .is_err());
+    assert!(control
+        .apply_team_instructions(
+            &before.id,
+            before.revision + 1,
+            "NEW_TEAM",
+            &owner(),
+            ("team-a", "https://relay.example")
+        )
+        .is_err());
+    assert!(control
+        .apply_team_instructions(
+            &before.id,
+            before.revision,
+            "NEW_TEAM",
+            &owner(),
+            ("team-a", "https://relay.example")
+        )
+        .unwrap());
+    assert!(control
+        .apply_team_instructions(
+            &before.id,
+            before.revision + 1,
+            "OTHER_TEAM",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+    assert!(control
+        .apply_team_instructions(
+            &before.id,
+            before.revision + 1,
+            "NEW_TEAM",
+            &owner(),
+            ("team-a", "https://foreign.example")
+        )
+        .is_err());
+    let after = control.store.agents().unwrap().remove(0);
+    assert_eq!(after.pubkey, before.pubkey);
+    assert_eq!(after.credential_id, before.credential_id);
+    assert_eq!(after.system_prompt, before.system_prompt);
+    assert_eq!(after.harness.command, before.harness.command);
+    assert_eq!(after.environment, before.environment);
+    assert_eq!(after.imported["record"], before.imported["record"]);
+    assert_eq!(after.imported["teamInstructions"], "NEW_TEAM");
+    assert_eq!(after.revision, before.revision + 1);
+    assert!(!after.enabled);
+    assert!(!control
+        .apply_team_instructions(
+            &after.id,
+            after.revision,
+            "  NEW_TEAM\n",
+            &owner(),
+            ("team-a", "https://relay.example")
+        )
+        .unwrap());
+    assert!(control
+        .apply_team_instructions(
+            &after.id,
+            after.revision,
+            "OTHER_TEAM",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+    assert_eq!(
+        control.store.agents().unwrap()[0].imported["teamInstructions"],
+        "NEW_TEAM"
+    );
+    drop(control);
+    let mut control = controller(root.path());
+    assert!(control
+        .apply_team_instructions(
+            &after.id,
+            after.revision,
+            "OTHER_TEAM",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+
+    assert!(!control
+        .apply_team_instructions(
+            &after.id,
+            after.revision,
+            "NEW_TEAM",
+            &owner(),
+            ("team-a", "https://relay.example")
+        )
+        .unwrap());
+    assert_eq!(control.store.agents().unwrap()[0].revision, after.revision);
+}
+
+#[test]
+fn memory_authorization_requires_exact_saved_owner_and_valid_member_attestation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example/", &owner()).unwrap();
+    let auth = crate::secret::test_attestation(prepared.key.pubkey());
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &auth,
+            "memory-owner",
+            &BundleMember {
+                team: "team-a".into(),
+                member: member(),
+                instructions: "TEAM".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        control
+            .team_member_authorization(&prepared.id, &owner())
+            .unwrap(),
+        auth
+    );
+    assert!(control
+        .verify_team_member_owner(&prepared.id, &"ab".repeat(32))
+        .is_err());
+    assert!(control
+        .team_member_authorization(&prepared.id, &"ab".repeat(32))
+        .is_err());
+    assert!(control
+        .team_member_authorization("missing", &owner())
+        .is_err());
+    let mut saved = control.store.agents().unwrap();
+    saved[0].auth_tag = Some(json!(["auth", owner(), "", "invalid-signature"]).to_string());
+    std::fs::write(
+        root.path().join("store/agents.json"),
+        serde_json::to_vec(&json!({"version": 1, "agents": saved})).unwrap(),
+    )
+    .unwrap();
+    drop(control);
+    let control = controller(root.path());
+    assert!(control
+        .team_member_authorization(&prepared.id, &owner())
+        .is_err());
+}
+
+#[test]
+fn legacy_unbound_instructions_require_matching_adoption_before_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let mut source = crate::store::tests::fixture();
+    source.imported = serde_json::json!({"teamInstructions": "LEGACY"});
+    control.store.insert(vec![source.clone()]).unwrap();
+    assert!(control
+        .store
+        .team_instructions(&source.id, source.revision, "", "unrelated")
+        .is_err());
+    assert!(!control
+        .store
+        .team_instructions(&source.id, source.revision, " LEGACY ", "original")
+        .unwrap());
+    assert!(control
+        .store
+        .team_instructions(&source.id, source.revision, "UPDATED", "original")
+        .unwrap());
+}
+
+#[test]
+fn catalog_removal_releases_only_obsolete_bindings_and_preserves_pending_imports() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "lifecycle",
+            &BundleMember {
+                team: "team-a".into(),
+                member: member(),
+                instructions: "SHARED".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let agent = control.store.agents().unwrap().remove(0);
+    let mut teams = std::collections::BTreeMap::new();
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
+        .unwrap();
+    assert!(control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "OTHER",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+    // A second active team sharing the same instructions retains protection.
+    assert!(!control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "SHARED",
+            &owner(),
+            ("team-c", "https://relay.example")
+        )
+        .unwrap());
+    teams.insert("team-a".into(), vec![]); // deletion or removal
+    teams.insert("team-c".into(), vec![agent.pubkey.clone()]);
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
+        .unwrap();
+    assert!(control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "OTHER",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+    teams.insert("team-c".into(), vec![]);
+    control
+        .reconcile_team_bindings("https://foreign.example", &owner(), &teams)
+        .unwrap();
+    control
+        .reconcile_team_bindings("https://relay.example", &"ab".repeat(32), &teams)
+        .unwrap();
+    assert_eq!(
+        control.store.agents().unwrap()[0].imported["teamBindings"],
+        serde_json::json!(["team-c"])
+    );
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &teams)
+        .unwrap();
+    drop(control);
+    let mut control = controller(root.path());
+    assert!(control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "RECREATED",
+            &owner(),
+            ("team-new", "https://relay.example")
+        )
+        .unwrap());
+    assert_eq!(
+        control.store.agents().unwrap()[0].imported["teamBindings"],
+        serde_json::json!(["team-new"])
+    );
+}

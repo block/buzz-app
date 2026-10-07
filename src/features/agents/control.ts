@@ -1,3 +1,4 @@
+import type { TeamSnapshot, BundleMember } from "./team-bundles";
 /** Native-owned configuration and process evidence; never a relay-session capability. */
 // Keep injection reachable from the generated author contract, not host construction.
 import type {} from "@deepseek-ai/cordis";
@@ -221,12 +222,36 @@ export interface AgentControlHost {
     requestId: string,
     destination: string,
     owner: string,
-  ): Promise<{ id: string; pubkey: string }>;
+  ): Promise<{ id: string; pubkey: string; saved?: boolean }>;
   commitCreate?(
     requestId: string,
     edit: AgentEdit,
     auth: string,
+    bundle?: BundleMember,
   ): Promise<ControlSnapshot>;
+  exportTeam?(
+    snapshot: TeamSnapshot,
+    members: string[],
+    community: string,
+    memoryLevel?: "none" | "core" | "everything",
+  ): Promise<TeamSnapshot>;
+  restoreTeamMemory?(
+    id: string,
+    memory: TeamSnapshot["members"][number]["memory"],
+  ): Promise<{ written: number; total: number; errors: string[] }>;
+  applyTeamInstructions?(
+    id: string,
+    revision: number,
+    instructions: string,
+    team: string,
+    community: string,
+  ): Promise<ControlSnapshot>;
+  captureTeam?(
+    team: TeamSnapshot["team"],
+    members: string[],
+    community: string,
+  ): Promise<TeamSnapshot>;
+  previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
     id: string,
@@ -295,7 +320,31 @@ export interface AgentControl {
     destination: string,
     owner: string,
     edit: AgentEdit,
+    bundle?: BundleMember,
   ): Promise<AgentView>;
+  exportTeam?(
+    snapshot: TeamSnapshot,
+    members: string[],
+    community: string,
+    memoryLevel?: "none" | "core" | "everything",
+  ): Promise<TeamSnapshot>;
+  restoreTeamMemory?(
+    id: string,
+    memory: TeamSnapshot["members"][number]["memory"],
+  ): Promise<{ written: number; total: number; errors: string[] }>;
+  applyTeamInstructions?(
+    id: string,
+    revision: number,
+    instructions: string,
+    team: string,
+    community: string,
+  ): Promise<ControlSnapshot>;
+  captureTeam?(
+    team: TeamSnapshot["team"],
+    members: string[],
+    community: string,
+  ): Promise<TeamSnapshot>;
+  previewTeam?(content: string): Promise<TeamSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
@@ -589,6 +638,7 @@ export function createAgentControl(
             destination: string,
             owner: string,
             edit: AgentEdit,
+            bundle?: BundleMember,
           ) => {
             let id = "";
             const data = await run(
@@ -601,6 +651,7 @@ export function createAgentControl(
                   owner,
                 );
                 id = prepared.id;
+                if (prepared.saved) return native.snapshot();
                 const result = await communityRequest<{ auth: string[] }>(
                   destination,
                   "authorize-agent",
@@ -610,6 +661,7 @@ export function createAgentControl(
                   requestId,
                   edit,
                   JSON.stringify(result.auth),
+                  bundle,
                 );
               },
               ready,
@@ -623,6 +675,76 @@ export function createAgentControl(
                 "Creation was not confirmed; refresh agents before trying again.",
               );
             return agent;
+          },
+        }
+      : {}),
+    ...(host?.restoreTeamMemory
+      ? {
+          restoreTeamMemory: (
+            id: string,
+            memory: TeamSnapshot["members"][number]["memory"],
+          ) => {
+            if (!host.restoreTeamMemory)
+              throw new Error("Memory restoration is unavailable.");
+            return host.restoreTeamMemory(id, memory);
+          },
+        }
+      : {}),
+    ...(host?.applyTeamInstructions
+      ? {
+          applyTeamInstructions: (
+            id: string,
+            revision: number,
+            instructions: string,
+            team: string,
+            community: string,
+          ) =>
+            run(async (host) => {
+              if (!host.applyTeamInstructions)
+                throw new Error("Team instruction updates are unavailable.");
+              return host.applyTeamInstructions(
+                id,
+                revision,
+                instructions,
+                team,
+                community,
+              );
+            }, ready),
+        }
+      : {}),
+    ...(host?.captureTeam
+      ? {
+          captureTeam: (
+            team: TeamSnapshot["team"],
+            members: string[],
+            community: string,
+          ) => {
+            if (!host.captureTeam)
+              throw new Error("Team capture is unavailable.");
+            return host.captureTeam(team, members, community);
+          },
+        }
+      : {}),
+    ...(host?.exportTeam
+      ? {
+          exportTeam: (
+            snapshot: TeamSnapshot,
+            members: string[],
+            community: string,
+            memoryLevel: "none" | "core" | "everything" = "none",
+          ) => {
+            if (!host.exportTeam)
+              throw new Error("Team export is unavailable.");
+            return host.exportTeam(snapshot, members, community, memoryLevel);
+          },
+        }
+      : {}),
+    ...(host?.previewTeam
+      ? {
+          previewTeam: (content: string) => {
+            if (!host.previewTeam)
+              throw new Error("Team preview is unavailable.");
+            return host.previewTeam(content);
           },
         }
       : {}),

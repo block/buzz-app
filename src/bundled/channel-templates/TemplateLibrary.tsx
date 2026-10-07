@@ -1,3 +1,10 @@
+import { relayOrigin } from "../../features/communities/destination";
+import type { AgentControl } from "../../features/agents/control";
+import type { TeamSnapshot } from "../../features/agents/team-bundles";
+import { decodeTeamFile } from "../../features/agents/team-encoding";
+import { TeamImportDialog } from "../agents/TeamImportDialog";
+import { TeamDeployDialog } from "../agents/TeamDeployDialog";
+import { TeamExportDialog } from "../agents/TeamExportDialog";
 import { npubEncode } from "nostr-tools/nip19";
 import { useEffect, useRef, useState } from "react";
 import type { ChannelKit } from "../../features/channel-templates/capability";
@@ -42,13 +49,22 @@ export function TemplateLibrary({
   catalog,
   active,
   section = "template",
+  control,
 }: {
   section?: "template" | "team";
+  control?: AgentControl | undefined;
   session?: RelaySession;
   kit: ChannelKit;
   catalog: ReturnType<typeof useTemplateCatalog>;
   active(): boolean;
 }) {
+  const destination = session?.viewer
+    ? relayOrigin(session.scope.slice(0, -(session.viewer.length + 1)))
+    : "";
+  const input = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<TeamSnapshot>();
+  const [deploying, setDeploying] = useState<Team>();
+  const [exporting, setExporting] = useState<Team>();
   const [editing, setEditing] = useState<Selection>();
   const [deleting, setDeleting] = useState<Selection>();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -69,6 +85,21 @@ export function TemplateLibrary({
   const entries = state.entries.filter((entry) => !entry.record.deleted);
   const disabled =
     !kit.available || state.status !== "ready" || !catalog.agentsReady;
+  async function previewFile(file: File) {
+    if (!active() || !control?.previewTeam) return;
+    setError("");
+    try {
+      if (file.size > 16 * 1024 * 1024)
+        throw new Error("Team snapshot exceeds the size limit");
+      const value = await control.previewTeam(
+        decodeTeamFile(new Uint8Array(await file.arrayBuffer())),
+      );
+      if (mounted.current && active()) setPreview(value);
+    } catch (error) {
+      if (mounted.current && active())
+        setError(error instanceof Error ? error.message : String(error));
+    }
+  }
   const open = (
     selection: Selection,
     element: HTMLElement | null,
@@ -157,6 +188,19 @@ export function TemplateLibrary({
                 }
                 actions={
                   <>
+                    {type === "team" &&
+                      control?.previewTeam &&
+                      control.create &&
+                      session?.viewer && (
+                        <Button
+                          variant="subtle"
+                          size="sm"
+                          disabled={disabled}
+                          onClick={() => input.current?.click()}
+                        >
+                          Import team snapshot
+                        </Button>
+                      )}
                     {type === "team" && (
                       <Button
                         variant="ghost"
@@ -213,6 +257,18 @@ export function TemplateLibrary({
                     return (
                       <LibraryItem
                         key={value.id}
+                        onDeploy={
+                          session && value.type === "team"
+                            ? () => setDeploying(value)
+                            : undefined
+                        }
+                        onExport={
+                          control?.exportTeam &&
+                          value.type === "team" &&
+                          value.portable
+                            ? () => setExporting(value)
+                            : undefined
+                        }
                         value={value}
                         entries={entries}
                         agents={catalog.agents}
@@ -259,6 +315,45 @@ export function TemplateLibrary({
             </section>
           );
         })}
+        <input
+          ref={input}
+          hidden
+          type="file"
+          accept=".json,.png"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void previewFile(file);
+          }}
+        />
+        {preview && control && session?.viewer && (
+          <TeamImportDialog
+            snapshot={preview}
+            control={control}
+            kit={kit}
+            destination={destination}
+            owner={session.viewer}
+            close={() => setPreview(undefined)}
+          />
+        )}
+        {deploying && session && (
+          <TeamDeployDialog
+            team={deploying}
+            kit={kit}
+            control={control}
+            session={session}
+            close={() => setDeploying(undefined)}
+          />
+        )}
+        {exporting && control && session && (
+          <TeamExportDialog
+            team={exporting}
+            control={control}
+            kit={kit}
+            community={destination}
+            close={() => setExporting(undefined)}
+          />
+        )}
         {editing && (
           <ChannelTemplatesDialog
             session={session}
@@ -268,6 +363,7 @@ export function TemplateLibrary({
             }}
             kit={kit}
             agents={catalog.agents}
+            control={control}
             initial={editing.value}
             expected={editing.eventId}
             active={active}
@@ -332,11 +428,15 @@ function LibraryItem({
   disabled,
   onEdit,
   onDuplicate,
+  onDeploy,
+  onExport,
   onDelete,
 }: {
   value: Team | Template;
   entries: readonly KitEntry[];
   agents: readonly AgentChoice[];
+  onDeploy?: (() => void) | undefined;
+  onExport?: (() => void) | undefined;
   disabled: boolean;
   onEdit(trigger: HTMLElement | null): void;
   onDuplicate(template: Template, trigger: HTMLElement | null): void;
@@ -381,6 +481,8 @@ function LibraryItem({
         }
       />
       <MenuPopup align="end" size="compact">
+        {onDeploy && <MenuItem onClick={onDeploy}>Deploy to channel</MenuItem>}
+        {onExport && <MenuItem onClick={onExport}>Share</MenuItem>}
         <MenuItem
           onClick={() => {
             onEdit(menuTrigger.current);

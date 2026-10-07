@@ -1,3 +1,8 @@
+import { sameCommunityAgents } from "../../features/agents/choices";
+import type { AgentControl } from "../../features/agents/control";
+import type { TeamSnapshot } from "../../features/agents/team-bundles";
+import { relayOrigin } from "../../features/communities/destination";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import type { RelaySession } from "../../features/relay/session";
 import {
   useEffect,
@@ -21,6 +26,7 @@ import styles from "../channels/ChannelTemplates.module.css";
 
 export function ChannelTemplatesDialog({
   session,
+  control,
   open,
   onOpenChange,
   kit,
@@ -32,6 +38,7 @@ export function ChannelTemplatesDialog({
   finalFocus,
 }: {
   session?: RelaySession | undefined;
+  control?: AgentControl | undefined;
   finalFocus?: DialogProps["finalFocus"];
   active(): boolean;
   open: boolean;
@@ -54,6 +61,12 @@ export function ChannelTemplatesDialog({
   const [draft, setDraft] = useState<Team | Template>(() =>
     structuredClone(initial),
   );
+  const [portable, setPortable] = useState<TeamSnapshot>();
+  const [loading, setLoading] = useState(
+    initial.type === "team" && !!initial.portable,
+  );
+  const revision = useRef(crypto.randomUUID());
+  const prepared = useRef<TeamSnapshot | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -61,12 +74,101 @@ export function ChannelTemplatesDialog({
       kit.ensure();
     }
   }, [open, kit]);
+  useEffect(() => {
+    if (initial.type !== "team" || !initial.portable) return;
+    let cancelled = false;
+    void kit
+      .loadTeam(initial)
+      .then(async (value) => {
+        if (!control?.previewTeam)
+          throw new Error("Team preview is unavailable");
+        const snapshot = await control.previewTeam(JSON.stringify(value));
+        if (snapshot.members.length !== initial.agents.length)
+          throw new Error(
+            "Portable team members do not match their definitions",
+          );
+        if (!cancelled) {
+          setPortable(snapshot);
+          setLoading(false);
+        }
+      })
+      .catch((reason) => {
+        if (!cancelled)
+          setError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initial, kit, control]);
+  const localMembers = sameCommunityAgents(
+    control?.captureTeam ? (control.snapshot().data?.agents ?? []) : [],
+    session?.scope ?? "",
+  );
+  const canCapture =
+    draft.type === "team" &&
+    !expected &&
+    !!control?.captureTeam &&
+    draft.agents.length > 0 &&
+    draft.agents.every((key) =>
+      localMembers.some((agent) => agent.pubkey === key),
+    );
+  const hasPortableFields =
+    !!portable?.team.description?.trim() ||
+    !!portable?.team.instructions?.trim();
   const save = async () => {
-    if (!live.current || !active()) return;
+    if (!live.current || !active() || loading) return;
     setBusy(true);
     setError("");
     try {
-      await kit.save(draft, expected);
+      if (
+        draft.type === "team" &&
+        ((initial.type === "team" && initial.portable) || canCapture)
+      ) {
+        if (!session?.viewer)
+          throw new Error("Choose a community before saving a team");
+        const community = relayOrigin(
+          session.scope.slice(0, -(session.viewer.length + 1)),
+        );
+        const previous =
+          initial.type === "team" && initial.portable ? initial.agents : [];
+        const added = draft.agents.filter(
+          (pubkey) => !portable || !previous.includes(pubkey),
+        );
+        const captured =
+          !prepared.current && added.length
+            ? await control?.captureTeam?.(
+                { name: draft.name },
+                added,
+                community,
+              )
+            : undefined;
+        const members =
+          prepared.current?.members ??
+          draft.agents.map((pubkey) => {
+            const index = previous.indexOf(pubkey);
+            const member =
+              portable && index >= 0
+                ? portable.members[index]
+                : captured?.members[added.indexOf(pubkey)];
+            if (!member)
+              throw new Error("A selected agent has no portable definition");
+            return member;
+          });
+        const snapshot: TeamSnapshot = {
+          format: "buzz-team-snapshot",
+          version: 1,
+          team: { ...portable?.team, name: draft.name },
+          members,
+        };
+        prepared.current = snapshot;
+        await kit.savePortable(draft, snapshot, expected, revision.current);
+      } else {
+        if (hasPortableFields)
+          throw new Error(
+            "Description and team instructions require nonempty local team members",
+          );
+        await kit.save(draft, expected);
+      }
       if (live.current && active()) onOpenChange(false);
     } catch (reason) {
       if (live.current && active())
@@ -98,7 +200,7 @@ export function ChannelTemplatesDialog({
           <Button
             variant="prominent"
             loading={busy}
-            disabled={!draft.name.trim() || state.status !== "ready"}
+            disabled={!draft.name.trim() || state.status !== "ready" || loading}
             onClick={() => void save()}
           >
             Save {draft.type}
@@ -106,7 +208,7 @@ export function ChannelTemplatesDialog({
         </>
       }
     >
-      <div className={styles.stack} inert={busy}>
+      <div className={styles.stack} inert={busy || loading}>
         {notice && <p role="status">{notice}</p>}
         {error && (
           <p role="alert" className={styles.error}>
@@ -124,18 +226,82 @@ export function ChannelTemplatesDialog({
         <Field label="Name">
           <Input
             ref={nameInput}
+            placeholder={
+              draft.type === "team" ? "Engineering Squad" : undefined
+            }
             maxLength={120}
             value={draft.name}
-            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            onChange={(e) => {
+              revision.current = crypto.randomUUID();
+              prepared.current = undefined;
+              setDraft({ ...draft, name: e.target.value });
+            }}
           />
         </Field>
         {draft.type === "team" ? (
-          <AgentSelection
-            session={session}
-            agents={agents}
-            selected={draft.agents}
-            onChange={(agents) => setDraft({ ...draft, agents })}
-          />
+          <>
+            {((initial.type === "team" && initial.portable) ||
+              canCapture ||
+              hasPortableFields) && (
+              <>
+                <Field label="Description">
+                  <Textarea
+                    placeholder="Optional description for this team."
+                    value={portable?.team.description ?? ""}
+                    onChange={(event) => {
+                      revision.current = crypto.randomUUID();
+                      prepared.current = undefined;
+                      setPortable((value) => ({
+                        ...(value ?? {
+                          format: "buzz-team-snapshot",
+                          version: 1,
+                          members: [],
+                        }),
+                        team: {
+                          ...value?.team,
+                          name: draft.name,
+                          description: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </Field>
+                <Field label="Team Instructions">
+                  <Textarea
+                    placeholder="Optional instructions applied to every deployed team member."
+                    value={portable?.team.instructions ?? ""}
+                    onChange={(event) => {
+                      revision.current = crypto.randomUUID();
+                      prepared.current = undefined;
+                      setPortable((value) => ({
+                        ...(value ?? {
+                          format: "buzz-team-snapshot",
+                          version: 1,
+                          members: [],
+                        }),
+                        team: {
+                          ...value?.team,
+                          name: draft.name,
+                          instructions: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </Field>
+              </>
+            )}
+            {loading && <p role="status">Loading team definitions…</p>}
+            <AgentSelection
+              session={session}
+              agents={agents}
+              selected={draft.agents}
+              onChange={(agents) => {
+                revision.current = crypto.randomUUID();
+                prepared.current = undefined;
+                setDraft({ ...draft, agents });
+              }}
+            />
+          </>
         ) : (
           <>
             <Field

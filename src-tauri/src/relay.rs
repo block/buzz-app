@@ -22,7 +22,8 @@ pub(crate) use channel_writes::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
     relay_kit_prepare,
 };
-pub(crate) use kit::relay_kit_sign;
+pub(crate) use kit::current_team_members;
+pub(crate) use kit::{relay_kit_reconcile_teams, relay_kit_sign};
 mod media_blocks;
 mod media_preparation;
 mod media_spool;

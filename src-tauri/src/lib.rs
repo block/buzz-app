@@ -46,10 +46,10 @@ use relay::{
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
-    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
-    relay_upload_chunk, relay_workflow_runs,
+    relay_kit_decode, relay_kit_prepare, relay_kit_reconcile_teams, relay_kit_sign,
+    relay_project_git, relay_project_git_cancel, relay_publish_read_state, relay_sign,
+    relay_sign_read_state, relay_sign_reminder, relay_sign_sidebar, relay_upload,
+    relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
 #[cfg(test)]
@@ -68,7 +68,9 @@ use agents::{
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
     agent_control_snapshot, agent_control_snapshot_memory_write, agent_control_start_on_app_launch,
-    agent_control_use_here, AgentHost,
+    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
+    agent_control_team_memory_restore, agent_control_team_preview, agent_control_use_here,
+    AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -434,6 +436,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_kit_sign,
         relay_kit_prepare,
         relay_kit_decode,
+        relay_kit_reconcile_teams,
         relay_direct_message,
         relay_decode_sidebar,
         relay_sign_sidebar,
@@ -472,6 +475,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_create_commit,
         agent_control_creation_profile,
         agent_control_snapshot_memory_write,
+        agent_control_team_preview,
+        agent_control_team_instructions,
+        agent_control_team_capture,
+        agent_control_team_memory_restore,
+        agent_control_team_export,
         agent_control_snapshot,
         agent_control_log_challenge,
         agent_control_read_log,

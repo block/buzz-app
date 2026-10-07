@@ -1,3 +1,4 @@
+import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import {
@@ -269,7 +270,10 @@ it("retries a personal catalog read cancelled by initial roster authority", asyn
     const catalog = owner.session.channelKit.refresh();
     await flush();
     const interrupted = wire.next();
-    expect(interrupted.filters[0]?.["#t"]).toEqual([KIT_TAG]);
+    expect(interrupted.filters[0]?.["#t"]).toEqual([
+      KIT_TAG,
+      TEAM_MANIFEST_TAG,
+    ]);
     owner.session.channels.ensureList();
     await flush();
     wire.next().respond([roster(relay, channel, [viewer.pubkey])]);

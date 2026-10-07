@@ -60,6 +60,9 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
     let viewer = viewer();
     let event = envelope(&viewer, 24200, 0);
     let now = event.created_at as i64;
+    // One timestamp for every fixture. prune(now + 86401) expires only rows
+    // stamped at most 1 s after `now`; wall-clock stamps from a slow run survive.
+    let at = |kind, serial| envelope_at(&viewer, kind, serial, event.created_at);
     for community in ["https://a.test", "https://b.test"] {
         store.seed(&viewer, community).unwrap();
     }
@@ -87,19 +90,13 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
         .unwrap()
         .0
         .is_empty());
-    let metrics = envelope(&viewer, 44200, 1);
+    let metrics = at(44200, 1);
     store
         .ingest(&viewer, "https://a.test", &metrics, 0, now)
         .unwrap();
     for i in 1..205 {
         store
-            .ingest(
-                &viewer,
-                "https://a.test",
-                &envelope(&viewer, 24200, i),
-                0,
-                now,
-            )
+            .ingest(&viewer, "https://a.test", &at(24200, i), 0, now)
             .unwrap();
     }
     let page = store
@@ -142,7 +139,7 @@ fn storage_partition_dedup_policy_paging_and_shrinking() {
     assert!(store
         .ingest(&viewer, "https://a.test", &event, 0, now)
         .is_err());
-    let disabled = envelope(&viewer, 24200, 999);
+    let disabled = at(24200, 999);
     store
         .ingest(&viewer, "https://a.test", &disabled, 1, now)
         .unwrap();

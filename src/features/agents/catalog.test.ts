@@ -393,3 +393,50 @@ it("reconciles a restored accepted share once the relay read returns it", async 
   });
   expect(second.catalog.state(30175, "helper").change?.stalled).toBeUndefined();
 });
+
+it("re-reads a listed team and refuses a changed, unshared or missing head", async () => {
+  const server = relay();
+  const team = (created_at: number, shared = true, name = "Crew") =>
+    signed(alice, {
+      kind: 30178,
+      tags: [
+        ["d", "crew"],
+        ...(shared ? [["shared", "true"]] : []),
+      ] as string[][],
+      content: teamBody(name),
+      created_at,
+    });
+  server.put(team(10));
+  const reader = client(server, bob);
+  await reader.catalog.refresh();
+  const [listed] = reader.catalog.snapshot().teams;
+  if (!listed) throw new Error("team not listed");
+  await expect(reader.catalog.currentTeam(listed)).resolves.toMatchObject({
+    eventId: listed.eventId,
+    name: "Crew",
+  });
+
+  server.put(team(11, true, "Crew v2"));
+  await expect(reader.catalog.currentTeam(listed)).rejects.toThrow(
+    "This team has changed since it was listed. Refresh and try again.",
+  );
+
+  // The owner can read its own unshared head; other readers find nothing.
+  const owner = client(server, alice);
+  await owner.catalog.refresh();
+  const [own] = owner.catalog.snapshot().teams;
+  if (!own) throw new Error("own team not listed");
+  const unshared = team(12, false);
+  server.put(unshared);
+  await expect(
+    owner.catalog.currentTeam({ ...own, eventId: unshared.id }),
+  ).rejects.toThrow("This team is no longer shared to the community.");
+  await expect(reader.catalog.currentTeam(listed)).rejects.toThrow(
+    "This team is no longer available in the catalog.",
+  );
+
+  const missing = client(relay(), bob);
+  await expect(missing.catalog.currentTeam(listed)).rejects.toThrow(
+    "This team is no longer available in the catalog.",
+  );
+});

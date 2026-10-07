@@ -25,7 +25,11 @@ import {
   createAgentControl,
 } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
+import { importTeamSnapshot } from "../../features/agents/team-import";
 import { AgentControlPanel } from "./AgentControlPanel";
+vi.mock("../../features/agents/team-import", () => ({
+  importTeamSnapshot: vi.fn(),
+}));
 import {
   CatalogLauncher,
   CatalogShareSwitch,
@@ -56,14 +60,23 @@ function client(
     local: writes.local,
   });
   owners.push(catalog, { dispose: () => writes.dispose() });
+  const teams: string[] = [];
   const session = {
     communityCatalog: catalog.queries,
+    channelKit: {
+      available: true,
+      snapshot: () => ({
+        entries: teams.map((id) => ({
+          record: { value: { type: "team", id } },
+        })),
+      }),
+    },
     scope,
     viewer: as.pubkey,
     names: undefined,
     media: undefined,
   } as unknown as RelaySession;
-  return { catalog: catalog.queries, session };
+  return { catalog: catalog.queries, session, teams };
 }
 
 const agentBody = JSON.stringify({
@@ -434,3 +447,107 @@ it.each([
     });
   },
 );
+
+it("adds a catalog team through the shared importer only while its listed head is current", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const server = catalogRelay();
+  const crew = (created_at: number, name = "Crew", shared = true) =>
+    signed(alice, {
+      kind: 30178,
+      tags: [
+        ["d", "crew"],
+        ...(shared ? [["shared", "true"]] : []),
+      ] as string[][],
+      content: JSON.stringify({
+        v: 1,
+        name,
+        members: [
+          {
+            member_key: "k1",
+            display_name: "Mate",
+            system_prompt: "Help.",
+            runtime: "goose",
+            session_policy: "thread",
+          },
+        ],
+      }),
+      created_at,
+    });
+  server.put(crew(1));
+  const viewer = client(server, bob);
+  const imported = vi.mocked(importTeamSnapshot);
+  imported.mockImplementation(async () => {
+    viewer.teams.push("team-copy");
+    return { id: "team-copy", agents: [], memories: [] };
+  });
+  const control = { previewTeam: vi.fn() } as unknown as Parameters<
+    typeof CatalogLauncher
+  >[0]["control"];
+  const view = () =>
+    render(
+      <CatalogLauncher
+        session={viewer.session}
+        addAgent={undefined}
+        hasAgent={() => false}
+        control={control}
+        destination="https://catalog.test"
+      />,
+    );
+  const openTeam = async () => {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose from catalog" }),
+    );
+    // The only entry is selected by default.
+    return screen.findByRole("button", {
+      name: /Crew (is already in your teams|from Community Catalog)/,
+    });
+  };
+  view();
+  fireEvent.click(await openTeam());
+  await screen.findByRole("button", { name: "Crew is already in your teams" });
+  expect(imported).toHaveBeenCalledOnce();
+  const call = imported.mock.calls[0];
+  if (!call) throw new Error("team was not imported");
+  const [usedControl, kit, snapshot, options] = call;
+  expect(usedControl).toBe(control);
+  expect(kit).toBe(viewer.session.channelKit);
+  expect(options).toEqual({
+    destination: "https://catalog.test",
+    owner: bob.pubkey,
+    keepAllowlist: false,
+    restoreMemory: false,
+  });
+  expect(snapshot).toMatchObject({
+    team: { name: "Crew" },
+    members: [
+      {
+        definition: {
+          name: "Mate",
+          runtime: "goose",
+          sessionPolicy: "thread",
+        },
+        memory: { level: "none", entries: [] },
+      },
+    ],
+  });
+  cleanup();
+
+  // Deleting the local copy makes it addable again; a head that moved after
+  // listing is refused without importing.
+  viewer.teams.length = 0;
+  view();
+  const add = await openTeam();
+  expect(add).toHaveAccessibleName("Add Crew from Community Catalog");
+  server.put(crew(2, "Crew v2"));
+  fireEvent.click(add);
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "This team has changed since it was listed. Refresh and try again.",
+  );
+  expect(imported).toHaveBeenCalledOnce();
+  cleanup();
+
+  // Once unshared, other users neither find it nor can add the old listing.
+  server.put(crew(3, "Crew v2", false));
+  await viewer.catalog.refresh();
+  expect(viewer.catalog.snapshot().teams).toEqual([]);
+});

@@ -12,10 +12,12 @@ import {
   type AgentPublication,
   catalogSlug,
   type CatalogAgent,
+  catalogTeamSnapshot,
   TEAM_CATALOG_KIND,
   teamCatalogContent,
   type TeamPublication,
 } from "../../features/agents/catalog-protocol";
+import { importTeamSnapshot } from "../../features/agents/team-import";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySession } from "../../features/relay/session";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -290,12 +292,34 @@ export function catalogSeed(agent: CatalogAgent): CatalogSeed {
   };
 }
 
+/** Adds a fresh copy of a listed team through the shared team importer,
+ * after confirming the previewed head is still the shared head. Catalog
+ * teams carry no memories or allowlists, and nothing is started. */
+export async function adoptCatalogTeam(
+  session: RelaySession,
+  control: AgentControl,
+  destination: string,
+  owner: string,
+  listed: TeamPublication,
+): Promise<string> {
+  const team = await session.communityCatalog.currentTeam(listed);
+  const result = await importTeamSnapshot(
+    control,
+    session.channelKit,
+    catalogTeamSnapshot(team),
+    { destination, owner, keepAllowlist: false, restoreMemory: false },
+  );
+  return result.id;
+}
+
 /** The header action that opens the catalog. An added agent goes through the
  * ordinary create flow, so its copy has a fresh identity and local keys. */
 export function CatalogLauncher({
   session,
   addAgent,
   hasAgent,
+  control,
+  destination,
 }: {
   session: RelaySession;
   addAgent:
@@ -303,9 +327,21 @@ export function CatalogLauncher({
     | undefined;
   /** Whether a local agent still exists; a deleted copy can be added again. */
   hasAgent(id: string): boolean;
+  /** Team adoption goes through the shared team importer. */
+  control?: AgentControl | undefined;
+  destination?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   if (!session.communityCatalog.available()) return null;
+  const kit = session.channelKit;
+  const owner = session.viewer;
+  const hasTeam = (id: string) =>
+    kit
+      .snapshot()
+      .entries.some(
+        (entry) =>
+          entry.record.value.type === "team" && entry.record.value.id === id,
+      );
   return (
     <>
       <Button
@@ -321,7 +357,13 @@ export function CatalogLauncher({
           session={session}
           onClose={() => setOpen(false)}
           hasCopy={(publication, id) =>
-            publication.kind === AGENT_CATALOG_KIND && hasAgent(id)
+            publication.kind === AGENT_CATALOG_KIND ? hasAgent(id) : hasTeam(id)
+          }
+          onAddTeam={
+            control?.previewTeam && kit.available && destination && owner
+              ? (listed) =>
+                  adoptCatalogTeam(session, control, destination, owner, listed)
+              : undefined
           }
           onAddAgent={
             addAgent &&

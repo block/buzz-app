@@ -336,6 +336,8 @@ export function AgentsPage({
                               session={connection.session}
                               addAgent={addAgent}
                               hasAgent={hasAgent}
+                              control={control}
+                              destination={importDestination}
                             />
                           )
                         : undefined

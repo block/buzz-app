@@ -222,9 +222,56 @@ export function createCommunityCatalog({
     });
   }
 
+  /** Re-reads a listed team's coordinate so adoption uses exactly the head
+   * that was previewed, and only while it is still shared. */
+  async function currentTeam(
+    listed: TeamPublication,
+  ): Promise<TeamPublication> {
+    if (closed || !reader)
+      throw new Error("This team is no longer available in the catalog.");
+    let events: readonly RelayEvent[];
+    try {
+      events = await reader.read(
+        [
+          {
+            kinds: [TEAM_CATALOG_KIND],
+            authors: [listed.owner],
+            "#d": [listed.d],
+            limit: 20,
+            consistency: "strong",
+          },
+        ],
+        { priority: "foreground" },
+      );
+    } catch {
+      throw new Error(
+        "Could not read the community catalog. Check the community connection, then retry.",
+      );
+    }
+    const head = catalogHeads(
+      events.filter(
+        (event) =>
+          event.pubkey === listed.owner && catalogD(event) === listed.d,
+      ),
+    ).get(`${TEAM_CATALOG_KIND}:${listed.owner}:${listed.d}`);
+    if (!head)
+      throw new Error("This team is no longer available in the catalog.");
+    if (head.id !== listed.eventId)
+      throw new Error(
+        "This team has changed since it was listed. Refresh and try again.",
+      );
+    if (!isShared(head))
+      throw new Error("This team is no longer shared to the community.");
+    const publication = parsePublication(head);
+    if (publication?.kind !== TEAM_CATALOG_KIND)
+      throw new Error("This team is no longer available in the catalog.");
+    return publication;
+  }
+
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      currentTeam,
       available: () => !!reader,
       writable: () => !!outbox?.supports(AGENT_CATALOG_KIND),
       refresh,

@@ -346,3 +346,38 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
     }
   },
 );
+
+it("deduplicates current custody records, preferring the configured setup and retaining equal-status order", () => {
+  const retained = {
+    pubkey: key,
+    name: "Retained",
+    configured: false,
+    picture: "https://images.example/retained.png",
+  };
+  const configured = {
+    pubkey: key,
+    name: "Renamed",
+    picture: "https://images.example/renamed.png",
+  };
+  const equal = { ...configured, name: "Other community" };
+  for (const agents of [
+    [retained, configured, equal],
+    [configured, retained, equal],
+  ]) {
+    expect(projectAgentLibrary({ version: 1, agents })).toEqual({
+      definitions: [],
+      identities: [
+        { pubkey: key, name: "Renamed", avatar: configured.picture },
+      ],
+    });
+  }
+  expect(() => projectAgentLibrary([configured, configured])).toThrow(
+    "Could not read",
+  );
+  expect(() =>
+    projectAgentLibrary({
+      version: 1,
+      agents: [configured, { ...retained, name: null }],
+    }),
+  ).toThrow("Could not read");
+});

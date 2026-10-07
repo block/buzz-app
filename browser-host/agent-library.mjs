@@ -27,7 +27,10 @@ export function projectAgentLibrary(raw) {
     )
       throw failure();
     // Parked identities are import candidates, not saved Buzz 1.0 agents.
-    raw = raw.agents.map((row) => {
+    // Retained unconfigured custody can share a key with its configured setup.
+    // Prefer that setup; equal-status records keep document order.
+    const selected = new Map();
+    for (const row of raw.agents) {
       if (
         !row ||
         typeof row !== "object" ||
@@ -35,8 +38,19 @@ export function projectAgentLibrary(raw) {
         !HEX.test(text(row.pubkey, 64))
       )
         throw failure();
-      return { pubkey: row.pubkey, name: row.name, avatar_url: row.picture };
-    });
+      const projected = {
+        pubkey: row.pubkey,
+        name: text(row.name),
+        avatar_url: row.picture,
+      };
+      const previous = selected.get(row.pubkey);
+      if (
+        !previous ||
+        (previous.configured === false && row.configured !== false)
+      )
+        selected.set(row.pubkey, { ...projected, configured: row.configured });
+    }
+    raw = [...selected.values()];
   }
   if (!Array.isArray(raw) || raw.length > MAX_ROWS) throw failure();
   const definitions = [],

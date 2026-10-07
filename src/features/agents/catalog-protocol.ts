@@ -2,13 +2,24 @@ import { avatarSource } from "../../shared/avatar-source.ts";
 import type { RelayEvent } from "../relay/events.ts";
 import type { AgentView } from "./control.ts";
 import { harnessKind } from "./harness-presets.ts";
+import {
+  AGENT_CATALOG_KIND,
+  type Body,
+  bytes,
+  MAX_CONTENT_BYTES,
+  object,
+  TEAM_CATALOG_KIND,
+} from "./catalog-envelope.ts";
 
-/** NIP-AP agent definition and team-catalog projection kinds. */
-export const AGENT_CATALOG_KIND = 30175;
-export const TEAM_CATALOG_KIND = 30178;
+export {
+  AGENT_CATALOG_KIND,
+  TEAM_CATALOG_KIND,
+  validCatalogEnvelope,
+} from "./catalog-envelope.ts";
+
+/** Team-catalog projection version and NIP-AP size limits. */
 export const TEAM_CATALOG_VERSION = 1;
 const SHARED_TAG = ["shared", "true"] as const;
-const MAX_CONTENT_BYTES = 65_535;
 const MAX_DISPLAY_NAME_CHARS = 128;
 const MAX_SYSTEM_PROMPT_BYTES = 64 * 1024;
 const MAX_DESCRIPTION_CHARS = 280;
@@ -60,7 +71,6 @@ export interface TeamPublication {
 }
 export type CatalogPublication = AgentPublication | TeamPublication;
 
-const bytes = (value: string) => new TextEncoder().encode(value).length;
 const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/u;
 const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
 const EMOJI = /\p{Emoji}/u;
@@ -274,7 +284,6 @@ export function catalogHeads(events: readonly RelayEvent[]) {
   return heads;
 }
 
-type Body = Record<string, unknown>;
 const optionalText = (value: unknown) =>
   typeof value === "string" && value.trim() ? value : undefined;
 
@@ -333,17 +342,6 @@ function parseAgent(
     ...(respondTo ? { respondTo } : {}),
     sessionPolicy: body.session_policy === "thread" ? "thread" : "channel",
   };
-}
-
-function object(content: string): Body | undefined {
-  try {
-    const value: unknown = JSON.parse(content);
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Body)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** Untrusted boundary: any invalid field rejects the whole publication. */
@@ -421,48 +419,4 @@ export function parsePublication(
     ...(shownInstructions ? { instructions: shownInstructions } : {}),
     members: parsed,
   };
-}
-
-/** Signer admission, mirrored by the native validator: exactly one `d`, at most
- * one exact `["shared","true"]` and one `client-id`, and no `env_vars` body. */
-export function validCatalogEnvelope(event: {
-  kind?: unknown;
-  content?: unknown;
-  tags?: unknown;
-  created_at?: unknown;
-}): boolean {
-  const { kind, content, tags, created_at } = event;
-  if (
-    (kind !== AGENT_CATALOG_KIND && kind !== TEAM_CATALOG_KIND) ||
-    typeof content !== "string" ||
-    bytes(content) > MAX_CONTENT_BYTES ||
-    !Number.isSafeInteger(created_at) ||
-    !Array.isArray(tags)
-  )
-    return false;
-  const count = (name: string) =>
-    tags.filter((tag) => Array.isArray(tag) && tag[0] === name).length;
-  if (count("d") !== 1 || count("shared") > 1 || count("client-id") > 1)
-    return false;
-  const tagsOk = tags.every(
-    (tag) =>
-      Array.isArray(tag) &&
-      tag.length === 2 &&
-      typeof tag[1] === "string" &&
-      (tag[0] === "d"
-        ? kind === AGENT_CATALOG_KIND
-          ? /^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag[1])
-          : !!tag[1] && [...tag[1]].length <= 64 && !/[\s\p{Cc}]/u.test(tag[1])
-        : tag[0] === "shared"
-          ? tag[1] === "true"
-          : tag[0] === "client-id" && tag[1].length <= 128),
-  );
-  const body = tagsOk ? object(content) : undefined;
-  if (!body || "env_vars" in body) return false;
-  const name = kind === AGENT_CATALOG_KIND ? body.display_name : body.name;
-  return (
-    typeof name === "string" &&
-    !!name.trim() &&
-    (kind === AGENT_CATALOG_KIND || Array.isArray(body.members))
-  );
 }

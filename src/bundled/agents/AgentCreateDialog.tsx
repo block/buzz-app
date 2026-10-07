@@ -55,6 +55,7 @@ export function AgentCreateDialog({
   source,
   initialSettings,
   onClose,
+  onCreated,
   onOpenHarnesses,
 }: {
   control: AgentControl;
@@ -65,6 +66,8 @@ export function AgentCreateDialog({
   source?: AgentView;
   initialSettings?: CloneSettings | undefined;
   onClose(): void;
+  /** The new identity exists, even if starting or profile setup fails later. */
+  onCreated?: ((agent: AgentView) => void) | undefined;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
   const [draft, setDraft] = useState<AgentDraft>(() => {
@@ -130,6 +133,7 @@ export function AgentCreateDialog({
         setPhase("creating");
         if (!control.create) return;
         agent = await control.create(requestId, destination, owner, edit);
+        onCreated?.(agent);
       }
       const created = agent;
       if (!saved && mounted.current) {

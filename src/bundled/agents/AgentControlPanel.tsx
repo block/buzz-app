@@ -42,9 +42,18 @@ export function AgentControlPanel({
   onOpenHarnesses,
   headerActions,
   session,
+  catalog,
 }: {
   session?: RelaySession | undefined;
   headerActions?: HTMLElement | null;
+  /** A header launcher that may seed the create flow; it owns any relay use. */
+  catalog?:
+    | ((
+        add:
+          | ((settings: CloneSettings, onCreated: () => void) => void)
+          | undefined,
+      ) => ReactNode)
+    | undefined;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -74,6 +83,7 @@ export function AgentControlPanel({
     owner: string;
     source?: AgentView;
     initialSettings?: CloneSettings;
+    onCreated?: () => void;
   } | null>(null);
   const [localPending, setLocalPending] = useState(false);
   const [handover, setHandover] = useState<{
@@ -268,6 +278,25 @@ export function AgentControlPanel({
       </Button>
     </div>
   );
+  const headerButtons = (
+    <>
+      {catalog?.(
+        createOwner &&
+          importDestination &&
+          state.data?.createAvailable &&
+          !localPending
+          ? (initialSettings, onCreated) =>
+              setAdding({
+                destination: importDestination,
+                owner: createOwner,
+                initialSettings,
+                onCreated,
+              })
+          : undefined,
+      )}
+      {createButton}
+    </>
+  );
   return (
     <section
       data-buzz-ui=""
@@ -276,9 +305,9 @@ export function AgentControlPanel({
     >
       {state.data &&
         (headerActions ? (
-          createPortal(createButton, headerActions)
+          createPortal(headerButtons, headerActions)
         ) : (
-          <div className="flex justify-end">{createButton}</div>
+          <div className="flex justify-end gap-2">{headerButtons}</div>
         ))}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
@@ -491,6 +520,7 @@ export function AgentControlPanel({
             ? { initialSettings: adding.initialSettings }
             : {})}
           onClose={() => setAdding(null)}
+          onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
         />
       )}

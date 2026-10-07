@@ -1,4 +1,4 @@
-import { validCatalogEnvelope } from "../src/features/agents/catalog-protocol.ts";
+import { validCatalogEnvelope } from "../src/features/agents/catalog-envelope.ts";
 import { getLogger } from "../src/features/developer/logging.ts";
 import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 

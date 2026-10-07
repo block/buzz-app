@@ -39,6 +39,7 @@ import {
   ManagedAgentActions,
   useManagedAgentActions,
 } from "./ManagedAgentActions";
+import { AgentShareSwitch, CatalogLauncher } from "./CommunityCatalog";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
@@ -327,6 +328,17 @@ export function AgentsPage({
                         ? connection.viewer
                         : undefined
                     }
+                    catalog={
+                      connection.status === "ready"
+                        ? (addAgent) => (
+                            <CatalogLauncher
+                              key={`${connection.scope}:${connection.generation}`}
+                              session={connection.session}
+                              addAgent={addAgent}
+                            />
+                          )
+                        : undefined
+                    }
                   >
                     {(
                       state,
@@ -488,6 +500,13 @@ function ManagedAgents({
                   : undefined
               }
             >
+              {connection.status === "ready" && (
+                <AgentShareSwitch
+                  session={connection.session}
+                  agent={agent}
+                  name={label(agent)}
+                />
+              )}
               <ManagedAgentActions
                 action={actions(agent)}
                 agent={agent}

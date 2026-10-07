@@ -473,6 +473,7 @@ export function AgentControlPanel({
           <AgentSnapshotExport
             key={agent.id}
             agent={agent}
+            defaultSessionPolicy={state.data?.defaultSettings?.sessionPolicy}
             session={session}
             destination={importDestination}
             onClose={() => setExporting(null)}

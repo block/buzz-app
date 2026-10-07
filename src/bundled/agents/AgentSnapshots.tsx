@@ -26,11 +26,13 @@ function download(bytes: Uint8Array, name: string, mime: string) {
 
 export function AgentSnapshotExport({
   agent,
+  defaultSessionPolicy,
   session,
   destination,
   onClose,
 }: {
   agent: AgentView;
+  defaultSessionPolicy?: "channel" | "thread" | undefined;
   session?: RelaySession | undefined;
   destination: string;
   onClose(): void;
@@ -38,10 +40,11 @@ export function AgentSnapshotExport({
   const [level, setLevel] = useState<MemoryLevel>("none");
   const [format, setFormat] = useState<"json" | "png">("png");
   const [confirmed, setConfirmed] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const exportFile = async () => {
-    if (pending || (level !== "none" && !confirmed)) return;
+    if (pending || !reviewed || (level !== "none" && !confirmed)) return;
     setPending(true);
     setError("");
     try {
@@ -72,8 +75,40 @@ export function AgentSnapshotExport({
           view.dispose();
         }
       }
-      const snapshot = buildAgentSnapshot(agent, level, entries);
-      const bytes = encodeAgentSnapshot(snapshot, format);
+      const snapshot = buildAgentSnapshot(
+        agent,
+        level,
+        entries,
+        defaultSessionPolicy,
+      );
+      let artwork: Uint8Array | undefined;
+      if (format === "png" && agent.picture) {
+        try {
+          const image = new Image();
+          image.crossOrigin = "anonymous";
+          image.src = agent.picture;
+          await image.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = 512;
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("Canvas unavailable");
+          context.drawImage(image, 0, 0, 512, 512);
+          const blob = await new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob(
+              (value) =>
+                value
+                  ? resolve(value)
+                  : reject(new Error("Artwork unavailable")),
+              "image/png",
+            ),
+          );
+          artwork = new Uint8Array(await blob.arrayBuffer());
+          canvas.width = canvas.height = 0;
+        } catch {
+          /* Missing or cross-origin artwork uses the placeholder. */
+        }
+      }
+      const bytes = encodeAgentSnapshot(snapshot, format, artwork);
       download(
         bytes,
         `${agent.name.replace(/[^a-zA-Z0-9_-]+/g, "-")}.agent.${format}`,
@@ -101,7 +136,7 @@ export function AgentSnapshotExport({
           </Button>
           <Button
             variant="primary"
-            disabled={pending || (level !== "none" && !confirmed)}
+            disabled={pending || !reviewed || (level !== "none" && !confirmed)}
             onClick={() => void exportFile()}
           >
             Export
@@ -144,6 +179,39 @@ export function AgentSnapshotExport({
             <option value="png">PNG</option>
             <option value="json">JSON</option>
           </select>
+        </label>
+        <p>
+          Portable configuration includes the agent name, instructions, model
+          and provider. Review the actual values before sharing: free text can
+          contain secrets that automated checks cannot detect.
+        </p>
+        <details>
+          <summary>Review portable configuration</summary>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
+            {JSON.stringify(
+              {
+                name: agent.name,
+                systemPrompt: agent.systemPrompt,
+                model: agent.harness.model,
+                provider: agent.harness.provider,
+                runtime: agent.harness.command,
+                respondTo: agent.respondTo,
+                sessionPolicy: agent.sessionPolicy ?? defaultSessionPolicy,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        </details>
+        <label>
+          <input
+            type="checkbox"
+            checked={reviewed}
+            disabled={pending}
+            onChange={(event) => setReviewed(event.target.checked)}
+          />{" "}
+          I reviewed the portable configuration and understand it may contain
+          private information.
         </label>
         {level !== "none" && (
           <>
@@ -230,9 +298,11 @@ export function AgentSnapshotImport({
       );
     }
   };
+  const unsupported = snapshot ? snapshotLimitations(snapshot) : [];
   const create = async () => {
     if (
       createdId ||
+      unsupported.length > 0 ||
       !snapshot ||
       busy ||
       !control.create ||
@@ -266,6 +336,7 @@ export function AgentSnapshotImport({
           new File([bytes], "snapshot-avatar", { type: mime }),
           destination,
           new AbortController().signal,
+          true,
         );
       }
       const agent = await control.create(
@@ -275,7 +346,7 @@ export function AgentSnapshotImport({
         {
           name: snapshot.profile.displayName,
           systemPrompt: snapshot.definition.systemPrompt ?? "",
-          sessionPolicy: snapshot.definition.sessionPolicy ?? "thread",
+          sessionPolicy: snapshot.definition.sessionPolicy ?? "channel",
           workspace: control.snapshot().data?.defaultWorkspace ?? "",
           harness: {
             command: "buzz-agent",
@@ -336,6 +407,7 @@ export function AgentSnapshotImport({
               disabled={
                 busy ||
                 !!createdId ||
+                unsupported.length > 0 ||
                 !snapshot ||
                 !destination ||
                 !owner ||
@@ -432,6 +504,19 @@ export function AgentSnapshotImport({
                     entries.
                   </p>
                 )}
+              {unsupported.length > 0 && (
+                <p role="alert">
+                  Import is blocked: {unsupported.join("; ")}. These settings
+                  cannot be applied faithfully on this host.
+                </p>
+              )}
+              <p>
+                Runtime: {snapshot.definition.runtime ?? "unspecified"}.
+                Response policy:{" "}
+                {snapshot.definition.respondTo ?? "unspecified"}. Parallelism:{" "}
+                {snapshot.definition.parallelism ?? "unspecified"}. Session
+                policy: {snapshot.definition.sessionPolicy ?? "channel"}.
+              </p>
               <p>
                 Review imported model and harness settings in Edit. Local
                 provider credentials and environment overrides must be
@@ -441,8 +526,7 @@ export function AgentSnapshotImport({
                 <summary>Full embedded manifest</summary>
                 <p>
                   This is the complete portable payload decoded from the file.
-                  Secrets, credentials, and source identity are not part of the
-                  snapshot format.
+                  Source identity is not part of the snapshot format.
                 </p>
                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">
                   {JSON.stringify(snapshot, null, 2)}
@@ -456,4 +540,19 @@ export function AgentSnapshotImport({
       )}
     </Dialog>
   );
+}
+
+/** A valid v1 manifest may describe settings that native AgentEdit cannot persist. */
+function snapshotLimitations(snapshot: AgentSnapshot): string[] {
+  const d = snapshot.definition;
+  return [
+    ...(d.runtime !== "buzz-agent" ? ["runtime (missing or unsupported)"] : []),
+    ...(d.respondTo && d.respondTo !== "owner-only" ? ["response policy"] : []),
+    ...(d.respondToAllowlist?.length ? ["source response allowlist"] : []),
+    ...(d.parallelism !== undefined ? ["parallelism"] : []),
+    ...(d.namePool?.length ? ["name pool"] : []),
+    ...(d.idleTimeoutSeconds !== undefined ? ["idle timeout"] : []),
+    ...(d.maxTurnDurationSeconds !== undefined ? ["turn timeout"] : []),
+    ...(snapshot.profile.about ? ["profile about"] : []),
+  ];
 }

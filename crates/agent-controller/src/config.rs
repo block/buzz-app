@@ -269,6 +269,8 @@ impl Agent {
             && !record["backend_agent_id"].is_null()
     }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {
+        visible_agent_text(&edit.name, false)?;
+        visible_agent_text(&edit.system_prompt, true)?;
         if let Some(picture) = edit.picture {
             validate_picture(&picture)?;
             if self.picture.as_ref() != Some(&picture) {
@@ -378,6 +380,49 @@ pub(crate) fn agent_id(pubkey: &str, relay: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("{pubkey}-{:x}", Sha256::digest(relay.as_bytes()))
 }
+// Executable instructions must remain visible in both the preview and persisted config.
+// Emoji joiners/selectors are allowed only when they compose visible emoji.
+fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
+    use std::sync::LazyLock;
+    static PICTOGRAPHIC: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^\p{Extended_Pictographic}$").expect("Unicode property is supported")
+    });
+    let chars: Vec<char> = value.chars().collect();
+    for (i, &ch) in chars.iter().enumerate() {
+        let code = ch as u32;
+        let pictographic = |c: char| PICTOGRAPHIC.is_match(&c.to_string());
+        let emoji_format = match ch {
+            '\u{fe0f}' => {
+                i > 0
+                    && (pictographic(chars[i - 1]) || matches!(chars[i - 1], '#' | '*' | '0'..='9'))
+            }
+            '\u{200d}' => {
+                let previous = chars[..i]
+                    .iter()
+                    .rev()
+                    .find(|&&c| c != '\u{fe0f}' && !matches!(c as u32, 0x1f3fb..=0x1f3ff));
+                previous.is_some_and(|&c| pictographic(c))
+                    && chars.get(i + 1).is_some_and(|&c| pictographic(c))
+            }
+            _ => false,
+        };
+        let ignorable = matches!(code,
+            0x00ad | 0x034f | 0x061c | 0x115f..=0x1160 | 0x17b4..=0x17b5 |
+            0x180b..=0x180f | 0x200b..=0x200f | 0x202a..=0x202e |
+            0x2060..=0x206f | 0x3164 | 0xfe00..=0xfe0f | 0xfeff |
+            0xffa0 | 0xfff0..=0xfff8 | 0x1bca0..=0x1bca3 |
+            0x1d173..=0x1d17a | 0xe0000..=0xe0fff);
+        if (ch.is_control() && !(prompt && matches!(ch, '\n' | '\t')))
+            || (ignorable && !emoji_format)
+        {
+            return Err(format!(
+                "Agent text contains prohibited invisible character U+{code:04X}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn text(value: &str, limit: usize, label: &str) -> Result<()> {
     if value.len() > limit || value.contains('\0') {
         Err(format!("{label} is too long or contains a NUL byte"))
@@ -481,4 +526,21 @@ fn validate_picture(value: &str) -> Result<()> {
         }
     }
     Err("Avatar must be an HTTPS image URL without credentials".into())
+}
+
+#[cfg(test)]
+mod snapshot_visible_text_tests {
+    use super::visible_agent_text;
+
+    #[test]
+    fn rejects_review_invisible_instruction_characters_but_preserves_visible_emoji() {
+        for ch in ['\u{202e}', '\u{200b}', '\u{e0061}'] {
+            assert!(visible_agent_text(&format!("Review{ch} code"), true).is_err());
+            assert!(visible_agent_text(&format!("Reviewer{ch}"), false).is_err());
+        }
+        for value in ["Review 👩‍💻", "Review ❤️", "Review 🧑🏽‍💻"] {
+            assert!(visible_agent_text(value, true).is_ok());
+        }
+        assert!(visible_agent_text("Review\n\tcode", true).is_ok());
+    }
 }

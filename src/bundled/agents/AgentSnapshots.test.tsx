@@ -21,13 +21,23 @@ vi.mock("../../features/profiles/avatar-upload", () => ({
   uploadAvatar: vi.fn(),
 }));
 
+const portableAgent = () => {
+  const { agent } = controlFixture();
+  agent.harness.command = "buzz-agent";
+  agent.acpCommand = null;
+  agent.mcpCommand = null;
+  agent.sessionPolicy = "thread";
+  agent.harness.environmentKeys = [];
+  return agent;
+};
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 function file(level: "none" | "core" = "none") {
-  const snapshot = buildAgentSnapshot(controlFixture().agent, level, [
+  const snapshot = buildAgentSnapshot(portableAgent(), level, [
     { slug: "core", body: "private fixture memory" },
   ]);
   return new File(
@@ -74,7 +84,7 @@ it.each(["json", "png"] as const)(
     const h = importControl();
     const close = vi.fn();
     const receivedBytes = encodeAgentSnapshot(
-      buildAgentSnapshot(controlFixture().agent),
+      buildAgentSnapshot(portableAgent()),
       format,
     );
     render(
@@ -123,7 +133,7 @@ it("imports received bytes only after the explicit Import click", async () => {
       destination="https://relay.example.test"
       owner={"ef".repeat(32)}
       receivedBytes={encodeAgentSnapshot(
-        buildAgentSnapshot(controlFixture().agent, "core", [
+        buildAgentSnapshot(portableAgent(), "core", [
           { slug: "core", body: "private fixture memory" },
         ]),
         "json",
@@ -143,7 +153,7 @@ it("uploads an embedded reference avatar before native creation and saves its lo
   vi.mocked(uploadAvatar).mockResolvedValueOnce(
     "https://relay.example.test/media/avatar.png",
   );
-  const snapshot = buildAgentSnapshot(controlFixture().agent);
+  const snapshot = buildAgentSnapshot(portableAgent());
   snapshot.profile.avatarDataUrl = "data:image/png;base64,iVBORw0KGgo=";
   render(
     <AgentSnapshotImport
@@ -160,6 +170,7 @@ it("uploads an embedded reference avatar before native creation and saves its lo
     expect.objectContaining({ type: "image/png" }),
     "https://relay.example.test",
     expect.any(AbortSignal),
+    true,
   );
   expect(h.create.mock.calls[0]?.[3]).toEqual(
     expect.objectContaining({
@@ -247,7 +258,7 @@ it("does not publish memory if identity creation fails", async () => {
 });
 
 it("exports without reading memory by default and requires confirmation to read memory", async () => {
-  const { agent } = controlFixture();
+  const agent = portableAgent();
   const download = vi.fn(() => "blob:fixture");
   vi.stubGlobal(
     "URL",
@@ -283,6 +294,11 @@ it("exports without reading memory by default and requires confirmation to read 
       />,
     );
     expect(screen.getByLabelText("Memories")).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I reviewed the portable configuration/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(download).toHaveBeenCalledOnce());
     expect(open).not.toHaveBeenCalled();
@@ -300,7 +316,16 @@ it("exports without reading memory by default and requires confirmation to read 
     });
     expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
     expect(open).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I reviewed the portable configuration/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I confirm that I want to include memory/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     expect(dispose).toHaveBeenCalledOnce();
@@ -310,7 +335,7 @@ it("exports without reading memory by default and requires confirmation to read 
 });
 
 it("does not read a different community's memory while exporting local config", async () => {
-  const { agent } = controlFixture();
+  const agent = portableAgent();
   const open = vi.fn();
   const session = { agentMemories: { open } } as never;
   render(
@@ -323,4 +348,47 @@ it("does not read a different community's memory while exporting local config", 
   );
   expect(screen.getByLabelText("Memories")).toBeDisabled();
   expect(open).not.toHaveBeenCalled();
+});
+
+it("previews valid but unsupported reference settings and blocks creation", async () => {
+  const h = importControl();
+  const snapshot = buildAgentSnapshot(portableAgent());
+  snapshot.definition.parallelism = 4;
+  snapshot.definition.respondTo = "allowlist";
+  snapshot.definition.respondToAllowlist = ["source-identity"];
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "json")}
+      onClose={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByText(/Import is blocked:.*response policy.*parallelism/),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it("defaults a reference snapshot with omitted session policy to channel", async () => {
+  const h = importControl();
+  const snapshot = buildAgentSnapshot(portableAgent());
+  delete snapshot.definition.sessionPolicy;
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "json")}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByText("Help with the project.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  expect(h.create.mock.calls[0]?.[3]).toEqual(
+    expect.objectContaining({ sessionPolicy: "channel" }),
+  );
 });

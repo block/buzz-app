@@ -14,7 +14,7 @@ export interface AgentSnapshot {
   version: 1;
   definition: {
     name: string;
-    sourceIsBuiltIn?: boolean;
+    sourceIsBuiltin?: boolean;
     systemPrompt?: string;
     runtime?: string;
     model?: string;
@@ -38,7 +38,64 @@ export interface AgentSnapshot {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown, max: number) =>
-  typeof value === "string" && value.length <= max && !value.includes("\0");
+  typeof value === "string" &&
+  encoder.encode(value).length <= max &&
+  !value.includes("\0");
+const invisible = (char: string) => {
+  const code = char.codePointAt(0) ?? 0;
+  return (
+    code === 0xad ||
+    code === 0x34f ||
+    code === 0x61c ||
+    (code >= 0x115f && code <= 0x1160) ||
+    (code >= 0x17b4 && code <= 0x17b5) ||
+    (code >= 0x180b && code <= 0x180f) ||
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2060 && code <= 0x206f) ||
+    code === 0x3164 ||
+    (code >= 0xfe00 && code <= 0xfe0f) ||
+    code === 0xfeff ||
+    code === 0xffa0 ||
+    (code >= 0xfff0 && code <= 0xfff8) ||
+    (code >= 0x1bca0 && code <= 0x1bca3) ||
+    (code >= 0x1d173 && code <= 0x1d17a) ||
+    (code >= 0xe0000 && code <= 0xe0fff)
+  );
+};
+/** Reviewable text: permit only contextual emoji joiners/selectors. */
+export function visibleSnapshotText(value: string, prompt = false): boolean {
+  const chars = Array.from(value);
+  const pictographic = (char: string) =>
+    /^\p{Extended_Pictographic}$/u.test(char);
+  for (const [i, char] of chars.entries()) {
+    if (/[\p{Cc}]/u.test(char) && !(prompt && (char === "\n" || char === "\t")))
+      return false;
+    if (!invisible(char)) continue;
+    if (
+      char === "\uFE0F" &&
+      (/[#*0-9]/.test(chars[i - 1] ?? "") || pictographic(chars[i - 1] ?? ""))
+    )
+      continue;
+    if (char === "\u200D" && pictographic(chars[i + 1] ?? "")) {
+      let previous = i - 1;
+      while (
+        previous >= 0 &&
+        (chars[previous] === "\uFE0F" ||
+          /[\u{1F3FB}-\u{1F3FF}]/u.test(chars[previous] ?? ""))
+      )
+        previous--;
+      if (pictographic(chars[previous] ?? "")) continue;
+    }
+    return false;
+  }
+  return true;
+}
+/** Heuristic only. The export UI also discloses residual free-text risk. */
+const credentialLike = (value: string) =>
+  /-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s,;]{8,})/i.test(
+    value,
+  );
 const optionalText = (value: unknown, max: number) =>
   value === undefined || text(value, max);
 const keys = (record: Record<string, unknown>, allowed: string[]) =>
@@ -71,7 +128,7 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
     !isRecord(m) ||
     !keys(d, [
       "name",
-      "sourceIsBuiltIn",
+      "sourceIsBuiltin",
       "systemPrompt",
       "runtime",
       "model",
@@ -90,29 +147,45 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
     !(d.name as string).trim() ||
     !text(p.displayName, 256) ||
     !(p.displayName as string).trim() ||
-    (d.sourceIsBuiltIn !== undefined &&
-      typeof d.sourceIsBuiltIn !== "boolean") ||
-    !optionalText(d.systemPrompt, 128 * 1024) ||
+    (d.sourceIsBuiltin !== undefined &&
+      typeof d.sourceIsBuiltin !== "boolean") ||
+    !optionalText(d.systemPrompt, 64 * 1024) ||
+    (typeof d.systemPrompt === "string" &&
+      !visibleSnapshotText(d.systemPrompt, true)) ||
+    !visibleSnapshotText(d.name as string) ||
+    !visibleSnapshotText(p.displayName as string) ||
     !optionalText(d.runtime, 128) ||
+    (typeof d.runtime === "string" && !visibleSnapshotText(d.runtime)) ||
     !optionalText(d.model, 512) ||
+    (typeof d.model === "string" && !visibleSnapshotText(d.model)) ||
     !optionalText(d.provider, 128) ||
+    (typeof d.provider === "string" && !visibleSnapshotText(d.provider)) ||
     !["channel", "thread", undefined].includes(
       d.sessionPolicy as string | undefined,
     ) ||
     !["owner-only", "allowlist", "anyone", undefined].includes(
       d.respondTo as string | undefined,
     ) ||
-    (d.respondTo !== undefined && d.respondTo !== "owner-only") ||
     (d.respondToAllowlist !== undefined &&
       (!Array.isArray(d.respondToAllowlist) ||
-        d.respondToAllowlist.length !== 0)) ||
-    d.namePool !== undefined ||
-    d.runtime !== undefined ||
-    p.about !== undefined ||
-    d.parallelism !== undefined ||
-    d.idleTimeoutSeconds !== undefined ||
-    d.maxTurnDurationSeconds !== undefined ||
+        d.respondToAllowlist.length > 128 ||
+        !d.respondToAllowlist.every((v: unknown) => text(v, 256)))) ||
+    (d.namePool !== undefined &&
+      (!Array.isArray(d.namePool) ||
+        d.namePool.length > 128 ||
+        !d.namePool.every((v: unknown) => text(v, 256)))) ||
+    (d.parallelism !== undefined &&
+      (!Number.isSafeInteger(d.parallelism) ||
+        (d.parallelism as number) < 1 ||
+        (d.parallelism as number) > 0xffffffff)) ||
+    (d.idleTimeoutSeconds !== undefined &&
+      (!Number.isSafeInteger(d.idleTimeoutSeconds) ||
+        (d.idleTimeoutSeconds as number) < 0)) ||
+    (d.maxTurnDurationSeconds !== undefined &&
+      (!Number.isSafeInteger(d.maxTurnDurationSeconds) ||
+        (d.maxTurnDurationSeconds as number) < 0)) ||
     !optionalText(p.about, 2048) ||
+    (typeof p.about === "string" && !visibleSnapshotText(p.about, true)) ||
     (p.avatarDataUrl !== undefined &&
       (typeof p.avatarDataUrl !== "string" ||
         !/^data:image\/(png|jpeg|gif|webp);base64,[a-zA-Z0-9+/]+=*$/.test(
@@ -152,7 +225,35 @@ export function buildAgentSnapshot(
   agent: AgentView,
   level: MemoryLevel = "none",
   memories: readonly Pick<MemoryEntry, "slug" | "body">[] = [],
+  defaultSessionPolicy?: "channel" | "thread",
 ): AgentSnapshot {
+  if (
+    agent.harness.command !== "buzz-agent" ||
+    agent.respondTo !== "owner-only" ||
+    agent.launchModelEnv ||
+    agent.launchProviderEnv ||
+    agent.backend ||
+    agent.acpCommand ||
+    agent.mcpCommand ||
+    agent.harness.environmentKeys.length > 0 ||
+    (agent.sessionPolicy === null && !defaultSessionPolicy)
+  ) {
+    throw new Error(
+      "This agent has runtime, response, or environment settings that cannot be exported faithfully.",
+    );
+  }
+  for (const value of [
+    agent.name,
+    agent.systemPrompt,
+    agent.harness.model,
+    agent.harness.provider,
+    agent.picture ?? "",
+  ]) {
+    if (credentialLike(value))
+      throw new Error(
+        "Portable configuration appears to contain a credential. Remove it before export.",
+      );
+  }
   const entries =
     level === "none"
       ? []
@@ -167,7 +268,9 @@ export function buildAgentSnapshot(
       systemPrompt: agent.systemPrompt,
       ...(agent.harness.model ? { model: agent.harness.model } : {}),
       ...(agent.harness.provider ? { provider: agent.harness.provider } : {}),
-      sessionPolicy: agent.sessionPolicy ?? "thread",
+      runtime: "buzz-agent",
+      respondTo: "owner-only",
+      sessionPolicy: agent.sessionPolicy ?? defaultSessionPolicy ?? "thread",
     },
     profile: {
       displayName: agent.name,
@@ -228,6 +331,7 @@ const concat = (parts: Uint8Array[]) => {
 export function encodeAgentSnapshot(
   snapshot: AgentSnapshot,
   format: "json" | "png",
+  artwork?: Uint8Array,
 ) {
   const { entries, ...memory } = snapshot.memory;
   const manifest = encoder.encode(
@@ -255,15 +359,53 @@ export function encodeAgentSnapshot(
   const base64 = btoa(
     Array.from(manifest, (byte) => String.fromCharCode(byte)).join(""),
   );
-  const png = concat([
-    MAGIC,
+  let imageParts: Uint8Array[] = [
     chunk("IHDR", ihdr),
-    chunk("tEXt", concat([keyword, encoder.encode(base64)])),
     chunk("IDAT", pixel),
     chunk("IEND", new Uint8Array()),
+  ];
+  if (artwork) {
+    // Artwork comes from a canvas-produced PNG. Never copy its ancillary metadata.
+    const parts: Uint8Array[] = [];
+    let at = 8;
+    if (
+      artwork.length > MAX_FILE ||
+      !artwork.subarray(0, 8).every((v, i) => v === MAGIC[i])
+    )
+      throw new Error("Invalid snapshot artwork.");
+    while (at + 12 <= artwork.length) {
+      const length = u32(artwork, at);
+      if (at + length + 12 > artwork.length)
+        throw new Error("Invalid snapshot artwork.");
+      const type = decoder.decode(artwork.subarray(at + 4, at + 8));
+      if (
+        u32(artwork, at + 8 + length) !==
+        crc(artwork.subarray(at + 4, at + 8 + length))
+      )
+        throw new Error("Invalid snapshot artwork.");
+      if (["IHDR", "IDAT", "IEND"].includes(type))
+        parts.push(artwork.slice(at, at + length + 12));
+      at += length + 12;
+      if (type === "IEND") break;
+    }
+    if (
+      at !== artwork.length ||
+      parts.length < 3 ||
+      decoder.decode(parts[0]?.subarray(4, 8)) !== "IHDR" ||
+      decoder.decode(parts.at(-1)?.subarray(4, 8)) !== "IEND"
+    )
+      throw new Error("Invalid snapshot artwork.");
+    imageParts = parts;
+  }
+  const png = concat([
+    MAGIC,
+    imageParts[0] ?? chunk("IHDR", ihdr),
+    chunk("tEXt", concat([keyword, encoder.encode(base64)])),
+    ...imageParts.slice(1),
   ]);
   if (png.length > MAX_FILE)
     throw new Error("Snapshot exceeds the size limit.");
+  parseAgentSnapshot(png);
   return png;
 }
 function pngManifest(bytes: Uint8Array) {

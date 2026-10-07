@@ -19,6 +19,7 @@ import {
 export async function prepareAttachment(
   file: File,
   signal: AbortSignal,
+  stripSnapshotMetadata = false,
 ): Promise<File> {
   if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
   signal.throwIfAborted();
@@ -32,9 +33,13 @@ export async function prepareAttachment(
   if (type === "image/gif") output = cleanGif(bytes);
   if (type === "image/png") {
     const chunks = pngChunks(bytes);
-    snapshot = snapshotChunk(chunks);
-    if (chunks.some((c) => c.kind === "acTL"))
-      output = cleanPng(bytes, snapshot, true);
+    snapshot = stripSnapshotMetadata ? undefined : snapshotChunk(chunks);
+    if (stripSnapshotMetadata || chunks.some((c) => c.kind === "acTL"))
+      output = cleanPng(
+        bytes,
+        snapshot,
+        chunks.some((c) => c.kind === "acTL"),
+      );
   }
   if (type === "image/webp") {
     const chunks = webpChunks(bytes);

@@ -60,7 +60,12 @@ export function parseBuzzLink(href: string): BuzzLink | null {
         ...(messageId ? { messageId: messageId.toLowerCase() } : {}),
       };
     }
-    if (url.hostname !== "message" || url.pathname) return null;
+    // Windows can supply an explicit root path before the query.
+    if (
+      url.hostname !== "message" ||
+      (url.pathname !== "" && url.pathname !== "/")
+    )
+      return null;
     // A duplicated known key is ambiguous and still rejects.
     if (
       ["channel", "id", "thread"].some(

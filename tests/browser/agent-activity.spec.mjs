@@ -1035,6 +1035,7 @@ test.describe("thread activity", () => {
       exact: true,
     });
     const indicator = thread.getByRole("status", { name: "Typing activity" });
+    const workingStatus = region.getByRole("status");
     const openThread = async (root) => {
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -1085,9 +1086,13 @@ test.describe("thread activity", () => {
     await expect(channelActivity(page)).toHaveCount(0);
     publish(keys[0], roots[0]);
     await expect(region.getByRole("button")).toHaveCount(1);
+    await expect(workingStatus).toContainText("Worker 1 is working");
     await expect(indicator).toHaveCount(0);
     publish(keys[1], roots[0]);
     await expect(region.getByRole("button")).toHaveCount(2);
+    await expect(workingStatus).toContainText(
+      /Worker [12], Worker [12] are working/,
+    );
     for (const agent of agents)
       await expect(
         region.getByRole("button", { name: new RegExp(agent.slice(0, 12)) }),
@@ -1098,6 +1103,7 @@ test.describe("thread activity", () => {
     publish(human, roots[0]);
     await expect(indicator).toHaveCount(1);
     await expect(indicator).not.toContainText("Worker");
+    await expect(workingStatus).toContainText("are working");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator("[data-panel-dock]").evaluate(async (element) => {
       await Promise.all(
@@ -1146,11 +1152,13 @@ test.describe("thread activity", () => {
     await expect(region.getByRole("button")).toHaveCount(1);
     publish(keys[1], roots[0], 9);
     await expect(region).toHaveCount(0);
+    await expect(workingStatus).toHaveCount(0);
     await expect(indicator).toHaveCount(0);
     await page
       .getByRole("button", { name: "Close Thread tab", exact: true })
       .click();
     // Channel uses the same rows behind an existing visible disclosure.
+    const channelStatus = channelActivity(page).getByRole("status");
     const channelTyping = page
       .getByRole("form", { name: "Send a message to Alpha", exact: true })
       .locator("..")
@@ -1159,10 +1167,17 @@ test.describe("thread activity", () => {
     await expect(channelActivity(page).locator("summary")).toHaveText(
       "Channel-wide activity · 1 agent",
     );
+    await expect(channelStatus).toContainText("Worker 1 is working");
     await expect(channelTyping).toHaveCount(0);
     publish(keys[1]);
     await expect(channelActivity(page).locator("summary")).toHaveText(
       "Channel-wide activity · 2 agents",
+    );
+    await expect(channelStatus).toContainText(
+      /Worker [12], Worker [12] are working/,
+    );
+    await expect(channelActivity(page).locator("details")).not.toHaveAttribute(
+      "open",
     );
     await expandChannelActivity(page);
     await expect(channelActivity(page).getByRole("button")).toHaveCount(2);
@@ -1170,6 +1185,7 @@ test.describe("thread activity", () => {
     publish(human);
     await expect(channelTyping).toBeVisible();
     await expect(channelTyping).not.toContainText("Worker");
+    await expect(channelStatus).toContainText("are working");
     await page.screenshot({
       path: testInfo.outputPath("channel-multiple-agents-human-typing.png"),
     });

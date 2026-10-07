@@ -62,6 +62,22 @@ export function ActivityAccessory({
     profiles.snapshot,
   );
   if (!keys) return null;
+  // Keep the announcement outside collapsed details; only the visually deduplicated
+  // agent typing is represented here, while public human typing remains separate.
+  const workingNames = keys
+    .split(":")
+    .filter(
+      (agent) =>
+        turns.some(
+          (turn) => turn.agent === agent && turn.state === "working",
+        ) || typing.some((entry) => entry.agent === agent),
+    )
+    .map((agent) =>
+      resolveName(
+        agent,
+        identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
+      ),
+    );
   const agents = (
     <div className={styles.agents}>
       {keys.split(":").map((agent) => {
@@ -127,6 +143,12 @@ export function ActivityAccessory({
           : "Agent activity in this channel"
       }
     >
+      {workingNames.length > 0 && (
+        <span className="sr-only" role="status">
+          {workingNames.join(", ")}
+          {workingNames.length === 1 ? " is working" : " are working"}
+        </span>
+      )}
       {threadRootId ? (
         agents
       ) : (

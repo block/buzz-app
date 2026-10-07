@@ -115,6 +115,14 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
     name: "Agent activity in this thread",
   });
   const summary = within(channel).getByText("Channel-wide activity · 2 agents");
+  expect(within(channel).getByRole("status")).toHaveTextContent(
+    "Agent aaaaaaaa is working",
+  );
+  expect(within(thread).getByRole("status")).toHaveTextContent(
+    "Agent aaaaaaaa is working",
+  );
+  expect(within(channel).getByRole("status")).toHaveClass("sr-only");
+  expect(channel.querySelector("details [role=status]")).toBeNull();
   expect(channel.querySelector("details")).not.toHaveAttribute("open");
   expect(
     within(channel).getByRole("button", { name: /aaaaaaaaaaaa/ }),
@@ -152,6 +160,10 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   expect(
     screen.queryByRole("region", { name: "Agent activity in this channel" }),
   ).not.toBeInTheDocument();
+  expect(within(channel).queryByRole("status")).not.toBeInTheDocument();
+  expect(within(thread).getByRole("status")).toHaveTextContent(
+    "Agent aaaaaaaa is working",
+  );
   mounted.unmount();
   expect(f.observe).toHaveBeenCalledTimes(1); // Disclosure never owns capture.
 });

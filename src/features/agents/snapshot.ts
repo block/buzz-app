@@ -2,7 +2,15 @@
 import type { AgentEdit, AgentView, ControlSnapshot } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
 
-export const MAX_AGENT_SNAPSHOT_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_AGENT_SNAPSHOT_JSON_BYTES = 5 * 1024 * 1024;
+export const MAX_AGENT_SNAPSHOT_PNG_BYTES = 10 * 1024 * 1024;
+/** Compatibility upper bound for callers without a known format; prefer the format-specific cap. */
+export const MAX_AGENT_SNAPSHOT_FILE_BYTES = MAX_AGENT_SNAPSHOT_PNG_BYTES;
+const snapshotFileLimit = (bytes: Uint8Array) =>
+  bytes.length >= 8 &&
+  bytes.subarray(0, 8).every((byte, i) => byte === MAGIC[i])
+    ? MAX_AGENT_SNAPSHOT_PNG_BYTES
+    : MAX_AGENT_SNAPSHOT_JSON_BYTES;
 const MAGIC = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
@@ -103,7 +111,7 @@ const keys = (record: Record<string, unknown>, allowed: string[]) =>
 
 /** Fail closed on unknown fields: a future writer cannot smuggle credentials as "config". */
 export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
-  if (bytes.length > MAX_AGENT_SNAPSHOT_FILE_BYTES)
+  if (bytes.length > snapshotFileLimit(bytes))
     throw new Error("Snapshot exceeds the size limit.");
   const raw =
     bytes.length >= 8 &&
@@ -446,7 +454,7 @@ export function encodeAgentSnapshot(
     const parts: Uint8Array[] = [];
     let at = 8;
     if (
-      artwork.length > MAX_AGENT_SNAPSHOT_FILE_BYTES ||
+      artwork.length > MAX_AGENT_SNAPSHOT_PNG_BYTES ||
       !artwork.subarray(0, 8).every((v, i) => v === MAGIC[i])
     )
       throw new Error("Invalid snapshot artwork.");
@@ -480,7 +488,7 @@ export function encodeAgentSnapshot(
     chunk("tEXt", concat([keyword, encoder.encode(base64)])),
     ...imageParts.slice(1),
   ]);
-  if (png.length > MAX_AGENT_SNAPSHOT_FILE_BYTES)
+  if (png.length > MAX_AGENT_SNAPSHOT_PNG_BYTES)
     throw new Error("Snapshot exceeds the size limit.");
   parseAgentSnapshot(png);
   return png;
@@ -493,7 +501,7 @@ function pngManifest(bytes: Uint8Array) {
   while (offset + 12 <= bytes.length) {
     const length = u32(bytes, offset);
     if (
-      length > MAX_AGENT_SNAPSHOT_FILE_BYTES ||
+      length > MAX_AGENT_SNAPSHOT_PNG_BYTES ||
       offset + 12 + length > bytes.length
     )
       throw new Error("Invalid PNG snapshot.");

@@ -4,6 +4,8 @@ import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
   MAX_AGENT_SNAPSHOT_FILE_BYTES,
+  MAX_AGENT_SNAPSHOT_JSON_BYTES,
+  MAX_AGENT_SNAPSHOT_PNG_BYTES,
   parseAgentSnapshot,
   snapshotImportEdit,
   snapshotLimitations,
@@ -114,11 +116,18 @@ it.each(["json", "png"] as const)(
       buildAgentSnapshot(portableAgent()),
       format,
     );
-    expect(bytes.length).toBeLessThanOrEqual(MAX_AGENT_SNAPSHOT_FILE_BYTES);
+    const cap =
+      format === "png"
+        ? MAX_AGENT_SNAPSHOT_PNG_BYTES
+        : MAX_AGENT_SNAPSHOT_JSON_BYTES;
+    expect(bytes.length).toBeLessThanOrEqual(cap);
     expect(parseAgentSnapshot(bytes).format).toBe("buzz-agent-snapshot");
-    expect(() =>
-      parseAgentSnapshot(new Uint8Array(MAX_AGENT_SNAPSHOT_FILE_BYTES + 1)),
-    ).toThrow("Snapshot exceeds the size limit.");
+    const oversized = new Uint8Array(cap + 1);
+    if (format === "png") oversized.set(bytes.subarray(0, 8));
+    expect(() => parseAgentSnapshot(oversized)).toThrow(
+      "Snapshot exceeds the size limit.",
+    );
+    expect(MAX_AGENT_SNAPSHOT_FILE_BYTES).toBe(MAX_AGENT_SNAPSHOT_PNG_BYTES);
   },
 );
 

@@ -187,9 +187,8 @@ it("delivers mentions and matching watches once, and never the agent's own event
   expect(second?.trigger).toMatchObject({
     type: "watch",
     event: watched,
-    watches: [
-      { slug: "watch/channel", interest: { instructions: "Be brief." } },
-    ],
+    slug: "watch/channel",
+    interest: { instructions: "Be brief." },
   });
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
@@ -453,12 +452,26 @@ it("fires a due timer once, then again an interval after it ran", async () => {
         prompt: "check in",
         enabled: true,
         interval_secs: 60,
+        armed_at: 1_000,
+        max_occurrences: 2,
+        expires_at: null,
+      },
+      // Armed long ago with no run state: what was due counts as used, so it
+      // neither fires at once nor ever (both of its runs are spent).
+      "watch/stale": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "stale",
+        enabled: true,
+        interval_secs: 60,
         armed_at: 0,
         max_occurrences: 2,
         expires_at: null,
       },
     },
   });
+  await vi.advanceTimersByTimeAsync(55_000);
+  expect(run).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).toHaveBeenCalledTimes(1);
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
@@ -476,8 +489,9 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   const stored = () =>
     JSON.parse(storage.getItem("buzz.agents2.v1") ?? "{}").agents[bot];
   expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
+  expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
-  expect(stored().timers).toEqual({});
+  expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
 });
 
 it("removes the agent's key and record", async () => {
@@ -487,4 +501,94 @@ it("removes the agent's key and record", async () => {
   expect(native.remove).toHaveBeenCalledWith(bot);
   expect(service.snapshot().agents).toEqual([]);
   expect(storage.getItem("buzz.agents2.v1")).not.toContain(bot);
+});
+
+it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/classified": {
+        type: "event",
+        interest_id: "missing",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+        classifier: {
+          questions: {
+            deploy: {
+              question: "Is it about a deploy?",
+              true: "It is",
+              false: "It is not",
+              threshold: 0.5,
+            },
+          },
+        },
+      },
+    },
+  });
+  emit({ events: [event("w", { content: "deploy" })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const triggers = run.mock.calls.map(([delivery]) => delivery.trigger);
+  expect(triggers).toEqual([
+    expect.objectContaining({ slug: "watch/channel" }),
+    expect.objectContaining({
+      slug: "watch/classified",
+      classifier: "not run",
+    }),
+  ]);
+  // Its Interest does not exist, so it arrives without instructions.
+  expect(triggers[1]).not.toHaveProperty("interest");
+});
+
+it("keeps DMs and reactions to its own messages away from watches", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attention: {
+      "watch/everything": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+      },
+    },
+  });
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  });
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  emit({
+    events: [
+      event("dm", { kind: 4, tags: [["p", bot]] }),
+      // p2 is what the run above published (p1 was the profile).
+      event("like", { kind: 7, tags: [["e", "p2".padEnd(64, "0")]] }),
+      event("note", { kind: 1 }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/everything",
+    event: { id: "note".padEnd(64, "0") },
+  });
+});
+
+it("keeps an Interest while a watch still uses it", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await expect(
+    service.save(bot, { attention: { "interest/default": null } }),
+  ).rejects.toThrow(/use this Interest/);
+  expect(service.find(bot)?.attention).toHaveProperty("interest/default");
+  await service.save(bot, {
+    attention: { "watch/channel": null, "interest/default": null },
+  });
+  expect(service.find(bot)?.attention).toEqual({});
 });

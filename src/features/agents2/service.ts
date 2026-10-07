@@ -17,7 +17,9 @@ import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
 import {
   addressedTo,
+  CHAT_KINDS,
   compileFilter,
+  parseSlug,
   tagsAgent,
   watchMatches,
   type AttentionObject,
@@ -26,6 +28,7 @@ import {
   timerState,
   type EventWatch,
   type Interest,
+  type TimerState,
   type TimerWatch,
 } from "./attention";
 import {
@@ -39,6 +42,7 @@ import {
   setAttention,
   writeRecords,
   type AgentRecord,
+  type SkippedObject,
 } from "./store";
 
 /** One agent in the selected community. */
@@ -50,6 +54,10 @@ export type Agent<Config = unknown> = Readonly<{
   owner: string;
   relay: string;
   attention: Readonly<Record<string, AttentionObject>>;
+  /** Stored attention objects that are invalid or over a limit, by slug. */
+  skipped: Readonly<Record<string, SkippedObject>>;
+  /** Run state of its timers, by slug; written only by the runtime. */
+  timers: Readonly<Record<string, TimerState>>;
   config: Config;
 }>;
 export type AgentChange<Config = unknown> = Readonly<{
@@ -80,24 +88,27 @@ export type AgentHandle = Readonly<{
   owner: string;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
 }>;
-export type WatchMatch = Readonly<{
-  slug: string;
-  watch: EventWatch;
-  interest?: Interest;
-}>;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent or replies to
    * something it wrote. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
+  /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
       event: RelayEvent;
-      watches: readonly WatchMatch[];
+      slug: string;
+      watch: EventWatch;
+      /** Absent when the watch names an Interest that does not exist. */
+      interest?: Interest;
+      /** Set when the watch has a classifier this app could not run. The spec
+       * passes the event rather than lose a match to an unavailable model. */
+      classifier?: "not run";
     }>
   | Readonly<{
       type: "timer";
       slug: string;
       timer: TimerWatch;
+      /** Absent when the timer names an Interest that does not exist. */
       interest?: Interest;
     }>;
 export type Delivery<Config = unknown> = Readonly<{
@@ -154,12 +165,14 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const QUEUE_LIMIT = 32;
-const SEEN_LIMIT = 512;
+/** The spec asks for at least the agent's 2,048 most recent events. */
+const SEEN_LIMIT = 2_048;
 /** Runs per agent per minute; bounds two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
+const EMPTY = Object.freeze({});
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 const bounded = (set: Set<string>, id: string) => {
@@ -174,7 +187,8 @@ type Binding = {
   session: unknown;
 };
 type Job = { trigger: Trigger; channelId?: string };
-type CompiledWatch = WatchMatch & {
+type WatchTrigger = Extract<Trigger, { type: "watch" }>;
+type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
   filter?: ReturnType<typeof compileFilter>;
 };
 /** One agent's runtime, for as long as its identity and record exist. Edits do not
@@ -329,6 +343,20 @@ export class Agents2Service extends Service implements Agents2 {
       record = { ...record, config: change.config };
     for (const [slug, value] of Object.entries(change.attention ?? {}))
       record = setAttention(record, slug, value);
+    // As the spec's writer: an Interest stays while anything still uses it.
+    for (const [slug, value] of Object.entries(change.attention ?? {})) {
+      const id = parseSlug(slug)?.id;
+      if (value !== null || !slug.startsWith("interest/") || !id) continue;
+      if (
+        Object.values(record.attention).some(
+          (object) =>
+            object.value.type !== "interest" && object.value.interest_id === id,
+        )
+      )
+        throw new Error(
+          "Remove or move the watches and timers that use this Interest first",
+        );
+    }
     this.write(record);
     if (renamed) await this.publishProfile(pubkey);
   }
@@ -446,6 +474,8 @@ export class Agents2Service extends Service implements Agents2 {
           prior.name === record.name &&
           prior.type === record.type &&
           prior.attention === record.attention &&
+          prior.skipped === record.skipped &&
+          prior.timers === record.timers &&
           prior.config === record.config
           ? prior
           : Object.freeze({
@@ -455,6 +485,8 @@ export class Agents2Service extends Service implements Agents2 {
               owner: identity.owner,
               relay: identity.relay,
               attention: record.attention,
+              skipped: record.skipped ?? EMPTY,
+              timers: record.timers ?? EMPTY,
               config: record.config,
             }),
       );
@@ -527,14 +559,14 @@ export class Agents2Service extends Service implements Agents2 {
     const watches: CompiledWatch[] = [];
     for (const object of Object.values(agent.attention)) {
       const watch = object.value;
-      // Classifiers are not supported yet; such a watch never matches.
-      if (watch.type !== "event" || !watch.enabled || watch.classifier)
-        continue;
+      if (watch.type !== "event" || !watch.enabled) continue;
       const interest = agent.attention[`interest/${watch.interest_id}`]?.value;
       watches.push({
         slug: object.slug,
         watch,
         ...(interest?.type === "interest" ? { interest } : {}),
+        // No classifier model runs here yet, so the event passes unclassified.
+        ...(watch.classifier ? { classifier: "not run" as const } : {}),
         ...(watch.filter ? { filter: compileFilter(watch.filter) } : {}),
       });
     }
@@ -554,8 +586,7 @@ export class Agents2Service extends Service implements Agents2 {
           bounded(runner.wrote, event.id);
           continue;
         }
-        const trigger = this.heard(runner, agent, event);
-        if (trigger)
+        for (const trigger of this.heard(runner, agent, event))
           this.enqueue(runner, {
             trigger,
             ...(batch.channelId ? { channelId: batch.channelId } : {}),
@@ -563,11 +594,7 @@ export class Agents2Service extends Service implements Agents2 {
       }
     }
   }
-  private heard(
-    runner: Runner,
-    agent: Agent,
-    event: RelayEvent,
-  ): Trigger | undefined {
+  private heard(runner: Runner, agent: Agent, event: RelayEvent): Trigger[] {
     const wrote = (id: string) => runner.wrote.has(id);
     // Two of one owner's agents would otherwise answer each other forever: one
     // hears another only when it is named in something that does not reply to it.
@@ -577,21 +604,25 @@ export class Agents2Service extends Service implements Agents2 {
           identity.pubkey === event.pubkey && identity.owner === agent.owner,
       )
     )
-      return tagsAgent(event, agent.pubkey) &&
-        addressedTo(event, agent.pubkey) &&
+      return CHAT_KINDS.includes(event.kind) &&
+        tagsAgent(event, agent.pubkey) &&
         !event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wrote(tag[1]))
-        ? { type: "mention", event }
-        : undefined;
+        ? [{ type: "mention", event }]
+        : [];
+    // Addressed events never reach a watch. Only conversation starts a run: not a
+    // DM it cannot read yet, nor a reaction to its message.
     if (addressedTo(event, agent.pubkey, wrote))
-      return { type: "mention", event };
-    const watches = this.watches(runner, agent)
+      return CHAT_KINDS.includes(event.kind)
+        ? [{ type: "mention", event }]
+        : [];
+    return this.watches(runner, agent)
       .filter(({ watch, filter }) => watchMatches(watch, event, filter))
-      .map(({ filter: _, ...match }) => match);
-    return watches.length ? { type: "watch", event, watches } : undefined;
+      .map(({ filter: _, ...match }) => ({ type: "watch", event, ...match }));
   }
 
-  // Spec schedule rules: first due at armed_at + interval, at most one occurrence
-  // when overdue, then due again interval after it ran; a new armed_at restarts.
+  // Spec schedule rules: occurrence k is due at armed_at + k × interval, at most one
+  // runs when overdue, then the next is due interval after it ran. A timer with no
+  // saved state counts what was already due as used (see timerState).
   private tick(now = Math.floor(Date.now() / 1000)) {
     let changed = false;
     for (const runner of this.runners.values()) {
@@ -603,7 +634,7 @@ export class Agents2Service extends Service implements Agents2 {
       for (const object of Object.values(agent.attention)) {
         const timer = object.value;
         if (timer.type !== "timer" || !timer.enabled) continue;
-        const state = timerState(timer, timers[object.slug]);
+        const state = timerState(timer, timers[object.slug], now);
         if (state !== timers[object.slug])
           timers = { ...timers, [object.slug]: state };
         if (now < state.nextDue || timerSpent(timer, state, now)) continue;
@@ -627,7 +658,6 @@ export class Agents2Service extends Service implements Agents2 {
         });
       }
       if (timers !== prior) {
-        // Run state only: the visible agent is unchanged, so no update().
         this.records = {
           ...this.records,
           [record.pubkey]: { ...record, timers },
@@ -635,7 +665,11 @@ export class Agents2Service extends Service implements Agents2 {
         changed = true;
       }
     }
-    if (changed) writeRecords(this.storage, this.records);
+    if (changed) {
+      writeRecords(this.storage, this.records);
+      // Shows the new run counts; the runners and their queues carry on.
+      this.update();
+    }
   }
 
   private enqueue(runner: Runner, job: Job) {

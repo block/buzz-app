@@ -101,6 +101,34 @@ confirmation; recipe head and catalog reads remain replica-eligible. For
 writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
 the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
 
+## Managed-agent registration (kind 30177)
+
+Plugins publish through `session.outbox.send()` after checking
+`session.outbox?.supports(30177)`. The host signs as the current viewer (the
+owner); the caller supplies `["d", agentPubkey]` and JSON `content`, which the
+transport preserves.
+
+Publish the complete intended **instance-state projection**. Another Buzz desktop
+can apply the event to an existing local agent with the same `d` public key,
+replacing its name, `persona_id`, `parallelism`, `respond_to`, and allowlist.
+When reusing a key, preserve its existing configuration in the projection;
+a valid but incomplete projection can clear omitted optional settings.
+
+The content parser requires `name`, `parallelism`, and `respond_to`. Literal
+name-only JSON such as `{"name":"x"}` fails parsing before local application.
+If it becomes the latest verified owner policy, discovery excludes the agent
+rather than falling back to legacy permissions. See the pinned
+[content parser](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/managed_agents/agent_events.rs#L38-L59)
+and [discovery policy](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/nostr_convert/agent_directory.rs#L73-L98).
+
+For definition-linked instances, prompt/model/provider fields resolve through
+kind 30175 and are omitted from new 30177 events. Definition-less instances must
+keep those fields, including intended empty values: readers can apply absent
+values as clears. See [NIP-AP's instance-state rules](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/nips/NIP-AP.md#slimming-kind30177-instance-state).
+Registration seeds discovery; it does not prove ownership or membership. See
+[authenticated owned-agent discovery](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/owned-agent-discovery.md)
+for those separate requirements.
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`

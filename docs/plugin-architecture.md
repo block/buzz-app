@@ -569,6 +569,8 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+For kind 30177 publication, follow the
+[managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
 The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
 Shared message UI opens exact public-key targets through ordinary page callbacks;

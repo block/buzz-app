@@ -1688,6 +1688,34 @@ fn native_downloads_only_accept_authenticated_media_urls() {
 }
 
 #[test]
+fn clipboard_decodes_pixels_and_rejects_invalid_or_oversized_images() {
+    use image::{ImageEncoder as _, Rgba, RgbaImage};
+    let pixels = RgbaImage::from_fn(2, 1, |x, _| {
+        if x == 0 {
+            Rgba([255, 0, 0, 255])
+        } else {
+            Rgba([0, 80, 200, 128])
+        }
+    });
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(pixels.as_raw(), 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert_eq!(clipboard_pixels(&png).unwrap(), (2, 1, pixels.into_raw()));
+    assert!(clipboard_pixels(b"not an image").is_err());
+    assert!(clipboard_pixels(&vec![0; 50 * 1024 * 1024 + 1]).is_err());
+
+    // A valid, compressible image exceeds the 50 MiB expanded RGBA cap.
+    let huge = RgbaImage::from_pixel(4096, 4096, Rgba([1, 2, 3, 255]));
+    let mut encoded = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut encoded)
+        .write_image(huge.as_raw(), 4096, 4096, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    assert!(encoded.len() < 50 * 1024 * 1024);
+    assert!(clipboard_pixels(&encoded).is_err());
+}
+
+#[test]
 fn download_names_are_safe_and_collisions_do_not_overwrite() {
     let url = Url::parse(&format!("https://relay.test/media/{}.pdf", "a".repeat(64))).unwrap();
     for invalid in [

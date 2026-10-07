@@ -74,6 +74,7 @@ fn main() {
             "relay_upload",
             "relay_upload_cancel",
             "media_download",
+            "media_copy_image",
             "get_os_idle_seconds",
             "plugin_import_folder",
             "plugin_import_git",

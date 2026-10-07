@@ -29,6 +29,7 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+mod image_clipboard;
 
 mod notifications;
 mod os_idle;
@@ -41,7 +42,7 @@ use identity::{
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
+    media_copy_image, media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
     relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
     relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
     relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
@@ -445,6 +446,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload,
         relay_upload_cancel,
         media_download,
+        media_copy_image,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -597,6 +599,7 @@ pub fn run() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
     builder
+        .manage(image_clipboard::ImageClipboard::default())
         .manage(IdentityHost::default())
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())
@@ -673,6 +676,7 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<relay::Spools>().cancel_all(&app.state::<relay::Uploads>());
+                app.state::<image_clipboard::ImageClipboard>().release();
                 app.state::<HarnessSetup>().shutdown();
                 browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {

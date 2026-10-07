@@ -1356,6 +1356,76 @@ fn save_download(
     Err("Too many files with this name".into())
 }
 
+/// Decode only formats the gallery can paste, with a bound on both encoded and
+/// expanded bytes. The URL extension and remote Content-Type are not evidence.
+fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
+    const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Image too large to copy".into());
+    }
+    let format = image::guess_format(bytes).map_err(|_| "Could not decode image")?;
+    if !matches!(
+        format,
+        image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Gif
+    ) {
+        return Err("Could not decode image".into());
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|_| "Could not decode image")?;
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|size| *size <= MAX_IMAGE_BYTES)
+        .ok_or("Image too large to copy")?;
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+    reader.limits(limits);
+    let rgba = reader
+        .decode()
+        .map_err(|_| "Could not decode image")?
+        .to_rgba8()
+        .into_raw();
+    if rgba.len() != pixels {
+        return Err("Could not decode image".into());
+    }
+    Ok((width as usize, height as usize, rgba))
+}
+
+/// The host owns authenticated media access and the OS clipboard. Never hand
+/// bearer tokens or privileged fetch capability to the webview.
+#[tauri::command]
+pub(crate) async fn media_copy_image<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    host: tauri::State<'_, IdentityHost>,
+    source: String,
+) -> Result<()> {
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let response = fetch_media(host.inner(), url, None)
+        .await
+        .map_err(|_| "Could not fetch image")?;
+    if !response
+        .headers()
+        .get("Content-Type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind.starts_with("image/") && kind != "image/svg+xml")
+    {
+        return Err("Could not decode image".into());
+    }
+    let pixels = tauri::async_runtime::spawn_blocking(move || clipboard_pixels(response.body()))
+        .await
+        .map_err(|_| "Could not decode image".to_owned())??;
+    crate::image_clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
 /// The host, not the webview, owns the save path and collision policy.
 #[tauri::command]

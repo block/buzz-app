@@ -33,6 +33,8 @@ No user-level npm configuration edit, Corepack bootstrap, or temporary
 tool PATH is needed for a clean public-registry setup. Commit the `bin/` scripts
 and package symlinks; `.hermit/` contains ignored local state.
 
+CMake is pinned through Hermit for the native Opus codec build.
+
 All tool versions are unchanged by the public-tooling migration. The public
 catalog does not yet include Node 24.18.0, so `bin/packages/node.hcl` pins its
 [official downloads and checksums](https://nodejs.org/dist/v24.18.0/SHASUMS256.txt)

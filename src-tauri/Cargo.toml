@@ -20,7 +20,7 @@ buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-buzz-audio-client = { git = "https://github.com/block/buzz.git", rev = "778be3469763ada03df5daf72b86e1e6fd7d826a" }
+buzz-audio-client = { git = "https://github.com/block/buzz.git", rev = "9e7534b79d624d2dd2e50a81940fd449c8502d49" }
 futures-util = { version = "0.3", features = ["sink"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }

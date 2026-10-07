@@ -471,12 +471,8 @@ it("leases observed settings only for the edited Codex agent in this community",
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
   });
-  const here = cards.find((card) =>
-    card.textContent?.includes("wss://relay.example.test"),
-  );
-  const elsewhere = cards.find((card) =>
-    card.textContent?.includes("wss://second.example"),
-  );
+  const here = await cardInCommunity(cards, "wss://relay.example.test");
+  const elsewhere = await cardInCommunity(cards, "wss://second.example");
   if (!here || !elsewhere) throw Error("Expected both community setups");
 
   fireEvent.click(

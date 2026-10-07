@@ -1738,12 +1738,9 @@ fn download_names_are_safe_and_collisions_do_not_overwrite() {
 
 #[test]
 fn media_ranges_are_single_and_bounded() {
-    assert_eq!(media_range("bytes=0-").as_deref(), Some("bytes=0-4194303"));
-    assert_eq!(media_range("bytes=10-20").as_deref(), Some("bytes=10-20"));
-    assert_eq!(
-        media_range("bytes=100-999999999").as_deref(),
-        Some("bytes=100-4194403")
-    );
+    assert_eq!(media_range("bytes=0-"), Some((0, 4194303)));
+    assert_eq!(media_range("bytes=10-20"), Some((10, 20)));
+    assert_eq!(media_range("bytes=100-999999999"), Some((100, 4194403)));
     assert!(media_range(&format!("bytes={}-", u64::MAX)).is_none());
     for value in [
         "bytes=-500",
@@ -1837,6 +1834,149 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     assert!(!headers.contains("cookie"));
     let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
     assert_strict(&blossom_event(&headers), "get", server);
+}
+
+/// Serves `blob` by `Range`, failing the first `failures` requests with 503,
+/// and records every upstream `Range` header.
+fn ranged_media_server(
+    blob: Vec<u8>,
+    failures: usize,
+) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let ranges = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = ranges.clone();
+    std::thread::spawn(move || {
+        for socket in listener.incoming() {
+            let mut socket = socket.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            let headers = String::from_utf8_lossy(&bytes).into_owned();
+            let range = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("range: bytes="))
+                .unwrap()
+                .to_owned();
+            let count = {
+                let mut seen = seen.lock().unwrap();
+                seen.push(format!("bytes={range}"));
+                seen.len()
+            };
+            if count <= failures {
+                socket
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+                continue;
+            }
+            let (first, last) = range.split_once('-').unwrap();
+            let first: usize = first.parse().unwrap();
+            if first >= blob.len() {
+                let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", blob.len());
+                socket.write_all(head.as_bytes()).unwrap();
+                continue;
+            }
+            let last = last.parse::<usize>().unwrap().min(blob.len() - 1);
+            let body = &blob[first..=last];
+            let head = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Range: bytes {first}-{last}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                blob.len(),
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).unwrap();
+            socket.write_all(body).unwrap();
+        }
+    });
+    (base, ranges)
+}
+
+fn media_blob(length: u64) -> Vec<u8> {
+    (0..length).map(|index| (index % 251) as u8).collect()
+}
+
+#[tokio::test]
+async fn tiny_media_reads_share_one_signed_block_fetch() {
+    let blob = media_blob(3000);
+    let (base, ranges) = ranged_media_server(blob.clone(), 0);
+    let url = base
+        .join(&format!("/media/{}.mp4", "c".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    // AVFoundation's opening reads, two of them racing from separate players.
+    let (header, atom) = tokio::join!(
+        media_blocks::read(&host, &url, 0, 7),
+        media_blocks::read(&host, &url, 32, 39),
+    );
+    let (header, atom) = (header.unwrap(), atom.unwrap());
+    assert_eq!(header.body(), &blob[0..8]);
+    assert_eq!(atom.body(), &blob[32..40]);
+    let tail = media_blocks::read(&host, &url, 2990, 2990 + 4 * 1024 * 1024 - 1)
+        .await
+        .unwrap();
+    assert_eq!(tail.status(), 206);
+    assert_eq!(tail.body(), &blob[2990..]);
+    let header = |name| tail.headers().get(name).unwrap().to_str().unwrap();
+    assert_eq!(header("content-range"), "bytes 2990-2999/3000");
+    assert_eq!(header("content-type"), "video/mp4");
+    assert_eq!(header("accept-ranges"), "bytes");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(
+        *ranges.lock().unwrap(),
+        [format!("bytes=0-{}", media_blocks::BLOCK - 1)]
+    );
+}
+
+#[tokio::test]
+async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(block + 100);
+    let (base, ranges) = ranged_media_server(blob.clone(), 0);
+    let url = base
+        .join(&format!("/media/{}.mp4", "d".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let across = media_blocks::read(&host, &url, block - 4, block + 3)
+        .await
+        .unwrap();
+    assert_eq!(across.body(), &blob[block as usize - 4..block as usize + 4]);
+    assert_eq!(
+        across.headers()["content-range"],
+        format!("bytes {}-{}/{}", block - 4, block + 3, block + 100)
+    );
+    assert_eq!(
+        media_blocks::read(&host, &url, block + 100, block + 200)
+            .await
+            .unwrap_err(),
+        416
+    );
+    assert_eq!(
+        *ranges.lock().unwrap(),
+        [
+            format!("bytes=0-{}", block - 1),
+            format!("bytes={block}-{}", 2 * block - 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn failed_media_blocks_are_fetched_again() {
+    let blob = media_blob(64);
+    let (base, ranges) = ranged_media_server(blob.clone(), 1);
+    let url = base
+        .join(&format!("/media/{}.mp4", "e".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    assert_eq!(
+        media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+        503
+    );
+    let retried = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    assert_eq!(retried.body(), &blob[..8]);
+    assert_eq!(ranges.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

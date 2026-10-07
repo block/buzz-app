@@ -1,0 +1,147 @@
+//! Ranged `buzz-media` reads served from aligned, shared blocks.
+//!
+//! WebKit hands custom-scheme `<video>` loads to AVFoundation, which reads the
+//! file in exact, mostly 8-byte to 4 KiB, ranges. One signed relay GET per read
+//! kept every newly mounted player (such as the review viewer) on a black, 00:00
+//! frame for many seconds. Each aligned block is one signed `Range` GET, shared
+//! by every read and player of the same URL.
+
+use super::fetch_media;
+use crate::identity::IdentityHost;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::OnceCell;
+use url::Url;
+
+pub(super) const BLOCK: u64 = 1024 * 1024;
+/// Bounds memory at 32 MiB. Identity never changes within a process, and the
+/// webview may already keep these bytes under `Cache-Control: private, max-age=3600`.
+const CAPACITY: usize = 32;
+
+struct Block {
+    start: u64,
+    total: u64,
+    headers: tauri::http::HeaderMap,
+    bytes: Vec<u8>,
+}
+
+type Slot = Arc<OnceCell<Arc<Block>>>;
+
+static BLOCKS: Mutex<VecDeque<((Url, u64), Slot)>> = Mutex::new(VecDeque::new());
+
+fn slot(url: &Url, index: u64) -> Slot {
+    let mut blocks = BLOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let position = blocks
+        .iter()
+        .position(|((cached, at), _)| *at == index && cached == url);
+    let entry = match position.and_then(|position| blocks.remove(position)) {
+        Some(entry) => entry,
+        None => ((url.clone(), index), Slot::default()),
+    };
+    let slot = entry.1.clone();
+    blocks.push_back(entry);
+    if blocks.len() > CAPACITY {
+        blocks.pop_front();
+    }
+    slot
+}
+
+/// `bytes START-END/TOTAL`, the only form a 206 to a single range carries.
+fn content_range(value: &str) -> Option<(u64, u64, u64)> {
+    let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+}
+
+async fn fetch_block(
+    host: &IdentityHost,
+    url: &Url,
+    index: u64,
+) -> std::result::Result<Arc<Block>, u16> {
+    let start = index * BLOCK;
+    let response = fetch_media(
+        host,
+        url.clone(),
+        Some(format!("bytes={start}-{}", start + BLOCK - 1)),
+    )
+    .await?;
+    let (headers, bytes) = (response.headers().clone(), response.into_body());
+    let declared = headers
+        .get("content-range")
+        .and_then(|value| content_range(value.to_str().ok()?));
+    let block = match declared {
+        // A 200 is the whole blob, as a block that covers it entirely may be.
+        None if bytes.len() as u64 <= BLOCK => Block {
+            start: 0,
+            total: bytes.len() as u64,
+            headers,
+            bytes,
+        },
+        Some((first, last, total))
+            if last >= first && last < total && last - first + 1 == bytes.len() as u64 =>
+        {
+            Block {
+                start: first,
+                total,
+                headers,
+                bytes,
+            }
+        }
+        _ => return Err(502),
+    };
+    Ok(Arc::new(block))
+}
+
+/// Answers `bytes=START-END` (already bounded by `media_range`) exactly, ending
+/// early only at the end of the blob.
+pub(super) async fn read(
+    host: &IdentityHost,
+    url: &Url,
+    start: u64,
+    end: u64,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let mut body = Vec::new();
+    let mut first: Option<Arc<Block>> = None;
+    let mut at = start;
+    let (first, last) = loop {
+        let index = at / BLOCK;
+        let block = slot(url, index)
+            .get_or_try_init(|| fetch_block(host, url, index))
+            .await?
+            .clone();
+        let last = end.min(block.total.checked_sub(1).ok_or(416u16)?);
+        if at > last {
+            return Err(416);
+        }
+        // Content addressing makes every block of a URL agree on the blob.
+        let to = (last + 1).min(block.start + block.bytes.len() as u64);
+        if at < block.start || to <= at {
+            return Err(502);
+        }
+        body.extend_from_slice(
+            &block.bytes[(at - block.start) as usize..(to - block.start) as usize],
+        );
+        at = to;
+        if at > last {
+            break (first.unwrap_or(block), last);
+        }
+        first.get_or_insert(block);
+    };
+    let mut response = tauri::http::Response::builder().status(206);
+    for (name, value) in &first.headers {
+        if name != "content-range" {
+            response = response.header(name, value);
+        }
+    }
+    response
+        .header(
+            "Content-Range",
+            format!("bytes {start}-{last}/{}", first.total),
+        )
+        .body(body)
+        .map_err(|_| 502)
+}

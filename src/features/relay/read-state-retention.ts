@@ -266,6 +266,24 @@ export function retainLocalRead(
   const encoder = new TextEncoder();
   let bytes = 2;
   const entries: [string, number][] = [];
+  const accepted = new Map<string, number>();
+  // A mark that a kept broader mark already reads is redundant here too, as
+  // in the journal: keep it and it only takes room from real reads. Covers
+  // always have a broader scope, so they are accepted before what they cover.
+  // Overrides make inherited ancestry load-bearing; keep everything then.
+  const coveredBy = overrides.size ? undefined : covered;
+  const redundant = (key: string, value: number) => {
+    const cover = coveredBy?.(key, (other) =>
+      other === key
+        ? value
+        : (kept.state.frontiers[other] ?? accepted.get(other)),
+    );
+    return (
+      cover !== undefined &&
+      cover !== key &&
+      (kept.state.frontiers[cover] !== undefined || accepted.has(cover))
+    );
+  };
   const protectedKey = (key: string) =>
     overrides.size > 0 && !key.startsWith("msg:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
@@ -278,6 +296,7 @@ export function retainLocalRead(
       bv - av ||
       a.localeCompare(b),
   )) {
+    if (redundant(key, value)) continue;
     const cost =
       encoder.encode(JSON.stringify(key)).byteLength +
       1 +
@@ -289,6 +308,7 @@ export function retainLocalRead(
     )
       break;
     entries.push([key, value]);
+    accepted.set(key, value);
     bytes += cost;
   }
   return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };

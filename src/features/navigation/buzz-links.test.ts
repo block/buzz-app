@@ -162,6 +162,9 @@ it("accepts the Windows root slash without changing message or thread targets", 
       buzzLinkTarget(canonical, scope),
     );
     expect(buzzLinkKind(windows)).toBe(suffix ? "thread" : "message");
+    expect(parseBuzzLink(windows.replace("buzz:", "BUZZ:"))).toEqual(
+      parseBuzzLink(canonical),
+    );
   }
 });
 it.each(["", "/"])("keeps message validation with path %j", (path) => {
@@ -179,7 +182,7 @@ it.each(["", "/"])("keeps message validation with path %j", (path) => {
   ])
     expect(parseBuzzLink(url), url).toBeNull();
 });
-it.each(["//", "/extra", "/%2F"])(
+it.each(["//", "/extra", "/%2F", "/./", "/extra/..", "/%2e/"])(
   "rejects non-root message path %j",
   (path) => {
     expect(

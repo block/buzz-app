@@ -60,10 +60,12 @@ export function parseBuzzLink(href: string): BuzzLink | null {
         ...(messageId ? { messageId: messageId.toLowerCase() } : {}),
       };
     }
-    // Windows can supply an explicit root path before the query.
+    // Windows can supply an explicit root path before the query. Check its raw
+    // form too: URL normalizes non-root paths such as /extra/.. to /.
     if (
       url.hostname !== "message" ||
-      (url.pathname !== "" && url.pathname !== "/")
+      (url.pathname !== "" &&
+        (url.pathname !== "/" || !/^buzz:\/\/message\/\?/i.test(href)))
     )
       return null;
     // A duplicated known key is ambiguous and still rejects.

@@ -22,6 +22,7 @@ import {
   MessageManagement,
   MessageManagementItems,
   MessageManagementStatus,
+  MessageReadStateItem,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
@@ -201,6 +202,7 @@ async function fixture(
             <MenuRoot>
               <MenuTrigger>Message actions</MenuTrigger>
               <MenuPopup>
+                <MessageReadStateItem row={row} session={owner.session} />
                 <MessageManagementItems row={row} session={owner.session} />
               </MenuPopup>
             </MenuRoot>
@@ -756,7 +758,7 @@ async function heldUnreadAction(action: "read" | "unread") {
       <MenuRoot>
         <MenuTrigger>Read actions</MenuTrigger>
         <MenuPopup>
-          <MessageManagementItems row={row} session={current} />
+          <MessageReadStateItem row={row} session={current} />
         </MenuPopup>
       </MenuRoot>
     </MessageManagement>

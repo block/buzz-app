@@ -44,7 +44,10 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
-import { MessageManagementItems } from "./MessageManagement";
+import {
+  MessageManagementItems,
+  MessageReadStateItem,
+} from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
@@ -496,6 +499,11 @@ export const MessageRow = memo(function MessageRow({
                       }
                     />
                   ) : undefined)
+                }
+                leadingItems={
+                  session ? (
+                    <MessageReadStateItem row={row} session={session} />
+                  ) : undefined
                 }
                 overflowItems={
                   <>

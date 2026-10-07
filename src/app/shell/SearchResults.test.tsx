@@ -1592,7 +1592,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
   }
 });
 
-it("finds and resolves authors by name words, ignoring accents", async () => {
+it("finds and resolves authors by name words, sending the relay the typed accents", async () => {
   const relay = keypair(),
     viewer = keypair(),
     zoe = keypair(),
@@ -1602,14 +1602,29 @@ it("finds and resolves authors by name words, ignoring accents", async () => {
     roster(relay, "crew", [viewer.pubkey]),
   ];
   const reads: Filter[][] = [];
+  const searches: string[] = [];
+  const people = [
+    profile(zoe, { display_name: "Zoë" }),
+    profile(other, { display_name: "Mary Zoë" }),
+  ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
     query(filters) {
-      if (filters.some((filter) => filter.kinds?.includes(0)))
-        return Promise.resolve([
-          profile(zoe, { display_name: "Zoë" }),
-          profile(other, { display_name: "Mary Zoey" }),
-        ]);
+      const search = filters.find((filter) => filter.kinds?.includes(0))
+        ?.search as string | undefined;
+      if (search !== undefined) {
+        searches.push(search);
+        // Like the relay's `simple` text index: lowercase word prefixes,
+        // with no accent folding.
+        return Promise.resolve(
+          people.filter((event) =>
+            String(JSON.parse(event.content).display_name)
+              .toLowerCase()
+              .split(/[^\p{L}\p{N}]+/u)
+              .some((word) => word.startsWith(search)),
+          ),
+        );
+      }
       if (filters.some((filter) => filter.kinds?.includes(9))) {
         reads.push(filters as Filter[]);
         return Promise.resolve([]);
@@ -1629,23 +1644,26 @@ it("finds and resolves authors by name words, ignoring accents", async () => {
     openConversation: () => {},
   };
   try {
-    const mounted = render(<SearchResults {...props} query="from:@zoe" />);
-    const people = within(screen.getByRole("group", { name: "People" }));
-    // The exact name first, then a later word that starts with the text.
+    const mounted = render(<SearchResults {...props} query="from:@Zoë" />);
+    const group = within(screen.getByRole("group", { name: "People" }));
+    // The exact name first, then a later word that matches.
     await waitFor(() =>
       expect(
-        people.getAllByRole("option").map((option) => option.textContent),
+        group.getAllByRole("option").map((option) => option.textContent),
       ).toEqual([
         expect.stringContaining("Zoë"),
-        expect.stringContaining("Mary Zoey"),
+        expect.stringContaining("Mary Zoë"),
       ]),
     );
-    mounted.rerender(<SearchResults {...props} query="from:zoe " />);
+    mounted.rerender(<SearchResults {...props} query="from:Zoë " />);
     await waitFor(() =>
       expect(reads.at(-1)).toEqual([
         expect.objectContaining({ authors: [zoe.pubkey] }),
       ]),
     );
+    // Folding is local only; the relay sees what the user typed.
+    expect(searches.length).toBeGreaterThan(0);
+    expect(searches.every((search) => search === "zoë")).toBe(true);
   } finally {
     cleanup();
     owner.dispose();

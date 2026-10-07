@@ -2457,3 +2457,67 @@ it.each([
     }
   },
 );
+it.each([
+  { found: [], hasMore: false, space: true },
+  {
+    found: [{ pubkey: "f".repeat(64), name: "Jose" }],
+    hasMore: false,
+    space: false,
+  },
+  { found: [], hasMore: true, space: false },
+])(
+  "Space waits for the full directory before it selects an exact name (%j)",
+  async ({ found, hasMore, space }) => {
+    const h = setup();
+    h.profiles.set(h.member, { name: "José" });
+    let finish: (value: { people: typeof found; hasMore: boolean }) => void =
+      () => {};
+    const people = vi.fn(
+      () =>
+        new Promise<{ people: typeof found; hasMore: boolean }>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const publish = vi.fn();
+    const result = () =>
+      publish.mock.lastCall?.[0] as CompletionResult | undefined;
+    const view = render(
+      <MentionCompletion
+        session={
+          {
+            ...h.session,
+            directMessages: { ...h.session.directMessages, people },
+          } as unknown as RelaySession
+        }
+        scope="space-test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@jose", start: 5, end: 5 }}
+        query={{ start: 0, end: 5, query: "jose" }}
+        publish={publish}
+      />,
+    );
+    try {
+      await waitFor(() =>
+        expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      // The member José is shown, but an outside Jose may still arrive.
+      const member = result()?.items.find((item) => item.id === h.member);
+      expect(member).toBeDefined();
+      expect(result()?.spaceId).toBeUndefined();
+      expect(member?.canSelect?.(" ")).toBe(false);
+      expect(member?.canSelect?.("Enter")).toBe(true);
+      await act(async () => finish({ people: found, hasMore }));
+      await waitFor(() =>
+        expect(result()?.spaceId).toBe(space ? h.member : undefined),
+      );
+      expect(
+        result()
+          ?.items.find((item) => item.id === h.member)
+          ?.canSelect?.(" "),
+      ).toBe(space);
+    } finally {
+      view.unmount();
+      h.library.dispose();
+    }
+  },
+);

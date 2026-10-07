@@ -1270,6 +1270,40 @@ it("pages combined local and relay invitations without losing matches, and reset
   });
 });
 
+it("offers local agents to add by the shared name rule", async () => {
+  const t = await setup();
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [
+      { pubkey: keypair().pubkey, name: "José" },
+      { pubkey: keypair().pubkey, name: "Honey" },
+    ],
+  });
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+  });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.search) ? [] : query(filters),
+  );
+  const input = screen.getByRole("searchbox");
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  const offered = () =>
+    screen
+      .queryAllByRole("button", { name: /^Add / })
+      .map((row) => row.getAttribute("aria-label"));
+  // Accents fold, so `jose` finds the agent José.
+  await t.user.type(input, "jose");
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(offered()).toEqual([expect.stringMatching(/^Add José/)]);
+  // Text inside a word does not match: `oney` does not find Honey.
+  await t.user.clear(input);
+  await t.user.type(input, "oney");
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(offered()).toEqual([]);
+});
+
 it("controlled presentation restores the dialog without retaining its search or issuing writes", async () => {
   const t = await setup();
   cleanup();

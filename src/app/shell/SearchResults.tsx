@@ -299,13 +299,19 @@ export function SearchResults({
       authorSuggestions?.query === query ? authorSuggestions.remote : [],
     ),
   ]);
+  // A selectable agent also matches by its own name, as in @ mentions.
+  const authorTier = (pubkey: string, name: string) =>
+    Math.min(
+      ...[name, selectableAgents.get(pubkey)?.name].map((alias) =>
+        alias === undefined
+          ? Infinity
+          : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
+      ),
+    );
   const authorChoices =
     authorToken && showAuthorPicker && authorSuggestions?.query === query
       ? [...candidates]
-          .filter(
-            ([, profile]) =>
-              matchPerson(profile.name, authorNeedle) !== undefined,
-          )
+          .filter(([pubkey, profile]) => authorTier(pubkey, profile.name) < 4)
           .filter(
             ([pubkey]) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
@@ -314,10 +320,8 @@ export function SearchResults({
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
             ([left, leftProfile], [right, rightProfile]) =>
-              Number(matchPerson(rightProfile.name, authorNeedle)?.tier === 0) -
-                Number(
-                  matchPerson(leftProfile.name, authorNeedle)?.tier === 0,
-                ) ||
+              Number(authorTier(right, rightProfile.name) === 0) -
+                Number(authorTier(left, leftProfile.name) === 0) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
               Number(members.includes(right)) - Number(members.includes(left)),

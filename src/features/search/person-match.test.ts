@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { foldName, matchPerson, normalizeName } from "./person-match";
+import {
+  extendsName,
+  foldName,
+  matchPerson,
+  normalizeName,
+} from "./person-match";
 
 describe("matchPerson", () => {
   it.each([
@@ -39,5 +44,15 @@ describe("matchPerson", () => {
   it("normalizes the way it matches", () => {
     expect(normalizeName("  ÉLODIE ")).toBe("elodie");
     expect(foldName("José ")).toBe("jose ");
+  });
+
+  it("finds a longer name only when it continues with a new word", () => {
+    expect(extendsName("José Luis", "jose")).toBe(true);
+    expect(extendsName("Jose-Luis", "jose")).toBe(true);
+    expect(extendsName("Jose\tLuis", "jose")).toBe(true);
+    expect(extendsName("Josefa", "jose")).toBe(false);
+    expect(extendsName("Jose", "jose")).toBe(false);
+    expect(extendsName("Jose ", "jose")).toBe(false);
+    expect(extendsName("Anything", "")).toBe(false);
   });
 });

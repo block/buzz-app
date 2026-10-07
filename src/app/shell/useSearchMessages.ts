@@ -91,7 +91,8 @@ export function useSearchMessages(
           if (isHexPubkey(parsed.from)) {
             author = parsed.from.toLowerCase();
           } else {
-            const handle = normalizeName(normalizeFromHandle(parsed.from));
+            const typed = normalizeFromHandle(parsed.from).trim();
+            const handle = normalizeName(typed);
             if (!handle) return { events: [] };
             const knownMembers = channelId
               ? (session.channels.get?.(channelId)?.members ?? [])
@@ -113,11 +114,12 @@ export function useSearchMessages(
             } else {
               // The signed kind-0 index is prefix-based and limited. A match
               // outside its first page is unknown; duplicate names are ambiguous.
+              // The relay does not fold accents, so it gets the typed text.
               const candidates = await session.read(
                 [
                   {
                     kinds: [0],
-                    search: handle,
+                    search: typed.toLowerCase(),
                     search_mode: "prefix",
                     limit: 40,
                   },

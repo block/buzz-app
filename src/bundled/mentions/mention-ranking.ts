@@ -1,4 +1,8 @@
-import { matchPerson, normalizeName } from "../../features/search/person-match";
+import {
+  extendsName,
+  matchPerson,
+  normalizeName,
+} from "../../features/search/person-match";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
@@ -87,9 +91,7 @@ export function exactMention(choices: readonly MentionChoice[], query: string) {
   if (
     matches.length !== 1 ||
     choices.some((c) =>
-      [...c.aliases, c.label].some((name) =>
-        normalized(name).startsWith(`${needle} `),
-      ),
+      [...c.aliases, c.label].some((name) => extendsName(name, needle)),
     )
   )
     return;

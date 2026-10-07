@@ -85,3 +85,23 @@ it("groups watches under their interest, pauses them, and adds timers", async ()
     },
   });
 });
+
+it("accepts the curly quotes macOS substitutes in a watch filter", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn(async () => {});
+  render(<AttentionPanel agent={agent} save={save} channels={[]} />);
+  const group = screen.getByRole("region", { name: "Release triage" });
+  await user.click(within(group).getByRole("button", { name: "Watch" }));
+  await user.type(
+    screen.getByLabelText("Filter (optional)"),
+    "content == \u201Csecretpassword\u201D",
+  );
+  await user.click(screen.getByRole("button", { name: "Add watch" }));
+  expect(save).toHaveBeenLastCalledWith({
+    attention: {
+      "watch/messages": expect.objectContaining({
+        filter: 'content == "secretpassword"',
+      }),
+    },
+  });
+});

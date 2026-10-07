@@ -104,6 +104,23 @@ export function portableAcpCommand(command: string): boolean {
   );
 }
 
+/** The first non-stock ACP transport alias a publication names. This app
+ * launches only the bundled transport, so such an entry can't be adopted
+ * faithfully; callers refuse it rather than substituting silently. */
+export function unsupportedTransport(
+  publication: AgentPublication | TeamPublication,
+): string | undefined {
+  const agents =
+    publication.kind === AGENT_CATALOG_KIND
+      ? [publication.agent]
+      : publication.members;
+  return agents.find(
+    (agent) => agent.acpCommand && agent.acpCommand !== STOCK_ACP,
+  )?.acpCommand;
+}
+export const unsupportedTransportMessage = (name: string, alias: string) =>
+  `${name} uses the ${alias} transport, which this app can't run yet, so it can't be added.`;
+
 /** Only HTTPS artwork travels; inline art would exceed the outbox budget and
  * the reader still renders through the authenticated media path. */
 function catalogAvatar(value: unknown): string | undefined {

@@ -31,6 +31,7 @@ vi.mock("../../features/agents/team-import", () => ({
   importTeamSnapshot: vi.fn(),
 }));
 import {
+  adoptCatalogTeam,
   CatalogLauncher,
   CatalogShareSwitch,
   CommunityCatalogDialog,
@@ -216,6 +217,91 @@ it("previews shared entries as plain text and adds an explicit copy", async () =
     screen.getByRole("button", { name: "Crew is already in your teams" })
       .textContent,
   ).toContain("Added to my teams");
+});
+
+it("refuses to add entries that name a transport this app can't run", async () => {
+  const server = catalogRelay();
+  const alias = { acp_command: "buzz-janet-acp" };
+  server.put(
+    signed(alice, {
+      kind: 30175,
+      tags: [
+        ["d", "janet"],
+        ["shared", "true"],
+      ],
+      content: JSON.stringify({
+        display_name: "Janet",
+        system_prompt: "Help.",
+        ...alias,
+      }),
+      created_at: 1,
+    }),
+  );
+  server.put(
+    signed(alice, {
+      kind: 30178,
+      tags: [
+        ["d", "crew"],
+        ["shared", "true"],
+      ],
+      content: JSON.stringify({
+        v: 1,
+        name: "Crew",
+        members: [
+          {
+            member_key: "k1",
+            display_name: "Mate",
+            system_prompt: "Help.",
+            ...alias,
+          },
+        ],
+      }),
+      created_at: 1,
+    }),
+  );
+  const viewer = client(server, bob);
+  const onAddAgent = vi.fn();
+  const onAddTeam = vi.fn(async () => "team-copy");
+  render(
+    <CommunityCatalogDialog
+      session={viewer.session}
+      onClose={() => {}}
+      hasCopy={() => false}
+      onAddAgent={onAddAgent}
+      onAddTeam={onAddTeam}
+    />,
+  );
+  await screen.findByText(
+    "Janet uses the buzz-janet-acp transport, which this app can't run yet, so it can't be added.",
+  );
+  const addAgent = screen.getByRole("button", {
+    name: "Add Janet from Community Catalog",
+  });
+  expect(addAgent).toBeDisabled();
+  fireEvent.click(addAgent);
+  expect(onAddAgent).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: /Crew/ }));
+  await screen.findByText(
+    "Crew uses the buzz-janet-acp transport, which this app can't run yet, so it can't be added.",
+  );
+  expect(
+    screen.getByRole("button", { name: "Add Crew from Community Catalog" }),
+  ).toBeDisabled();
+  expect(onAddTeam).not.toHaveBeenCalled();
+
+  // The adapter refuses too, before anything reaches the shared importer.
+  const [listed] = viewer.catalog.snapshot().teams;
+  if (!listed) throw new Error("team not listed");
+  await expect(
+    adoptCatalogTeam(
+      viewer.session,
+      {} as never,
+      "https://relay.example.test",
+      bob.pubkey,
+      listed,
+    ),
+  ).rejects.toThrow("Crew uses the buzz-janet-acp transport");
+  expect(importTeamSnapshot).not.toHaveBeenCalled();
 });
 
 it("shows the empty catalog copy", async () => {

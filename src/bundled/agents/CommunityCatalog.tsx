@@ -16,6 +16,8 @@ import {
   TEAM_CATALOG_KIND,
   teamCatalogContent,
   type TeamPublication,
+  unsupportedTransport,
+  unsupportedTransportMessage,
 } from "../../features/agents/catalog-protocol";
 import { importTeamSnapshot } from "../../features/agents/team-import";
 import type { ChannelKit } from "../../features/channel-templates/capability";
@@ -325,6 +327,8 @@ export async function adoptCatalogTeam(
   listed: TeamPublication,
 ): Promise<string> {
   const team = await session.communityCatalog.currentTeam(listed);
+  const alias = unsupportedTransport(team);
+  if (alias) throw new Error(unsupportedTransportMessage(team.name, alias));
   const result = await importTeamSnapshot(
     control,
     session.channelKit,
@@ -444,6 +448,7 @@ export function CommunityCatalogDialog({
   const owner = (entry: Publication) =>
     own(entry) ? "You" : resolve(entry.owner, "Community member");
   const picture = (url?: string) => avatarMedia(url, session.media);
+  const transport = current && unsupportedTransport(current);
   const addTeam = async (team: TeamPublication) => {
     if (!onAddTeam) return;
     setError(undefined);
@@ -481,7 +486,7 @@ export function CommunityCatalogDialog({
                     ? `${current.agent.displayName} is already in My Agents`
                     : `Add ${current.agent.displayName} from Community Catalog`
                 }
-                disabled={isAdded(current)}
+                disabled={isAdded(current) || !!transport}
                 onClick={() => onAddAgent(current)}
               >
                 {isAdded(current) ? "Added to My Agents" : "Add agent"}
@@ -496,7 +501,7 @@ export function CommunityCatalogDialog({
                     ? `${current.name} is already in your teams`
                     : `Add ${current.name} from Community Catalog`
                 }
-                disabled={isAdded(current) || adding}
+                disabled={isAdded(current) || adding || !!transport}
                 onClick={() => void addTeam(current)}
               >
                 {isAdded(current)
@@ -627,6 +632,16 @@ export function CommunityCatalogDialog({
                   </ul>
                 </div>
               </>
+            )}
+            {transport && !isAdded(current) && (
+              <p role="note" className="m-0 break-words text-body-sm">
+                {unsupportedTransportMessage(
+                  current.kind === AGENT_CATALOG_KIND
+                    ? current.agent.displayName
+                    : current.name,
+                  transport,
+                )}
+              </p>
             )}
             {error && (
               <p role="alert" className="m-0 break-words text-body-sm">

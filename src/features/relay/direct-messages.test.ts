@@ -180,6 +180,31 @@ it("retries a rejected first message with the same signed event", async () => {
     t.owner.dispose();
   }
 });
+it.each(["removed participant", "unavailable discovery"])(
+  "does not republish a restored DM retry with %s",
+  async (failure) => {
+    const t = setup();
+    try {
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      t.publish.mockRejectedValueOnce(new PublishRejected("Retry later"));
+      const message = t.owner.session.messages.send(id, "Keep me");
+      await expect(
+        t.dm.delivered(message, id, new AbortController().signal),
+      ).rejects.toThrow("Retry later");
+      if (failure === "removed participant")
+        t.query.mockResolvedValueOnce([
+          roster(t.relay, id, [t.viewer.pubkey], 1800000000),
+        ]);
+      else t.query.mockRejectedValueOnce(new Error("Discovery offline"));
+      await expect(
+        t.dm.delivered(message, id, new AbortController().signal),
+      ).rejects.toThrow(/member|offline/);
+      expect(t.publish).toHaveBeenCalledOnce();
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 it("reads paginated verified profiles, excludes the viewer, and cancels with the caller", async () => {
   const t = setup();
   try {

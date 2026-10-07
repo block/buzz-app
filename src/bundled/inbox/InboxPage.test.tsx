@@ -92,6 +92,7 @@ function fixture(
   let responseGate: Promise<void> | undefined;
   let releaseResponses = () => {};
   let responseStarted = false;
+  const responseChannels: string[] = [];
   let failResponses = false;
   let failAux = false;
   let auxGate: Promise<void> | undefined;
@@ -260,6 +261,11 @@ function fixture(
           )
         ) {
           responseStarted = true;
+          responseChannels.push(
+            ...filters.flatMap((filter) =>
+              filter.since !== undefined ? (filter["#h"] ?? []) : [],
+            ),
+          );
           await responseGate;
           if (failResponses) throw new Error("reply history offline");
         }
@@ -438,6 +444,7 @@ function fixture(
     readSteps,
     evidenceReads: () => evidenceReads,
     historyRequests,
+    responseChannels,
     responseStarted: () => responseStarted,
     failResponses(value = true) {
       failResponses = value;
@@ -725,6 +732,21 @@ async function openRowMenu(
   }
   return screen.findByRole("menuitem", { name: "Mark unread" });
 }
+it("checks reply history only for candidates matching Activity and Sender", async () => {
+  const h = fixture({ withDm: true, withSenders: true });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("DMs");
+  await chooseFilter("Humans", "Sender");
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  await chooseFilter("Unresponded only", "Filters");
+  await waitFor(() => {
+    expect(rows()).toHaveLength(1);
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready");
+  });
+  expect(h.responseChannels).toEqual(["dm-room", "dm-room"]);
+});
+
 it("does not present cold unanswered rows while later replies are loading or unavailable", async () => {
   const h = fixture({ coldReply: true });
   const release = h.holdResponses();

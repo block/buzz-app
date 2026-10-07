@@ -64,6 +64,8 @@ export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
  * config; the app owns the name and attention. */
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
+  /** Replaces the type's whole config. Spread `agent.config` to change one
+   * field, or tabs that each save a part will erase each other's fields. */
   save(config: Config): Promise<void>;
 };
 export type AgentTab<Config = unknown> = Readonly<{
@@ -238,7 +240,12 @@ export class Agents2Service extends Service implements Agents2 {
         this.binding = undefined;
         for (const runner of this.runners.values()) this.retire(runner);
         this.runners.clear();
-        this.update();
+        // Clear what is shown without reconciling, which would make new runners.
+        this.state = Object.freeze({
+          ...this.state,
+          agents: Object.freeze([]),
+        });
+        this.notify();
       };
     });
   }
@@ -358,14 +365,21 @@ export class Agents2Service extends Service implements Agents2 {
 
   private async load() {
     if (!this.native) return;
+    // Only what existed before the list was asked for may be pruned; an agent
+    // created while it is in flight is missing from it but very much alive.
+    const before = new Set(Object.keys(this.records));
     try {
-      this.identities = await this.native.list();
+      const listed = await this.native.list();
+      const created = this.identities.filter(
+        (identity) => !listed.some((saved) => saved.pubkey === identity.pubkey),
+      );
+      this.identities = [...listed, ...created];
       // A record whose key is gone can never run again.
       const kept = new Set(this.identities.map((identity) => identity.pubkey));
-      const orphans = Object.keys(this.records).filter((key) => !kept.has(key));
-      if (orphans.length) {
+      const orphan = (key: string) => before.has(key) && !kept.has(key);
+      if (Object.keys(this.records).some(orphan)) {
         this.records = Object.fromEntries(
-          Object.entries(this.records).filter(([key]) => kept.has(key)),
+          Object.entries(this.records).filter(([key]) => !orphan(key)),
         );
         writeRecords(this.storage, this.records);
       }
@@ -471,12 +485,16 @@ export class Agents2Service extends Service implements Agents2 {
     const same =
       agents.length === this.state.agents.length &&
       agents.every((agent, index) => agent === this.state.agents[index]);
-    if (same) return;
-    this.state = Object.freeze({
-      ...this.state,
-      agents: Object.freeze(agents),
-    });
-    this.notify();
+    if (!same) {
+      this.state = Object.freeze({
+        ...this.state,
+        agents: Object.freeze(agents),
+      });
+      this.notify();
+    }
+    // Resume runners whose queue paused while their agent was out of view.
+    for (const runner of this.runners.values())
+      if (runner.queue.length) void this.drain(runner);
   }
   private notify() {
     for (const listener of this.listeners) listener();
@@ -636,18 +654,23 @@ export class Agents2Service extends Service implements Agents2 {
   }
 
   // One run at a time per agent, in arrival order. Each job runs the agent as it
-  // is when the job starts; a job for an agent that is no longer visible or has
-  // no runnable type is dropped. A run that ignores its deadline stops holding
+  // is when the job starts. While the agent is out of view (disconnected, another
+  // community) the queue pauses and update() resumes it; a type that cannot run
+  // drops what is queued. A run that ignores its deadline stops holding
   // the queue when the deadline passes; it is not otherwise fenced.
   private async drain(runner: Runner) {
     if (runner.running) return;
     runner.running = true;
     while (runner.queue.length && this.runners.get(runner.pubkey) === runner) {
-      const job = runner.queue.shift() as Job;
       const agent = this.find(runner.pubkey);
+      if (!agent) break;
       const type = runner.type;
       const run = type?.run;
-      if (!agent || !run) continue;
+      if (!type || !run) {
+        runner.queue.length = 0;
+        break;
+      }
+      const job = runner.queue.shift() as Job;
       const lifetime = runner.controller.signal;
       const signal = AbortSignal.any([
         lifetime,

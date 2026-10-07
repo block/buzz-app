@@ -152,19 +152,7 @@ export function ActivityAccessory({
               : "Agent activity in this channel"
           }
         >
-          {threadRootId ? (
-            agents
-          ) : (
-            // Observer turns have no thread identity. Keep all of them accessible
-            // without presenting a second full list as conversation-local work.
-            <details key={channelId}>
-              <summary className={`text-body-sm ${styles.summary}`}>
-                Channel-wide activity · {keys.split(":").length}{" "}
-                {keys.includes(":") ? "agents" : "agent"}
-              </summary>
-              {agents}
-            </details>
-          )}
+          {agents}
         </section>
       )}
     </>

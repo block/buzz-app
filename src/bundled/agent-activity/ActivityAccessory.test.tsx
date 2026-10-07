@@ -95,7 +95,7 @@ function fixture() {
   return { owner, observe, release, turn, typing, view, open, canOpen };
 }
 
-it("collapses channel-wide evidence without hiding simultaneous turns or unknown status", async () => {
+it("shows existing channel rows without a disclosure and preserves simultaneous turns or unknown status", async () => {
   const f = fixture();
   f.turn();
   f.turn(agent, "two");
@@ -116,19 +116,16 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   const thread = screen.getByRole("region", {
     name: "Agent activity in this thread",
   });
-  const summary = within(channel).getByText("Channel-wide activity · 2 agents");
   expect(channelStatus).toHaveTextContent("Agent aaaaaaaa is working");
   expect(threadStatus).toHaveTextContent("Agent aaaaaaaa is working");
   expect(channelStatus).toHaveClass("sr-only");
-  expect(channel.querySelector("details [role=status]")).toBeNull();
-  expect(channel.querySelector("details")).not.toHaveAttribute("open");
+  expect(channel.querySelector("details, summary")).toBeNull();
   expect(
     within(channel).getByRole("button", { name: /aaaaaaaaaaaa/ }),
-  ).not.toBeVisible();
+  ).toBeVisible();
   expect(within(thread).getAllByRole("button")).toHaveLength(1);
   expect(within(thread).getByRole("button")).toHaveTextContent("working");
   const user = userEvent.setup();
-  await user.click(summary);
   expect(within(channel).getAllByRole("button")).toHaveLength(2);
   expect(
     within(channel).getByRole("button", { name: /aaaaaaaaaaaa/ }),
@@ -141,15 +138,12 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   );
   expect(f.open).toHaveBeenCalledWith(activityTarget(agent, "alpha"));
   act(() => f.turn(agent, "one", "alpha", "turn_completed"));
-  expect(channel.querySelector("details")).toHaveAttribute("open");
   expect(
     within(channel).getByRole("button", { name: /aaaaaaaaaaaa/ }),
   ).toHaveTextContent("working");
   act(() => f.turn(agent, "two", "alpha", "turn_completed"));
   // Thread typing is not proof that a channel-wide turn is still active.
-  expect(
-    within(channel).getByText("Channel-wide activity · 1 agent"),
-  ).toBeVisible();
+  expect(within(channel).getAllByRole("button")).toHaveLength(1);
   expect(
     within(channel).queryByRole("button", { name: /aaaaaaaaaaaa/ }),
   ).not.toBeInTheDocument();
@@ -162,7 +156,7 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
   expect(channelStatus).toBeEmptyDOMElement();
   expect(threadStatus).toHaveTextContent("Agent aaaaaaaa is working");
   mounted.unmount();
-  expect(f.observe).toHaveBeenCalledTimes(1); // Disclosure never owns capture.
+  expect(f.observe).toHaveBeenCalledTimes(1); // Presentation never owns capture.
 });
 
 it.each([
@@ -199,21 +193,20 @@ it.each([
   },
 );
 
-it("retains expanded state on updates, resets across channels, and follows exact thread scope", async () => {
+it("keeps rows visible on updates and follows exact channel and thread scope", async () => {
   const f = fixture();
   f.turn();
   f.turn(other, "two", "beta");
   f.typing(root);
   f.typing("d".repeat(64));
   const mounted = render(f.view());
-  await userEvent
-    .setup()
-    .click(screen.getByText("Channel-wide activity · 1 agent"));
   act(() => f.turn(agent, "refresh"));
   expect(screen.getByRole("button")).toBeVisible();
   mounted.rerender(f.view("beta"));
-  expect(screen.getByRole("button")).not.toBeVisible();
-  expect(screen.getByText("Channel-wide activity · 1 agent")).toBeVisible();
+  expect(screen.getByRole("button")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Agent activity in this channel" }),
+  ).toBeVisible();
   mounted.rerender(f.view("alpha", root));
   expect(screen.getByRole("button")).toBeVisible();
   mounted.rerender(f.view("alpha", "e".repeat(64)));
@@ -236,7 +229,9 @@ it("keeps channel typing inspectable, expires thread evidence independently, and
       {f.view("alpha", root)}
     </>,
   );
-  expect(screen.getByText("Channel-wide activity · 1 agent")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Agent activity in this channel" }),
+  ).toBeVisible();
   expect(
     screen.getByRole("region", { name: "Agent activity in this thread" }),
   ).toBeVisible();
@@ -244,16 +239,20 @@ it("keeps channel typing inspectable, expires thread evidence independently, and
   expect(
     screen.queryByRole("region", { name: "Agent activity in this thread" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText("Channel-wide activity · 1 agent")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Agent activity in this channel" }),
+  ).toBeVisible();
   act(() => f.owner.state({ status: "retrying", routes: [] }));
   // Stale/unknown evidence is not presented as a count of working agents.
-  expect(screen.getByText("Channel-wide activity · 1 agent")).toBeVisible();
-  expect(screen.getByText("status unknown")).not.toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Agent activity in this channel" }),
+  ).toBeVisible();
+  expect(screen.getByText("status unknown")).toBeVisible();
   act(f.release);
   expect(screen.queryByRole("region")).not.toBeInTheDocument();
 });
 
-it("omits unavailable destinations from the summary and hides when none can open", () => {
+it("omits unavailable rows and hides when none can open", () => {
   const f = fixture();
   f.turn();
   f.turn(other);
@@ -261,7 +260,9 @@ it("omits unavailable destinations from the summary and hides when none can open
     (...args: unknown[]) => args[0] === activityTarget(agent, "alpha"),
   );
   const mounted = render(f.view());
-  expect(screen.getByText("Channel-wide activity · 1 agent")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Agent activity in this channel" }),
+  ).toBeVisible();
   f.canOpen.mockReturnValue(false);
   mounted.rerender(f.view());
   expect(screen.queryByRole("region")).not.toBeInTheDocument();

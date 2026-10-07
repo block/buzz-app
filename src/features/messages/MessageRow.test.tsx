@@ -1099,8 +1099,10 @@ it.each(["peer", "own"] as const)(
       },
       unread: {
         subscribe: () => () => {},
+        subscribeSync: () => () => {},
         snapshot: () => undefined,
         attention: () => ({ unread: false, forced: false, viewing: true }),
+        following: () => false,
       },
     } as unknown as RelaySession;
     renderDom(
@@ -1131,9 +1133,10 @@ it.each(["peer", "own"] as const)(
               "Send to channel",
               "Edit message",
               "Delete message",
+              "Follow thread",
               "Report",
             ]
-          : ["Mark unread", "Copy message", "Report"],
+          : ["Mark unread", "Copy message", "Follow thread", "Report"],
       );
     } finally {
       cleanup();

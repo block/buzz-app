@@ -517,6 +517,8 @@ function freeSlug(space: "interest" | "watch", base: string, agent: Agent) {
   return `${space}/${id}`;
 }
 const now = () => Math.floor(Date.now() / 1000);
+const straightQuotes = (text: string) =>
+  text.replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"');
 
 function NewInterest({
   agent,
@@ -644,8 +646,10 @@ function WatchForm({
       (Array.isArray(scope) && !scope.length
         ? "Choose at least one channel"
         : validateObject(slug, value));
-    if (problem) action.setError(problem);
-    else
+    // A filter problem is already shown under the field.
+    if (problem) {
+      if (!filterProblem) action.setError(problem);
+    } else
       void action
         .run(() => save({ attention: { [slug]: value } }))
         .then((ok) => ok && onDone());
@@ -725,13 +729,19 @@ function WatchForm({
             label="Filter (optional)"
             description={
               filterProblem ||
-              'e.g. is_reply && !(author == "<hex>"), or content == "deploy"'
+              'Exact match only. e.g. content == "deploy", or is_reply && !(author == "<hex>")'
             }
           >
             <Input
               value={filter}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
               aria-invalid={!!filterProblem || undefined}
-              onChange={(event) => setFilter(event.target.value)}
+              // macOS turns typed quotes into curly ones; the grammar only takes ".
+              onChange={(event) =>
+                setFilter(straightQuotes(event.target.value))
+              }
             />
           </Field>
         </>

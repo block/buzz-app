@@ -142,10 +142,13 @@ it("imports received bytes only after the explicit Import click", async () => {
     />,
   );
   expect(await screen.findByText("Help with the project.")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: /Restore memory/ }),
+  ).not.toBeChecked();
   expect(h.create).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Import" }));
   await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
-  await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledOnce());
+  expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
 });
 
 it("uploads an embedded reference avatar before native creation and saves its local URL", async () => {
@@ -222,6 +225,7 @@ it("publishes opted-in memory only after a fresh identity has been created", asy
   expect(await screen.findByText("Help with the project.")).toBeVisible();
   expect(screen.getByRole("alert")).toHaveTextContent("plaintext");
   expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /Restore memory/ }));
   fireEvent.click(screen.getByRole("button", { name: "Import" }));
   await waitFor(() =>
     expect(h.writeSnapshotMemory).toHaveBeenCalledWith("new-id", [
@@ -231,6 +235,61 @@ it("publishes opted-in memory only after a fresh identity has been created", asy
   expect(h.create.mock.invocationCallOrder[0]).toBeLessThan(
     h.writeSnapshotMemory.mock.invocationCallOrder[0] ?? 0,
   );
+});
+
+it("imports configuration without a memory writer and disables restoration", async () => {
+  const h = importControl();
+  const control = {
+    ...h.control,
+    writeSnapshotMemory: undefined,
+  } as AgentControl;
+  render(
+    <AgentSnapshotImport
+      control={control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(
+        buildAgentSnapshot(portableAgent(), "core", [
+          { slug: "core", body: "private fixture memory" },
+        ]),
+        "png",
+      )}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByText("Help with the project.")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: /Restore memory/ }),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
+});
+
+it("clears memory consent when a different file is selected", async () => {
+  const h = importControl();
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(file("core"));
+  const consent = await screen.findByRole("checkbox", {
+    name: /Restore memory/,
+  });
+  fireEvent.click(consent);
+  expect(consent).toBeChecked();
+  choose(file("core"));
+  expect(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  ).not.toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  expect(h.writeSnapshotMemory).not.toHaveBeenCalled();
 });
 
 it("does not publish memory if identity creation fails", async () => {

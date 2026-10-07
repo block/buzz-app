@@ -8,6 +8,7 @@ import { uploadAvatar } from "../../features/profiles/avatar-upload";
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
   type AgentSnapshot,
   type MemoryLevel,
@@ -343,6 +344,7 @@ export function AgentSnapshotImport({
 }) {
   const requestId = useRef(crypto.randomUUID());
   const [snapshot, setSnapshot] = useState<AgentSnapshot>();
+  const [restoreMemory, setRestoreMemory] = useState(false);
   const [fileError, setFileError] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
@@ -351,6 +353,7 @@ export function AgentSnapshotImport({
   useEffect(() => {
     if (!receivedBytes) return;
     requestId.current = crypto.randomUUID();
+    setRestoreMemory(false);
     try {
       setSnapshot(parseAgentSnapshot(receivedBytes));
       setFileError("");
@@ -364,10 +367,11 @@ export function AgentSnapshotImport({
   const read = async (file?: File) => {
     setFileError("");
     setSnapshot(undefined);
+    setRestoreMemory(false);
     const readId = crypto.randomUUID();
     requestId.current = readId;
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
+    if (file.size > MAX_AGENT_SNAPSHOT_FILE_BYTES) {
       setFileError("Snapshot exceeds the size limit.");
       return;
     }
@@ -393,7 +397,9 @@ export function AgentSnapshotImport({
       !control.create ||
       !destination ||
       !owner ||
-      (snapshot.memory.entries.length > 0 && !control.writeSnapshotMemory)
+      (restoreMemory &&
+        snapshot.memory.entries.length > 0 &&
+        !control.writeSnapshotMemory)
     )
       return;
     setBusy(true);
@@ -450,7 +456,11 @@ export function AgentSnapshotImport({
       setResult(
         `${agent.name} was created successfully. Review settings and configure local credentials in Edit, publish its profile, then Start the agent.`,
       );
-      if (snapshot.memory.entries.length && control.writeSnapshotMemory) {
+      if (
+        restoreMemory &&
+        snapshot.memory.entries.length &&
+        control.writeSnapshotMemory
+      ) {
         try {
           const outcome = await control.writeSnapshotMemory(
             agent.id,
@@ -498,7 +508,8 @@ export function AgentSnapshotImport({
                 !snapshot ||
                 !destination ||
                 !owner ||
-                (snapshot.memory.entries.length > 0 &&
+                (restoreMemory &&
+                  snapshot.memory.entries.length > 0 &&
                   !control.writeSnapshotMemory)
               }
               variant="primary"
@@ -570,27 +581,40 @@ export function AgentSnapshotImport({
                 agent is independent of the source — identity never travels.
               </p>
               {snapshot.memory.entries.length ? (
-                <p role="alert">
-                  This snapshot includes{" "}
-                  <strong>
-                    {snapshot.memory.entries.length}{" "}
-                    {snapshot.memory.level === "core" ? "core" : "all"} memory{" "}
-                    {snapshot.memory.entries.length === 1 ? "entry" : "entries"}
-                  </strong>
-                  . Memory is stored as plaintext in the file and will be
-                  restored under the new agent's identity.
-                </p>
+                <div>
+                  <p role="alert">
+                    This snapshot includes{" "}
+                    <strong>
+                      {snapshot.memory.entries.length}{" "}
+                      {snapshot.memory.level === "core" ? "core" : "all"} memory{" "}
+                      {snapshot.memory.entries.length === 1
+                        ? "entry"
+                        : "entries"}
+                    </strong>
+                    . Memory is plaintext in the file. It is omitted from import
+                    unless you explicitly choose to restore it.
+                  </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={restoreMemory}
+                      disabled={busy || !control.writeSnapshotMemory}
+                      onChange={(event) =>
+                        setRestoreMemory(event.target.checked)
+                      }
+                    />{" "}
+                    Restore memory under the new agent identity
+                  </label>
+                  {!control.writeSnapshotMemory && (
+                    <p role="alert">
+                      Memory restoration is unavailable on this host. You can
+                      still import the agent configuration without memory.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <p>No memory included — config only.</p>
               )}
-              {snapshot.memory.entries.length > 0 &&
-                !control.writeSnapshotMemory && (
-                  <p role="alert">
-                    Memory restoration requires a packaged desktop with snapshot
-                    memory support. Import is disabled to prevent dropping
-                    entries.
-                  </p>
-                )}
               {unsupported.length > 0 && (
                 <p role="alert">
                   Import is blocked: {unsupported.join("; ")}. These settings

@@ -3,7 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { AttentionPanel, describeWatch } from "./AttentionPanel";
+import { describeWatch } from "./attention";
+import { AttentionPanel } from "./AttentionPanel";
 import type { Agent } from "./service";
 
 afterEach(cleanup);

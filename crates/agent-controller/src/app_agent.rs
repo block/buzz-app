@@ -47,7 +47,9 @@ impl AppAgent {
             return Err("Agent identity changed".into());
         }
         if !KINDS.contains(&kind) {
-            return Err("Agents can sign profiles, messages, edits, reactions and deletions only".into());
+            return Err(
+                "Agents can sign profiles, messages, edits, reactions and deletions only".into(),
+            );
         }
         if content.len() > 64 * 1024
             || tags.len() > 256
@@ -87,7 +89,10 @@ impl NewAppAgent {
     }
 }
 
-/// The saved identities, one JSON file under app data.
+/// The saved identities, one JSON file under app data. Reads see a whole file
+/// (writes rename into place); each read-modify-write holds a file lock beside it,
+/// since more than one app instance can share the directory.
+#[derive(Clone)]
 pub struct AppAgents {
     path: PathBuf,
 }
@@ -97,7 +102,8 @@ impl AppAgents {
     }
     pub fn list(&self) -> Result<Vec<AppAgent>> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "Saved agent identities are malformed".into()),
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| "Saved agent identities are malformed".into()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
             Err(_) => Err("Could not read saved agent identities".into()),
         }
@@ -108,10 +114,30 @@ impl AppAgents {
             .find(|agent| agent.pubkey == pubkey)
             .ok_or_else(|| "No such agent on this device".into())
     }
-    fn write(&self, agents: &[AppAgent]) -> Result<()> {
+    /// Runs `change` on the saved list while holding the cross-process lock, and
+    /// saves what it returns.
+    fn update<T>(&self, change: impl FnOnce(&mut Vec<AppAgent>) -> Result<T>) -> Result<T> {
         let dir = self.path.parent().ok_or("Invalid agent identity storage")?;
         std::fs::create_dir_all(dir).map_err(|_| "Could not create agent identity storage")?;
-        let bytes = serde_json::to_vec_pretty(agents).map_err(|_| "Could not encode agent identities")?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(self.path.with_extension("lock"))
+            .map_err(|_| "Could not open agent identity lock")?;
+        lock.lock().map_err(|_| "Could not lock agent identities")?;
+        let mut agents = self.list()?;
+        let result = change(&mut agents)?;
+        self.write(&agents)?;
+        Ok(result)
+    }
+    fn write(&self, agents: &[AppAgent]) -> Result<()> {
+        let bytes =
+            serde_json::to_vec_pretty(agents).map_err(|_| "Could not encode agent identities")?;
         let temp = self.path.with_extension("tmp");
         std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
         std::fs::rename(&temp, &self.path).map_err(|_| "Could not save agent identities".into())
@@ -135,7 +161,8 @@ impl AppAgents {
     ) -> Result<AppAgent> {
         let auth = serde_json::to_string(auth).map_err(|_| "Invalid owner authorization")?;
         validate_attestation(&auth, prepared.key.pubkey())?;
-        let tag: Vec<String> = serde_json::from_str(&auth).map_err(|_| "Invalid owner authorization")?;
+        let tag: Vec<String> =
+            serde_json::from_str(&auth).map_err(|_| "Invalid owner authorization")?;
         if tag[1] != prepared.owner {
             return Err("Agent authorization belongs to another owner".into());
         }
@@ -147,22 +174,28 @@ impl AppAgents {
         };
         let id = agent.credential_id();
         credentials.add(&id, &prepared.key)?;
-        agent.read_key(credentials).map_err(|_| "New agent key could not be verified")?;
-        let mut agents = self.list()?;
-        agents.retain(|saved| saved.pubkey != agent.pubkey);
-        agents.push(agent.clone());
-        self.write(&agents)?;
+        agent
+            .read_key(credentials)
+            .map_err(|_| "New agent key could not be verified")?;
+        self.update(|agents| {
+            agents.retain(|saved| saved.pubkey != agent.pubkey);
+            agents.push(agent.clone());
+            Ok(())
+        })?;
         Ok(agent)
     }
     /// Forgets the identity, then deletes its key. Absence is success.
     pub fn remove(&self, pubkey: &str, credentials: &dyn Credentials) -> Result<()> {
-        let mut agents = self.list()?;
-        let Some(index) = agents.iter().position(|agent| agent.pubkey == pubkey) else {
-            return Ok(());
-        };
-        let agent = agents.remove(index);
-        self.write(&agents)?;
-        credentials.delete(&agent.credential_id(), &agent.pubkey)
+        let removed = self.update(|agents| {
+            Ok(agents
+                .iter()
+                .position(|agent| agent.pubkey == pubkey)
+                .map(|index| agents.remove(index)))
+        })?;
+        match removed {
+            Some(agent) => credentials.delete(&agent.credential_id(), &agent.pubkey),
+            None => Ok(()),
+        }
     }
 }
 

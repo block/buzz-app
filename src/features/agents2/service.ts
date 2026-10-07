@@ -1,7 +1,7 @@
 // Agents2: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
-// from it has its own native-held key, an `agent-attention/v1` configuration
-// and a config blob the type owns. The app delivers matching live events to
+// from it has its own native-held key, an `agent-attention/v1` configuration the
+// app owns and edits, and a config blob the type owns. The app delivers matching live events to
 // `run` from the stream the owner already receives, so no plugin opens a socket
 // or a REQ.
 import { Service, type Context } from "@deepseek-ai/cordis";
@@ -18,6 +18,7 @@ import type { RelayData } from "../relay/service";
 import {
   addressedTo,
   compileFilter,
+  tagsAgent,
   watchMatches,
   type AttentionObject,
   type AttentionValue,
@@ -25,7 +26,6 @@ import {
   timerState,
   type EventWatch,
   type Interest,
-  type TimerState,
   type TimerWatch,
 } from "./attention";
 import {
@@ -58,10 +58,13 @@ export type AgentChange<Config = unknown> = Readonly<{
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
 }>;
-/** What the peek view and each tab receive. */
+/** What a type's read-only peek receives. */
+export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
+/** What each of a type's settings tabs receives. A type writes only its own
+ * config; the app owns the name and attention. */
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
-  save(change: AgentChange<Config>): Promise<void>;
+  save(config: Config): Promise<void>;
 };
 export type AgentTab<Config = unknown> = Readonly<{
   id: string;
@@ -81,7 +84,8 @@ export type WatchMatch = Readonly<{
   interest?: Interest;
 }>;
 export type Trigger =
-  /** Directly addressed: a mention, DM, or reply to something the agent wrote. */
+  /** Directly addressed: a chat message that mentions the agent or replies to
+   * something it wrote. */
   | Readonly<{ type: "mention"; event: RelayEvent }>
   | Readonly<{
       type: "watch";
@@ -99,9 +103,10 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The live route's channel; absent when the wire scope was ambiguous. */
   channelId?: string;
   agent: AgentHandle;
+  /** The agent's config when this run started. */
   config: Config;
-  /** Aborts on the run's deadline, or when the agent is edited or removed. Advisory:
-   * the handle keeps working, so finishing up after an abort is harmless. */
+  /** Aborts on the run's deadline, or when the agent is removed or its type is
+   * replaced. Advisory: the handle keeps working, so finishing up is harmless. */
   signal: AbortSignal;
 }>;
 export type AgentType<Config = unknown> = {
@@ -116,7 +121,7 @@ export type AgentType<Config = unknown> = {
   /** One short line under the agent's name, e.g. its model; defaults to the title. */
   summary?(agent: Agent<Config>): string;
   /** A read-only glance shown when the agent is selected in the grid. */
-  Peek?: ComponentType<AgentViewProps<Config>>;
+  Peek?: ComponentType<AgentPeekProps<Config>>;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
   run?(delivery: Delivery<Config>): void | Promise<void>;
@@ -153,8 +158,6 @@ const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
-/** Timer schedule state is runtime state, not config, so it is kept apart from it. */
-const TIMERS_KEY = "buzz.agents2.timers.v1";
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 const bounded = (set: Set<string>, id: string) => {
@@ -162,20 +165,35 @@ const bounded = (set: Set<string>, id: string) => {
   if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as string);
 };
 
-type Binding = { scope: string; viewer: string; session: unknown };
+type Binding = {
+  scope: string;
+  origin: string;
+  viewer: string;
+  session: unknown;
+};
 type Job = { trigger: Trigger; channelId?: string };
-/** One running agent. Replaced, and its runs aborted, when the agent changes. */
+type CompiledWatch = WatchMatch & {
+  filter?: ReturnType<typeof compileFilter>;
+};
+/** One agent's runtime, for as long as its identity and record exist. Edits do not
+ * replace it: each job reads the agent as it is when the job starts, and the
+ * watches are recompiled only when its attention changes. */
 type Runner = {
-  agent: Agent;
-  type: RegisteredAgentType;
-  watches: readonly (WatchMatch & {
-    filter?: ReturnType<typeof compileFilter>;
-  })[];
+  readonly pubkey: string;
+  /** The registration whose `run` it calls; a new one aborts the in-flight run. */
+  type: RegisteredAgentType | undefined;
   controller: AbortController;
   queue: Job[];
   running: boolean;
   windowStart: number;
   admitted: number;
+  /** Events seen, and events it wrote (so replies to it are addressed). */
+  readonly seen: Set<string>;
+  readonly wrote: Set<string>;
+  compiled?: {
+    attention: Agent["attention"];
+    watches: readonly CompiledWatch[];
+  };
 };
 
 export class Agents2Service extends Service implements Agents2 {
@@ -187,11 +205,6 @@ export class Agents2Service extends Service implements Agents2 {
   private binding: Binding | undefined;
   private stopLive: (() => void) | undefined;
   private runners = new Map<string, Runner>();
-  /** Per agent: events seen, and events it wrote (so replies to it are addressed). */
-  private readonly seen = new Map<string, Set<string>>();
-  private readonly wrote = new Map<string, Set<string>>();
-  /** Keyed by `pubkey slug`. */
-  private timers: Record<string, TimerState>;
 
   constructor(
     ctx: Context,
@@ -202,11 +215,6 @@ export class Agents2Service extends Service implements Agents2 {
     super(ctx, "agents2");
     this.contributions = createContributions<AgentType>(ctx);
     this.records = readRecords(storage);
-    try {
-      this.timers = JSON.parse(storage.getItem(TIMERS_KEY) ?? "{}") ?? {};
-    } catch {
-      this.timers = {};
-    }
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
       agents: [],
@@ -228,6 +236,8 @@ export class Agents2Service extends Service implements Agents2 {
         this.stopLive?.();
         this.stopLive = undefined;
         this.binding = undefined;
+        for (const runner of this.runners.values()) this.retire(runner);
+        this.runners.clear();
         this.update();
       };
     });
@@ -272,9 +282,6 @@ export class Agents2Service extends Service implements Agents2 {
     if (!binding) throw new Error("Connect to a community first");
     if (!kind) throw new Error("That agent type is not available");
     if (!name.trim()) throw new Error("Name the agent");
-    const destination = relayOrigin(
-      binding.scope.slice(0, -(binding.viewer.length + 1)),
-    );
     const defaults = kind.defaults();
     let record: AgentRecord = {
       pubkey: "",
@@ -285,7 +292,10 @@ export class Agents2Service extends Service implements Agents2 {
     };
     for (const [slug, value] of Object.entries(defaults.attention ?? {}))
       record = setAttention(record, slug, value);
-    const pubkey = await native.prepare(destination, binding.viewer);
+    const pubkey = await native.prepare(
+      relayOrigin(binding.origin),
+      binding.viewer,
+    );
     const auth = await native.authorize(pubkey);
     const identity = await native.commit(pubkey, auth);
     this.identities = [
@@ -293,6 +303,8 @@ export class Agents2Service extends Service implements Agents2 {
       identity,
     ];
     this.write({ ...record, pubkey });
+    // The agent exists from here on; a missing profile only leaves it unnamed
+    // for others until its next rename.
     await this.publishProfile(pubkey);
     return this.find(pubkey) as Agent;
   }
@@ -334,16 +346,29 @@ export class Agents2Service extends Service implements Agents2 {
   private async publishProfile(pubkey: string) {
     const record = this.records[pubkey];
     if (!record || !this.native) return;
-    await this.native.publish(pubkey, {
-      kind: 0,
-      content: JSON.stringify({ name: record.name, bot: true }),
-    });
+    try {
+      await this.native.publish(pubkey, {
+        kind: 0,
+        content: JSON.stringify({ name: record.name, bot: true }),
+      });
+    } catch (error) {
+      console.warn(`Agent ${record.name} profile was not published`, error);
+    }
   }
 
   private async load() {
     if (!this.native) return;
     try {
       this.identities = await this.native.list();
+      // A record whose key is gone can never run again.
+      const kept = new Set(this.identities.map((identity) => identity.pubkey));
+      const orphans = Object.keys(this.records).filter((key) => !kept.has(key));
+      if (orphans.length) {
+        this.records = Object.fromEntries(
+          Object.entries(this.records).filter(([key]) => kept.has(key)),
+        );
+        writeRecords(this.storage, this.records);
+      }
       this.state = { ...this.state, status: "ready" };
     } catch (error) {
       this.state = { ...this.state, status: "error", error: message(error) };
@@ -358,9 +383,11 @@ export class Agents2Service extends Service implements Agents2 {
       snapshot.status === "ready" &&
       !snapshot.cached &&
       snapshot.scope &&
+      snapshot.origin &&
       snapshot.viewer
         ? {
             scope: snapshot.scope,
+            origin: snapshot.origin,
             viewer: snapshot.viewer,
             session: snapshot.session,
           }
@@ -378,9 +405,10 @@ export class Agents2Service extends Service implements Agents2 {
     this.update();
   }
 
-  // Rebuilds the visible agents and the runners from identities, records, types and
-  // the connection. A runner whose agent or type changed is replaced, which aborts
-  // its in-flight run; nothing else about a run's lifetime is managed.
+  // Joins identities, records and the connection into the visible agents, and
+  // keeps one runner per saved agent. Runners outlive edits and reconnects; one is
+  // retired only when its agent is removed, and its run is aborted when the
+  // agent's type is replaced.
   private update() {
     const binding = this.binding;
     const agents: Agent[] = [];
@@ -396,42 +424,50 @@ export class Agents2Service extends Service implements Agents2 {
       } catch {
         continue;
       }
+      // Reuse the frozen agent while nothing visible changed, so subscribers see
+      // a stable snapshot.
       const prior = this.find(identity.pubkey);
-      const next: Agent = Object.freeze({
-        pubkey: identity.pubkey,
-        name: record.name,
-        type: record.type,
-        owner: identity.owner,
-        relay: identity.relay,
-        attention: record.attention,
-        config: record.config,
-      });
       agents.push(
         prior &&
-          prior.name === next.name &&
-          prior.type === next.type &&
-          prior.attention === next.attention &&
-          prior.config === next.config
+          prior.name === record.name &&
+          prior.type === record.type &&
+          prior.attention === record.attention &&
+          prior.config === record.config
           ? prior
-          : next,
+          : Object.freeze({
+              pubkey: identity.pubkey,
+              name: record.name,
+              type: record.type,
+              owner: identity.owner,
+              relay: identity.relay,
+              attention: record.attention,
+              config: record.config,
+            }),
       );
     }
     const types = new Map(this.types().map((type) => [type.key, type]));
-    const runners = new Map<string, Runner>();
-    for (const agent of agents) {
-      const type = types.get(agent.type);
-      if (!type?.run) continue;
-      const prior = this.runners.get(agent.pubkey);
-      runners.set(
-        agent.pubkey,
-        prior && prior.agent === agent && prior.type === type
-          ? prior
-          : this.runner(agent, type),
-      );
-    }
     for (const [pubkey, runner] of this.runners)
-      if (runners.get(pubkey) !== runner) runner.controller.abort();
-    this.runners = runners;
+      if (
+        !this.records[pubkey] ||
+        !this.identities.some((identity) => identity.pubkey === pubkey)
+      ) {
+        this.retire(runner);
+        this.runners.delete(pubkey);
+      }
+    for (const identity of this.identities) {
+      const record = this.records[identity.pubkey];
+      if (!record) continue;
+      const type = types.get(record.type);
+      const runner = this.runners.get(identity.pubkey);
+      if (!runner)
+        this.runners.set(identity.pubkey, this.runner(identity, type));
+      else if (runner.type !== type) {
+        runner.controller.abort();
+        runner.controller = new AbortController();
+        runner.type = type;
+        void this.drain(runner);
+      }
+    }
     const same =
       agents.length === this.state.agents.length &&
       agents.every((agent, index) => agent === this.state.agents[index]);
@@ -446,8 +482,31 @@ export class Agents2Service extends Service implements Agents2 {
     for (const listener of this.listeners) listener();
   }
 
-  private runner(agent: Agent, type: RegisteredAgentType): Runner {
-    const watches: Runner["watches"][number][] = [];
+  private runner(
+    identity: AgentIdentity,
+    type: RegisteredAgentType | undefined,
+  ): Runner {
+    return {
+      pubkey: identity.pubkey,
+      type,
+      controller: new AbortController(),
+      queue: [],
+      running: false,
+      windowStart: 0,
+      admitted: 0,
+      seen: new Set(),
+      wrote: new Set(),
+    };
+  }
+  private retire(runner: Runner) {
+    runner.queue.length = 0;
+    runner.controller.abort();
+  }
+  /** The runner's event watches for the agent's current attention. */
+  private watches(runner: Runner, agent: Agent) {
+    if (runner.compiled?.attention === agent.attention)
+      return runner.compiled.watches;
+    const watches: CompiledWatch[] = [];
     for (const object of Object.values(agent.attention)) {
       const watch = object.value;
       // Classifiers are not supported yet; such a watch never matches.
@@ -461,38 +520,23 @@ export class Agents2Service extends Service implements Agents2 {
         ...(watch.filter ? { filter: compileFilter(watch.filter) } : {}),
       });
     }
-    return {
-      agent,
-      type,
-      watches,
-      controller: new AbortController(),
-      queue: [],
-      running: false,
-      windowStart: 0,
-      admitted: 0,
-    };
+    runner.compiled = { attention: agent.attention, watches };
+    return watches;
   }
 
   private dispatch(batch: LiveBatch) {
     for (const runner of this.runners.values()) {
-      const { pubkey } = runner.agent;
-      const seen = this.seen.get(pubkey) ?? new Set();
-      const wrote = this.wrote.get(pubkey) ?? new Set();
-      this.seen.set(pubkey, seen);
-      this.wrote.set(pubkey, wrote);
+      const agent = this.find(runner.pubkey);
+      if (!agent || !runner.type?.run) continue;
       for (const event of batch.events) {
-        if (seen.has(event.id)) continue;
-        bounded(seen, event.id);
+        if (runner.seen.has(event.id)) continue;
+        bounded(runner.seen, event.id);
         // An agent never hears itself; its own events make replies addressed.
-        if (event.pubkey === pubkey) {
-          bounded(wrote, event.id);
+        if (event.pubkey === agent.pubkey) {
+          bounded(runner.wrote, event.id);
           continue;
         }
-        const trigger: Trigger | undefined = addressedTo(event, pubkey, (id) =>
-          wrote.has(id),
-        )
-          ? { type: "mention", event }
-          : this.watching(runner, event);
+        const trigger = this.heard(runner, agent, event);
         if (trigger)
           this.enqueue(runner, {
             trigger,
@@ -501,8 +545,28 @@ export class Agents2Service extends Service implements Agents2 {
       }
     }
   }
-  private watching(runner: Runner, event: RelayEvent): Trigger | undefined {
-    const watches = runner.watches
+  private heard(
+    runner: Runner,
+    agent: Agent,
+    event: RelayEvent,
+  ): Trigger | undefined {
+    const wrote = (id: string) => runner.wrote.has(id);
+    // Two of one owner's agents would otherwise answer each other forever: one
+    // hears another only when it is named in something that does not reply to it.
+    if (
+      this.identities.some(
+        (identity) =>
+          identity.pubkey === event.pubkey && identity.owner === agent.owner,
+      )
+    )
+      return tagsAgent(event, agent.pubkey) &&
+        addressedTo(event, agent.pubkey) &&
+        !event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wrote(tag[1]))
+        ? { type: "mention", event }
+        : undefined;
+    if (addressedTo(event, agent.pubkey, wrote))
+      return { type: "mention", event };
+    const watches = this.watches(runner, agent)
       .filter(({ watch, filter }) => watchMatches(watch, event, filter))
       .map(({ filter: _, ...match }) => match);
     return watches.length ? { type: "watch", event, watches } : undefined;
@@ -512,25 +576,29 @@ export class Agents2Service extends Service implements Agents2 {
   // when overdue, then due again interval after it ran; a new armed_at restarts.
   private tick(now = Math.floor(Date.now() / 1000)) {
     let changed = false;
-    for (const runner of this.runners.values())
-      for (const object of Object.values(runner.agent.attention)) {
+    for (const runner of this.runners.values()) {
+      const agent = this.find(runner.pubkey);
+      const record = this.records[runner.pubkey];
+      if (!agent || !record || !runner.type?.run) continue;
+      const prior = record.timers ?? {};
+      let timers = prior;
+      for (const object of Object.values(agent.attention)) {
         const timer = object.value;
         if (timer.type !== "timer" || !timer.enabled) continue;
-        const key = `${runner.agent.pubkey} ${object.slug}`;
-        const state = timerState(timer, this.timers[key]);
-        if (state !== this.timers[key]) {
-          this.timers[key] = state;
-          changed = true;
-        }
+        const state = timerState(timer, timers[object.slug]);
+        if (state !== timers[object.slug])
+          timers = { ...timers, [object.slug]: state };
         if (now < state.nextDue || timerSpent(timer, state, now)) continue;
-        this.timers[key] = {
-          ...state,
-          used: state.used + 1,
-          nextDue: now + timer.interval_secs,
+        timers = {
+          ...timers,
+          [object.slug]: {
+            ...state,
+            used: state.used + 1,
+            nextDue: now + timer.interval_secs,
+          },
         };
-        changed = true;
         const interest =
-          runner.agent.attention[`interest/${timer.interest_id}`]?.value;
+          agent.attention[`interest/${timer.interest_id}`]?.value;
         this.enqueue(runner, {
           trigger: {
             type: "timer",
@@ -540,7 +608,16 @@ export class Agents2Service extends Service implements Agents2 {
           },
         });
       }
-    if (changed) this.storage.setItem(TIMERS_KEY, JSON.stringify(this.timers));
+      if (timers !== prior) {
+        // Run state only: the visible agent is unchanged, so no update().
+        this.records = {
+          ...this.records,
+          [record.pubkey]: { ...record, timers },
+        };
+        changed = true;
+      }
+    }
+    if (changed) writeRecords(this.storage, this.records);
   }
 
   private enqueue(runner: Runner, job: Job) {
@@ -550,7 +627,7 @@ export class Agents2Service extends Service implements Agents2 {
       runner.admitted = 0;
     }
     if (runner.queue.length >= QUEUE_LIMIT || runner.admitted >= RATE_LIMIT) {
-      console.warn(`Agent ${runner.agent.name} dropped an event`);
+      console.warn(`Agent ${this.find(runner.pubkey)?.name} dropped an event`);
       return;
     }
     runner.admitted++;
@@ -558,25 +635,30 @@ export class Agents2Service extends Service implements Agents2 {
     void this.drain(runner);
   }
 
-  // One run at a time per agent, in arrival order. A run that ignores its deadline
-  // stops holding the queue when the deadline passes; it is not otherwise fenced.
+  // One run at a time per agent, in arrival order. Each job runs the agent as it
+  // is when the job starts; a job for an agent that is no longer visible or has
+  // no runnable type is dropped. A run that ignores its deadline stops holding
+  // the queue when the deadline passes; it is not otherwise fenced.
   private async drain(runner: Runner) {
     if (runner.running) return;
     runner.running = true;
-    const run = runner.type.run as NonNullable<AgentType["run"]>;
-    const agent: AgentHandle = Object.freeze({
-      pubkey: runner.agent.pubkey,
-      name: runner.agent.name,
-      owner: runner.agent.owner,
-      publish: (event: AgentEventTemplate) =>
-        this.publish(runner.agent.pubkey, event),
-    });
-    while (runner.queue.length && !runner.controller.signal.aborted) {
+    while (runner.queue.length && this.runners.get(runner.pubkey) === runner) {
       const job = runner.queue.shift() as Job;
+      const agent = this.find(runner.pubkey);
+      const type = runner.type;
+      const run = type?.run;
+      if (!agent || !run) continue;
+      const lifetime = runner.controller.signal;
       const signal = AbortSignal.any([
-        runner.controller.signal,
-        AbortSignal.timeout(runner.type.timeoutMs ?? 60_000),
+        lifetime,
+        AbortSignal.timeout(type.timeoutMs ?? 60_000),
       ]);
+      const handle: AgentHandle = Object.freeze({
+        pubkey: agent.pubkey,
+        name: agent.name,
+        owner: agent.owner,
+        publish: (event: AgentEventTemplate) => this.publish(runner, event),
+      });
       try {
         await Promise.race([
           Promise.resolve().then(() =>
@@ -584,8 +666,8 @@ export class Agents2Service extends Service implements Agents2 {
               Object.freeze({
                 trigger: job.trigger,
                 ...(job.channelId ? { channelId: job.channelId } : {}),
-                agent,
-                config: runner.agent.config,
+                agent: handle,
+                config: agent.config,
                 signal,
               }),
             ),
@@ -598,19 +680,17 @@ export class Agents2Service extends Service implements Agents2 {
           }),
         ]);
       } catch (error) {
-        if (!runner.controller.signal.aborted)
-          console.error(`Agent run failed: ${runner.agent.name}`, error);
+        if (!lifetime.aborted)
+          console.error(`Agent run failed: ${agent.name}`, error);
       }
     }
     runner.running = false;
   }
 
-  private async publish(pubkey: string, event: AgentEventTemplate) {
+  private async publish(runner: Runner, event: AgentEventTemplate) {
     if (!this.native) throw new Error("Agents run only in the desktop app");
-    const signed = await this.native.publish(pubkey, event);
-    const wrote = this.wrote.get(pubkey) ?? new Set();
-    this.wrote.set(pubkey, wrote);
-    bounded(wrote, signed.id);
+    const signed = await this.native.publish(runner.pubkey, event);
+    bounded(runner.wrote, signed.id);
     return signed;
   }
 }

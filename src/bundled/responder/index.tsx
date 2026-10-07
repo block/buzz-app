@@ -1,16 +1,49 @@
 // An example Agents2 type with no network: each agent replies, as itself, with its
 // configured text when it is mentioned or one of its watches fires.
-import { useState } from "react";
+//
+// It is written the way an external plugin must be: React comes from `ctx.react`,
+// and the only imports from the app are types, so the controls are plain HTML.
 import type { PluginModule } from "../../plugins/api";
 import type { AgentViewProps } from "../../features/agents2/service";
-import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 
 type Config = { reply: string };
 
-export const inject = ["agents2"];
+export const inject = ["react", "agents2"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  const { useState } = ctx.react;
+
+  function ReplyTab({ agent, save }: AgentViewProps<Config>) {
+    const [reply, setReply] = useState(agent.config.reply);
+    const [pending, setPending] = useState(false);
+    return (
+      <div style={{ display: "grid", gap: "var(--space-2)" }}>
+        <label
+          className="text-label"
+          style={{ display: "grid", gap: "var(--space-1)" }}
+        >
+          Reply text
+          <textarea
+            rows={4}
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+          />
+        </label>
+        <div>
+          <button
+            type="button"
+            disabled={pending || reply === agent.config.reply}
+            onClick={() => {
+              setPending(true);
+              void save({ reply }).finally(() => setPending(false));
+            }}
+          >
+            {pending ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   ctx.agents2.register<Config>({
     id: "responder",
     title: "Responder",
@@ -27,7 +60,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }),
     summary: (agent) => `Replies “${agent.config.reply}”`,
     Peek: ({ agent }) => (
-      <div className="grid gap-1">
+      <div style={{ display: "grid", gap: "var(--space-1)" }}>
         <p className="m-0 text-caption text-secondary">Replies with</p>
         <p className="m-0 whitespace-pre-wrap text-body-sm">
           {agent.config.reply.trim() || "Nothing yet; it stays quiet."}
@@ -56,32 +89,3 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
 };
-
-function ReplyTab({ agent, save }: AgentViewProps<Config>) {
-  const [reply, setReply] = useState(agent.config.reply);
-  const [pending, setPending] = useState(false);
-  return (
-    <div className="grid gap-2 pt-4">
-      <Field label="Reply text">
-        <Textarea
-          rows={4}
-          value={reply}
-          onChange={(event) => setReply(event.target.value)}
-        />
-      </Field>
-      <div>
-        <Button
-          size="compact"
-          loading={pending}
-          disabled={reply === agent.config.reply}
-          onClick={() => {
-            setPending(true);
-            void save({ config: { reply } }).finally(() => setPending(false));
-          }}
-        >
-          Save
-        </Button>
-      </div>
-    </div>
-  );
-}

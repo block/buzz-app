@@ -1,10 +1,11 @@
 // Device-local storage for Agents2 agents: each agent's attention objects in the
-// `agent-attention/v1` shape, plus one JSON blob its plugin type owns. The key and
-// owner attestation live in native custody, never here. A relay-backed store can
-// replace this later without changing the record shape.
+// `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
+// run state. The key and owner attestation live in native custody, never here. A
+// relay-backed store can replace this later without changing the record shape.
 import {
   type AttentionObject,
   type AttentionValue,
+  type TimerState,
   validateObject,
 } from "./attention";
 
@@ -17,6 +18,9 @@ export type AgentRecord = Readonly<{
   attention: Readonly<Record<string, AttentionObject>>;
   /** Plugin-owned config. The host never reads it. */
   config: unknown;
+  /** Run state of its timers, by slug. Not config, so it never leaves the device;
+   * kept here so removing a timer or the agent removes its state with it. */
+  timers?: Readonly<Record<string, TimerState>>;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -55,7 +59,16 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
         !validateObject(slug, object.value)
       )
         attention[slug] = object;
-    records[pubkey] = { ...record, attention };
+    const timers: Record<string, TimerState> = {};
+    for (const [slug, state] of Object.entries(record.timers ?? {}))
+      if (
+        attention[slug]?.value.type === "timer" &&
+        [state?.armedAt, state?.nextDue, state?.used].every(
+          Number.isSafeInteger,
+        )
+      )
+        timers[slug] = state;
+    records[pubkey] = { ...record, attention, timers };
   }
   return records;
 }
@@ -70,7 +83,8 @@ export function writeRecords(
   );
 }
 
-/** Replaces or deletes (`value: null`) one attention object, after validating it. */
+/** Replaces or deletes (`value: null`) one attention object, after validating it.
+ * A slug that stops being a timer loses its timer state. */
 export function setAttention(
   record: AgentRecord,
   slug: string,
@@ -78,11 +92,14 @@ export function setAttention(
   now = Math.floor(Date.now() / 1000),
 ): AgentRecord {
   const { [slug]: _, ...rest } = record.attention;
-  if (value === null) return { ...record, attention: rest };
+  const { [slug]: __, ...timers } = record.timers ?? {};
+  const kept = value?.type === "timer" ? (record.timers ?? {}) : timers;
+  if (value === null) return { ...record, attention: rest, timers: kept };
   const problem = validateObject(slug, value);
   if (problem) throw new Error(problem);
   return {
     ...record,
     attention: { ...rest, [slug]: { slug, value, modifiedAt: now } },
+    timers: kept,
   };
 }

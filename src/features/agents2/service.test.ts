@@ -11,6 +11,7 @@ import { memoryStorage } from "./test-fakes";
 const viewer = "a".repeat(64);
 const other = "b".repeat(64);
 const bot = "c".repeat(64);
+const sibling = "d".repeat(64);
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
 const event = (id: string, patch: Partial<RelayEvent> = {}) =>
   ({
@@ -36,6 +37,7 @@ function fakeRelay() {
     status: "ready",
     generation: 1,
     viewer,
+    origin: "https://relay.example.test",
     scope: `https://relay.example.test:${viewer}`,
     session,
   };
@@ -50,12 +52,12 @@ function fakeRelay() {
   };
 }
 
-function fakeNative() {
-  const identities: AgentIdentity[] = [];
+function fakeNative(identities: AgentIdentity[] = []) {
   let published = 0;
+  const keys = [bot, sibling];
   const native = {
     list: vi.fn(async () => [...identities]),
-    prepare: vi.fn(async () => bot),
+    prepare: vi.fn(async () => keys.shift() as string),
     authorize: vi.fn(async () => ["auth", viewer, "", "sig"]),
     commit: vi.fn(async (pubkey: string) => {
       const identity = {
@@ -67,23 +69,25 @@ function fakeNative() {
       return identity;
     }),
     remove: vi.fn(async () => {}),
-    publish: vi.fn(async (_pubkey: string, template: { kind: number }) =>
-      event(`p${++published}`, { pubkey: bot, kind: template.kind }),
+    publish: vi.fn(async (pubkey: string, template: { kind: number }) =>
+      event(`p${++published}`, { pubkey, kind: template.kind }),
     ),
   } satisfies AgentsNative;
   return native;
 }
 
 type Config = { reply: string };
-async function setup() {
+async function setup({
+  storage = memoryStorage(),
+  identities = [] as AgentIdentity[],
+} = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,
     subscribe: () => () => {},
   });
   const fake = fakeRelay();
-  const native = fakeNative();
-  const storage = memoryStorage();
+  const native = fakeNative(identities);
   const service = new Agents2Service(ctx, fake.relay, native, storage);
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -181,8 +185,45 @@ it("treats a reply to something the agent published as addressed", async () => {
   expect(run.mock.calls[1]?.[0].trigger.type).toBe("mention");
 });
 
-it("runs one at a time and aborts a running delivery when the agent changes; publish keeps working", async () => {
+it("keeps the in-flight run and the queue across edits; each job reads the agent as it starts", async () => {
   const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  let held: Delivery<Config> | undefined;
+  run.mockImplementationOnce(
+    (delivery) =>
+      new Promise<void>((resolve) => {
+        held = delivery;
+        release = resolve;
+      }),
+  );
+  emit({
+    events: [
+      event("1", { tags: [["p", bot]] }),
+      event("2", { tags: [["p", bot]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(held).toBeDefined());
+  expect(run).toHaveBeenCalledTimes(1);
+  await service.save(bot, { name: "Echo two", config: { reply: "new" } });
+  await service.save(bot, {
+    attention: { "watch/channel": null },
+  });
+  expect(held?.signal.aborted).toBe(false);
+  await held?.agent.publish({ kind: 7, content: "+" });
+  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+    kind: 7,
+    content: "+",
+  });
+  release();
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  const queued = run.mock.calls[1]?.[0];
+  expect(queued?.config).toEqual({ reply: "new" });
+  expect(queued?.agent.name).toBe("Echo two");
+});
+
+it("aborts the in-flight run, and drops what is queued, when the agent is removed", async () => {
+  const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   let held: Delivery<Config> | undefined;
   run.mockImplementationOnce(
@@ -198,23 +239,132 @@ it("runs one at a time and aborts a running delivery when the agent changes; pub
     ],
   });
   await vi.waitFor(() => expect(held).toBeDefined());
-  expect(run).toHaveBeenCalledTimes(1);
-  await service.save(bot, { config: { reply: "new" } });
+  await service.remove(bot);
   expect(held?.signal.aborted).toBe(true);
-  // The handle is not fenced: finishing up after an abort still publishes.
-  await held?.agent.publish({ kind: 7, content: "+" });
-  expect(native.publish).toHaveBeenLastCalledWith(bot, {
-    kind: 7,
-    content: "+",
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("is not woken by reactions, deletions or DMs", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const ownMessage = "p1".padEnd(64, "0");
+  emit({
+    events: [
+      event("react", {
+        kind: 7,
+        tags: [
+          ["e", ownMessage],
+          ["p", bot],
+        ],
+      }),
+      event("delete", { kind: 5, tags: [["e", ownMessage]] }),
+      event("dm", { kind: 4, tags: [["p", bot]] }),
+    ],
   });
-  emit({ events: [event("3", { tags: [["p", bot]] })] });
+  emit({ events: [event("m", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({ type: "mention" });
+});
+
+it("does not let one owner's agents wake each other by replying", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sibling" });
+  run.mockImplementation(async ({ agent, trigger }) => {
+    if (trigger.type === "timer") return;
+    await agent.publish({ kind: 9, content: "hi" });
+  });
+  const start = event("start", {
+    tags: [
+      ["h", channel],
+      ["p", bot],
+    ],
+  });
+  emit({ events: [start] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  // The sibling replies to Echo's message, naming it, and also says "deploy",
+  // which Echo's watch matches. Neither wakes Echo.
+  const echoMessage = "p3".padEnd(64, "0");
+  emit({
+    events: [
+      event("reply", {
+        pubkey: sibling,
+        content: "deploy",
+        tags: [
+          ["h", channel],
+          ["e", echoMessage],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(run).toHaveBeenCalledTimes(1);
+  // A fresh mention from the sibling still does.
+  emit({
+    events: [
+      event("ask", {
+        pubkey: sibling,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].config).toEqual({ reply: "new" });
+});
+
+it("keeps a created agent when its profile cannot be published", async () => {
+  const { service, native } = await setup();
+  native.publish.mockRejectedValueOnce(new Error("offline"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.find(bot)).toBe(agent);
+  expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+it("forgets records whose key is gone when identities load", async () => {
+  const storage = memoryStorage();
+  storage.setItem(
+    "buzz.agents2.v1",
+    JSON.stringify({
+      version: 1,
+      agents: {
+        [bot]: {
+          pubkey: bot,
+          type: "example/echo",
+          name: "Echo",
+          attention: {},
+          config: {},
+        },
+        [sibling]: {
+          pubkey: sibling,
+          type: "example/echo",
+          name: "Gone",
+          attention: {},
+          config: {},
+        },
+      },
+    }),
+  );
+  const { service } = await setup({
+    storage,
+    identities: [
+      { pubkey: bot, relay: "wss://relay.example.test", owner: viewer },
+    ],
+  });
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Echo",
+  ]);
+  expect(storage.getItem("buzz.agents2.v1")).not.toContain(sibling);
 });
 
 it("fires a due timer once, then again an interval after it ran", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
-  const { service, run } = await setup();
+  const { service, run, storage } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, {
     attention: {
@@ -243,6 +393,12 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(run).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).toHaveBeenCalledTimes(2);
+  // Its run state lives in the agent's record and goes when the timer does.
+  const stored = () =>
+    JSON.parse(storage.getItem("buzz.agents2.v1") ?? "{}").agents[bot];
+  expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
+  await service.save(bot, { attention: { "watch/tick": null } });
+  expect(stored().timers).toEqual({});
 });
 
 it("removes the agent's key and record", async () => {

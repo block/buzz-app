@@ -14,10 +14,8 @@ import {
 } from "react";
 import styles from "./Agents2Page.module.css";
 import { AgentTabs } from "./AgentTabs";
-import {
-  AttentionSummary,
-  type ChannelChoice,
-} from "../../features/agents2/AttentionPanel";
+import type { ChannelChoice } from "../../features/agents2/attention";
+import { AttentionSummary } from "../../features/agents2/AttentionPanel";
 import { useAgents2, useChannelChoices } from "../../features/agents2/react";
 import type {
   Agent,
@@ -43,6 +41,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { formatPublicKey } from "../../shared/identity/public-key";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -124,7 +123,6 @@ export function Agents2Page({
     ) : selected ? (
       <AgentPeek
         key={selected.pubkey}
-        agents2={agents2}
         agent={selected}
         type={typeOf(selected)}
         channels={channels}
@@ -319,14 +317,12 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function AgentPeek({
-  agents2,
   agent,
   type,
   channels,
   onBuild,
   onClose,
 }: {
-  agents2: Agents2;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
@@ -360,10 +356,7 @@ function AgentPeek({
       </Button>
       {Peek ? (
         <div className={styles.peekPlugin}>
-          <Peek
-            agent={agent}
-            save={(change) => agents2.save(agent.pubkey, change)}
-          />
+          <Peek agent={agent} />
         </div>
       ) : !type ? (
         <p className="m-0 text-body-sm text-secondary">
@@ -482,6 +475,11 @@ function AgentBuild({
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
   const remove = async () => {
     setRemoving(true);
     setError("");
@@ -509,9 +507,7 @@ function AgentBuild({
           <dd>{type?.title ?? "Type unavailable"}</dd>
           <dt>Key</dt>
           <dd className="flex items-center gap-1">
-            <code className="truncate">
-              {agent.pubkey.slice(0, 8)}…{agent.pubkey.slice(-6)}
-            </code>
+            <code className="truncate">{formatPublicKey(agent.pubkey, 8)}</code>
             <IconButton
               aria-label={copied ? "Copied" : "Copy public key"}
               size="sm"

@@ -115,6 +115,22 @@ describe("matching", () => {
     expect(
       addressedTo(event({ pubkey: agent, tags: [["p", agent]] }), agent),
     ).toBe(false);
+    // Only conversation addresses it: not a reaction to or deletion of its
+    // message, and not a DM it could not read.
+    for (const kind of [4, 5, 7])
+      expect(
+        addressedTo(
+          event({
+            kind,
+            tags: [
+              ["e", "mine"],
+              ["p", agent],
+            ],
+          }),
+          agent,
+          (id) => id === "mine",
+        ),
+      ).toBe(false);
   });
   it("restarts a timer's schedule on a new armed_at and spends it", () => {
     const timer: TimerWatch = {

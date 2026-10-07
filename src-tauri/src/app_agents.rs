@@ -8,23 +8,43 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Serializes identity file writes, and holds the one key awaiting attestation.
-/// It owns its credential handle so Agents2 never waits on, or fails with, the
-/// harness agent controller (whose storage lock another app may hold).
+/// The identity file (which locks its own writes across app instances) and the
+/// keys awaiting attestation, by pubkey. It owns its credential handle so Agents2
+/// never waits on, or fails with, the harness agent controller (whose storage
+/// lock another app may hold).
 #[derive(Clone)]
 pub(crate) struct AppAgentHost(
-    Arc<tokio::sync::Mutex<Result<AppAgents, String>>>,
-    Arc<tokio::sync::Mutex<Option<NewAppAgent>>>,
+    Result<AppAgents, String>,
+    Arc<std::sync::Mutex<Vec<NewAppAgent>>>,
     Arc<dyn Credentials>,
 );
+/// Creates abandoned before commit are dropped, oldest first, past this many.
+const PENDING_LIMIT: usize = 8;
 impl AppAgentHost {
     pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
         Self(
-            Arc::new(tokio::sync::Mutex::new(path.map(AppAgents::open))),
+            path.map(AppAgents::open),
             Arc::default(),
             Arc::new(PlatformCredentials::default()),
         )
     }
+    fn agents(&self) -> Result<AppAgents, String> {
+        self.0.clone()
+    }
+    fn pending(&self) -> std::sync::MutexGuard<'_, Vec<NewAppAgent>> {
+        self.1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Runs blocking file and credential work off the async runtime.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| "Native credential operation failed".to_owned())?
 }
 
 #[derive(Serialize)]
@@ -48,9 +68,8 @@ impl From<AppAgent> for AppAgentSummary {
 pub(crate) async fn app_agent_list(
     state: tauri::State<'_, AppAgentHost>,
 ) -> Result<Vec<AppAgentSummary>, String> {
-    let agents = state.0.lock().await;
-    let agents = agents.as_ref().map_err(Clone::clone)?;
-    Ok(agents.list()?.into_iter().map(Into::into).collect())
+    let agents = state.agents()?;
+    blocking(move || Ok(agents.list()?.into_iter().map(Into::into).collect())).await
 }
 
 /// Generates a key for `owner` in `destination`. The caller has the community
@@ -63,7 +82,11 @@ pub(crate) async fn app_agent_create_prepare(
 ) -> Result<String, String> {
     let prepared = AppAgents::prepare(&destination, &owner)?;
     let pubkey = prepared.pubkey().to_owned();
-    *state.1.lock().await = Some(prepared);
+    let mut pending = state.pending();
+    if pending.len() >= PENDING_LIMIT {
+        pending.remove(0);
+    }
+    pending.push(prepared);
     Ok(pubkey)
 }
 
@@ -76,11 +99,9 @@ pub(crate) async fn app_agent_create_authorize(
     pubkey: String,
 ) -> Result<Vec<String>, String> {
     let owner = state
-        .1
-        .lock()
-        .await
-        .as_ref()
-        .filter(|prepared| prepared.pubkey() == pubkey)
+        .pending()
+        .iter()
+        .find(|prepared| prepared.pubkey() == pubkey)
         .map(|prepared| prepared.owner().to_owned())
         .ok_or("Create request expired; try again")?;
     identity.inner().authorize_agent(owner, pubkey).await
@@ -93,24 +114,21 @@ pub(crate) async fn app_agent_create_commit(
     pubkey: String,
     auth: Vec<String>,
 ) -> Result<AppAgentSummary, String> {
+    let agents = state.agents()?;
     let prepared = {
-        let mut pending = state.1.lock().await;
-        match pending.as_ref() {
-            Some(prepared) if prepared.pubkey() == pubkey => pending.take(),
-            _ => None,
-        }
+        let mut pending = state.pending();
+        pending
+            .iter()
+            .position(|prepared| prepared.pubkey() == pubkey)
+            .map(|index| pending.remove(index))
     }
     .ok_or("Create request expired; try again")?;
     let credentials = state.2.clone();
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let agents = state.0.blocking_lock();
-        let agents = agents.as_ref().map_err(Clone::clone)?;
+    blocking(move || {
         credentials.retry();
         agents.commit(prepared, &auth, credentials.as_ref())
     })
     .await
-    .map_err(|_| "Native credential operation failed")?
     .map(Into::into)
 }
 
@@ -119,17 +137,9 @@ pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
 ) -> Result<(), String> {
+    let agents = state.agents()?;
     let credentials = state.2.clone();
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let agents = state.0.blocking_lock();
-        agents
-            .as_ref()
-            .map_err(Clone::clone)?
-            .remove(&pubkey, credentials.as_ref())
-    })
-    .await
-    .map_err(|_| "Native credential operation failed")?
+    blocking(move || agents.remove(&pubkey, credentials.as_ref())).await
 }
 
 #[derive(Deserialize)]
@@ -148,16 +158,13 @@ pub(crate) async fn app_agent_publish(
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
-    let agent = {
-        let agents = state.0.lock().await;
-        agents.as_ref().map_err(Clone::clone)?.get(&pubkey)?
-    };
+    let agents = state.agents()?;
     let credentials = state.2.clone();
-    let (agent, key) = tauri::async_runtime::spawn_blocking(move || {
+    let (agent, key) = blocking(move || {
+        let agent = agents.get(&pubkey)?;
         agent.read_key(credentials.as_ref()).map(|key| (agent, key))
     })
-    .await
-    .map_err(|_| "Native credential operation failed")??;
+    .await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
     let event_id = signed
         .get("id")

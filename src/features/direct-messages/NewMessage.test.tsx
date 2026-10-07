@@ -375,6 +375,26 @@ it("matches an exact public key without exposing short key substrings", async ()
   }
 });
 
+it("matches names from the start of a word, like mentions", async () => {
+  const t = setup();
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+
+  await t.user.type(recipient(), "erson");
+  await waitFor(() =>
+    expect(screen.queryAllByRole("option", { name: /^Person/ })).toHaveLength(
+      0,
+    ),
+  );
+  await t.user.clear(recipient());
+  await t.user.type(recipient(), "1");
+  expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "Person 10" })).toBeVisible();
+  expect(
+    screen.queryByRole("option", { name: "Person 3" }),
+  ).not.toBeInTheDocument();
+});
+
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {
   const t = setup();
   t.mount();

@@ -1,7 +1,7 @@
 /**
  * The one rule for matching a typed name to a person or agent name. Mentions,
- * the message search author picker and people pickers use it, so the same
- * text finds the same people everywhere. The normative statement and portable
+ * New message recipients, the message search author picker and the
+ * add-member search use it, so the same text finds the same people. The normative statement and portable
  * fixtures live in the mention rules (src/bundled/mentions/README.md, section 3).
  */
 

@@ -15,7 +15,15 @@ test.use({
   screenshot: "off",
 });
 
-test("Inbox archive scope is separate from attention filters and preserves them", async ({
+async function choose(page, inbox, control, option) {
+  await inbox.getByRole("combobox", { name: control }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+  await expect(inbox.getByRole("combobox", { name: control })).toContainText(
+    option,
+  );
+}
+
+test("Inbox Show filter is separate from attention filters and preserves them", async ({
   page,
   app,
 }, testInfo) => {
@@ -23,62 +31,51 @@ test("Inbox archive scope is separate from attention filters and preserves them"
   await page.goto(app.origin);
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
-  const scope = inbox.getByRole("group", { name: "Inbox scope" });
-  const inboxButton = scope.getByRole("button", { name: "Inbox", exact: true });
-  const archivedButton = scope.getByRole("button", {
-    name: "Archived",
-    exact: true,
-  });
   const rows = inbox
     .getByRole("list", { name: "Inbox conversations" })
     .getByRole("listitem");
 
-  await expect(inboxButton).toHaveAttribute("aria-current", "page");
-  const selectedScopeBackground = await inboxButton.evaluate(
-    (button) => getComputedStyle(button).backgroundColor,
+  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
+    "Inbox",
   );
-  const unselectedScopeBackground = await archivedButton.evaluate(
-    (button) => getComputedStyle(button).backgroundColor,
-  );
-  expect(selectedScopeBackground).not.toBe(unselectedScopeBackground);
   await inbox.getByRole("button", { name: "About Inbox archive" }).hover();
   await expect(page.getByRole("tooltip")).toHaveText(
     "Archive choices are saved on this device for this account and community. They don’t sync to your other devices.",
   );
   await expect(rows).toHaveCount(1);
+  const rowArchive = rows.getByRole("button", { name: /^Archive / });
+  await page.mouse.move(0, 0);
+  await expect(rowArchive.locator("xpath=..")).toHaveCSS("opacity", "0");
+  await rows.hover();
+  await expect(rowArchive.locator("xpath=..")).toHaveCSS("opacity", "1");
 
-  await inbox.getByRole("combobox", { name: "Activity type" }).click();
-  await page.getByRole("option", { name: "Mentions" }).click();
-  await inbox.getByRole("combobox", { name: "Sender" }).click();
-  await page.getByRole("option", { name: "Agents" }).click();
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await choose(page, inbox, "Activity type", "Mentions");
+  await choose(page, inbox, "Sender", "Agents");
+  await choose(page, inbox, "Attention", "Unread only");
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Archive conversation" }).click();
   await expect(rows).toHaveCount(0);
 
-  await archivedButton.click();
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
-  await expect(archivedButton).toHaveAttribute("aria-current", "page");
-  await expect(archivedButton.locator("xpath=..")).toHaveCSS(
-    "background-color",
-    "rgb(255, 255, 255)",
-  );
   await expect(inbox.getByRole("combobox", { name: "Sender" })).toContainText(
     "Agents",
   );
   await expect(
-    inbox.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeChecked();
+    inbox.getByRole("combobox", { name: "Attention" }),
+  ).toContainText("Unread only");
   await page.mouse.move(800, 300);
   await page.screenshot({
     path: testInfo.outputPath("inbox-archived-scope.png"),
     fullPage: true,
   });
 
-  await inboxButton.click();
+  await choose(page, inbox, "Show", "Inbox + archived");
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("Archived");
+  await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
-  await expect(inboxButton).toHaveAttribute("aria-current", "page");
   await expect(
     inbox.getByRole("combobox", { name: "Activity type" }),
   ).toContainText("Mentions");
@@ -86,8 +83,8 @@ test("Inbox archive scope is separate from attention filters and preserves them"
     "Agents",
   );
   await expect(
-    inbox.getByRole("checkbox", { name: "Unread only" }),
-  ).toBeChecked();
+    inbox.getByRole("combobox", { name: "Attention" }),
+  ).toContainText("Unread only");
 });
 
 test("Inbox archive survives reload, restores, and reopens on a new mention", async ({
@@ -111,14 +108,13 @@ test("Inbox archive survives reload, restores, and reopens on a new mention", as
   await openPage(page, "Inbox");
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   await expect(rows).toHaveCount(0);
-  await inbox.getByRole("button", { name: "Archived", exact: true }).click();
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
-  const scope = inbox.getByRole("group", { name: "Inbox scope" });
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Restore conversation" }).click();
   await expect(rows).toHaveCount(0);
-  await scope.getByRole("button", { name: "Inbox", exact: true }).click();
+  await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(1);
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
@@ -137,10 +133,10 @@ test("Inbox archive survives reload, restores, and reopens on a new mention", as
   app.histories.get(`primary/${channel}`).push(seed);
   app.relay.publish("primary", seed);
   app.append("primary", channel, "Agent progress", true, false, root.id);
-  await inbox.getByRole("button", { name: "Archived", exact: true }).click();
+  await choose(page, inbox, "Show", "Archived");
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Archive room");
-  await scope.getByRole("button", { name: "Inbox", exact: true }).click();
+  await choose(page, inbox, "Show", "Inbox");
   await expect(rows).toHaveCount(0);
   app.append(
     "primary",

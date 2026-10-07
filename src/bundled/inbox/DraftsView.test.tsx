@@ -444,7 +444,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   await screen.findByText("Please review this");
   await chooseFilter("Threads");
   await chooseFilter("Humans", "Sender");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Unread only" }));
+  await chooseFilter("Unread only", "Attention");
   fireEvent.click(screen.getByRole("button", { name: "Drafts" }));
   expect(
     screen.queryByRole("combobox", { name: "Activity type" }),
@@ -453,7 +453,7 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
     screen.queryByRole("combobox", { name: "Sender" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("checkbox", { name: "Unread only" }),
+    screen.queryByRole("combobox", { name: "Attention" }),
   ).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Back to Inbox" }),
@@ -517,7 +517,9 @@ it("Drafts shares the composer storage, gates origin navigation on current membe
   expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
     "Humans",
   );
-  expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
+  expect(screen.getByRole("combobox", { name: "Attention" })).toHaveTextContent(
+    "Unread only",
+  );
   expect(h.journal()?.state.frontiers).toEqual({});
 });
 

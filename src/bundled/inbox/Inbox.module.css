@@ -158,7 +158,7 @@
 
 .filterPair {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
@@ -167,36 +167,10 @@
   margin-inline-start: auto;
 }
 
-/* Scope is navigation, independent from the attention filters below. */
-.headerActions,
-.scopeSwitch {
+.headerActions {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-}
-
-.scopeSwitch {
-  padding: var(--space-half);
-  margin: 0;
-  min-width: 0;
-  border: 0;
-  border-radius: var(--radius-capsule);
-  background: var(--surface-inset);
-}
-
-.scopeItem {
-  display: flex;
-  align-items: center;
-}
-
-.scopeItemSelected {
-  border-radius: var(--radius-pill);
-  background: var(--surface-panel);
-}
-
-.scopeSwitch .navigation-item {
-  font-size: var(--text-label-sm);
-  min-height: var(--size-control-sm);
 }
 
 .scroll {
@@ -331,7 +305,7 @@
 
 .rowSurface {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-row-gap);
   min-width: 0;
@@ -342,6 +316,22 @@
   place-items: center;
   width: 12px;
   height: 12px;
+}
+
+/* Revealed on hover or keyboard focus; always shown without a hover pointer. */
+.rowArchive {
+  opacity: 0;
+}
+
+.row:hover .rowArchive,
+.row:focus-within .rowArchive {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowArchive {
+    opacity: 1;
+  }
 }
 
 .unreadDot {
@@ -377,6 +367,8 @@
 
 .sourceLine {
   display: flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
 }
 

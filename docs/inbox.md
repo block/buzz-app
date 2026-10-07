@@ -16,13 +16,13 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 ### Archive conversations
 
-Archive in the conversation header or row context menu removes that conversation from the active Inbox. Inbox and Archived are separate scopes; Activity, Sender, Unread only and Unresponded only selections stay in effect in either scope. The discreet About Inbox archive hint explains that archive choices are saved only on this device for the current account and community and do not sync to other devices. Archived opens the archived view, where Restore returns a conversation to Inbox. Replies alone keep it archived. A new verified message explicitly mentioning the viewer reopens it, including a new mention in the same second as archiving. Historical mentions and replayed observed messages do not reopen it. Reopening retires the saved archive so later evidence eviction cannot hide the conversation again.
+Archive in the conversation header, row button, or row context menu removes that conversation from the active Inbox. The compact Show picker offers Inbox, Archived, and Inbox + archived; Activity type, Sender, and Attention selections stay in effect in every view. Attention offers All messages and Unread only. All four choices are saved on this device for the current account and community, with each missing or invalid choice using its own default. The toolbar wraps on narrow screens. Archived rows in Inbox + archived carry an Archived label and a Restore button; archiving or restoring leaves them in that combined view. The discreet About Inbox archive hint explains that archive choices are saved only on this device for the current account and community and do not sync to other devices. Choosing Archived opens the archived view, where Restore returns a conversation to Inbox. Archive/Restore row buttons appear on hover or keyboard focus and remain visible without a hover pointer; row actions do not open or mark a conversation read. Archiving from an open conversation advances the viewer to the next visible conversation (or the preceding one at the end), marking that conversation read as a normal selection would; with no remaining conversation, the viewer closes. An incoming mention can remove an open conversation from the Archived list without closing its viewer or composer. Archived + Unread only offers Show all archived conversations when empty, clearing only the attention restriction. Replies alone keep it archived. A new verified message explicitly mentioning the viewer reopens it, including a new mention in the same second as archiving. Historical mentions and replayed observed messages do not reopen it. Reopening retires the saved archive so later evidence eviction cannot hide the conversation again.
 
 Archive is personal view intent saved on this device, partitioned by the relay session's community and viewer scope. It persists across reloads and reconnects, with the same-window subscription and cross-window storage notifications as other view intent. Failed saves leave the conversation visible and expose Retry. This first version neither synchronizes archive choices across devices nor changes unread or notification policy. It does not delete messages or claim a task has finished. The archived view uses the same bounded verified conversation evidence as Inbox, so it is not a permanent full-history archive browser.
 
 Inbox now renders chat-only DMs, mentions and participating threads through
 `session.unread.inbox()`, with independent Activity type and Sender filters and
-an Unread only toggle. Sender classification uses `session.agentChoices` and
+an independent Attention picker. Sender classification uses `session.agentChoices` and
 cached/profile-backed identity evidence, never a new inventory or name heuristic.
 Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
 specific group members awaiting their stored edit/deletion closure. Those rows
@@ -31,7 +31,7 @@ usable and the detail does not reveal an incomplete body. A failed read exposes
 Retry above both panes, including narrow detail. This is a visible completeness
 warning, not a guarantee that the relay did not change after verification.
 Retry stays focusable while pending. Successful recovery returns focus to the
-visible detail Close control (or the Activity type filter with no detail) only
+visible detail Close control (or the Show filter with no detail) only
 if Retry still owned focus when its alert was removed; moving focus away is
 respected. Revalidation hides and disables an already-admitted reader and its
 composer without unmounting them; incomplete bodies remain outside the visible
@@ -63,7 +63,7 @@ read lets its admitted save settle, then quietly cancels the remaining steps.
 Genuine storage/access failures remain visible, without reviving the cancelled
 Retry intent. Context menus allow device-local
 Mark unread. Focus returns to the invoking row, a surviving row, or the persistent
-Activity type filter on Close/Escape. Escape belongs to the detail, including in-head
+Show filter on Close/Escape. Escape belongs to the detail, including in-head
 DMs and incomplete previews; a keyboard-opened incomplete preview focuses its
 visible Close control once per visit, without refocusing on placeholder updates.
 Portalled media and controls retain their own dismissal. DM timelines share the

@@ -131,30 +131,33 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     await expect(inbox.getByRole("combobox", { name: "Sender" })).toBeVisible();
     const toolbar = inbox.locator('[class*="toolbar"]').first();
     const layout = await toolbar.evaluate((element) => {
-      const [activity, sender] = element.querySelectorAll('[role="combobox"]');
-      const unread = element.querySelector('[role="checkbox"]');
-      if (!activity || !sender || !unread) return;
-      const a = activity.getBoundingClientRect();
-      const s = sender.getBoundingClientRect();
-      const u = unread.getBoundingClientRect();
-      const t = element.getBoundingClientRect();
+      const bounds = element.getBoundingClientRect();
+      const controls = [
+        ...element.querySelectorAll('[role="combobox"], button'),
+      ].map((control) => {
+        const { left, right, top, bottom } = control.getBoundingClientRect();
+        return { left, right, top, bottom };
+      });
       return {
-        pairGap: s.left - a.right,
-        pairY: s.top - a.top,
-        unreadY: u.top - a.top,
-        left: t.left,
-        right: t.right,
-        bottom: t.bottom,
-        unreadRight: u.right,
-        unreadBottom: u.bottom,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+        bottom: bounds.bottom,
+        controls,
       };
     });
-    expect(layout?.pairY).toBe(0);
-    expect(layout?.pairGap).toBeCloseTo(8, 0);
-    expect(layout?.unreadRight).toBeLessThanOrEqual(layout.right);
-    expect(layout?.unreadBottom).toBeLessThanOrEqual(layout.bottom);
-    expect(layout?.unreadY).toBeGreaterThanOrEqual(0);
-    if (width === 390) expect(layout?.unreadY).toBeGreaterThan(0);
+    expect(layout.controls.length).toBe(5);
+    for (const control of layout.controls) {
+      expect(control.left).toBeGreaterThanOrEqual(layout.left);
+      expect(control.right).toBeLessThanOrEqual(layout.right);
+      expect(control.top).toBeGreaterThanOrEqual(layout.top);
+      expect(control.bottom).toBeLessThanOrEqual(layout.bottom);
+    }
+    // All four pickers remain usable; wrapping is the narrow-width contract.
+    if (width === 390)
+      expect(
+        new Set(layout.controls.map((control) => control.top)).size,
+      ).toBeGreaterThan(1);
     await expect(
       inbox.getByText("Unread reply 1", { exact: true }),
     ).toBeVisible();
@@ -313,7 +316,8 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     page.getByRole("menuitem", { name: "Mark unread" }),
   ).toBeDisabled();
   await page.keyboard.press("Escape");
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await inbox.getByRole("combobox", { name: "Attention" }).click();
+  await page.getByRole("option", { name: "Unread only", exact: true }).click();
   await expect(rows).toHaveCount(2);
   await row.getByRole("button", { name: /^Open / }).click();
   await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
@@ -799,7 +803,8 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   );
   await inbox.getByRole("combobox", { name: "Activity type" }).click();
   await page.getByRole("option", { name: "DMs", exact: true }).click();
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await inbox.getByRole("combobox", { name: "Attention" }).click();
+  await page.getByRole("option", { name: "Unread only", exact: true }).click();
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const row = list.getByRole("listitem").first();
   await expect(list.getByRole("listitem")).toHaveCount(1);
@@ -831,7 +836,7 @@ test("an in-head DM keeps exact focus and Escape returns from an empty narrow li
   await expect(list).toBeVisible();
   await expect(list.getByRole("listitem")).toHaveCount(0);
   await expect(
-    inbox.getByRole("combobox", { name: "Activity type", exact: true }),
+    inbox.getByRole("combobox", { name: "Show", exact: true }),
   ).toBeFocused();
 });
 
@@ -845,7 +850,8 @@ test("Escape from an unread detail restores its invoking row", async ({
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-  await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+  await inbox.getByRole("combobox", { name: "Attention" }).click();
+  await page.getByRole("option", { name: "Unread only", exact: true }).click();
   const list = inbox.getByRole("list", { name: "Inbox conversations" });
   const first = list
     .getByRole("listitem")

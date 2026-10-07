@@ -26,14 +26,19 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { QuestionIcon, BellIcon } from "../../shared/design-system/icons";
+import {
+  ArchiveIcon,
+  ArchiveOffIcon,
+  BellIcon,
+  QuestionIcon,
+} from "../../shared/design-system/icons";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
@@ -43,7 +48,12 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
-import { subscribeView, viewRevision } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import {
   archiveKey,
   archiveIndex,
@@ -53,8 +63,15 @@ import {
   updateArchive,
 } from "./archive";
 
+type ShowFilter = "inbox" | "archived" | "all";
 type ActivityFilter = "all" | "dms" | "threads" | "mentions";
 type SenderFilter = "everyone" | "humans" | "agents";
+type AttentionFilter = "all" | "unread";
+const shows = [
+  { value: "inbox", label: "Inbox" },
+  { value: "archived", label: "Archived" },
+  { value: "all", label: "Inbox + archived" },
+] as const;
 const activities = [
   { value: "all", label: "All activity" },
   { value: "dms", label: "DMs" },
@@ -66,8 +83,42 @@ const senders = [
   { value: "humans", label: "Humans" },
   { value: "agents", label: "Agents" },
 ] as const;
+const attentions = [
+  { value: "all", label: "All messages" },
+  { value: "unread", label: "Unread only" },
+] as const;
+const showGroups = [{ label: "", options: shows }] as const;
 const activityGroups = [{ label: "", options: activities }] as const;
 const senderGroups = [{ label: "", options: senders }] as const;
+const attentionGroups = [{ label: "", options: attentions }] as const;
+type Filters = {
+  show: ShowFilter;
+  activity: ActivityFilter;
+  sender: SenderFilter;
+  attention: AttentionFilter;
+};
+const filtersKey = "inbox:filters";
+/** Saved choices are per device/viewer/community; unknown or missing fields use defaults. */
+function readFilters(scope: string): Filters {
+  const saved = readView<unknown>(scope, filtersKey, undefined);
+  const field = <T extends string>(
+    key: keyof Filters,
+    options: readonly [{ value: T }, ...{ value: T }[]],
+  ): T => {
+    const value: unknown =
+      saved && typeof saved === "object"
+        ? (saved as Record<string, unknown>)[key]
+        : undefined;
+    return (options.find((option) => option.value === value) ?? options[0])
+      .value;
+  };
+  return {
+    show: field("show", shows),
+    activity: field("activity", activities),
+    sender: field("sender", senders),
+    attention: field("attention", attentions),
+  };
+}
 const matchesActivity = (
   item: InboxItem,
   filter: ActivityFilter,
@@ -85,6 +136,11 @@ const matchesActivity = (
   }
 };
 const hasUnread = (item: InboxItem) => item.unreadCount > 0 || item.manual;
+const targetOf = (item: InboxItem) => ({
+  channelId: item.channelId,
+  messageId: item.messageId,
+  ...(item.rootId ? { rootId: item.rootId } : {}),
+});
 
 export function InboxPage({
   relay,
@@ -174,12 +230,17 @@ export function InboxView({
     session.unread.sync,
     session.unread.sync,
   );
-  const [activity, setActivity] = useState<ActivityFilter>("all");
-  const [senderFilter, setSenderFilter] = useState<SenderFilter>("everyone");
-  const [unreadOnly, setUnreadOnly] = useState(false);
-  const [drafts, setDrafts] = useState(false);
-  const [archivedView, setArchivedView] = useState(false);
   const archiveScope = session.scope;
+  const [filters, setFilters] = useState(() => readFilters(archiveScope));
+  const { show, activity, sender: senderFilter } = filters;
+  const unreadOnly = filters.attention === "unread";
+  function setFilter(patch: Partial<Filters>) {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    setLimit(50);
+    writeView(archiveScope, filtersKey, next);
+  }
+  const [drafts, setDrafts] = useState(false);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
     [archiveScope],
@@ -200,6 +261,8 @@ export function InboxView({
   const invokingRow = useRef<HTMLButtonElement | null>(null);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
   const fallbackControl = useRef<HTMLDivElement | null>(null);
+  // Row to focus after its predecessor leaves the list ("" means the toolbar).
+  const focusRow = useRef<string | undefined>(undefined);
   const workspace = useRef<HTMLDivElement | null>(null);
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
@@ -246,7 +309,10 @@ export function InboxView({
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
   const archived = (item: InboxItem) => isArchived(archives, item);
-  const viewItems = items.filter((item) => archived(item) === archivedView);
+  const viewItems =
+    show === "all"
+      ? items
+      : items.filter((item) => archived(item) === (show === "archived"));
   useEffect(() => {
     try {
       reopenArchives(archiveScope, inbox.items, archiveRevision);
@@ -270,7 +336,8 @@ export function InboxView({
   );
   // A late verified root can legitimately regroup channel:reply into
   // channel:root. Keep the captured visit by exact key, never by a namesake.
-  const selected = viewItems.find(
+  // Keep the captured visit mounted if its archive membership changes while open.
+  const selected = items.find(
     (item) =>
       item.channelId === selectedTarget?.channelId &&
       item.messageIds.includes(selectedTarget.messageId),
@@ -397,6 +464,20 @@ export function InboxView({
     if (profileIds.length && list.status === "ready")
       void session.profiles.ensure(profileIds, "background").catch(() => {});
   }, [session, profileIds, list.status, list.asOf]);
+  useLayoutEffect(() => {
+    const id = focusRow.current;
+    if (id === undefined || pending) return;
+    focusRow.current = undefined;
+    const row = [
+      ...(workspace.current?.querySelectorAll<HTMLElement>(
+        "li[data-inbox-row]",
+      ) ?? []),
+    ].find((entry) => entry.dataset.inboxRow === id);
+    (
+      row?.querySelector<HTMLElement>("button") ??
+      fallbackControl.current?.querySelector<HTMLElement>('[role="combobox"]')
+    )?.focus({ preventScroll: true });
+  });
   async function run(work: () => Promise<unknown>, valid?: () => boolean) {
     if (!active.current || busy.current) return;
     busy.current = true;
@@ -453,12 +534,29 @@ export function InboxView({
         session.unread.inbox().items.includes(item)
       );
     };
+    // Rows stay put in Inbox + archived; otherwise they leave this view, so
+    // an open viewer advances to the next conversation instead of closing.
+    const leaves = show !== "all";
+    const index = visible.findIndex((row) => row.id === item.id);
+    const next = leaves
+      ? (visible[index + 1] ?? visible[index - 1])
+      : undefined;
+    const open = item.id === selectedId;
+    let advanced: InboxItem | undefined;
     void run(async () => {
       updateArchive(archiveScope, item, value);
       setMenu(undefined);
-      setRestoringFocus(true);
-      setSelectedTarget(undefined);
-    }, valid);
+      if (!leaves) return;
+      if (open && next) {
+        advanced = next;
+        setSelectedTarget(targetOf(next));
+      } else if (open) {
+        setRestoringFocus(true);
+        setSelectedTarget(undefined);
+      } else focusRow.current = next?.id ?? "";
+    }, valid).then(() => {
+      if (advanced && hasUnread(advanced) && canRead) mutate(advanced, false);
+    });
   }
   function mutate(item: InboxItem, unread: boolean) {
     // An open menu is not authority: recheck the current session at action entry.
@@ -579,43 +677,6 @@ export function InboxView({
         }
         actions={
           <div className={styles.headerActions}>
-            {!drafts && (
-              <>
-                <fieldset className={styles.scopeSwitch}>
-                  <legend className="sr-only">Inbox scope</legend>
-                  {[
-                    { archived: false, label: "Inbox" },
-                    { archived: true, label: "Archived" },
-                  ].map(({ archived: value, label }) => (
-                    <span
-                      key={label}
-                      className={`${styles.scopeItem} ${archivedView === value ? styles.scopeItemSelected : ""}`}
-                    >
-                      <NavigationItem
-                        label={label}
-                        variant="pill"
-                        selected={archivedView === value}
-                        onClick={() => {
-                          if (archivedView === value) return;
-                          cancelRetry();
-                          setSelectedTarget(undefined);
-                          setArchivedView(value);
-                          setLimit(50);
-                        }}
-                      />
-                    </span>
-                  ))}
-                </fieldset>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  aria-label="About Inbox archive"
-                  title="Archive choices are saved on this device for this account and community. They don’t sync to your other devices."
-                >
-                  <QuestionIcon size="1rem" aria-hidden="true" />
-                </Button>
-              </>
-            )}
             <Button
               size="sm"
               variant="ghost"
@@ -658,33 +719,52 @@ export function InboxView({
             <div ref={fallbackControl} className={styles.toolbar}>
               <div className={styles.filterPair}>
                 <Select
+                  label="Show"
+                  variant="compact"
+                  value={show}
+                  groups={showGroups}
+                  onValueChange={(value) => {
+                    if (value === show) return;
+                    cancelRetry();
+                    setSelectedTarget(undefined);
+                    setFilter({ show: value as ShowFilter });
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="About Inbox archive"
+                  title="Archive choices are saved on this device for this account and community. They don’t sync to your other devices."
+                >
+                  <QuestionIcon size="1rem" aria-hidden="true" />
+                </Button>
+                <Select
                   label="Activity type"
                   variant="compact"
                   value={activity}
                   groups={activityGroups}
-                  onValueChange={(value) => {
-                    setActivity(value as ActivityFilter);
-                    setLimit(50);
-                  }}
+                  onValueChange={(value) =>
+                    setFilter({ activity: value as ActivityFilter })
+                  }
                 />
                 <Select
                   label="Sender"
                   variant="compact"
                   value={senderFilter}
                   groups={senderGroups}
-                  onValueChange={(value) => {
-                    setSenderFilter(value as SenderFilter);
-                    setLimit(50);
-                  }}
+                  onValueChange={(value) =>
+                    setFilter({ sender: value as SenderFilter })
+                  }
                 />
               </div>
-              <Checkbox
-                label="Unread only"
-                checked={unreadOnly}
-                onCheckedChange={(checked) => {
-                  setUnreadOnly(checked);
-                  setLimit(50);
-                }}
+              <Select
+                label="Attention"
+                variant="compact"
+                value={filters.attention}
+                groups={attentionGroups}
+                onValueChange={(value) =>
+                  setFilter({ attention: value as AttentionFilter })
+                }
               />
             </div>
             <div className={styles.scroll}>
@@ -726,17 +806,28 @@ export function InboxView({
                 !failure && (
                   <div className={styles.empty} role="status">
                     <h3 className="text-label">
-                      {archivedView
-                        ? "No archived conversations in this view"
+                      {show === "archived"
+                        ? unreadOnly
+                          ? "No archived conversations match Unread only"
+                          : "No archived conversations in this view"
                         : unreadOnly
                           ? "No unread activity in this view"
                           : "No recent activity in this view"}
                     </h3>
                     <p className="text-body text-subtle">
-                      {archivedView
+                      {show === "archived"
                         ? "Archived conversations stay here until you restore them or receive a new mention."
                         : "Mentions, direct messages, and replies in threads you participate in appear here."}
                     </p>
+                    {show === "archived" && unreadOnly && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setFilter({ attention: "all" })}
+                      >
+                        Show all archived conversations
+                      </Button>
+                    )}
                   </div>
                 )}
               <ul
@@ -773,9 +864,11 @@ export function InboxView({
                         ? `#${channel.name}`
                         : "Conversation";
                   const unread = hasUnread(item);
+                  const rowArchived = archived(item);
                   return (
                     <li
                       key={item.id}
+                      data-inbox-row={item.id}
                       className={styles.row}
                       data-unread={unread || undefined}
                       data-selected={selectedId === item.id || undefined}
@@ -859,6 +952,11 @@ export function InboxView({
                                       {context}
                                     </span>
                                   </span>
+                                  {show === "all" && rowArchived && (
+                                    <span className="text-caption text-subtle">
+                                      Archived
+                                    </span>
+                                  )}
                                 </span>
                                 <span
                                   id={`${previewId}-${item.id}`}
@@ -881,11 +979,7 @@ export function InboxView({
                                 return;
                               cancelRetry();
                               invokingRow.current = event.currentTarget;
-                              setSelectedTarget({
-                                channelId: item.channelId,
-                                messageId: item.messageId,
-                                ...(item.rootId ? { rootId: item.rootId } : {}),
-                              });
+                              setSelectedTarget(targetOf(item));
                               if (unread && canRead) mutate(item, false);
                             }}
                           />
@@ -903,6 +997,25 @@ export function InboxView({
                               aria-hidden="true"
                             />
                           )}
+                          <span className={styles.rowArchive}>
+                            <IconButton
+                              size="sm"
+                              disabled={pending}
+                              aria-label={`${rowArchived ? "Restore" : "Archive"} ${sender} in ${context}`}
+                              title={rowArchived ? "Restore" : "Archive"}
+                              onClick={() => archive(item, !rowArchived)}
+                              icon={
+                                rowArchived ? (
+                                  <ArchiveOffIcon
+                                    size={16}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <ArchiveIcon size={16} aria-hidden="true" />
+                                )
+                              }
+                            />
+                          </span>
                         </ContextMenuTrigger>
                         <MenuPopup
                           size="compact"
@@ -913,9 +1026,9 @@ export function InboxView({
                         >
                           <MenuItem
                             disabled={pending}
-                            onClick={() => archive(item, !archivedView)}
+                            onClick={() => archive(item, !rowArchived)}
                           >
-                            {archivedView
+                            {rowArchived
                               ? "Restore conversation"
                               : "Archive conversation"}
                           </MenuItem>
@@ -962,9 +1075,9 @@ export function InboxView({
                   : undefined
               }
               archiveAction={{
-                archived: archivedView,
+                archived: archived(selected),
                 disabled: pending,
-                run: () => archive(selected, !archivedView),
+                run: () => archive(selected, !archived(selected)),
               }}
               onBack={() => {
                 setRestoringFocus(true);

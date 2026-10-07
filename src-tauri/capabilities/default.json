@@ -60,6 +60,7 @@
     "allow-agent-control-create-prepare",
     "allow-app-agent-list",
     "allow-app-agent-create-prepare",
+    "allow-app-agent-create-authorize",
     "allow-app-agent-create-commit",
     "allow-app-agent-delete",
     "allow-app-agent-publish",

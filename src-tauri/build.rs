@@ -90,6 +90,7 @@ fn main() {
             "agent_control_create_prepare",
             "app_agent_list",
             "app_agent_create_prepare",
+            "app_agent_create_authorize",
             "app_agent_create_commit",
             "app_agent_delete",
             "app_agent_publish",

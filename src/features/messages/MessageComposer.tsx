@@ -1209,6 +1209,7 @@ function Composer({
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
+          canOpenActivity={canOpenLink}
         />
       ) : null}
       {extensions?.accessories && (

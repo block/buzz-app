@@ -35,6 +35,8 @@ export function ActivityAccessory({
     (turn) =>
       !threadRootId && turn.channelId === channelId && turn.state !== "ended",
   );
+  // TypingIndicator suppresses this same exact-scope, canOpen-filtered set in
+  // composers. Keep its projection synchronized when changing row eligibility.
   const typing = snapshot.typing.filter(
     (entry) =>
       entry.channelId === channelId && entry.threadRootId === threadRootId,

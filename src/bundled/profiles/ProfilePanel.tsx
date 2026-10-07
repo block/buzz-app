@@ -55,9 +55,9 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
-import { AttentionPanel } from "../../features/agents2/AttentionPanel";
 import { useAgent2, useChannelChoices } from "../../features/agents2/react";
 import type { Agents2 } from "../../features/agents2/service";
+import { agentSections } from "../../features/agents2/tabs";
 
 const emptyState: AgentControlState = {
   status: "unavailable",
@@ -175,23 +175,18 @@ function ProfileDetails({
     emptyControlSnapshot,
   );
   const [tab, setTab] = useState<
-    | "info"
-    | "runtime"
-    | "channels"
-    | "memories"
-    | "attention"
-    | `plugin:${string}`
+    "info" | "runtime" | "channels" | "memories" | `agent:${string}`
   >("info");
-  // An Agents2 agent's sections come from its type, not the harness.
+  // An Agents2 agent's sections come from its type and the app, not the harness.
   const plugin = useAgent2(agents2, pubkey);
-  const pluginTabs = plugin?.type.tabs ?? [];
-  // The app wakes every Agents2 agent, so it owns their Attention tab.
   const channelChoices = useChannelChoices(
     plugin ? session.channels : undefined,
   );
-  const PluginTab = pluginTabs.find(
-    (item) => `plugin:${item.id}` === tab,
-  )?.component;
+  const sections =
+    plugin && agents2
+      ? agentSections({ agents2, ...plugin, channels: channelChoices })
+      : [];
+  const section = sections.find((item) => item.value === tab);
   const tabHost = usePanelTabHost();
   const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
@@ -263,8 +258,7 @@ function ProfileDetails({
   const selectedTab =
     (tab === "memories" && (!isOwner || plugin)) ||
     (tab === "runtime" && !canViewRuntime) ||
-    (tab.startsWith("plugin:") && !PluginTab) ||
-    (tab === "attention" && !plugin)
+    (tab.startsWith("agent:") && !section)
       ? "info"
       : tab;
   useEffect(() => {
@@ -427,13 +421,7 @@ function ProfileDetails({
           onValueChange={setTab}
           items={[
             { value: "info", label: "Info" },
-            ...pluginTabs.map((item) => ({
-              value: `plugin:${item.id}` as const,
-              label: item.title,
-            })),
-            ...(plugin
-              ? [{ value: "attention" as const, label: "Attention" }]
-              : []),
+            ...sections.map(({ value, label }) => ({ value, label })),
             ...(canViewRuntime
               ? [{ value: "runtime" as const, label: "Runtime" }]
               : []),
@@ -446,17 +434,8 @@ function ProfileDetails({
           variant="panel"
           renderPanel={(selected) => (
             <div className={styles.tabContent}>
-              {PluginTab && plugin && agents2 && selected === tab ? (
-                <PluginTab
-                  agent={plugin.agent}
-                  save={(change) => agents2.save(plugin.agent.pubkey, change)}
-                />
-              ) : selected === "attention" && plugin && agents2 ? (
-                <AttentionPanel
-                  agent={plugin.agent}
-                  save={(change) => agents2.save(plugin.agent.pubkey, change)}
-                  channels={channelChoices}
-                />
+              {selected.startsWith("agent:") ? (
+                sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
                   <UserStatusDisplay session={session} userId={pubkey} />

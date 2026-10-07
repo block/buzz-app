@@ -103,7 +103,7 @@ it("peeks at a selected agent beside the grid and follows the arrow keys", async
   );
   expect(screen.getByText("Peek of Ada")).toBeInTheDocument();
   expect(screen.getByText("Every hour")).toBeInTheDocument();
-  expect(screen.getByText("Mentions and DMs")).toBeInTheDocument();
+  expect(screen.getByText("Mentions and replies")).toBeInTheDocument();
 
   await user.keyboard("{ArrowRight}");
   expect(screen.getByText("Peek of Bo")).toBeInTheDocument();

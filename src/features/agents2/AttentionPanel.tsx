@@ -30,90 +30,30 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import {
+  attentionOf,
   compileFilter,
-  interestSlug,
+  describeWatch,
+  interestTitle,
+  interval,
   parseSlug,
+  plural,
+  UNITS,
   validateObject,
   type AttentionObject,
   type AttentionValue,
+  type ChannelChoice,
   type EventWatch,
-  type TimerWatch,
+  type Watch,
+  type WatchObject,
 } from "./attention";
-import type { Agent, AgentChange, AgentViewProps } from "./service";
+import type { Agent, AgentChange } from "./service";
 
-export type ChannelChoice = Readonly<{ id: string; name: string }>;
-type Watch = EventWatch | TimerWatch;
-type WatchObject = AttentionObject & { value: Watch };
-type Save = AgentViewProps["save"];
-
-const UNITS = [
-  ["day", 86_400],
-  ["hour", 3_600],
-  ["minute", 60],
-  ["second", 1],
-] as const;
-const plural = (count: number, unit: string) =>
-  `${count} ${unit}${count === 1 ? "" : /(ch|s)$/.test(unit) ? "es" : "s"}`;
-const interval = (seconds: number) => {
-  const [unit, size] =
-    UNITS.find(([, size]) => seconds % size === 0) ?? UNITS[3];
-  return { count: seconds / size, unit, size };
-};
-export function every(seconds: number) {
-  const { count, unit } = interval(seconds);
-  return count === 1 ? `Every ${unit}` : `Every ${plural(count, unit)}`;
-}
-/** `release-triage` reads as "Release triage". */
-export const interestTitle = (id: string) => {
-  const words = id.replace(/[-_]+/g, " ").trim() || id;
-  return words.charAt(0).toUpperCase() + words.slice(1);
-};
-
-/** One line for a watch, for rows and the peek. */
-export function describeWatch(
-  watch: Watch,
-  channels: readonly ChannelChoice[] = [],
-) {
-  if (watch.type === "timer") return every(watch.interval_secs);
-  if (watch.name) return watch.name;
-  const what =
-    watch.kinds.length === 1 && watch.kinds[0] === 9
-      ? "Messages"
-      : watch.kinds.length
-        ? `Kind ${watch.kinds.join(", ")} events`
-        : "Any event";
-  const where =
-    watch.channels === "all"
-      ? "any channel"
-      : watch.channels.length === 1 &&
-          channels.some((item) => item.id === watch.channels[0])
-        ? `#${channels.find((item) => item.id === watch.channels[0])?.name}`
-        : plural(watch.channels.length, "channel");
-  return `${what} in ${where}${watch.filter ? ", filtered" : ""}`;
-}
+/** The app's own writer: any field, including attention. */
+type Save = (change: AgentChange) => Promise<void>;
 
 function unnamed(watch: EventWatch): EventWatch {
   const { name: _, ...rest } = watch;
   return rest;
-}
-
-/** The agent's objects by role, in slug order; `orphans` serve no Interest. */
-export function attentionOf(agent: Agent) {
-  const objects = Object.values(agent.attention).sort((a, b) =>
-    a.slug.localeCompare(b.slug),
-  );
-  const interests = objects.filter(
-    (object) => object.value.type === "interest",
-  );
-  const watches = objects.filter(
-    (object): object is WatchObject => object.value.type !== "interest",
-  );
-  const ids = new Set(interests.map((object) => parseSlug(object.slug)?.id));
-  return {
-    interests,
-    watches,
-    orphans: watches.filter((object) => !ids.has(object.value.interest_id)),
-  };
 }
 
 const watchIcon = (watch: Watch) =>
@@ -131,13 +71,13 @@ export function AttentionSummary({
   agent: Agent;
   channels?: readonly ChannelChoice[];
 }) {
-  const { watches } = attentionOf(agent);
+  const { watches } = attentionOf(agent.attention);
   const on = watches.filter((object) => object.value.enabled);
   const paused = watches.length - on.length;
   return (
     <ul className="m-0 grid list-none gap-1.5 p-0 text-body-sm">
       <li className="flex items-center gap-2">
-        <AtIcon size={14} aria-hidden="true" /> Mentions and DMs
+        <AtIcon size={14} aria-hidden="true" /> Mentions and replies
       </li>
       {on.map((object) => (
         <li key={object.slug} className="flex min-w-0 items-center gap-2">
@@ -185,16 +125,20 @@ export function AttentionPanel({
   agent,
   save,
   channels = [],
-}: AgentViewProps & { channels?: readonly ChannelChoice[] }) {
-  const { interests, watches, orphans } = attentionOf(agent);
+}: {
+  agent: Agent;
+  save: Save;
+  channels?: readonly ChannelChoice[];
+}) {
+  const { interests, watches, orphans } = attentionOf(agent.attention);
   const [adding, setAdding] = useState(false);
   return (
     <div className="grid content-start gap-6">
       <SettingsGroup>
         <PreferenceRow
           icon={<AtIcon size={16} />}
-          title="Mentions and DMs"
-          subtitle="And replies to its messages. Always on."
+          title="Mentions and replies"
+          subtitle="Messages that mention it or reply to it. Always on."
         />
       </SettingsGroup>
       {interests.map((object) => {
@@ -217,7 +161,8 @@ export function AttentionPanel({
             <h4 className="m-0 text-label">Without an interest</h4>
             <p className="m-0 text-body-sm text-secondary">
               Its Interest was removed, so these wake the agent without
-              instructions. Edit one to give it an interest_id, or remove it.
+              instructions. Edit its JSON to give it an interest_id, or remove
+              it.
             </p>
           </div>
           <SettingsGroup>
@@ -225,7 +170,6 @@ export function AttentionPanel({
               <WatchRow
                 key={`${object.slug}:${object.modifiedAt}`}
                 object={object}
-                agent={agent}
                 channels={channels}
                 save={save}
               />
@@ -336,7 +280,6 @@ function InterestGroup({
             <WatchRow
               key={`${watch.slug}:${watch.modifiedAt}`}
               object={watch}
-              agent={agent}
               channels={channels}
               save={save}
             />
@@ -370,14 +313,12 @@ function RowMenu({
   label,
   onEdit,
   editLabel = "Edit",
-  extra,
   removeLabel = "Remove",
   onRemove,
 }: {
   label: string;
   onEdit(): void;
   editLabel?: string;
-  extra?: { label: string; onClick(): void };
   removeLabel?: string;
   onRemove(): void;
 }) {
@@ -399,14 +340,6 @@ function RowMenu({
           </MenuIcon>
           {editLabel}
         </MenuItem>
-        {extra && (
-          <MenuItem onClick={extra.onClick}>
-            <MenuIcon>
-              <PencilSimpleIcon size={14} />
-            </MenuIcon>
-            {extra.label}
-          </MenuItem>
-        )}
         <MenuItem tone="danger" onClick={onRemove}>
           <MenuIcon>
             <TrashIcon size={14} />
@@ -420,22 +353,19 @@ function RowMenu({
 
 function WatchRow({
   object,
-  agent,
   channels,
   save,
 }: {
   object: WatchObject;
-  agent: Agent;
   channels: readonly ChannelChoice[];
   save: Save;
 }) {
   const { value, slug } = object;
-  const [editing, setEditing] = useState<"form" | "json">();
+  const [editing, setEditing] = useState(false);
   const action = useAction();
   const title = describeWatch(value, channels);
   const put = (next: AttentionValue | null) =>
     action.run(() => save({ attention: { [slug]: next } }));
-  const orphan = !agent.attention[interestSlug(value.interest_id)];
   const detail =
     value.type === "timer"
       ? [
@@ -477,39 +407,19 @@ function WatchRow({
             />
             <RowMenu
               label={title}
-              {...(orphan
-                ? { editLabel: "Edit JSON", onEdit: () => setEditing("json") }
-                : {
-                    onEdit: () => setEditing("form"),
-                    extra: {
-                      label: "Edit JSON",
-                      onClick: () => setEditing("json"),
-                    },
-                  })}
+              editLabel="Edit JSON"
+              onEdit={() => setEditing(true)}
               onRemove={() => void put(null)}
             />
           </span>
         }
       />
-      {editing === "form" && (
-        <div className="p-3">
-          <WatchForm
-            kind={value.type}
-            interest={value.interest_id}
-            agent={agent}
-            channels={channels}
-            save={save}
-            editing={object}
-            onDone={() => setEditing(undefined)}
-          />
-        </div>
-      )}
-      {editing === "json" && (
+      {editing && (
         <JsonEditor
           slug={slug}
           value={value}
           save={save}
-          onDone={() => setEditing(undefined)}
+          onDone={() => setEditing(false)}
         />
       )}
     </>
@@ -667,15 +577,14 @@ const KINDS = {
   any: [],
 } as const;
 
-/** Adds, or edits the common fields of, one watch or timer for `interest`. Fields
- * the form does not show (tags, classifier, expiry) are kept as they are. */
+/** Adds one watch or timer for `interest`. Editing an existing one is its JSON,
+ * so the form never has to read every field of the schema back in. */
 function WatchForm({
   kind,
   interest,
   agent,
   channels,
   save,
-  editing,
   onDone,
 }: {
   kind: "event" | "timer";
@@ -683,32 +592,16 @@ function WatchForm({
   agent: Agent;
   channels: readonly ChannelChoice[];
   save: Save;
-  editing?: WatchObject;
   onDone(): void;
 }) {
-  const prior = editing?.value;
-  const event = prior?.type === "event" ? prior : undefined;
-  const timer = prior?.type === "timer" ? prior : undefined;
-  const [name, setName] = useState(event?.name ?? "");
-  const [scope, setScope] = useState<string[] | "all">(
-    event && event.channels !== "all" ? [...event.channels] : "all",
-  );
-  const kindsKey = !event
-    ? "messages"
-    : event.kinds.length === 0
-      ? "any"
-      : event.kinds.length === 1 && event.kinds[0] === 9
-        ? "messages"
-        : "custom";
-  const [kinds, setKinds] = useState<string>(kindsKey);
-  const [filter, setFilter] = useState(event?.filter ?? "");
-  const [prompt, setPrompt] = useState(timer?.prompt ?? "");
-  const start = interval(timer?.interval_secs ?? 3_600);
-  const [count, setCount] = useState(String(start.count));
-  const [unit, setUnit] = useState(String(start.size === 1 ? 60 : start.size));
-  const [limit, setLimit] = useState(
-    timer?.max_occurrences ? String(timer.max_occurrences) : "",
-  );
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState<string[] | "all">("all");
+  const [kinds, setKinds] = useState<keyof typeof KINDS>("messages");
+  const [filter, setFilter] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [count, setCount] = useState("1");
+  const [unit, setUnit] = useState(String(interval(3_600).size));
+  const [limit, setLimit] = useState("");
   const action = useAction();
   let filterProblem = "";
   if (filter.trim())
@@ -717,49 +610,34 @@ function WatchForm({
     } catch (error) {
       filterProblem = message(error);
     }
-  const build = (): AttentionValue => {
-    if (kind === "event") {
-      const {
-        name: _,
-        filter: __,
-        ...rest
-      } = event ?? {
-        type: "event" as const,
-        interest_id: interest,
-        enabled: true,
-        since: now(),
-        channels: "all" as const,
-        kinds: KINDS.messages,
-      };
-      return {
-        ...rest,
-        channels: scope,
-        kinds:
-          kinds === "custom" && event
-            ? event.kinds
-            : KINDS[kinds as keyof typeof KINDS],
-        ...(name.trim() ? { name: name.trim() } : {}),
-        ...(filter.trim() ? { filter: filter.trim() } : {}),
-      };
-    }
-    const seconds = Math.round(Number(count) * Number(unit));
-    return {
-      type: "timer",
-      interest_id: interest,
-      prompt,
-      enabled: timer?.enabled ?? true,
-      interval_secs: seconds,
-      // A new interval restarts the schedule; an unchanged one keeps it.
-      armed_at:
-        timer && timer.interval_secs === seconds ? timer.armed_at : now(),
-      max_occurrences: limit.trim() ? Number(limit) : null,
-      expires_at: timer?.expires_at ?? null,
-    };
-  };
+  const build = (): AttentionValue =>
+    kind === "event"
+      ? {
+          type: "event",
+          interest_id: interest,
+          enabled: true,
+          since: now(),
+          channels: scope,
+          kinds: KINDS[kinds],
+          ...(name.trim() ? { name: name.trim() } : {}),
+          ...(filter.trim() ? { filter: filter.trim() } : {}),
+        }
+      : {
+          type: "timer",
+          interest_id: interest,
+          prompt,
+          enabled: true,
+          interval_secs: Math.round(Number(count) * Number(unit)),
+          armed_at: now(),
+          max_occurrences: limit.trim() ? Number(limit) : null,
+          expires_at: null,
+        };
   const submit = () => {
-    const slug =
-      editing?.slug ??
-      freeSlug("watch", kind === "timer" ? "timer" : name || "messages", agent);
+    const slug = freeSlug(
+      "watch",
+      kind === "timer" ? "timer" : name || "messages",
+      agent,
+    );
     const value = build();
     const problem =
       filterProblem ||
@@ -769,10 +647,10 @@ function WatchForm({
     if (problem) action.setError(problem);
     else
       void action
-        .run(() => save({ attention: { [slug]: value } } as AgentChange))
+        .run(() => save({ attention: { [slug]: value } }))
         .then((ok) => ok && onDone());
   };
-  const title = `${editing ? "Edit" : "New"} ${kind === "timer" ? "timer" : "watch"}`;
+  const title = `New ${kind === "timer" ? "timer" : "watch"}`;
   return (
     <section
       className="grid gap-3 rounded-container bg-surface-inset p-4"
@@ -791,21 +669,13 @@ function WatchForm({
             label="Wake on"
             variant="field"
             value={kinds}
-            onValueChange={setKinds}
+            onValueChange={(value) => setKinds(value as keyof typeof KINDS)}
             groups={[
               {
                 label: "Events",
                 options: [
                   { value: "messages", label: "Messages" },
                   { value: "any", label: "Any event" },
-                  ...(kindsKey === "custom" && event
-                    ? [
-                        {
-                          value: "custom",
-                          label: `Kinds ${event.kinds.join(", ")}`,
-                        },
-                      ]
-                    : []),
                 ],
               },
             ]}
@@ -830,13 +700,7 @@ function WatchForm({
           {scope !== "all" && (
             <fieldset className="m-0 grid max-h-48 gap-1 overflow-auto border-0 p-0">
               <legend className="sr-only">Channels</legend>
-              {[
-                ...channels,
-                // Saved channels this client doesn't list stay choosable.
-                ...scope
-                  .filter((id) => !channels.some((item) => item.id === id))
-                  .map((id) => ({ id, name: id })),
-              ].map((channel) => (
+              {channels.map((channel) => (
                 <Checkbox
                   key={channel.id}
                   label={`#${channel.name}`}
@@ -850,7 +714,7 @@ function WatchForm({
                   }
                 />
               ))}
-              {!channels.length && !scope.length && (
+              {!channels.length && (
                 <p className="m-0 text-body-sm text-secondary">
                   No channels to choose from yet.
                 </p>
@@ -919,7 +783,7 @@ function WatchForm({
       <Problem error={action.error} />
       <FormActions
         pending={action.pending}
-        submit={editing ? "Save" : kind === "timer" ? "Add timer" : "Add watch"}
+        submit={kind === "timer" ? "Add timer" : "Add watch"}
         onSubmit={submit}
         onCancel={onDone}
       />

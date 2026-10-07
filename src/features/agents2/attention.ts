@@ -308,20 +308,26 @@ const isReply: Predicate = (event) =>
       (tag[3] === undefined || ["root", "reply", ""].includes(tag[3])),
   );
 
-/** Directly addressed events take the runtime's built-in mention path, never a watch. */
+/** Kinds that are conversation: only these can address an agent. A reaction or a
+ * deletion of the agent's message is not someone talking to it. */
+export const CHAT_KINDS: readonly number[] = [9, 40003, 40007, 46010];
+
+/** Directly addressed events take the runtime's built-in mention path, never a
+ * watch: a chat event that p-tags the agent or replies to something it wrote.
+ * DMs (kind 4) are not delivered yet: `run` could neither read nor answer one. */
 export function addressedTo(
   event: EventData,
   agent: string,
   wroteEvent: (id: string) => boolean = () => false,
 ) {
-  if (event.pubkey === agent) return false;
-  const tagged = event.tags.some((tag) => tag[0] === "p" && tag[1] === agent);
-  if (event.kind === 4 && tagged) return true;
-  if ([9, 40003, 40007, 46010].includes(event.kind) && tagged) return true;
-  return event.tags.some(
-    (tag) => tag[0] === "e" && !!tag[1] && wroteEvent(tag[1]),
+  if (event.pubkey === agent || !CHAT_KINDS.includes(event.kind)) return false;
+  return (
+    tagsAgent(event, agent) ||
+    event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wroteEvent(tag[1]))
   );
 }
+export const tagsAgent = (event: EventData, agent: string) =>
+  event.tags.some((tag) => tag[0] === "p" && tag[1] === agent);
 
 /** Steps 1, 2 and 4 of event watch matching. Step 3 (addressed events and the
  * agent's own events) belongs to the caller; classifiers are not run here. */
@@ -370,4 +376,81 @@ export function timerSpent(timer: TimerWatch, state: TimerState, now: number) {
     (timer.expires_at !== null && now >= timer.expires_at) ||
     (timer.max_occurrences !== null && state.used >= timer.max_occurrences)
   );
+}
+
+// Reading the format for people: one line per watch, objects grouped by role.
+
+export type ChannelChoice = Readonly<{ id: string; name: string }>;
+export type Watch = EventWatch | TimerWatch;
+export type WatchObject = AttentionObject & { value: Watch };
+
+export const UNITS = [
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60],
+  ["second", 1],
+] as const;
+export const plural = (count: number, unit: string) =>
+  `${count} ${unit}${count === 1 ? "" : /(ch|s)$/.test(unit) ? "es" : "s"}`;
+/** The largest whole unit of `seconds`. */
+export function interval(seconds: number) {
+  const [unit, size] =
+    UNITS.find(([, size]) => seconds % size === 0) ?? UNITS[3];
+  return { count: seconds / size, unit, size };
+}
+export function every(seconds: number) {
+  const { count, unit } = interval(seconds);
+  return count === 1 ? `Every ${unit}` : `Every ${plural(count, unit)}`;
+}
+/** `release-triage` reads as "Release triage". */
+export const interestTitle = (id: string) => {
+  const words = id.replace(/[-_]+/g, " ").trim() || id;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/** One line for a watch, for rows and the peek. */
+export function describeWatch(
+  watch: Watch,
+  channels: readonly ChannelChoice[] = [],
+) {
+  if (watch.type === "timer") return every(watch.interval_secs);
+  if (watch.name) return watch.name;
+  const what =
+    watch.kinds.length === 1 && watch.kinds[0] === 9
+      ? "Messages"
+      : watch.kinds.length
+        ? `Kind ${watch.kinds.join(", ")} events`
+        : "Any event";
+  const only =
+    watch.channels !== "all" && watch.channels.length === 1
+      ? channels.find((item) => item.id === watch.channels[0])
+      : undefined;
+  const where =
+    watch.channels === "all"
+      ? "any channel"
+      : only
+        ? `#${only.name}`
+        : plural(watch.channels.length, "channel");
+  return `${what} in ${where}${watch.filter ? ", filtered" : ""}`;
+}
+
+/** The objects by role, in slug order; `orphans` serve no Interest. */
+export function attentionOf(
+  attention: Readonly<Record<string, AttentionObject>>,
+) {
+  const objects = Object.values(attention).sort((a, b) =>
+    a.slug.localeCompare(b.slug),
+  );
+  const interests = objects.filter(
+    (object) => object.value.type === "interest",
+  );
+  const watches = objects.filter(
+    (object): object is WatchObject => object.value.type !== "interest",
+  );
+  const ids = new Set(interests.map((object) => parseSlug(object.slug)?.id));
+  return {
+    interests,
+    watches,
+    orphans: watches.filter((object) => !ids.has(object.value.interest_id)),
+  };
 }

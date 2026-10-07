@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ChannelQueries } from "../relay/contracts";
-import type { ChannelChoice } from "./AttentionPanel";
+import type { ChannelChoice } from "./attention";
 import type { Agents2 } from "./service";
 
 const noSubscribe = () => () => {};

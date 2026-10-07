@@ -4,6 +4,7 @@ import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { foldProfiles } from "../../features/relay/profiles";
+import { normalizeName } from "../../features/search/person-match";
 import {
   isHexPubkey,
   normalizeFromHandle,
@@ -90,7 +91,7 @@ export function useSearchMessages(
           if (isHexPubkey(parsed.from)) {
             author = parsed.from.toLowerCase();
           } else {
-            const handle = normalizeFromHandle(parsed.from).toLowerCase();
+            const handle = normalizeName(normalizeFromHandle(parsed.from));
             if (!handle) return { events: [] };
             const knownMembers = channelId
               ? (session.channels.get?.(channelId)?.members ?? [])
@@ -101,11 +102,9 @@ export function useSearchMessages(
             }
             const scoped = knownMembers.filter(
               (pubkey) =>
-                session.profiles
-                  .snapshot()
-                  .get(pubkey)
-                  ?.name.trim()
-                  .toLowerCase() === handle,
+                normalizeName(
+                  session.profiles.snapshot().get(pubkey)?.name ?? "",
+                ) === handle,
             );
             if (scoped.length === 1) {
               author = scoped[0];
@@ -131,8 +130,7 @@ export function useSearchMessages(
               );
               const matches = [...foldProfiles(candidates)].filter(
                 ([pubkey, profile]) =>
-                  profile.name.trim().toLowerCase() === handle ||
-                  pubkey === handle,
+                  normalizeName(profile.name) === handle || pubkey === handle,
               );
               if (matches.length !== 1)
                 return { events: [], ambiguousAuthor: matches.length > 1 };

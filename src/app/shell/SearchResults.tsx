@@ -20,6 +20,7 @@ import { matchName, matchRank, SearchChoices } from "./SearchChoices";
 import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
+import { matchPerson } from "../../features/search/person-match";
 import {
   isChannelUuid,
   isHexPubkey,
@@ -301,8 +302,9 @@ export function SearchResults({
   const authorChoices =
     authorToken && showAuthorPicker && authorSuggestions?.query === query
       ? [...candidates]
-          .filter(([, profile]) =>
-            profile.name.toLowerCase().startsWith(authorNeedle),
+          .filter(
+            ([, profile]) =>
+              matchPerson(profile.name, authorNeedle) !== undefined,
           )
           .filter(
             ([pubkey]) =>
@@ -312,9 +314,9 @@ export function SearchResults({
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
             ([left, leftProfile], [right, rightProfile]) =>
-              Number(rightProfile.name.trim().toLowerCase() === authorNeedle) -
+              Number(matchPerson(rightProfile.name, authorNeedle)?.tier === 0) -
                 Number(
-                  leftProfile.name.trim().toLowerCase() === authorNeedle,
+                  matchPerson(leftProfile.name, authorNeedle)?.tier === 0,
                 ) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||

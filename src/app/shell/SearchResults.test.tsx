@@ -1592,6 +1592,66 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
   }
 });
 
+it("finds and resolves authors by name words, ignoring accents", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    zoe = keypair(),
+    other = keypair();
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(zoe, { display_name: "Zoë" }),
+          profile(other, { display_name: "Mary Zoey" }),
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9))) {
+        reads.push(filters as Filter[]);
+        return Promise.resolve([]);
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="from:@zoe" />);
+    const people = within(screen.getByRole("group", { name: "People" }));
+    // The exact name first, then a later word that starts with the text.
+    await waitFor(() =>
+      expect(
+        people.getAllByRole("option").map((option) => option.textContent),
+      ).toEqual([
+        expect.stringContaining("Zoë"),
+        expect.stringContaining("Mary Zoey"),
+      ]),
+    );
+    mounted.rerender(<SearchResults {...props} query="from:zoe " />);
+    await waitFor(() =>
+      expect(reads.at(-1)).toEqual([
+        expect.objectContaining({ authors: [zoe.pubkey] }),
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("prioritizes people, separates agents, shows profile avatars, and excludes archived identities", async () => {
   const relay = keypair(),
     viewer = keypair(),

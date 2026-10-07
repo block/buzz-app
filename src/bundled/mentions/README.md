@@ -1,6 +1,6 @@
 # Mention rules
 
-`version 1` · `client contract` · `uses existing tags`
+`version 2` · `client contract` · `uses existing tags`
 
 ## Abstract
 
@@ -79,9 +79,10 @@ NOT contain `@`, a line break, or a tab. It MAY contain spaces. A client MAY loo
 back only 160 characters from the caret. A caret outside the text gives no query.
 
 A query with a space is **admitted** only while it is still the start of a
-known name (case-insensitive). A query that is a complete known name plus a
-trailing space is not admitted, so the user can keep typing prose. The known
-names are the aliases and labels of the current choice set, including people
+known name. Compare with the section 3 normalization, but do not trim the
+query: its trailing space matters here. A query that is a complete known name
+plus a trailing space is not admitted, so the user can keep typing prose. The
+known names are the aliases and labels of the current choice set, including people
 that the directory search for this query found. This check is the `admission`
 fixture section.
 
@@ -101,9 +102,16 @@ that the user already selected does not open a query.
 
 ## 3. Matching (normative)
 
-Normalize the query and each name by trimming at both ends and lowercasing
-(ECMAScript `trim` and `toLowerCase`). An empty query matches every choice at
-tier 0. Otherwise, a name matches the query at the first tier that applies:
+Normalize the query and each name the same way. For each code point, apply
+Unicode NFKD, remove marks (`\p{M}`), lowercase (ECMAScript `toLowerCase`), and
+replace final sigma `ς` with `σ`. Then trim both ends (ECMAScript `trim`). So
+`jose` matches `José`, and `παρος` matches `ΠΑΡΟΣ`. Space selection (section 5),
+query admission (section 2, without the trim), and ordering by normalized labels
+(section 4) use this same normalization. Shared code:
+[person-match.ts](../../features/search/person-match.ts).
+
+An empty query matches every choice at tier 0. Otherwise, a name matches the
+query at the first tier that applies:
 
 | Tier | Rule |
 | --- | --- |

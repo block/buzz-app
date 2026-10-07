@@ -231,7 +231,7 @@ it("orders mixed people and agents the same way from every input order", () => {
 });
 
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(1);
+  expect(mentionConformance.version).toBe(2);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);
 });

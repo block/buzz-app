@@ -2,8 +2,8 @@ import { Popover } from "@base-ui/react/popover";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
-import { matchFolded } from "../search/match";
 import { MatchedLabel } from "../search/MatchedLabel";
+import { matchPerson, normalizeName } from "../search/person-match";
 import { pickerText, readSearchUsage, recordChoice } from "../search/usage";
 import { useSearchHighlight } from "../search/use-search-highlight";
 import { publicKeyLabels } from "../../shared/identity/public-key";
@@ -11,7 +11,6 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
-import { matchPerson } from "../search/person-match";
 import { usePeople, type Recipient } from "./usePeople";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
@@ -84,13 +83,10 @@ export function RecipientPicker({
             : 4;
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
-  // The directory matches name prefixes on the relay, so fuzzy matches would
-  // depend on which people happen to be loaded. Underline only real substrings.
-  // Match without accents, as the directory does: "jose" is José exactly.
-  const matchOf = (person: Recipient) => {
-    const match = needle ? matchFolded(person.name, needle) : undefined;
-    return match && match.rank <= 3 ? match : undefined;
-  };
+  // The shared name rule, the same as mentions: whole name, start of name,
+  // whole word, start of a word, all without accents or case.
+  const matchOf = (person: Recipient) =>
+    needle ? matchPerson(person.name, needle) : undefined;
   // Read again when the selection changes, so a person chosen earlier in this
   // message counts. Rows already showing keep their order either way.
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
@@ -142,7 +138,7 @@ export function RecipientPicker({
   // below 2, so each relationship keeps its own band of ten.
   const order = (person: Recipient) => {
     if (!needle) return 0;
-    const rank = matchOf(person)?.rank ?? 3;
+    const rank = matchOf(person)?.tier ?? 3;
     if (rank === 0) return -2;
     if (personKey(person.pubkey) === picked) return -1;
     const dm = dms.get(person.pubkey);
@@ -197,6 +193,17 @@ export function RecipientPicker({
     open: listed,
     onOpen: () => setOpen(true),
   });
+  // Space completes like an @ mention: only for one exact name, and only when
+  // no longer name continues it ("Avery" waits while "Avery Chen" exists).
+  // A search still running could find that longer name, so Space waits too.
+  const exactRecipient = () => {
+    const typedName = normalizeName(query);
+    if (!typedName || !listed || directory.loading) return;
+    const names = eligible.map((person) => normalizeName(person.name));
+    if (names.some((name) => name.startsWith(`${typedName} `))) return;
+    const exact = eligible.filter((_, index) => names[index] === typedName);
+    return exact.length === 1 ? exact[0] : undefined;
+  };
   const loadingRows = useRef(10);
   useEffect(() => {
     if (!directory.loading && !directory.error)
@@ -387,6 +394,22 @@ export function RecipientPicker({
                 setOpen(false);
               } else if (atLimit) {
                 if (event.key === "Enter" && open) event.preventDefault();
+              } else if (event.key === " " && !event.shiftKey) {
+                const person = exactRecipient();
+                if (person) {
+                  event.preventDefault();
+                  choose(person);
+                }
+              } else if (event.key === "Tab" && !event.shiftKey) {
+                // Tab picks the highlighted row, as in @ mentions. With no
+                // highlight it moves focus as usual.
+                const person = listed
+                  ? byPubkey.get(highlight.active)
+                  : undefined;
+                if (person) {
+                  event.preventDefault();
+                  choose(person);
+                }
               } else if (
                 !highlight.keyDown(event) &&
                 open &&

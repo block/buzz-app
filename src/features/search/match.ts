@@ -78,35 +78,3 @@ export function matchName(
 
 export const matchRank = (label: string, needle: string) =>
   matchName(label, needle)?.rank;
-
-// Lowercasing a whole word turns a final Σ into ς, but one letter at a time
-// gives σ; treat them as one letter so both sides agree.
-const fold = (text: string) =>
-  text
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/ς/g, "σ");
-
-/** `matchName` on text without accents, the way the people directory
- * searches: "jose" matches José exactly. Positions are the label's own code
- * points, so the underline lands on the accented letters. */
-export function matchFolded(label: string, needle: string) {
-  const origin: number[] = [];
-  let folded = "";
-  [...label].forEach((char, index) => {
-    for (const piece of fold(char)) {
-      folded += piece;
-      origin.push(index);
-    }
-  });
-  const match = matchName(folded, fold(needle));
-  return (
-    match && {
-      rank: match.rank,
-      positions: [
-        ...new Set(match.positions.flatMap((at) => origin[at] ?? [])),
-      ],
-    }
-  );
-}

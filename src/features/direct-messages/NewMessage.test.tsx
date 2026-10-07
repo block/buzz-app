@@ -426,6 +426,53 @@ it("matches accented names the way the directory finds them", async () => {
   }
 });
 
+it("completes with Space only for one exact name, and with Tab", async () => {
+  const t = setup();
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  const averyChen = { pubkey: "b".repeat(64), name: "Avery Chen" };
+  const jose = { pubkey: "c".repeat(64), name: "José" };
+  const josefa = { pubkey: "d".repeat(64), name: "Josefa" };
+  t.directMessages.people.mockResolvedValue({
+    people: [avery, averyChen, jose, josefa],
+    hasMore: false,
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "José" });
+  // Exact without accents, and no longer name continues it: Space picks.
+  await t.user.type(recipient(), "jose");
+  await screen.findByRole("option", { name: "Josefa" });
+  await t.user.keyboard(" ");
+  expect(
+    await screen.findByRole("button", { name: "Remove José" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveValue("");
+  // "Avery Chen" continues "avery", so Space is a normal space.
+  await t.user.type(recipient(), "avery");
+  await screen.findByRole("option", { name: "Avery Chen" });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("avery ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+  // Tab picks the highlighted row.
+  await t.user.keyboard("c");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Avery Chen" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    ),
+  );
+  await t.user.keyboard("{Tab}");
+  expect(
+    await screen.findByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeVisible();
+  expect(recipient()).toHaveFocus();
+  // With nothing typed there is no highlight, so Tab leaves the field.
+  await t.user.keyboard("{Tab}");
+  expect(recipient()).not.toHaveFocus();
+  expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
+});
+
 it("reveals the highlighted person on every arrow key and when the list reopens", async () => {
   const t = setup();
   const scrolled = vi.mocked(Element.prototype.scrollIntoView);

@@ -1366,6 +1366,8 @@ fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
         animated_frame: bool,
         mut expected: Option<(usize, usize)>,
     ) -> Result<()> {
+        let mut alpha_successor = false;
+        let mut frame_chunk_seen = false;
         while !bytes.is_empty() {
             let header = bytes.get(..8).ok_or("Could not decode image")?;
             let size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
@@ -1373,6 +1375,20 @@ fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
             let next = end.checked_add(size & 1).ok_or("Could not decode image")?;
             let payload = bytes.get(8..end).ok_or("Could not decode image")?;
             if bytes.get(..next).is_none() {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && alpha_successor && &header[..4] != b"VP8 " {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame && frame_chunk_seen {
+                return Err("Could not decode image".into());
+            }
+            if animated_frame
+                && !alpha_successor
+                && &header[..4] != b"ALPH"
+                && &header[..4] != b"VP8 "
+                && &header[..4] != b"VP8L"
+            {
                 return Err("Could not decode image".into());
             }
             match &header[..4] {
@@ -1383,17 +1399,29 @@ fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
                     }
                     let width = usize::from(u16::from_le_bytes([frame[6], frame[7]]) & 0x3fff);
                     let height = usize::from(u16::from_le_bytes([frame[8], frame[9]]) & 0x3fff);
-                    // Three padded VP8 planes consume 384 bytes per 16x16 macroblock.
-                    // Allow another plane's worth for decoder border and output work.
-                    let padded_bytes = width
+                    // The locked VP8 decoder allocates three padded Y/U/V planes
+                    // before comparing the embedded frame with its canvas.
+                    let plane_bytes = width
                         .div_ceil(16)
                         .checked_mul(height.div_ceil(16))
-                        .and_then(|blocks| blocks.checked_mul(16 * 16 * 4))
+                        .and_then(|blocks| blocks.checked_mul(16 * 16 + 2 * 8 * 8))
                         .ok_or("Image too large to copy")?;
-                    if width == 0 || height == 0 || padded_bytes > max_bytes {
+                    if width == 0 || height == 0 || plane_bytes > max_bytes {
                         return Err("Image too large to copy".into());
                     }
                     if expected.is_some_and(|dimensions| dimensions != (width, height)) {
+                        return Err("Could not decode image".into());
+                    }
+                    frame_chunk_seen = true;
+                }
+                b"VP8L" if animated_frame => {
+                    frame_chunk_seen = true;
+                }
+                b"ALPH" if animated_frame => {
+                    // `image-webp` decodes the successor payload as VP8 even when
+                    // its chunk tag is not VP8; require the tag we validated.
+                    alpha_successor = true;
+                    if bytes.len().saturating_sub(next) < 8 {
                         return Err("Could not decode image".into());
                     }
                 }
@@ -1426,6 +1454,9 @@ fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
             }
             bytes = &bytes[next..];
         }
+        if animated_frame && !frame_chunk_seen {
+            return Err("Could not decode image".into());
+        }
         Ok(())
     }
 
@@ -1435,6 +1466,9 @@ fn check_webp_vp8_frames(bytes: &[u8], max_bytes: usize) -> Result<()> {
     }
     let riff_size = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
     let end = riff_size.checked_add(8).ok_or("Could not decode image")?;
+    if end != bytes.len() {
+        return Err("Could not decode image".into());
+    }
     let body = bytes.get(12..end).ok_or("Could not decode image")?;
     chunks(body, max_bytes, false, None)
 }

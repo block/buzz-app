@@ -1750,10 +1750,17 @@ fn clipboard_bounds_embedded_webp_vp8_frames_before_decode() {
     let mut static_chunks = chunk(b"VP8X", &[0, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
     static_chunks.extend(vp8(64, 64));
     assert!(check_webp_vp8_frames(&webp(&static_chunks), 64 * 64 * 4).is_ok());
-    assert!(check_webp_vp8_frames(&webp(&static_chunks), 64 * 64 * 4 - 1).is_err());
+    assert!(check_webp_vp8_frames(&webp(&static_chunks), 4 * 4 * 384 - 1).is_err());
     let mut mismatch = chunk(b"VP8X", &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     mismatch.extend(vp8(64, 64));
     assert!(check_webp_vp8_frames(&webp(&mismatch), 64 * 64 * 4).is_err());
+
+    // Padded VP8 planes have their own bound; odd dimensions must not lower
+    // the existing (unpadded) RGBA output cap.
+    let mut odd = chunk(b"VP8X", &[0, 0, 0, 0, 32, 0, 0, 32, 0, 0]);
+    odd.extend(vp8(33, 33));
+    assert!(check_webp_vp8_frames(&webp(&odd), 33 * 33 * 4).is_ok());
+    assert!(check_webp_vp8_frames(&webp(&odd), 9 * 384 - 1).is_err());
 
     // The first animated frame nests VP8 after a 16-byte ANMF header.
     let mut frame = vec![0; 16];
@@ -1762,13 +1769,32 @@ fn clipboard_bounds_embedded_webp_vp8_frames_before_decode() {
     frame.extend(vp8(64, 64));
     let mut animated_chunks = chunk(b"VP8X", &[2, 0, 0, 0, 63, 0, 0, 63, 0, 0]);
     animated_chunks.extend(chunk(b"ANMF", &frame));
-    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 4096).is_err());
+    assert!(check_webp_vp8_frames(&webp(&animated_chunks), 4 * 4 * 384 - 1).is_err());
     assert!(check_webp_vp8_frames(&webp(&animated_chunks), 64 * 64 * 4).is_ok());
     frame[6] = 0;
     assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
     frame[6] = 63;
     frame.pop();
     assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &frame)), 64 * 64 * 4).is_err());
+
+    let mut alpha_frame = vec![0; 16];
+    alpha_frame[6] = 63;
+    alpha_frame[9] = 63;
+    alpha_frame.extend(chunk(b"ALPH", &[0]));
+    alpha_frame.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_ok());
+    let vp8_tag = alpha_frame
+        .windows(4)
+        .position(|bytes| bytes == b"VP8 ")
+        .unwrap();
+    alpha_frame[vp8_tag..vp8_tag + 4].copy_from_slice(b"JUNK");
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_err());
+    alpha_frame.truncate(vp8_tag);
+    assert!(check_webp_vp8_frames(&webp(&chunk(b"ANMF", &alpha_frame)), 64 * 64 * 4).is_err());
+
+    let mut trailing = webp(&static_chunks);
+    trailing.extend(vp8(64, 64));
+    assert!(check_webp_vp8_frames(&trailing, 64 * 64 * 4).is_err());
 }
 
 #[test]

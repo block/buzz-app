@@ -1,8 +1,9 @@
 // The app's editor for an agent's `agent-attention/v1` objects. Every agent type is
 // woken through them, so the app edits them once instead of each plugin. Watches
 // and timers sit under the Interest they serve; raw JSON covers what the forms
-// leave out (tags, classifiers, expiry). Validation is the spec's, at save.
+// leave out (tags, classifiers). Validation is the spec's, at save.
 import { useState } from "react";
+import { formatItemTimestamp } from "../../shared/datetime";
 import {
   AtIcon,
   DotsThreeIcon,
@@ -11,6 +12,7 @@ import {
   PlusIcon,
   TimerIcon,
   TrashIcon,
+  WarningCircleIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -37,16 +39,20 @@ import {
   interval,
   parseSlug,
   plural,
+  timerSpent,
+  timerState,
   UNITS,
   validateObject,
   type AttentionObject,
   type AttentionValue,
   type ChannelChoice,
   type EventWatch,
+  type TimerWatch,
   type Watch,
   type WatchObject,
 } from "./attention";
 import type { Agent, AgentChange } from "./service";
+import type { SkippedObject } from "./store";
 
 /** The app's own writer: any field, including attention. */
 type Save = (change: AgentChange) => Promise<void>;
@@ -132,8 +138,23 @@ export function AttentionPanel({
 }) {
   const { interests, watches, orphans } = attentionOf(agent.attention);
   const [adding, setAdding] = useState(false);
+  const skipped = Object.values(agent.skipped);
+  const row = (object: WatchObject) => (
+    <WatchRow
+      key={`${object.slug}:${object.modifiedAt}`}
+      object={object}
+      agent={agent}
+      channels={channels}
+      save={save}
+    />
+  );
   return (
     <div className="grid content-start gap-6">
+      <p className="m-0 text-body-sm text-secondary">
+        What wakes this agent. Mentions and replies always do. For anything
+        else, add an Interest: something it looks after, with instructions. The
+        watches and timers under an Interest decide when it wakes for it.
+      </p>
       <SettingsGroup>
         <PreferenceRow
           icon={<AtIcon size={16} />}
@@ -152,6 +173,7 @@ export function AttentionPanel({
             agent={agent}
             channels={channels}
             save={save}
+            row={row}
           />
         );
       })}
@@ -160,17 +182,28 @@ export function AttentionPanel({
           <div className="grid gap-0.5">
             <h4 className="m-0 text-label">Without an interest</h4>
             <p className="m-0 text-body-sm text-secondary">
-              Its Interest was removed, so these wake the agent without
-              instructions. Edit its JSON to give it an interest_id, or remove
-              it.
+              These name an Interest that does not exist, so they wake the agent
+              without instructions. Edit the JSON to set its interest_id, or
+              remove it.
+            </p>
+          </div>
+          <SettingsGroup>{orphans.map(row)}</SettingsGroup>
+        </section>
+      )}
+      {skipped.length > 0 && (
+        <section className="grid gap-2" aria-label="Skipped">
+          <div className="grid gap-0.5">
+            <h4 className="m-0 text-label">Skipped</h4>
+            <p className="m-0 text-body-sm text-secondary">
+              These are saved but never wake the agent, because they are invalid
+              or over a limit. Fix the JSON, or remove them.
             </p>
           </div>
           <SettingsGroup>
-            {orphans.map((object) => (
-              <WatchRow
+            {skipped.map((object) => (
+              <SkippedRow
                 key={`${object.slug}:${object.modifiedAt}`}
                 object={object}
-                channels={channels}
                 save={save}
               />
             ))}
@@ -186,7 +219,7 @@ export function AttentionPanel({
       ) : (
         <div>
           <Button size="compact" onClick={() => setAdding(true)}>
-            <PlusIcon size={14} aria-hidden="true" /> Interest
+            <PlusIcon size={14} aria-hidden="true" /> Add interest
           </Button>
         </div>
       )}
@@ -201,6 +234,7 @@ function InterestGroup({
   agent,
   channels,
   save,
+  row,
 }: {
   id: string;
   object: AttentionObject;
@@ -208,6 +242,7 @@ function InterestGroup({
   agent: Agent;
   channels: readonly ChannelChoice[];
   save: Save;
+  row(object: WatchObject): React.ReactNode;
 }) {
   const instructions =
     object.value.type === "interest" ? object.value.instructions : "";
@@ -217,13 +252,7 @@ function InterestGroup({
   const [draft, setDraft] = useState<"event" | "timer">();
   const action = useAction();
   const remove = () =>
-    action.run(() =>
-      save({
-        attention: Object.fromEntries(
-          [object, ...watches].map((item) => [item.slug, null]),
-        ),
-      }),
-    );
+    action.run(() => save({ attention: { [object.slug]: null } }));
   return (
     <section className="grid gap-2" aria-label={title}>
       <div className="flex items-center justify-between gap-2">
@@ -234,11 +263,11 @@ function InterestGroup({
             setText(instructions);
             setEditing(true);
           }}
+          // The spec keeps an Interest while anything still uses it.
           removeLabel={
-            watches.length
-              ? `Remove with ${plural(watches.length, "watch")}`
-              : "Remove"
+            watches.length ? "Remove (first remove what uses it)" : "Remove"
           }
+          removeDisabled={watches.length > 0}
           onRemove={() => void remove()}
         />
       </div>
@@ -274,17 +303,15 @@ function InterestGroup({
         </p>
       )}
       <Problem error={action.error} />
-      {watches.length > 0 && (
-        <SettingsGroup>
-          {watches.map((watch) => (
-            <WatchRow
-              key={`${watch.slug}:${watch.modifiedAt}`}
-              object={watch}
-              channels={channels}
-              save={save}
-            />
-          ))}
-        </SettingsGroup>
+      {watches.length > 0 ? (
+        <SettingsGroup>{watches.map(row)}</SettingsGroup>
+      ) : (
+        !draft && (
+          <p className="m-0 text-body-sm text-secondary">
+            Nothing wakes it for this yet. Add a watch to wake it on events, or
+            a timer to wake it on a schedule.
+          </p>
+        )
       )}
       {draft ? (
         <WatchForm
@@ -298,10 +325,10 @@ function InterestGroup({
       ) : (
         <div className="flex gap-2">
           <Button size="compact" onClick={() => setDraft("event")}>
-            <EyeIcon size={14} aria-hidden="true" /> Watch
+            <EyeIcon size={14} aria-hidden="true" /> Add watch
           </Button>
           <Button size="compact" onClick={() => setDraft("timer")}>
-            <TimerIcon size={14} aria-hidden="true" /> Timer
+            <TimerIcon size={14} aria-hidden="true" /> Add timer
           </Button>
         </div>
       )}
@@ -314,13 +341,17 @@ function RowMenu({
   onEdit,
   editLabel = "Edit",
   removeLabel = "Remove",
+  removeDisabled = false,
   onRemove,
+  extra,
 }: {
   label: string;
   onEdit(): void;
   editLabel?: string;
   removeLabel?: string;
+  removeDisabled?: boolean;
   onRemove(): void;
+  extra?: React.ReactNode;
 }) {
   return (
     <MenuRoot>
@@ -340,7 +371,8 @@ function RowMenu({
           </MenuIcon>
           {editLabel}
         </MenuItem>
-        <MenuItem tone="danger" onClick={onRemove}>
+        {extra}
+        <MenuItem tone="danger" disabled={removeDisabled} onClick={onRemove}>
           <MenuIcon>
             <TrashIcon size={14} />
           </MenuIcon>
@@ -351,12 +383,44 @@ function RowMenu({
   );
 }
 
+/** Where a timer's schedule stands, for its row. */
+function timerStatus(agent: Agent, slug: string, timer: TimerWatch) {
+  const at = now();
+  const state = timerState(timer, agent.timers[slug], at);
+  const runs =
+    timer.max_occurrences !== null
+      ? `ran ${state.used} of ${plural(timer.max_occurrences, "time")}`
+      : state.used > 0 && `ran ${plural(state.used, "time")}`;
+  if (timerSpent(timer, state, at))
+    return {
+      spent: true,
+      text:
+        timer.expires_at !== null && at >= timer.expires_at
+          ? "Ended"
+          : `Done, ${runs}`,
+    };
+  return {
+    spent: false,
+    text: [
+      timer.enabled &&
+        `next ${formatItemTimestamp(Math.max(state.nextDue, at), { withTime: true })}`,
+      runs,
+      timer.expires_at !== null &&
+        `until ${formatItemTimestamp(timer.expires_at, { withTime: true })}`,
+    ]
+      .filter(Boolean)
+      .join(", "),
+  };
+}
+
 function WatchRow({
   object,
+  agent,
   channels,
   save,
 }: {
   object: WatchObject;
+  agent: Agent;
   channels: readonly ChannelChoice[];
   save: Save;
 }) {
@@ -366,16 +430,16 @@ function WatchRow({
   const title = describeWatch(value, channels);
   const put = (next: AttentionValue | null) =>
     action.run(() => save({ attention: { [slug]: next } }));
+  const status =
+    value.type === "timer" ? timerStatus(agent, slug, value) : undefined;
   const detail =
     value.type === "timer"
-      ? [
-          `“${value.prompt}”`,
-          value.max_occurrences !== null &&
-            `at most ${plural(value.max_occurrences, "time")}`,
-        ]
+      ? [`“${value.prompt}”`, status?.text]
       : [
           value.name && describeWatch(unnamed(value), channels),
-          value.classifier && "with a classifier",
+          value.filter && `when ${value.filter}`,
+          value.classifier &&
+            "has a classifier, which this app cannot run yet, so it matches without it",
         ];
   return (
     <>
@@ -410,6 +474,30 @@ function WatchRow({
               editLabel="Edit JSON"
               onEdit={() => setEditing(true)}
               onRemove={() => void put(null)}
+              extra={
+                value.type === "timer" &&
+                status?.spent && (
+                  // A new armed_at is a new schedule, with nothing used yet.
+                  <MenuItem
+                    onClick={() =>
+                      void put({
+                        ...value,
+                        enabled: true,
+                        armed_at: now(),
+                        expires_at:
+                          value.expires_at !== null && value.expires_at <= now()
+                            ? null
+                            : value.expires_at,
+                      })
+                    }
+                  >
+                    <MenuIcon>
+                      <TimerIcon size={14} />
+                    </MenuIcon>
+                    Run again
+                  </MenuItem>
+                )
+              }
             />
           </span>
         }
@@ -418,6 +506,46 @@ function WatchRow({
         <JsonEditor
           slug={slug}
           value={value}
+          save={save}
+          onDone={() => setEditing(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/** A stored object the reader skipped: its problem, and the way to fix it. */
+function SkippedRow({ object, save }: { object: SkippedObject; save: Save }) {
+  const [editing, setEditing] = useState(false);
+  const action = useAction();
+  return (
+    <>
+      <PreferenceRow
+        icon={<WarningCircleIcon size={16} />}
+        title={object.slug}
+        subtitle={
+          <>
+            {object.problem}
+            <Problem error={action.error} />
+          </>
+        }
+        trailing={
+          <RowMenu
+            label={object.slug}
+            editLabel="Edit JSON"
+            onEdit={() => setEditing(true)}
+            onRemove={() =>
+              void action.run(() =>
+                save({ attention: { [object.slug]: null } }),
+              )
+            }
+          />
+        }
+      />
+      {editing && (
+        <JsonEditor
+          slug={object.slug}
+          value={object.value}
           save={save}
           onDone={() => setEditing(false)}
         />
@@ -462,11 +590,11 @@ function JsonEditor({
   onDone,
 }: {
   slug: string;
-  value: AttentionValue;
+  value: unknown;
   save: Save;
   onDone(): void;
 }) {
-  const [text, setText] = useState(JSON.stringify(value, null, 2));
+  const [text, setText] = useState(JSON.stringify(value ?? {}, null, 2));
   const action = useAction();
   const submit = () => {
     let next: unknown;
@@ -578,6 +706,7 @@ const KINDS = {
   messages: [9],
   any: [],
 } as const;
+const REPLIES = { any: "", only: "is_reply", none: "!is_reply" } as const;
 
 /** Adds one watch or timer for `interest`. Editing an existing one is its JSON,
  * so the form never has to read every field of the schema back in. */
@@ -599,19 +728,32 @@ function WatchForm({
   const [name, setName] = useState("");
   const [scope, setScope] = useState<string[] | "all">("all");
   const [kinds, setKinds] = useState<keyof typeof KINDS>("messages");
-  const [filter, setFilter] = useState("");
+  const [exactly, setExactly] = useState("");
+  const [replies, setReplies] = useState<keyof typeof REPLIES>("any");
+  const [advanced, setAdvanced] = useState("");
   const [prompt, setPrompt] = useState("");
   const [count, setCount] = useState("1");
   const [unit, setUnit] = useState(String(interval(3_600).size));
   const [limit, setLimit] = useState("");
+  const [until, setUntil] = useState("");
   const action = useAction();
   let filterProblem = "";
-  if (filter.trim())
+  if (advanced.trim())
     try {
-      compileFilter(filter.trim());
+      compileFilter(advanced.trim());
     } catch (error) {
       filterProblem = message(error);
     }
+  // The simple fields and the advanced expression, all of which must hold.
+  const filter = [
+    exactly && `content == ${JSON.stringify(exactly)}`,
+    REPLIES[replies],
+    advanced.trim() &&
+      (exactly || REPLIES[replies] ? `(${advanced.trim()})` : advanced.trim()),
+  ]
+    .filter(Boolean)
+    .join(" && ");
+  const expires = until ? Math.floor(new Date(until).getTime() / 1000) : null;
   const build = (): AttentionValue =>
     kind === "event"
       ? {
@@ -622,7 +764,7 @@ function WatchForm({
           channels: scope,
           kinds: KINDS[kinds],
           ...(name.trim() ? { name: name.trim() } : {}),
-          ...(filter.trim() ? { filter: filter.trim() } : {}),
+          ...(filter ? { filter } : {}),
         }
       : {
           type: "timer",
@@ -632,7 +774,7 @@ function WatchForm({
           interval_secs: Math.round(Number(count) * Number(unit)),
           armed_at: now(),
           max_occurrences: limit.trim() ? Number(limit) : null,
-          expires_at: null,
+          expires_at: expires,
         };
   const submit = () => {
     const slug = freeSlug(
@@ -645,7 +787,9 @@ function WatchForm({
       filterProblem ||
       (Array.isArray(scope) && !scope.length
         ? "Choose at least one channel"
-        : validateObject(slug, value));
+        : expires !== null && (Number.isNaN(expires) || expires <= now())
+          ? "Choose an end time in the future"
+          : validateObject(slug, value));
     // A filter problem is already shown under the field.
     if (problem) {
       if (!filterProblem) action.setError(problem);
@@ -726,24 +870,56 @@ function WatchForm({
             </fieldset>
           )}
           <Field
-            label="Filter (optional)"
-            description={
-              filterProblem ||
-              'Exact match only. e.g. content == "deploy", or is_reply && !(author == "<hex>")'
-            }
+            label="Text is exactly (optional)"
+            description="The whole message, not a part of it"
           >
             <Input
-              value={filter}
+              value={exactly}
+              placeholder="deploy"
               spellCheck={false}
-              autoCorrect="off"
-              autoCapitalize="off"
-              aria-invalid={!!filterProblem || undefined}
-              // macOS turns typed quotes into curly ones; the grammar only takes ".
-              onChange={(event) =>
-                setFilter(straightQuotes(event.target.value))
-              }
+              onChange={(event) => setExactly(event.target.value)}
             />
           </Field>
+          <Select
+            label="Replies"
+            variant="field"
+            value={replies}
+            onValueChange={(value) => setReplies(value as keyof typeof REPLIES)}
+            groups={[
+              {
+                label: "Replies",
+                options: [
+                  { value: "any", label: "Replies or not" },
+                  { value: "only", label: "Only replies" },
+                  { value: "none", label: "Not replies" },
+                ],
+              },
+            ]}
+          />
+          <details className="grid gap-2">
+            <summary className="cursor-pointer text-body-sm text-secondary">
+              Advanced filter
+            </summary>
+            <Field
+              label="Filter expression (optional)"
+              description={
+                filterProblem ||
+                'e.g. author == "<hex key>" || content == "help". Use &&, ||, ! and ( ).'
+              }
+            >
+              <Input
+                value={advanced}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                aria-invalid={!!filterProblem || undefined}
+                // macOS turns typed quotes into curly ones; the grammar only takes ".
+                onChange={(event) =>
+                  setAdvanced(straightQuotes(event.target.value))
+                }
+              />
+            </Field>
+          </details>
         </>
       ) : (
         <>
@@ -786,6 +962,13 @@ function WatchForm({
               min={1}
               value={limit}
               onChange={(event) => setLimit(event.target.value)}
+            />
+          </Field>
+          <Field label="Until (optional)" description="It stops at this time">
+            <Input
+              type="datetime-local"
+              value={until}
+              onChange={(event) => setUntil(event.target.value)}
             />
           </Field>
         </>

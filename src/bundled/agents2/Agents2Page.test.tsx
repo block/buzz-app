@@ -23,6 +23,8 @@ const agent = (name: string, n: number): Agent => ({
   owner: "f".repeat(64),
   relay: "wss://relay.example",
   config: { reply: `${name} says hi` },
+  skipped: {},
+  timers: {},
   attention: {
     "interest/default": {
       slug: "interest/default",

@@ -71,6 +71,44 @@ describe("validateObject", () => {
       validateObject("watch/w", { ...watch, filter: "author ==" }),
     ).toMatch(/string/);
   });
+  it("refuses values over the spec's limits", () => {
+    expect(
+      validateObject("interest/x", {
+        type: "interest",
+        instructions: "x".repeat(16_385),
+      }),
+    ).toMatch(/16,384 bytes/);
+    expect(
+      validateObject("watch/w", {
+        ...watch,
+        filter: Array(129).fill("true").join(" && "),
+      }),
+    ).toMatch(/256 parts/);
+    expect(
+      validateObject("watch/w", { ...watch, filter: "x".repeat(4_097) }),
+    ).toMatch(/4,096 bytes/);
+    expect(
+      validateObject("watch/w", {
+        ...watch,
+        kinds: Array.from({ length: 101 }, (_, kind) => kind),
+      }),
+    ).toMatch(/kinds/);
+    const question = { question: "q", threshold: 0.5 };
+    expect(
+      validateObject("watch/w", {
+        ...watch,
+        classifier: { questions: { a: question } },
+      }),
+    ).toMatch(/Missing field: true/);
+    expect(
+      validateObject("watch/w", {
+        ...watch,
+        classifier: {
+          questions: { a: { ...question, true: "y", false: "n" } },
+        },
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("compileFilter", () => {
@@ -115,24 +153,23 @@ describe("matching", () => {
     expect(
       addressedTo(event({ pubkey: agent, tags: [["p", agent]] }), agent),
     ).toBe(false);
-    // Only conversation addresses it: not a reaction to or deletion of its
-    // message, and not a DM it could not read.
-    for (const kind of [4, 5, 7])
-      expect(
-        addressedTo(
-          event({
-            kind,
-            tags: [
-              ["e", "mine"],
-              ["p", agent],
-            ],
-          }),
-          agent,
-          (id) => id === "mine",
-        ),
-      ).toBe(false);
+    // A DM to it and anything that names its events are addressed too, so no
+    // watch sees them; only a chat p-tag pulls it into a conversation.
+    expect(addressedTo(event({ kind: 4, tags: [["p", agent]] }), agent)).toBe(
+      true,
+    );
+    expect(
+      addressedTo(
+        event({ kind: 7, tags: [["e", "mine"]] }),
+        agent,
+        (id) => id === "mine",
+      ),
+    ).toBe(true);
+    expect(addressedTo(event({ kind: 7, tags: [["p", agent]] }), agent)).toBe(
+      false,
+    );
   });
-  it("restarts a timer's schedule on a new armed_at and spends it", () => {
+  it("counts what was already due when a timer has no state, and spends it", () => {
     const timer: TimerWatch = {
       type: "timer",
       interest_id: "default",
@@ -143,10 +180,18 @@ describe("matching", () => {
       max_occurrences: 1,
       expires_at: null,
     };
-    const state = timerState(timer, undefined);
+    const state = timerState(timer, undefined, 100);
     expect(state).toEqual({ armedAt: 100, nextDue: 110, used: 0 });
-    expect(timerState(timer, { ...state, used: 1 }).used).toBe(1);
-    expect(timerState({ ...timer, armed_at: 200 }, state).nextDue).toBe(210);
+    expect(timerState(timer, { ...state, used: 1 }, 500).used).toBe(1);
+    // No saved state at 135: occurrences at 110, 120 and 130 count as used.
+    expect(timerState(timer, undefined, 135)).toEqual({
+      armedAt: 100,
+      nextDue: 140,
+      used: 3,
+    });
+    expect(timerState({ ...timer, armed_at: 200 }, state, 200).nextDue).toBe(
+      210,
+    );
     expect(timerSpent(timer, { ...state, used: 1 }, 0)).toBe(true);
     expect(timerSpent({ ...timer, expires_at: 50 }, state, 50)).toBe(true);
   });

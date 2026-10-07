@@ -52,6 +52,9 @@ const CHANNEL =
 const QUESTION = /^[a-z][a-z0-9_]{0,31}$/;
 const MAX_INT = 2 ** 53 - 1;
 const BODY_LIMIT = 65_535;
+/** At most this many Interests, and this many watches and timers together. */
+export const OBJECT_LIMIT = 100;
+const TEXT_LIMIT = 16_384;
 
 export function parseSlug(slug: string) {
   const [, space, id] = /^(interest|watch)\/(.+)$/.exec(slug) ?? [];
@@ -79,20 +82,21 @@ function fields(
   for (const name of required)
     if (!(name in value)) fail(`Missing field: ${name}`);
 }
-const text = (value: unknown, name: string) =>
-  typeof value === "string" && !value.includes("\0")
-    ? value
-    : fail(`${name} must be text`);
-const filled = (value: unknown, name: string) =>
-  text(value, name).trim() ? (value as string) : fail(`${name} is empty`);
-function label(value: unknown, name: string) {
-  const result = text(value, name);
-  if (
-    new TextEncoder().encode(result).length > 256 ||
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: the spec excludes them.
-    /[\u0000-\u001f\u007f-\u009f]/.test(result)
-  )
-    fail(`${name} must be a short label`);
+const bytes = (value: string) => new TextEncoder().encode(value).length;
+const text = (value: unknown, name: string, max = BODY_LIMIT) => {
+  if (typeof value !== "string" || value.includes("\0"))
+    fail(`${name} must be text`);
+  if (bytes(value as string) > max)
+    fail(`${name} is longer than ${max.toLocaleString("en-US")} bytes`);
+  return value as string;
+};
+const filled = (value: unknown, name: string, max?: number) =>
+  text(value, name, max).trim() ? (value as string) : fail(`${name} is empty`);
+function label(value: unknown, name: string, max = 256) {
+  const result = text(value, name, max);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the spec excludes them.
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(result))
+    fail(`${name} must be a single line of text`);
   return result;
 }
 const integer = (value: unknown, name: string, min = 0, max = MAX_INT) =>
@@ -125,6 +129,7 @@ function eventWatch(value: Record<string, unknown>) {
     if (
       !Array.isArray(channels) ||
       !channels.length ||
+      channels.length > 100 ||
       !unique(channels) ||
       channels.some(
         (channel) => typeof channel !== "string" || !CHANNEL.test(channel),
@@ -133,6 +138,7 @@ function eventWatch(value: Record<string, unknown>) {
       fail('channels must be "all" or a list of channel ids');
   if (
     !Array.isArray(kinds) ||
+    kinds.length > 100 ||
     !unique(kinds) ||
     kinds.some(
       (kind) => !Number.isSafeInteger(kind) || kind < 0 || kind > 65_535,
@@ -140,39 +146,51 @@ function eventWatch(value: Record<string, unknown>) {
   )
     fail("kinds must be a list of event kinds");
   if (tags !== undefined) {
-    if (!isObject(tags) || !Object.keys(tags).length)
-      fail("tags must name at least one tag");
+    const keys = isObject(tags) ? Object.keys(tags).length : 0;
+    if (!keys || keys > 16) fail("tags must name 1 to 16 tags");
+    let total = 0;
     for (const [key, values] of Object.entries(tags as object)) {
       if (!/^[A-Za-z]$/.test(key) || key === "h")
         fail(`Tag ${key} must be one letter other than h`);
-      if (!Array.isArray(values) || !values.length)
-        fail(`Tag ${key} needs values`);
-      for (const item of values as unknown[])
-        if (!label(item, `Tag ${key}`)) fail(`Tag ${key} values are empty`);
+      if (!Array.isArray(values) || !values.length || values.length > 32)
+        fail(`Tag ${key} needs 1 to 32 values`);
+      for (const item of values as unknown[]) {
+        if (!label(item, `Tag ${key}`, 1_024))
+          fail(`Tag ${key} values are empty`);
+        total += bytes(item as string);
+      }
     }
+    if (total > TEXT_LIMIT) fail("Tag values are longer than 16,384 bytes");
   }
-  if (value.filter !== undefined) compileFilter(text(value.filter, "filter"));
+  if (value.filter !== undefined)
+    compileFilter(text(value.filter, "filter", 4_096));
   if (classifier !== undefined) {
     if (!isObject(classifier)) fail("classifier must be an object");
     fields(classifier as Record<string, unknown>, ["questions"]);
     const questions = (classifier as Record<string, unknown>).questions;
-    if (!isObject(questions) || !Object.keys(questions).length)
-      fail("classifier needs a question");
+    const count = isObject(questions) ? Object.keys(questions).length : 0;
+    if (!count || count > 8) fail("classifier needs 1 to 8 questions");
+    let total = 0;
     for (const [name, question] of Object.entries(questions as object)) {
       if (!QUESTION.test(name) || name === "true" || name === "false")
         fail(`Invalid question name: ${name}`);
       if (!isObject(question)) fail(`Question ${name} must be an object`);
       const q = question as Record<string, unknown>;
-      fields(q, ["question", "threshold"], ["true", "false", "guidance"]);
-      text(q.question, "question");
-      for (const key of ["true", "false", "guidance"])
-        if (q[key] !== undefined) text(q[key], key);
+      fields(q, ["question", "true", "false", "threshold"], ["guidance"]);
+      for (const [key, max] of [
+        ["question", 2_048],
+        ["true", 4_096],
+        ["false", 4_096],
+        ["guidance", 8_192],
+      ] as const)
+        if (q[key] !== undefined) total += bytes(text(q[key], key, max));
       if (
         typeof q.threshold !== "number" ||
         !(q.threshold > 0 && q.threshold < 1)
       )
         fail("threshold must be between 0 and 1");
     }
+    if (total > TEXT_LIMIT) fail("Classifier text is longer than 16,384 bytes");
   }
 }
 
@@ -188,7 +206,7 @@ function timer(value: Record<string, unknown>) {
     "expires_at",
   ]);
   interestId(value.interest_id);
-  filled(value.prompt, "prompt");
+  filled(value.prompt, "prompt", TEXT_LIMIT);
   if (typeof value.enabled !== "boolean") fail("enabled must be true or false");
   integer(value.interval_secs, "interval_secs", 1, 31_536_000);
   integer(value.armed_at, "armed_at");
@@ -210,12 +228,12 @@ export function validateObject(
       if (object.type !== "interest")
         fail('An interest/ value has type "interest"');
       fields(object, ["type", "instructions"]);
-      filled(object.instructions, "instructions");
+      filled(object.instructions, "instructions", TEXT_LIMIT);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
     else fail('A watch/ value has type "event" or "timer"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
-    if (new TextEncoder().encode(body).length > BODY_LIMIT)
+    if (bytes(body) > BODY_LIMIT)
       fail("The object is larger than 65,535 bytes");
     return undefined;
   } catch (error) {
@@ -229,8 +247,13 @@ export function validateObject(
 //       | (author | content) "==" string
 type Predicate = (event: EventData) => boolean;
 const MAX_DEPTH = 32;
+const MAX_NODES = 256;
 export function compileFilter(source: string): Predicate {
   let at = 0;
+  let nodes = 0;
+  const node = () => {
+    if (++nodes > MAX_NODES) fail("Filter has more than 256 parts");
+  };
   const space = () => {
     while (at < source.length && " \t\r\n".includes(source[at] as string)) at++;
   };
@@ -260,6 +283,7 @@ export function compileFilter(source: string): Predicate {
   };
   const atom = (depth: number): Predicate => {
     if (depth > MAX_DEPTH) fail("Filter is nested too deeply");
+    node();
     if (take("!")) {
       const inner = atom(depth + 1);
       return (event) => !inner(event);
@@ -284,14 +308,20 @@ export function compileFilter(source: string): Predicate {
   };
   const and = (depth: number): Predicate => {
     const parts = [atom(depth)];
-    while (take("&&")) parts.push(atom(depth));
+    while (take("&&")) {
+      node();
+      parts.push(atom(depth));
+    }
     return parts.length === 1
       ? (parts[0] as Predicate)
       : (event) => parts.every((part) => part(event));
   };
   const or = (depth: number): Predicate => {
     const parts = [and(depth)];
-    while (take("||")) parts.push(and(depth));
+    while (take("||")) {
+      node();
+      parts.push(and(depth));
+    }
     return parts.length === 1
       ? (parts[0] as Predicate)
       : (event) => parts.some((part) => part(event));
@@ -308,21 +338,23 @@ const isReply: Predicate = (event) =>
       (tag[3] === undefined || ["root", "reply", ""].includes(tag[3])),
   );
 
-/** Kinds that are conversation: only these can address an agent. A reaction or a
- * deletion of the agent's message is not someone talking to it. */
+/** Kinds that are conversation: only these p-tag an agent into a conversation,
+ * and only these start a mention run. A reaction to or deletion of the agent's
+ * message is addressed (no watch sees it) but is not someone talking to it. */
 export const CHAT_KINDS: readonly number[] = [9, 40003, 40007, 46010];
 
 /** Directly addressed events take the runtime's built-in mention path, never a
- * watch: a chat event that p-tags the agent or replies to something it wrote.
- * DMs (kind 4) are not delivered yet: `run` could neither read nor answer one. */
+ * watch: a DM to the agent, a chat event that p-tags it, or any event with an
+ * `e` tag naming something it wrote. Its own events are the caller's to skip. */
 export function addressedTo(
   event: EventData,
   agent: string,
   wroteEvent: (id: string) => boolean = () => false,
 ) {
-  if (event.pubkey === agent || !CHAT_KINDS.includes(event.kind)) return false;
+  if (event.pubkey === agent) return false;
+  if (event.kind === 4) return tagsAgent(event, agent);
   return (
-    tagsAgent(event, agent) ||
+    (CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent)) ||
     event.tags.some((tag) => tag[0] === "e" && !!tag[1] && wroteEvent(tag[1]))
   );
 }
@@ -359,18 +391,30 @@ export type TimerState = Readonly<{
   nextDue: number;
   used: number;
 }>;
+/** The saved state while it still describes this schedule. Without one, every
+ * occurrence due by `now` counts as used, so a timer never runs more often than
+ * it allows (occurrence k is due at armed_at + k × interval_secs). */
 export function timerState(
   timer: TimerWatch,
   prior: TimerState | undefined,
+  now: number,
 ): TimerState {
-  return prior && prior.armedAt === timer.armed_at
-    ? prior
-    : {
-        armedAt: timer.armed_at,
-        nextDue: timer.armed_at + timer.interval_secs,
-        used: 0,
-      };
+  if (prior && prior.armedAt === timer.armed_at) return prior;
+  const used =
+    now < timer.armed_at
+      ? 0
+      : Math.floor((now - timer.armed_at) / timer.interval_secs);
+  return {
+    armedAt: timer.armed_at,
+    nextDue: timer.armed_at + (used + 1) * timer.interval_secs,
+    used,
+  };
 }
+/** Edits to these restart the count; the rest keep the saved state. */
+export const sameSchedule = (a: TimerWatch, b: TimerWatch) =>
+  a.armed_at === b.armed_at &&
+  a.interval_secs === b.interval_secs &&
+  a.enabled === b.enabled;
 export function timerSpent(timer: TimerWatch, state: TimerState, now: number) {
   return (
     (timer.expires_at !== null && now >= timer.expires_at) ||

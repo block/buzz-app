@@ -229,7 +229,7 @@ export interface AgentControlHost {
   writeSnapshotMemory?(
     id: string,
     entries: readonly { slug: string; body: string }[],
-  ): Promise<{ written: number; errors: string[] }>;
+  ): Promise<{ written: number; total: number; errors: string[] }>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(

@@ -55,7 +55,13 @@ function importControl() {
       _edit: unknown,
     ) => ({ ...controlFixture().agent, id: "new-id", pubkey: "cd".repeat(32) }),
   );
-  const writeSnapshotMemory = vi.fn(async () => ({ written: 1, errors: [] }));
+  const writeSnapshotMemory = vi.fn(
+    async (): Promise<{
+      written: number;
+      total: number;
+      errors: string[];
+    }> => ({ written: 1, total: 1, errors: [] }),
+  );
   const refresh = vi.fn(async () => {});
   const control = {
     create,
@@ -236,6 +242,40 @@ it("publishes opted-in memory only after a fresh identity has been created", asy
     h.writeSnapshotMemory.mock.invocationCallOrder[0] ?? 0,
   );
 });
+
+it.each([
+  [
+    {
+      written: 0,
+      total: 1,
+      errors: ["core: memory restore failed; retry this agent"],
+    },
+    "0 of 1",
+  ],
+  [{ written: 1, total: 2, errors: [] }, "1 of 1"],
+])(
+  "reports incomplete native memory confirmation after creating the identity",
+  async (receipt, count) => {
+    const h = importControl();
+    h.writeSnapshotMemory.mockResolvedValueOnce(receipt);
+    render(
+      <AgentSnapshotImport
+        control={h.control}
+        destination="https://relay.example.test"
+        owner={"ef".repeat(32)}
+        onClose={() => {}}
+      />,
+    );
+    choose(file("core"));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Restore memory/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("alert")).toHaveTextContent(count);
+    expect(h.create).toHaveBeenCalledOnce();
+  },
+);
 
 it("imports configuration without a memory writer and disables restoration", async () => {
   const h = importControl();

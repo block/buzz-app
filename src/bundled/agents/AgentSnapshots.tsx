@@ -442,9 +442,14 @@ export function AgentSnapshotImport({
             agent.id,
             snapshot.memory.entries,
           );
-          if (outcome.written !== snapshot.memory.entries.length)
+          const expected = snapshot.memory.entries.length;
+          if (
+            outcome.total !== expected ||
+            outcome.written !== expected ||
+            outcome.errors.length
+          )
             setFileError(
-              `Memory partially restored: ${outcome.written} of ${snapshot.memory.entries.length} entries written. The agent exists but some memory entries failed to publish. ${outcome.errors.join("; ")}`,
+              `Memory partially restored: ${outcome.written} of ${expected} entries confirmed. The agent exists but some memory entries were not confirmed. ${outcome.errors.join("; ")}`,
             );
         } catch (error) {
           setFileError(

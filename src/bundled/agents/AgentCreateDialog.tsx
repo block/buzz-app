@@ -48,7 +48,8 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
 }
 
 /** Seeds the create form. A catalog runtime applies only when this computer
- * offers it; its model and provider travel with that runtime alone. */
+ * offers it; its model and provider travel with that runtime alone. A preset
+ * harness owns its model and credentials, so it is selected with neither. */
 export function seededDraft(
   state: AgentControlState,
   seed?: CloneSettings | CatalogSeed,
@@ -67,11 +68,16 @@ export function seededDraft(
         harnessKind(option.command) === seed.runtime,
     );
   const seeded = { ...draft, sessionPolicy: seed.sessionPolicy };
-  if (!chosen || harnessPreset(chosen.command)) return seeded;
-  return {
+  if (!chosen) return seeded;
+  const runtime = {
     ...seeded,
     command: chosen.command,
     args: JSON.stringify(chosen.defaultArgs ?? []),
+  };
+  if (harnessPreset(chosen.command))
+    return { ...runtime, model: "", provider: "" };
+  return {
+    ...runtime,
     model: seed.model ?? "",
     provider:
       seed.provider ?? (chosen.command === draft.command ? draft.provider : ""),

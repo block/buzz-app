@@ -347,3 +347,90 @@ it("adopts a shared agent through the create form with its portable settings", a
     "Add Helper from Community Catalog",
   );
 });
+
+it.each([
+  ["claude", "/fixture/claude-agent-acp", "Claude Code"],
+  ["hermes", "/fixture/hermes-acp", "Hermes Agent"],
+])(
+  "adopts a shared %s agent with the local preset harness",
+  async (runtime, command, label) => {
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+    const server = catalogRelay();
+    server.put(
+      signed(alice, {
+        kind: 30175,
+        tags: [
+          ["d", "preset"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Preset",
+          system_prompt: "Help.",
+          runtime,
+          model: "their-model",
+          provider: "their-provider",
+          session_policy: "thread",
+        }),
+        created_at: 1,
+      }),
+    );
+    const fixture = controlFixture();
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.data.harnessOptions?.push({
+      command,
+      label,
+      available: true,
+      defaultArgs: [],
+      providers: [],
+    });
+    fixture.host.prepareCreate = async () => ({
+      id: "copy-1",
+      pubkey: "cd".repeat(32),
+    });
+    const commit = vi.fn(async (_request: string, edit: AgentEdit) => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "copy-1",
+        pubkey: "cd".repeat(32),
+        name: edit.name,
+        status: "stopped",
+      });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.commitCreate = commit;
+    const control = createAgentControl(fixture.host);
+    owners.push({ dispose: () => control.dispose() });
+    const viewer = client(server, bob);
+    render(
+      <AgentControlPanel
+        control={control}
+        importDestination="https://relay.example.test"
+        createOwner={viewer.session.viewer}
+        catalog={(add, has) => (
+          <CatalogLauncher
+            session={viewer.session}
+            addAgent={add}
+            hasAgent={has}
+          />
+        )}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose from catalog" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Add Preset from Community Catalog",
+      }),
+    );
+    const form = await screen.findByRole("dialog", { name: "Create agent" });
+    fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+    await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+    // The preset owns its model and credentials; the default harness differs.
+    expect(commit.mock.calls[0]?.[1]).toMatchObject({
+      sessionPolicy: "thread",
+      harness: { command, args: [], model: "", provider: "" },
+    });
+  },
+);

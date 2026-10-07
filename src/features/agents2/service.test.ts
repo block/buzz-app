@@ -55,7 +55,7 @@ function fakeRelay() {
     connect(connected: boolean) {
       snapshot = connected
         ? { ...connected_, session: { ...session } as RelaySession }
-        : ({ status: "loading", generation: 2 } as RelaySnapshot);
+        : { status: "disconnected", generation: 2, session };
       for (const listener of changes) listener();
     },
     emit: (batch: LiveBatch) => {

@@ -5,7 +5,8 @@ use buzzodz_plugins::HostGrants;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-use crate::{with_manager, PluginManager};
+use crate::plugin_secrets::{self, ConsentPrompts, OsStore, SecretReference};
+use crate::PluginManager;
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
@@ -22,6 +23,8 @@ pub(crate) struct HostRequest {
     #[serde(default)]
     headers: BTreeMap<String, String>,
     body: Option<String>,
+    /// A saved secret the native client adds as a header. JavaScript never sees its value.
+    secret: Option<SecretReference>,
 }
 
 fn default_method() -> String {
@@ -36,25 +39,68 @@ pub(crate) struct HostResponse {
 }
 
 #[tauri::command]
-pub(crate) async fn plugin_host_request(
+pub(crate) async fn plugin_host_request<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     manager: tauri::State<'_, PluginManager>,
+    prompts: tauri::State<'_, ConsentPrompts>,
     id: String,
     revision: String,
     request: HostRequest,
 ) -> Result<HostResponse, String> {
-    let (url, method, headers) = validate_request(&request)?;
-    let operation = async {
-        let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
-            .await
-            .map_err(|_| "Host request is unavailable")?;
-        if !allows_origin(&grants, &url) {
-            return Err("Host request origin is not declared".into());
+    let (url, method, mut headers) = validate_request(&request)?;
+    let manager = manager.0.clone()?;
+    let checked = manager.clone();
+    let check_url = url.clone();
+    let reference = request.secret.clone();
+    let plan = tauri::async_runtime::spawn_blocking(move || {
+        let grants = checked
+            .host_grants(&id, &revision)
+            .map_err(|_| "Host request is unavailable".to_owned())?;
+        if !allows_origin(&grants, &check_url) {
+            return Err("Host request origin is not declared".to_owned());
         }
-        send_request(url, method, headers, request.body).await
-    };
-    tokio::time::timeout(DEADLINE, operation)
+        reference
+            .map(|reference| {
+                plugin_secrets::plan(&checked, &id, &reference, &check_url, reserved_header)
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    // A consent prompt waits for the user, so it is outside the request deadline.
+    if let Some(plan) = plan {
+        let (name, value) = plugin_secrets::authorize(
+            std::sync::Arc::new(OsStore),
+            &prompts,
+            manager,
+            plan,
+            |message| plugin_secrets::ask_native(app, message),
+        )
+        .await?;
+        headers.insert(name, value);
+    }
+    tokio::time::timeout(DEADLINE, send_request(url, method, headers, request.body))
         .await
         .map_err(|_| "Host request timed out")?
+}
+
+/// Headers neither plugin code nor a secret reference may set.
+fn reserved_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host"
+            | "cookie"
+            | "proxy-authorization"
+            | "proxy-authenticate"
+            | "proxy-connection"
+            | "connection"
+            | "keep-alive"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "content-length"
+    )
 }
 
 fn allows_origin(grants: &HostGrants, url: &reqwest::Url) -> bool {
@@ -103,21 +149,7 @@ fn validate_request(
     for (name, value) in &request.headers {
         let name =
             HeaderName::from_bytes(name.as_bytes()).map_err(|_| "Invalid host request header")?;
-        if matches!(
-            name.as_str(),
-            "host"
-                | "cookie"
-                | "proxy-authorization"
-                | "proxy-authenticate"
-                | "proxy-connection"
-                | "connection"
-                | "keep-alive"
-                | "te"
-                | "trailer"
-                | "transfer-encoding"
-                | "upgrade"
-                | "content-length"
-        ) {
+        if reserved_header(&name) {
             return Err("Host request header is not allowed".into());
         }
         let value = HeaderValue::from_str(value).map_err(|_| "Invalid host request header")?;
@@ -206,6 +238,7 @@ mod tests {
             method: "POST".into(),
             headers: BTreeMap::new(),
             body: Some("{}".into()),
+            secret: None,
         }
     }
 

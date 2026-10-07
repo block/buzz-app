@@ -432,8 +432,39 @@ cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
 limited PATH and passes that search path to the command.
-Plugins parse and retain their own credentials; the host has no provider registry
-or credential store.
+The host has no provider registry.
+
+#### Plugin secrets
+
+A plugin can save secrets, such as an API key, in the OS credential store
+(Keychain on macOS) and use them in host requests. JavaScript never reads a
+secret value: all plugins share one WebView, so a value returned to JavaScript
+would be readable by every plugin.
+
+- `ctx.host.secrets.enter(name, label)` opens an app-owned window that runs no
+  plugin code. The user types the value there and it goes straight to the
+  credential store. Resolves `true` when saved.
+- `ctx.host.secrets.has(name)` and `ctx.host.secrets.delete(name)` manage the
+  plugin's own secrets. Names are 1–64 lowercase letters, digits, `.`, `_` or `-`.
+- `ctx.host.request({ ..., secret: { name, header, prefix } })` makes the native
+  client add the header `<prefix><value>`. Reserved headers such as `Cookie` and
+  `Host` are rejected.
+
+A secret is sent only to origins in the `networkOrigins` of the plugin that
+saved it, whichever plugin sends the request. Redirects are not followed.
+
+Another plugin, such as a harness adapter, names the owner:
+`secret: { provider: "example.provider", name: "token", header: "Authorization", prefix: "Bearer " }`.
+The first use shows a native dialog, "Always Allow" or "Don't Allow", that plugin
+code cannot answer. Always Allow is saved per consumer, provider and secret name
+in `secret-grants.json` beside the registry. It survives restarts and plugin
+updates. Settings → Plugins → Credential access lists saved answers with Revoke.
+Removing either plugin removes its answers. Don't Allow saves nothing.
+
+Limit: a malicious plugin cannot read a secret or send it to another site, but it
+can *use* a granted or own secret against the provider's declared origins, and
+it can imitate another plugin's identity inside the shared WebView. Install only
+trusted plugins.
 
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the

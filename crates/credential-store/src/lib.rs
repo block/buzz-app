@@ -214,5 +214,98 @@ pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
     Err(Error::Unavailable)
 }
 
+/// Keychain service holding plugin-owned secrets; accounts are `<plugin id>/<name>`.
+pub const PLUGIN_SECRET_SERVICE: &str = plugin_secret_service(cfg!(debug_assertions));
+
+pub const fn plugin_secret_service(debug: bool) -> &'static str {
+    if debug {
+        "dev.local.buzz.foundation.plugin-secrets.debug"
+    } else {
+        "dev.local.buzz.foundation.plugin-secrets"
+    }
+}
+
+/// Read one plugin secret. `Absent` means nothing is saved.
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+pub fn read_plugin_secret(account: &str) -> Result<Zeroizing<Vec<u8>>> {
+    read(PLUGIN_SECRET_SERVICE, account)
+}
+
+/// Save or replace one plugin secret.
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+pub fn write_plugin_secret(account: &str, value: &str) -> Result<()> {
+    entry(PLUGIN_SECRET_SERVICE, account)?.write(value)
+}
+
+/// Delete one plugin secret; a missing secret is already deleted.
+#[cfg(all(not(test), any(target_os = "windows", target_os = "linux")))]
+pub fn delete_plugin_secret(account: &str) -> Result<()> {
+    match entry(PLUGIN_SECRET_SERVICE, account)?.delete() {
+        Err(Error::Absent) => Ok(()),
+        other => other,
+    }
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn read_plugin_secret(account: &str) -> Result<Zeroizing<Vec<u8>>> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    SecKeychain::default()
+        .map_err(mac_error)?
+        .find_generic_password(PLUGIN_SECRET_SERVICE, account)
+        .map(|(password, _)| Zeroizing::new(password.to_vec()))
+        .map_err(mac_error)
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn write_plugin_secret(account: &str, value: &str) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    SecKeychain::default()
+        .map_err(mac_error)?
+        .set_generic_password(PLUGIN_SECRET_SERVICE, account, value.as_bytes())
+        .map_err(mac_error)
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+pub fn delete_plugin_secret(account: &str) -> Result<()> {
+    use security_framework::os::macos::keychain::SecKeychain;
+    match SecKeychain::default()
+        .map_err(mac_error)?
+        .find_generic_password(PLUGIN_SECRET_SERVICE, account)
+    {
+        Ok((_, item)) => {
+            item.delete();
+            Ok(())
+        }
+        Err(error) => match mac_error(error) {
+            Error::Absent => Ok(()),
+            error => Err(error),
+        },
+    }
+}
+
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+pub fn read_plugin_secret(_: &str) -> Result<Zeroizing<Vec<u8>>> {
+    Err(Error::Unavailable)
+}
+
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+pub fn write_plugin_secret(_: &str, _: &str) -> Result<()> {
+    Err(Error::Unavailable)
+}
+
+#[cfg(all(
+    not(test),
+    not(any(target_os = "macos", target_os = "windows", target_os = "linux"))
+))]
+pub fn delete_plugin_secret(_: &str) -> Result<()> {
+    Err(Error::Unavailable)
+}
+
 #[cfg(test)]
 mod tests;

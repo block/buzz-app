@@ -296,3 +296,15 @@ fn human_identity_slots_stay_separate() {
     assert_eq!(human_service(false), "dev.local.buzz.foundation.identity");
     assert_eq!(HUMAN_SERVICE, human_service(cfg!(debug_assertions)));
 }
+#[test]
+fn plugin_secret_slots_stay_separate_from_identity() {
+    assert_eq!(
+        plugin_secret_service(true),
+        "dev.local.buzz.foundation.plugin-secrets.debug"
+    );
+    assert_eq!(
+        plugin_secret_service(false),
+        "dev.local.buzz.foundation.plugin-secrets"
+    );
+    assert_ne!(PLUGIN_SECRET_SERVICE, HUMAN_SERVICE);
+}

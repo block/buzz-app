@@ -104,6 +104,11 @@ fn native_command_permissions_allow_only_main_webview() {
         "plugin_recover",
         "plugin_host_run_command",
         "plugin_host_request",
+        "plugin_secret_has",
+        "plugin_secret_delete",
+        "plugin_secret_enter",
+        "plugin_secret_grants",
+        "plugin_secret_revoke",
         "oauth_callback_begin",
         "oauth_callback_wait",
         "oauth_callback_cancel",
@@ -182,4 +187,30 @@ fn native_command_permissions_allow_only_main_webview() {
         );
     }
     assert!(invoke(&main, "plugin:window|close", local_origin).is_ok());
+
+    // The credential entry window can save one value and nothing else; the
+    // main webview, where plugins run, cannot drive it.
+    let entry_window = WindowBuilder::new(&app, "secret-entry").build().unwrap();
+    let entry = entry_window
+        .add_child(
+            WebviewBuilder::new("secret-entry", WebviewUrl::default()),
+            tauri::LogicalPosition::new(0, 0),
+            tauri::LogicalSize::new(440, 280),
+        )
+        .unwrap();
+    for command in [
+        "plugin_secret_entry_prompt",
+        "plugin_secret_entry_submit",
+        "plugin_secret_entry_cancel",
+    ] {
+        assert!(invoke(&entry, command, local_origin).is_ok(), "{command}");
+        assert!(invoke(&main, command, local_origin).is_err(), "{command}");
+        assert!(invoke(&entry, command, "https://example.org").is_err());
+    }
+    for command in application_commands {
+        assert!(
+            invoke(&entry, command, local_origin).is_err(),
+            "entry window must reject {command}"
+        );
+    }
 }

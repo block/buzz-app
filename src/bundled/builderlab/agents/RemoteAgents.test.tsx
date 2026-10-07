@@ -54,6 +54,7 @@ async function fixture(selected: string | null = null) {
     {
       request,
       runCommand: vi.fn(),
+      secrets: { has: vi.fn(), enter: vi.fn(), delete: vi.fn() },
       prepareRemoteAgentAuthorization: authorize,
     },
     session,

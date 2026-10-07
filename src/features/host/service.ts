@@ -8,7 +8,27 @@ export type HostRequest = Readonly<{
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /** A saved secret the native client adds as a header; JavaScript never sees its value. */
+  secret?: HostSecretReference;
 }>;
+/**
+ * Names a saved secret. It is sent only to origins declared by the plugin that
+ * saved it (`provider`, this plugin when omitted). Another plugin's secret is
+ * used only after the user chooses Always Allow in a native dialog.
+ */
+export type HostSecretReference = Readonly<{
+  provider?: string;
+  name: string;
+  header: string;
+  prefix?: string;
+}>;
+/** This plugin's own saved secrets. Values can be saved and used, never read. */
+export interface HostSecrets {
+  has(name: string): Promise<boolean>;
+  /** Opens an app-owned window where the user enters the value; resolves whether it was saved. */
+  enter(name: string, label: string): Promise<boolean>;
+  delete(name: string): Promise<void>;
+}
 export type HostResponse = Readonly<{
   status: number;
   headers: Readonly<Record<string, string>>;
@@ -24,6 +44,7 @@ export type NipOaAuthorization = readonly [
 export interface Host {
   runCommand(id: string): Promise<string | null>;
   request(input: HostRequest): Promise<HostResponse>;
+  readonly secrets: HostSecrets;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
     signal?: AbortSignal,
@@ -112,6 +133,35 @@ export class HostService extends Service implements Host {
       });
     } catch {
       return null;
+    }
+  }
+
+  // A getter, so `this.ctx` is the calling plugin's context, as in request().
+  get secrets(): HostSecrets {
+    return {
+      has: (name) => this.secretCommand<boolean>("plugin_secret_has", { name }),
+      enter: (name, label) =>
+        this.secretCommand<boolean>("plugin_secret_enter", { name, label }),
+      delete: (name) =>
+        this.secretCommand<void>("plugin_secret_delete", { name }),
+    };
+  }
+
+  private async secretCommand<T>(
+    command: string,
+    args: Record<string, string>,
+  ): Promise<T> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Secrets require an installed desktop plugin");
+    try {
+      return await invoke<T>(command, {
+        id: owner.id,
+        revision: owner.revision,
+        ...args,
+      });
+    } catch (error) {
+      throw typeof error === "string" ? new Error(error) : error;
     }
   }
 

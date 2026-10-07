@@ -206,3 +206,36 @@ it("routes HTTPS requests with plugin identity and rejects browser requests", as
   vi.mocked(isTauri).mockReturnValue(false);
   await expect(plugin.host.request(request)).rejects.toThrow(/desktop plugin/);
 });
+
+it("scopes secret commands to the calling plugin and never returns a value", async () => {
+  const { root, plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  expect(await plugin.host.secrets.has("api-key")).toBe(true);
+  expect(await plugin.host.secrets.enter("api-key", "TypeSafe API key")).toBe(
+    false,
+  );
+  expect(invoke).toHaveBeenNthCalledWith(1, "plugin_secret_has", {
+    id: "example.plugin",
+    revision: "abc",
+    name: "api-key",
+  });
+  expect(invoke).toHaveBeenNthCalledWith(2, "plugin_secret_enter", {
+    id: "example.plugin",
+    revision: "abc",
+    name: "api-key",
+    label: "TypeSafe API key",
+  });
+  vi.mocked(invoke).mockRejectedValueOnce("Plugin is not installed");
+  await expect(plugin.host.secrets.delete("api-key")).rejects.toThrow(
+    "Plugin is not installed",
+  );
+  // The app itself has no plugin identity, so it cannot act as a provider.
+  await expect(root.host.secrets.has("api-key")).rejects.toThrow(
+    "Secrets require an installed desktop plugin",
+  );
+  expect(Object.keys(plugin.host.secrets).sort()).toEqual([
+    "delete",
+    "enter",
+    "has",
+  ]);
+});

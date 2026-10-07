@@ -40,6 +40,7 @@ import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
+  ChatCircleIcon,
   FolderSimpleIcon,
   GitBranchIcon,
   MinusIcon,
@@ -720,22 +721,19 @@ function ReadySidebar({
         </MenuItem>,
       );
     }
-    if (
-      placementWritable &&
-      channel.channelType !== "dm" &&
-      channel.channelType !== "forum"
-    ) {
+    if (placementWritable && channel.channelType !== "forum") {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
       const starred = sectionKey === "starred";
+      const movingDm = channel.channelType === "dm";
       actions.push(
         <MenuSubmenu key="move-channel">
           <MenuSubmenuTrigger>
             <MenuIcon>
               <FolderSimpleIcon size={14} />
             </MenuIcon>
-            Move channel
+            {movingDm ? "Move conversation" : "Move channel"}
           </MenuSubmenuTrigger>
           <MenuSubmenuPopup
             aria-label={`Move ${channel.name} to section`}
@@ -752,13 +750,17 @@ function ReadySidebar({
                   ? "starred"
                   : currentSectionId
                     ? `group:${currentSectionId}`
-                    : "channels"
+                    : movingDm
+                      ? "dms"
+                      : "channels"
               }
               onValueChange={(destination) => {
                 if (destination === "starred")
                   void setChannelStar(channel.id, !starred, surface);
                 else {
-                  const groupId = destination.slice("group:".length);
+                  const groupId = destination.startsWith("group:")
+                    ? destination.slice("group:".length)
+                    : undefined;
                   void assignGroup(
                     channel.id,
                     groupId === currentSectionId ? undefined : groupId,
@@ -787,6 +789,14 @@ function ReadySidebar({
                   {group.name}
                 </MenuRadioItem>
               ))}
+              {movingDm && (
+                <MenuRadioItem value="dms" closeOnClick={false}>
+                  <MenuIcon>
+                    <ChatCircleIcon size={14} />
+                  </MenuIcon>
+                  Direct messages
+                </MenuRadioItem>
+              )}
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
@@ -1280,6 +1290,7 @@ function ReadySidebar({
                           menuEnabled={menuEnabled}
                           sectionKey={section.key}
                           selectFrame={
+                            channel.channelType !== "dm" &&
                             isChannelSectionKey(section.key)
                               ? DraggableChannel
                               : undefined

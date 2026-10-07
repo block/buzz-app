@@ -5,7 +5,11 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+stubAvatarBrowserApis();
 import { afterEach, expect, it, vi } from "vitest";
 import { createCommunityCatalog } from "../../features/agents/catalog";
 import {
@@ -15,7 +19,18 @@ import {
 import { createOutbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed, type Key } from "../../features/relay/testing";
-import { CatalogShareSwitch, CommunityCatalogDialog } from "./CommunityCatalog";
+import * as communityApi from "../../features/communities/api";
+import {
+  type AgentEdit,
+  createAgentControl,
+} from "../../features/agents/control";
+import { controlFixture } from "../../features/agents/control-testing";
+import { AgentControlPanel } from "./AgentControlPanel";
+import {
+  CatalogLauncher,
+  CatalogShareSwitch,
+  CommunityCatalogDialog,
+} from "./CommunityCatalog";
 
 const alice = keypair(),
   bob = keypair();
@@ -26,7 +41,11 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-function client(server: ReturnType<typeof catalogRelay>, as: Key) {
+function client(
+  server: ReturnType<typeof catalogRelay>,
+  as: Key,
+  scope = "wss://catalog.test",
+) {
   const writes = createOutbox(as.pubkey, server.writer(as), memoryStorage(), {
     timeoutMs: 1_000,
   });
@@ -39,7 +58,7 @@ function client(server: ReturnType<typeof catalogRelay>, as: Key) {
   owners.push(catalog, { dispose: () => writes.dispose() });
   const session = {
     communityCatalog: catalog.queries,
-    scope: "wss://catalog.test",
+    scope,
     viewer: as.pubkey,
     names: undefined,
     media: undefined,
@@ -147,11 +166,12 @@ it("previews shared entries as plain text and adds an explicit copy", async () =
   );
   const viewer = client(server, bob);
   const onAddAgent = vi.fn();
-  const onAddTeam = vi.fn(async () => {});
+  const onAddTeam = vi.fn(async () => "team-copy");
   const { container } = render(
     <CommunityCatalogDialog
       session={viewer.session}
       onClose={() => {}}
+      hasCopy={() => true}
       onAddAgent={onAddAgent}
       onAddTeam={onAddTeam}
     />,
@@ -188,10 +208,142 @@ it("previews shared entries as plain text and adds an explicit copy", async () =
 it("shows the empty catalog copy", async () => {
   const viewer = client(catalogRelay(), bob);
   render(
-    <CommunityCatalogDialog session={viewer.session} onClose={() => {}} />,
+    <CommunityCatalogDialog
+      session={viewer.session}
+      onClose={() => {}}
+      hasCopy={() => true}
+    />,
   );
   await screen.findByText("Nothing shared yet");
   expect(
     screen.getByText("Shared agents and teams will appear here."),
   ).toBeTruthy();
+});
+
+it("adopts a shared agent through the create form with its portable settings", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const server = catalogRelay();
+  server.put(
+    signed(alice, {
+      kind: 30175,
+      tags: [
+        ["d", "helper"],
+        ["shared", "true"],
+      ],
+      content: JSON.stringify({
+        display_name: "Helper",
+        system_prompt: "Help.",
+        acp_command: "buzz-acp",
+        runtime: "goose",
+        model: "gpt-x",
+        provider: "openai",
+        respond_to: "anyone",
+        session_policy: "thread",
+      }),
+      created_at: 1,
+    }),
+  );
+  const fixture = controlFixture();
+  fixture.data.createAvailable = true;
+  fixture.data.defaultWorkspace = "/fixture/workspace";
+  fixture.data.harnessOptions?.push({
+    command: "/fixture/goose",
+    label: "Goose",
+    available: true,
+    defaultArgs: ["acp"],
+    providers: [],
+  });
+  fixture.host.prepareCreate = async () => ({
+    id: "copy-1",
+    pubkey: "cd".repeat(32),
+  });
+  const commit = vi.fn(async (_request: string, edit: AgentEdit) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "copy-1",
+      pubkey: "cd".repeat(32),
+      name: edit.name,
+      status: "stopped",
+    });
+    return structuredClone(fixture.data);
+  });
+  fixture.host.commitCreate = commit;
+  const control = createAgentControl(fixture.host);
+  owners.push({ dispose: () => control.dispose() });
+  const render_ = (viewer: ReturnType<typeof client>) => (
+    <AgentControlPanel
+      control={control}
+      importDestination="https://relay.example.test"
+      createOwner={viewer.session.viewer}
+      catalog={(add, has) => (
+        <CatalogLauncher
+          session={viewer.session}
+          addAgent={add}
+          hasAgent={has}
+        />
+      )}
+    />
+  );
+  const bobView = client(server, bob);
+  const view = render(render_(bobView));
+  const openCatalog = async () => {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose from catalog" }),
+    );
+    return screen.findByRole("button", {
+      name: /Helper (is already in My Agents|from Community Catalog)/,
+    });
+  };
+  fireEvent.click(await openCatalog());
+  const form = await screen.findByRole("dialog", { name: "Create agent" });
+  fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  const edit = commit.mock.calls[0]?.[1];
+  expect(edit).toMatchObject({
+    name: "Helper",
+    systemPrompt: "Help.",
+    sessionPolicy: "thread",
+    workspace: "/fixture/workspace",
+    harness: {
+      command: "/fixture/goose",
+      args: ["acp"],
+      model: "gpt-x",
+      provider: "openai",
+    },
+    environment: { BUZZ_ACP_AGENTS: "10" },
+  });
+  expect(JSON.stringify(edit)).not.toMatch(/buzz-acp|anyone|respond/);
+  await waitFor(() => {
+    const close = within(form).queryByRole("button", { name: "Close" });
+    if (close) fireEvent.click(close);
+    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
+  });
+
+  const added = await openCatalog();
+  expect(added).toHaveAccessibleName("Helper is already in My Agents");
+  expect(added).toBeDisabled();
+  fireEvent.keyDown(added, { key: "Escape" });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Community Catalog" }),
+    ).toBeNull(),
+  );
+
+  // Another viewer on this installation has added nothing.
+  view.rerender(render_(client(server, keypair())));
+  expect(await openCatalog()).toHaveAccessibleName(
+    "Add Helper from Community Catalog",
+  );
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  // Deleting the copy makes the entry addable again.
+  view.rerender(render_(bobView));
+  fixture.data.agents = fixture.data.agents.filter(
+    (agent) => agent.id !== "copy-1",
+  );
+  await control.refresh();
+  expect(await openCatalog()).toHaveAccessibleName(
+    "Add Helper from Community Catalog",
+  );
 });

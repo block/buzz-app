@@ -330,11 +330,12 @@ export function AgentsPage({
                     }
                     catalog={
                       connection.status === "ready"
-                        ? (addAgent) => (
+                        ? (addAgent, hasAgent) => (
                             <CatalogLauncher
                               key={`${connection.scope}:${connection.generation}`}
                               session={connection.session}
                               addAgent={addAgent}
+                              hasAgent={hasAgent}
                             />
                           )
                         : undefined

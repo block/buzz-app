@@ -44,6 +44,8 @@ export interface CatalogAgent {
   runtime?: string;
   model?: string;
   provider?: string;
+  /** Portable ACP transport alias; never a local path. */
+  acpCommand?: string;
   respondTo?: RespondTo;
   sessionPolicy: SessionPolicy;
 }
@@ -334,6 +336,7 @@ function parseAgent(
     ...(shownDescription ? { description: shownDescription } : {}),
     ...(avatarUrl ? { avatarUrl } : {}),
     ...identifiers,
+    ...(acp ? { acpCommand: acp } : {}),
     ...(respondTo ? { respondTo } : {}),
     sessionPolicy: body.session_policy === "thread" ? "thread" : "channel",
   };

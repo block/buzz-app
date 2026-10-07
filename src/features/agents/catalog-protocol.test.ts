@@ -183,7 +183,11 @@ describe("catalog reads", () => {
     expect(parsePublication(shared(100))).toMatchObject({
       kind: 30175,
       owner,
-      agent: { displayName: "Fixture agent", respondTo: "owner-only" },
+      agent: {
+        displayName: "Fixture agent",
+        acpCommand: "buzz-acp",
+        respondTo: "owner-only",
+      },
     });
     const team = await teamCatalogContent(
       { id: "t1", name: "Crew", agents: [owner] },

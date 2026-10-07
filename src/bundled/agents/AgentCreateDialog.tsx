@@ -4,6 +4,7 @@ import {
   agentFailureReason,
   type AgentControl,
   type AgentControlState,
+  type CatalogSeed,
   type CloneSettings,
   type AgentView,
 } from "../../features/agents/control";
@@ -15,6 +16,7 @@ import {
   harnessKind,
   type AgentDraft,
 } from "./agent-edit";
+import { harnessPreset } from "../../features/agents/harness-presets";
 
 /** The Agent defaults harness is copied at creation; the rest is inherited at start. */
 function newAgentDraft(state: AgentControlState): AgentDraft {
@@ -45,6 +47,37 @@ function newAgentDraft(state: AgentControlState): AgentDraft {
   };
 }
 
+/** Seeds the create form. A catalog runtime applies only when this computer
+ * offers it; its model and provider travel with that runtime alone. */
+export function seededDraft(
+  state: AgentControlState,
+  seed?: CloneSettings | CatalogSeed,
+): AgentDraft {
+  const draft = {
+    ...newAgentDraft(state),
+    name: seed?.name ?? "",
+    systemPrompt: seed?.systemPrompt ?? "",
+  };
+  if (!seed || !("origin" in seed)) return draft;
+  const chosen =
+    seed.runtime &&
+    state.data?.harnessOptions?.find(
+      (option) =>
+        option.available !== false &&
+        harnessKind(option.command) === seed.runtime,
+    );
+  const seeded = { ...draft, sessionPolicy: seed.sessionPolicy };
+  if (!chosen || harnessPreset(chosen.command)) return seeded;
+  return {
+    ...seeded,
+    command: chosen.command,
+    args: JSON.stringify(chosen.defaultArgs ?? []),
+    model: seed.model ?? "",
+    provider:
+      seed.provider ?? (chosen.command === draft.command ? draft.provider : ""),
+  };
+}
+
 type CreatePhase = "creating" | "starting" | "publishing" | "checking";
 
 export function AgentCreateDialog({
@@ -64,7 +97,7 @@ export function AgentCreateDialog({
   destination: string;
   owner: string;
   source?: AgentView;
-  initialSettings?: CloneSettings | undefined;
+  initialSettings?: CloneSettings | CatalogSeed | undefined;
   onClose(): void;
   /** The new identity exists, even if starting or profile setup fails later. */
   onCreated?: ((agent: AgentView) => void) | undefined;
@@ -76,13 +109,11 @@ export function AgentCreateDialog({
           ...agentDraft(source),
           name: `${source.name} copy`,
         }
-      : {
-          ...newAgentDraft(state),
-          name: initialSettings?.name ?? "",
-          systemPrompt: initialSettings?.systemPrompt ?? "",
-        };
+      : seededDraft(state, initialSettings);
     return { ...initial, environment: { BUZZ_ACP_AGENTS: "10" } };
   });
+  // Catalog seeds carry more than the clone notice describes.
+  const cloned = !!initialSettings && !("origin" in initialSettings);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [nextStep, setNextStep] = useState<"start" | "profile">("start");
@@ -231,7 +262,7 @@ export function AgentCreateDialog({
             <Dialog.Title className="text-heading">
               {source
                 ? `Duplicate ${source.name}`
-                : initialSettings
+                : cloned
                   ? "Clone agent"
                   : "Create agent"}
             </Dialog.Title>
@@ -241,7 +272,7 @@ export function AgentCreateDialog({
             {destination || "a connected community"}. It won't join a channel
             automatically.
           </Dialog.Description>
-          {initialSettings && (
+          {cloned && (
             <p className="text-body-sm text-secondary">
               Only the name and instructions were copied. Review them for
               embedded secrets. Choose this computer’s workspace and runtime
@@ -333,7 +364,7 @@ export function AgentCreateDialog({
                     ? nextStep === "start"
                       ? "Start agent"
                       : "Finish profile"
-                    : initialSettings
+                    : cloned
                       ? "Clone agent"
                       : "Create agent"}
               </Button>

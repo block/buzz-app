@@ -205,6 +205,15 @@ export type CommunityResolution = {
   signature: string;
 };
 export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
+/** A community catalog definition that seeds a new agent. Portable fields
+ * only: never paths, arguments, environment values or credentials. */
+export type CatalogSeed = CloneSettings & {
+  origin: "catalog";
+  sessionPolicy: "channel" | "thread";
+  runtime?: string;
+  model?: string;
+  provider?: string;
+};
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
   configureHere?(

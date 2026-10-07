@@ -4,7 +4,7 @@ import { sameCommunityAgents } from "../../features/agents/choices";
 import type {
   AgentControl,
   AgentView,
-  CloneSettings,
+  CatalogSeed,
 } from "../../features/agents/control";
 import {
   AGENT_CATALOG_KIND,
@@ -235,32 +235,59 @@ export function TeamShareDialog({
 
 const coordinate = (publication: Publication) =>
   `${publication.kind}:${publication.owner}:${publication.d}`;
-const addedKey = (scope: string) => `buzz.catalog-added.v1:${scope}`;
+const addedKey = (scope: string, viewer: string) =>
+  `buzz.catalog-added.v2:${JSON.stringify([scope, viewer])}`;
 
-/** Copies already added from this community, by catalog coordinate. Local
- * only: an adopted copy is independent of the shared entry. */
-export function addedCopies(scope: string): ReadonlySet<string> {
+/** The local copy each catalog coordinate produced for this viewer in this
+ * community. Only a hint: an adopted copy is independent of the entry. */
+export function addedCopies(
+  scope: string,
+  viewer: string,
+): ReadonlyMap<string, string> {
   try {
     const value: unknown = JSON.parse(
-      localStorage.getItem(addedKey(scope)) ?? "[]",
+      localStorage.getItem(addedKey(scope, viewer)) ?? "{}",
     );
-    return new Set(
-      Array.isArray(value)
-        ? value.filter((item): item is string => typeof item === "string")
+    return new Map(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.entries(value).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          )
         : [],
     );
   } catch {
-    return new Set();
+    return new Map();
   }
 }
-export function rememberAdded(scope: string, publication: Publication) {
-  const added = new Set(addedCopies(scope));
-  added.add(coordinate(publication));
+export function rememberAdded(
+  scope: string,
+  viewer: string,
+  publication: Publication,
+  copy: string,
+) {
+  const added = new Map(addedCopies(scope, viewer));
+  added.set(coordinate(publication), copy);
   try {
-    localStorage.setItem(addedKey(scope), JSON.stringify([...added]));
+    localStorage.setItem(
+      addedKey(scope, viewer),
+      JSON.stringify(Object.fromEntries(added)),
+    );
   } catch {
     /* The copy exists either way; only the Added hint is lost. */
   }
+}
+
+/** The portable create seed; the create form resolves the runtime locally. */
+export function catalogSeed(agent: CatalogAgent): CatalogSeed {
+  return {
+    origin: "catalog",
+    name: agent.displayName,
+    systemPrompt: agent.systemPrompt,
+    sessionPolicy: agent.sessionPolicy,
+    ...(agent.runtime ? { runtime: agent.runtime } : {}),
+    ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.provider ? { provider: agent.provider } : {}),
+  };
 }
 
 /** The header action that opens the catalog. An added agent goes through the
@@ -268,11 +295,14 @@ export function rememberAdded(scope: string, publication: Publication) {
 export function CatalogLauncher({
   session,
   addAgent,
+  hasAgent,
 }: {
   session: RelaySession;
   addAgent:
-    | ((settings: CloneSettings, onCreated: () => void) => void)
+    | ((settings: CatalogSeed, onCreated: (agent: AgentView) => void) => void)
     | undefined;
+  /** Whether a local agent still exists; a deleted copy can be added again. */
+  hasAgent(id: string): boolean;
 }) {
   const [open, setOpen] = useState(false);
   if (!session.communityCatalog.available()) return null;
@@ -290,16 +320,20 @@ export function CatalogLauncher({
         <CommunityCatalogDialog
           session={session}
           onClose={() => setOpen(false)}
+          hasCopy={(publication, id) =>
+            publication.kind === AGENT_CATALOG_KIND && hasAgent(id)
+          }
           onAddAgent={
             addAgent &&
             ((publication) => {
               setOpen(false);
-              addAgent(
-                {
-                  name: publication.agent.displayName,
-                  systemPrompt: publication.agent.systemPrompt,
-                },
-                () => rememberAdded(session.scope, publication),
+              addAgent(catalogSeed(publication.agent), (agent) =>
+                rememberAdded(
+                  session.scope,
+                  session.viewer ?? "",
+                  publication,
+                  agent.id,
+                ),
               );
             })
           }
@@ -314,19 +348,24 @@ export function CatalogLauncher({
 export function CommunityCatalogDialog({
   session,
   onClose,
+  hasCopy,
   onAddAgent,
   onAddTeam,
 }: {
   session: RelaySession;
   onClose(): void;
+  /** Whether the local copy an earlier add produced still exists. */
+  hasCopy(publication: Publication, id: string): boolean;
   onAddAgent?: ((publication: AgentPublication) => void) | undefined;
-  onAddTeam?: ((publication: TeamPublication) => Promise<void>) | undefined;
+  /** Resolves with the local team copy's ID. */
+  onAddTeam?: ((publication: TeamPublication) => Promise<string>) | undefined;
 }) {
   const catalog = session.communityCatalog;
   const snapshot = useCommunityCatalog(catalog);
   const resolve = useIdentityNames(session.names);
   const scope = session.scope;
-  const [added, setAdded] = useState(() => addedCopies(scope));
+  const viewer = session.viewer ?? "";
+  const [added, setAdded] = useState(() => addedCopies(scope, viewer));
   const [selected, setSelected] = useState<string>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string>();
@@ -334,8 +373,10 @@ export function CommunityCatalogDialog({
   const current =
     entries.find((entry) => coordinate(entry) === selected) ?? entries[0];
   const own = (entry: Publication) => entry.owner === session.viewer;
-  const isAdded = (entry: Publication) =>
-    own(entry) || added.has(coordinate(entry));
+  const isAdded = (entry: Publication) => {
+    const copy = added.get(coordinate(entry));
+    return own(entry) || (copy !== undefined && hasCopy(entry, copy));
+  };
   const owner = (entry: Publication) =>
     own(entry) ? "You" : resolve(entry.owner, "Community member");
   const picture = (url?: string) => avatarMedia(url, session.media);
@@ -344,9 +385,9 @@ export function CommunityCatalogDialog({
     setError(undefined);
     setAdding(true);
     try {
-      await onAddTeam(team);
-      rememberAdded(scope, team);
-      setAdded(addedCopies(scope));
+      const copy = await onAddTeam(team);
+      rememberAdded(scope, viewer, team, copy);
+      setAdded(addedCopies(scope, viewer));
     } catch (problem) {
       setError(message(problem));
     } finally {

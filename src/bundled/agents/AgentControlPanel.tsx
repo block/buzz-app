@@ -12,6 +12,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  CatalogSeed,
   CloneSettings,
   ImportSource,
 } from "../../features/agents/control";
@@ -50,8 +51,12 @@ export function AgentControlPanel({
   catalog?:
     | ((
         add:
-          | ((settings: CloneSettings, onCreated: () => void) => void)
+          | ((
+              settings: CatalogSeed,
+              onCreated: (agent: AgentView) => void,
+            ) => void)
           | undefined,
+        hasAgent: (id: string) => boolean,
       ) => ReactNode)
     | undefined;
   resolveName?: ReturnType<typeof useIdentityNames>;
@@ -82,8 +87,8 @@ export function AgentControlPanel({
     destination: string;
     owner: string;
     source?: AgentView;
-    initialSettings?: CloneSettings;
-    onCreated?: () => void;
+    initialSettings?: CloneSettings | CatalogSeed;
+    onCreated?: (agent: AgentView) => void;
   } | null>(null);
   const [localPending, setLocalPending] = useState(false);
   const [handover, setHandover] = useState<{
@@ -293,6 +298,7 @@ export function AgentControlPanel({
                 onCreated,
               })
           : undefined,
+        (id) => !!state.data?.agents.some((agent) => agent.id === id),
       )}
       {createButton}
     </>

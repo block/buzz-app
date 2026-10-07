@@ -35,13 +35,18 @@ pub(crate) fn tools_path() -> Result<OsString> {
 /// Keep caller-owned bundle/runtime entries first; never interpret an empty or
 /// relative tool directory against an agent's workspace.
 pub(crate) fn compose(dirs: impl IntoIterator<Item = PathBuf>) -> Result<OsString> {
-    let mut paths = Vec::new();
-    for dir in dirs {
-        if dir.is_absolute() && !paths.contains(&dir) {
-            paths.push(dir);
+    #[cfg(windows)]
+    return std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into());
+    #[cfg(unix)]
+    {
+        let mut paths = Vec::new();
+        for dir in dirs {
+            if dir.is_absolute() && !paths.contains(&dir) {
+                paths.push(dir);
+            }
         }
+        std::env::join_paths(paths).map_err(|_| "Invalid runtime tools path".into())
     }
-    std::env::join_paths(paths).map_err(|_| "Invalid runtime tools path".into())
 }
 
 #[cfg(unix)]
@@ -164,6 +169,7 @@ fn login_path(shell: &std::path::Path, timeout: std::time::Duration) -> Option<O
 mod tests {
     use super::*;
     #[test]
+    #[cfg(unix)]
     fn composition_keeps_priority_and_ignores_workspace_relative_entries() {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("bundle");

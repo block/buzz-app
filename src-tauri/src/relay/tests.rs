@@ -1979,6 +1979,131 @@ async fn failed_media_blocks_are_fetched_again() {
     assert_eq!(ranges.lock().unwrap().len(), 2);
 }
 
+/// Answers each connection with the next canned response, ignoring the request.
+fn scripted_media_server(
+    responses: Vec<Vec<u8>>,
+) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = served.clone();
+    std::thread::spawn(move || {
+        for (socket, response) in listener.incoming().zip(responses) {
+            let mut socket = socket.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // The client may hang up on an oversized body.
+            let _ = socket.write_all(&response);
+        }
+    });
+    (base, served)
+}
+
+fn media_response(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\n{headers}Connection: close\r\n\r\n"
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    response
+}
+
+#[tokio::test]
+async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
+    let block = media_blocks::BLOCK;
+    for (name, length) in [("f", 64), ("0", block + 64)] {
+        let blob = media_blob(length);
+        let whole = media_response("200 OK", &format!("Content-Length: {length}\r\n"), &blob);
+        let (base, served) = scripted_media_server(vec![whole.clone(), whole]);
+        let url = base
+            .join(&format!("/media/{}.mp4", name.repeat(64)))
+            .unwrap();
+        let host = IdentityHost::fixture();
+        for _ in 0..2 {
+            let response = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.body(), &blob);
+            assert!(response.headers().get("content-range").is_none());
+        }
+        // A whole response is never cached as a block.
+        assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn invalid_partial_media_blocks_are_rejected_and_retried() {
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(3000);
+    let oversized = media_blob(2 * block);
+    let partial = |range: &str, body: &[u8]| {
+        let length = format!("Content-Length: {}\r\n", body.len());
+        let range = if range.is_empty() {
+            String::new()
+        } else {
+            format!("Content-Range: {range}\r\n")
+        };
+        media_response("206 Partial Content", &format!("{range}{length}"), body)
+    };
+    let cases = [
+        (partial("", &blob), 502),
+        (partial("bytes 0-x/3000", &blob), 502),
+        (partial("bytes 8-15/3000", &blob[8..16]), 502),
+        (partial("bytes 0-7/3000", &blob[..8]), 502),
+        (
+            partial(
+                &format!("bytes 0-{}/{}", 2 * block - 1, 4 * block),
+                &oversized,
+            ),
+            413,
+        ),
+        // No Content-Length: the 1 MiB cap applies while buffering.
+        (
+            media_response(
+                "206 Partial Content",
+                &format!("Content-Range: bytes 0-{}/{}\r\n", 2 * block - 1, 4 * block),
+                &oversized,
+            ),
+            413,
+        ),
+    ];
+    let expected: Vec<u16> = cases.iter().map(|(_, status)| *status).collect();
+    let mut responses: Vec<Vec<u8>> = cases.into_iter().map(|(response, _)| response).collect();
+    responses.push(partial("bytes 0-2999/3000", &blob));
+    let (base, served) = scripted_media_server(responses);
+    let url = base
+        .join(&format!("/media/{}.mp4", "1".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    for status in expected.iter() {
+        assert_eq!(
+            media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+            *status
+        );
+    }
+    let read = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    assert_eq!(read.status(), 206);
+    assert_eq!(read.body(), &blob[..8]);
+    assert_eq!(read.headers()["content-range"], "bytes 0-7/3000");
+    // Rejections were never cached; the valid block now is.
+    assert_eq!(
+        media_blocks::read(&host, &url, 2992, 2999)
+            .await
+            .unwrap()
+            .body(),
+        &blob[2992..]
+    );
+    assert_eq!(
+        served.load(std::sync::atomic::Ordering::SeqCst),
+        expected.len() + 1
+    );
+}
+
 #[tokio::test]
 async fn media_proxy_passes_relay_denials_through_without_a_body() {
     let (base, task) = fixture_server(

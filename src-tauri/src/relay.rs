@@ -1107,8 +1107,9 @@ const MAX_MEDIA: usize = 100 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
-/// The relay's own cap on a single 206 response.
-const MAX_MEDIA_RANGE: usize = 16 * 1024 * 1024;
+/// Only `media_blocks` sends `Range`, always for one block, so a 206 is never
+/// buffered past it.
+const MAX_MEDIA_RANGE: usize = media_blocks::BLOCK as usize;
 
 /// `buzz-media://` serves relay `GET /media/*` to `<img>`, `<video>` and
 /// `<audio>`, which cannot send the required Blossom `Authorization` header.

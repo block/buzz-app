@@ -16,7 +16,8 @@ use tokio::sync::OnceCell;
 use url::Url;
 
 pub(super) const BLOCK: u64 = 1024 * 1024;
-/// Bounds memory at 32 MiB. Identity never changes within a process, and the
+/// Retains at most 32 blocks (32 MiB); a reader still holding an evicted block
+/// keeps it until it finishes. Identity never changes within a process, and the
 /// webview may already keep these bytes under `Cache-Control: private, max-age=3600`.
 const CAPACITY: usize = 32;
 
@@ -57,47 +58,51 @@ fn content_range(value: &str) -> Option<(u64, u64, u64)> {
     Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
 }
 
+/// Why a block fetch left nothing to cache.
+enum Uncached {
+    Status(u16),
+    /// The upstream ignored `Range`: its bounded 200 goes to the player as is.
+    Whole(Box<tauri::http::Response<Vec<u8>>>),
+}
+
 async fn fetch_block(
     host: &IdentityHost,
     url: &Url,
     index: u64,
-) -> std::result::Result<Arc<Block>, u16> {
+) -> std::result::Result<Arc<Block>, Uncached> {
     let start = index * BLOCK;
     let response = fetch_media(
         host,
         url.clone(),
         Some(format!("bytes={start}-{}", start + BLOCK - 1)),
     )
-    .await?;
+    .await
+    .map_err(Uncached::Status)?;
+    if response.status() != 206 {
+        return Err(Uncached::Whole(Box::new(response)));
+    }
     let (headers, bytes) = (response.headers().clone(), response.into_body());
-    let declared = headers
+    // Only exactly the requested block, or its EOF-truncated part, is cached.
+    let exact = headers
         .get("content-range")
-        .and_then(|value| content_range(value.to_str().ok()?));
-    let block = match declared {
-        // A 200 is the whole blob, as a block that covers it entirely may be.
-        None if bytes.len() as u64 <= BLOCK => Block {
-            start: 0,
-            total: bytes.len() as u64,
-            headers,
-            bytes,
-        },
-        Some((first, last, total))
-            if last >= first && last < total && last - first + 1 == bytes.len() as u64 =>
-        {
-            Block {
-                start: first,
-                total,
-                headers,
-                bytes,
-            }
-        }
-        _ => return Err(502),
-    };
-    Ok(Arc::new(block))
+        .and_then(|value| content_range(value.to_str().ok()?))
+        .filter(|&(first, last, total)| {
+            first == start
+                && total > start
+                && last == (start + BLOCK).min(total) - 1
+                && bytes.len() as u64 == last - first + 1
+        });
+    let (_, _, total) = exact.ok_or(Uncached::Status(502))?;
+    Ok(Arc::new(Block {
+        start,
+        total,
+        headers,
+        bytes,
+    }))
 }
 
 /// Answers `bytes=START-END` (already bounded by `media_range`) exactly, ending
-/// early only at the end of the blob.
+/// early only at the end of the blob, or with an upstream 200 that ignored `Range`.
 pub(super) async fn read(
     host: &IdentityHost,
     url: &Url,
@@ -109,10 +114,14 @@ pub(super) async fn read(
     let mut at = start;
     let (first, last) = loop {
         let index = at / BLOCK;
-        let block = slot(url, index)
+        let block = match slot(url, index)
             .get_or_try_init(|| fetch_block(host, url, index))
-            .await?
-            .clone();
+            .await
+        {
+            Ok(block) => block.clone(),
+            Err(Uncached::Status(status)) => return Err(status),
+            Err(Uncached::Whole(response)) => return Ok(*response),
+        };
         let last = end.min(block.total.checked_sub(1).ok_or(416u16)?);
         if at > last {
             return Err(416);

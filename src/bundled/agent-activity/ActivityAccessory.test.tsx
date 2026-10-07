@@ -140,6 +140,9 @@ it("collapses channel-wide evidence without hiding simultaneous turns or unknown
     within(channel).getByRole("button", { name: /aaaaaaaaaaaa/ }),
   );
   expect(f.open).toHaveBeenCalledWith(activityTarget(agent, "alpha"));
+  // The thread composer opens that thread's scoped activity, not the channel's.
+  await user.click(within(thread).getByRole("button"));
+  expect(f.open).toHaveBeenLastCalledWith(activityTarget(agent, "alpha", root));
   act(() => f.turn(agent, "one", "alpha", "turn_completed"));
   expect(channel.querySelector("details")).toHaveAttribute("open");
   expect(

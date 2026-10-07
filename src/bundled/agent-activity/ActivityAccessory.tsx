@@ -42,7 +42,7 @@ export function ActivityAccessory({
       entry.channelId === channelId && entry.threadRootId === threadRootId,
   );
   const keys = [...new Set([...turns, ...typing].map((entry) => entry.agent))]
-    .filter((agent) => canOpen(activityTarget(agent, channelId)))
+    .filter((agent) => canOpen(activityTarget(agent, channelId, threadRootId)))
     .sort()
     .join(":");
   useEffect(() => {
@@ -82,7 +82,7 @@ export function ActivityAccessory({
   const agents = (
     <div className={styles.agents}>
       {keys.split(":").map((agent) => {
-        const target = activityTarget(agent, channelId);
+        const target = activityTarget(agent, channelId, threadRootId);
         const name = resolveName(
           agent,
           identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
@@ -102,7 +102,7 @@ export function ActivityAccessory({
               <>
                 <p className="text-body-sm">
                   {threadRootId ? (
-                    "Working in this thread. Details show channel activity, including other threads."
+                    "Working in this thread. Details open this thread's activity."
                   ) : (
                     <>
                       {working

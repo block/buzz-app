@@ -401,7 +401,7 @@ remain deferred until an agreed integration batch. Do not gate ordinary visual
 feedback on them. Broader agent architecture proposals are outside the V1 scope.
 
 
-## Raw Agent Activity plugin
+## Agent Activity plugin
 
 **Agent Activity** is an independently toggleable bundled plugin. Compact
 avatar/name/status rows sit below messages and above the thread composer. The
@@ -409,13 +409,14 @@ channel composer instead shows a collapsed **Channel-wide activity** summary
 with an agent count. Expand it to inspect all channel activity, including work
 in threads and unknown statuses; it does not imply another job is running in
 the channel conversation. Sidebar and thread-summary working dots are unchanged.
-Observer turns have no thread identity, so thread typing never hides channel
+Working-state turns have no thread identity, so thread typing never hides channel
 telemetry for that agent, including simultaneous work. Channel navigation resets
 the disclosure; ordinary activity updates preserve its open state while activity
 remains. When the last evidence disappears, the disclosure unmounts and resets.
 Hover/focus on an agent row shows an owner-only summary; click, tap, Enter or Space
-opens that exact agent's **channel activity** in the right panel, including work
-in other threads. Optional names and avatars reuse shared background profile
+opens that exact agent's activity in the right panel: **channel activity**
+(including work in other threads) from the channel composer, or that thread's
+transcript from a thread composer. Optional names and avatars reuse shared background profile
 queries; key fragments distinguish identities without profiles.
 
 Thread indicators consume the existing kind-20002 typing signal with the resolved
@@ -456,6 +457,35 @@ preselects the exact identity and originating channel, not a thread. The
 known-agent check is display-only evidence, not an ownership badge, and the action
 may show a waiting state for identities with no published owner-visible telemetry.
 Shared agents and new activity-view permissions are out of scope.
+
+### Transcript
+
+The panel opens on **Transcript**; **Raw** keeps the exact diagnostic records
+below. `activityTranscript` (`src/features/agents/activity-transcript.ts`) is a
+display projection over the same session-owned records, not a second store. It
+reads allowlisted ACP fields into turns: the triggering prompt (author and content
+from the `<buzz-event>` framing, other sections collapsed), the session's system
+prompt, thoughts, assistant text as Markdown, tool calls, permission requests joined to
+their tool call with the auto-approval outcome, plans, mode changes, the session's
+selected config values (e.g. model), context usage, stop reason and errors. Tool
+names and inputs differ by adapter (Pi, Codex, Claude Code), so tool rows show the
+adapter's title and raw input as sent; only ACP's standard `kind` (icon), `status`,
+`locations` and content (text, and `diff` as removed/added lines) are interpreted.
+Adapter-specific `_meta` such as exit codes stays in **Raw**. The one adapter
+special case: pi-acp repeats its `session/new` startup banner
+(`_meta.piAcp.startupInfo`) as an agent message, which the transcript omits. JSON-RPC ids are matched per pool slot and
+direction. Agent-elided strings and payloads are labeled, not hidden. Turns whose
+`turn_started` frame is not loaded are marked as partial. Posted chat messages are
+not joined here; the transcript shows the agent's ACP output.
+
+A thread composer opens `buzz:agent-activity?…&thread=<root>`, which is valid only
+with its channel. **Conversation → This thread** shows turns whose thread root is
+the payload's `threadRootEventId` (harness 2026-10-01 and later) or, for older
+harnesses, the prompt `<context>` block's `Thread root:`. Turns whose thread cannot
+be recovered appear only under **Whole channel** and are counted, never guessed.
+Whole channel labels each turn as channel conversation, a thread or unknown.
+
+The transcript covers only loaded records: the live window plus one saved page.
 
 The **Channel** selector filters raw entries and working-turn counts, or shows all
 channels including unscoped records. For a selected channel, batches are projected
@@ -588,7 +618,7 @@ is off, no new traffic, or an interrupted feed—not that an agent is idle.
 For a contextual view, click the identity's avatar/mention in the channel, then
 **View activity**. It preselects that exact key and channel; **Channel → All channels**
 broadens the view. Alternatively, select an active agent above the channel or thread composer.
-Expand raw entries and close/reopen the panel. In **Settings → Agents → Saved agent
+Check the transcript, then open **Raw**, expand entries and close/reopen the panel. In **Settings → Agents → Saved agent
 activity**, verify both capture switches and the host path. Disable the **Agent
 Activity** plugin in **Settings → Plugins**, give the agent work, then re-enable:
 archive capture should continue independently, and restored rows must not claim

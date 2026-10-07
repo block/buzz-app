@@ -236,6 +236,8 @@ import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
+import TablerBulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
+export const BulbIcon = defineIcon("tabler", TablerBulbIcon);
 import TablerTerminalWindowIcon from "@tabler/icons-react/dist/esm/icons/IconTerminal2.mjs";
 export const TerminalWindowIcon = defineIcon(
   "tabler",

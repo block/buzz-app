@@ -66,6 +66,8 @@ const senders = [
   { value: "humans", label: "Humans" },
   { value: "agents", label: "Agents" },
 ] as const;
+const activityGroups = [{ label: "", options: activities }] as const;
+const senderGroups = [{ label: "", options: senders }] as const;
 const matchesActivity = (
   item: InboxItem,
   filter: ActivityFilter,
@@ -659,7 +661,7 @@ export function InboxView({
                   label="Activity type"
                   variant="compact"
                   value={activity}
-                  groups={[{ label: "", options: activities }]}
+                  groups={activityGroups}
                   onValueChange={(value) => {
                     setActivity(value as ActivityFilter);
                     setLimit(50);
@@ -669,7 +671,7 @@ export function InboxView({
                   label="Sender"
                   variant="compact"
                   value={senderFilter}
-                  groups={[{ label: "", options: senders }]}
+                  groups={senderGroups}
                   onValueChange={(value) => {
                     setSenderFilter(value as SenderFilter);
                     setLimit(50);

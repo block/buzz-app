@@ -13,6 +13,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage } from "./InboxPage";
+import { readView, writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySnapshot, RelayData } from "../../features/relay/service";
@@ -677,6 +678,43 @@ it("restores Inbox filters after leaving and reopening the page", async () => {
     );
   });
 });
+
+it.each(["another scope", "invalid selection"])(
+  "ignores persisted Inbox filters from %s",
+  async (mode) => {
+    const h = fixture();
+    writeView(
+      mode === "another scope"
+        ? "other-community:other-viewer"
+        : h.owner.session.scope,
+      "inbox:filters",
+      {
+        version: 1,
+        activity: mode === "invalid selection" ? "unknown" : "mentions",
+        sender: "agents",
+        response: "unresponded",
+      },
+    );
+    render(h.view);
+    await screen.findByText("Please review this");
+    expect(
+      screen.getByRole("combobox", { name: "Activity type" }),
+    ).toHaveTextContent("All activity");
+    expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+      "Everyone",
+    );
+    expect(screen.getByRole("combobox", { name: "Filters" })).toHaveTextContent(
+      "All",
+    );
+    await chooseFilter("Unread only", "Filters");
+    expect(readView(h.owner.session.scope, "inbox:filters", null)).toEqual({
+      version: 1,
+      activity: "all",
+      sender: "everyone",
+      response: "unread",
+    });
+  },
+);
 
 it("Mentions uses the mentioned message and excludes ordinary unread thread progress", async () => {
   const h = fixture();

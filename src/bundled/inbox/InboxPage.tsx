@@ -40,6 +40,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
 import { dmLabel } from "./dm-label";
+import { readView, writeView } from "../../shared/view-state";
 
 type ActivityFilter = "all" | "dms" | "threads" | "mentions";
 type SenderFilter = "everyone" | "humans" | "agents";
@@ -70,51 +71,34 @@ const defaultInboxFilters: InboxFilters = {
   sender: "everyone",
   response: "all",
 };
-function inboxFilterStorageKey(scope: NavigationScope) {
-  return `buzz.inbox.filters.v1:${scope.viewer}:${encodeURIComponent(scope.communityOrigin)}`;
-}
-function saveInboxFilters(key: string, filters: InboxFilters) {
-  try {
-    if (typeof localStorage !== "undefined")
-      localStorage.setItem(key, JSON.stringify({ version: 1, ...filters }));
-  } catch {
-    // Inbox filtering remains usable when browser storage is unavailable.
-  }
-}
-function loadInboxFilters(key: string): InboxFilters {
-  try {
-    if (typeof localStorage === "undefined") return defaultInboxFilters;
-    const saved = localStorage.getItem(key);
-    if (!saved || saved.length > 256) return defaultInboxFilters;
-    const value: unknown = JSON.parse(saved);
-    if (!value || typeof value !== "object" || Array.isArray(value))
-      return defaultInboxFilters;
-    const filters = value as Record<string, unknown>;
-    if (
-      filters.version !== 1 ||
-      !activities.some((option) => option.value === filters.activity) ||
-      !senders.some((option) => option.value === filters.sender) ||
-      !responseFilters.some((option) => option.value === filters.response)
-    )
-      return defaultInboxFilters;
-    return {
-      activity: filters.activity as ActivityFilter,
-      sender: filters.sender as SenderFilter,
-      response: filters.response as ResponseFilter,
-    };
-  } catch {
+const inboxFiltersKey = "inbox:filters";
+function loadInboxFilters(scope: string): InboxFilters {
+  const value = readView<unknown>(scope, inboxFiltersKey, null);
+  if (!value || typeof value !== "object" || Array.isArray(value))
     return defaultInboxFilters;
-  }
+  const filters = value as Record<string, unknown>;
+  if (
+    filters.version !== 1 ||
+    !activities.some((option) => option.value === filters.activity) ||
+    !senders.some((option) => option.value === filters.sender) ||
+    !responseFilters.some((option) => option.value === filters.response)
+  )
+    return defaultInboxFilters;
+  return {
+    activity: filters.activity as ActivityFilter,
+    sender: filters.sender as SenderFilter,
+    response: filters.response as ResponseFilter,
+  };
 }
 function chooseInboxFilter(
   setFilters: React.Dispatch<React.SetStateAction<InboxFilters>>,
-  scope: NavigationScope,
+  scope: string,
   current: InboxFilters,
   change: Partial<InboxFilters>,
 ) {
   const next = { ...current, ...change };
   setFilters(next);
-  saveInboxFilters(inboxFilterStorageKey(scope), next);
+  writeView(scope, inboxFiltersKey, { version: 1, ...next });
 }
 const matchesActivity = (
   item: InboxItem,
@@ -217,9 +201,8 @@ export function InboxView({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
-  const filterStorageKey = inboxFilterStorageKey(scope);
   const [savedFilters, setSavedFilters] = useState(() =>
-    loadInboxFilters(filterStorageKey),
+    loadInboxFilters(session.scope),
   );
   const activity = savedFilters.activity;
   const senderFilter = savedFilters.sender;
@@ -641,9 +624,14 @@ export function InboxView({
                   value={activity}
                   groups={[{ label: "", options: activities }]}
                   onValueChange={(value) => {
-                    chooseInboxFilter(setSavedFilters, scope, savedFilters, {
-                      activity: value as ActivityFilter,
-                    });
+                    chooseInboxFilter(
+                      setSavedFilters,
+                      session.scope,
+                      savedFilters,
+                      {
+                        activity: value as ActivityFilter,
+                      },
+                    );
                     setLimit(50);
                   }}
                 />
@@ -653,9 +641,14 @@ export function InboxView({
                   value={senderFilter}
                   groups={[{ label: "", options: senders }]}
                   onValueChange={(value) => {
-                    chooseInboxFilter(setSavedFilters, scope, savedFilters, {
-                      sender: value as SenderFilter,
-                    });
+                    chooseInboxFilter(
+                      setSavedFilters,
+                      session.scope,
+                      savedFilters,
+                      {
+                        sender: value as SenderFilter,
+                      },
+                    );
                     setLimit(50);
                   }}
                 />
@@ -673,9 +666,14 @@ export function InboxView({
                 }
                 groups={[{ label: "", options: responseFilters }]}
                 onValueChange={(value) => {
-                  chooseInboxFilter(setSavedFilters, scope, savedFilters, {
-                    response: value as ResponseFilter,
-                  });
+                  chooseInboxFilter(
+                    setSavedFilters,
+                    session.scope,
+                    savedFilters,
+                    {
+                      response: value as ResponseFilter,
+                    },
+                  );
                   setLimit(50);
                 }}
               />

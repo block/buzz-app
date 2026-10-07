@@ -355,6 +355,38 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     expect(listed(a.catalog)).toEqual([]);
   });
 
+  it("a disconnect never revives a share another device unshared", async () => {
+    const server = relay();
+    const a = client(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const share = await settled(
+      a.writes,
+      a.catalog.publish(kind, "x", true, body),
+    );
+    server.put(
+      signed(alice, {
+        kind,
+        tags: [["d", "x"]],
+        content: "",
+        created_at: share.event.created_at + 5,
+      }),
+    );
+    await a.catalog.refresh();
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: false });
+    a.link.down = true;
+    a.owner.clear();
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: false });
+    expect(listed(a.catalog)).toEqual([]);
+    await a.catalog.refresh().catch(() => {});
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: false });
+    expect(listed(a.catalog)).toEqual([]);
+    a.link.down = false;
+    await a.catalog.refresh();
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: false });
+    expect(listed(a.catalog)).toEqual([]);
+  });
+
   it("refuses rather than publishing an unshare the head would outrank", async () => {
     const server = relay();
     server.put(head(now() + 120));

@@ -84,9 +84,16 @@ export function createCommunityCatalog({
   const demands = new Set<object>();
   const listeners = new Set<() => void>();
   let ownHeads = new Map<string, EventData>();
-  // Relay-confirmed own heads, kept apart from the dismissible journal so
-  // dismissing a notice can never revive the head it replaced.
+  // Relay-confirmed own heads (acknowledged here or read back from any of
+  // this owner's devices), kept apart from the dismissible journal and the
+  // transient relay read so neither a dismissal nor a disconnect can revive
+  // the head a newer one replaced.
   const confirmedHeads = new Map<string, RelayEvent>();
+  function retain(event: RelayEvent) {
+    const key = coordinate(event);
+    const known = confirmedHeads.get(key);
+    if (!known || outranks(event, known)) confirmedHeads.set(key, event);
+  }
   let changes = new Map<string, OutgoingEvent>();
 
   function localCatalog() {
@@ -97,12 +104,8 @@ export function createCommunityCatalog({
   function build(): CommunityCatalogSnapshot {
     const items = localCatalog();
     // Relay-accepted local heads count immediately; the relay read catches up.
-    for (const item of items.filter(confirmed)) {
-      const event = (item.signed ?? item.event) as RelayEvent;
-      const key = coordinate(event);
-      const known = confirmedHeads.get(key);
-      if (!known || outranks(event, known)) confirmedHeads.set(key, event);
-    }
+    for (const item of items.filter(confirmed))
+      retain((item.signed ?? item.event) as RelayEvent);
     const heads = catalogHeads([...relayEvents, ...confirmedHeads.values()]);
     ownHeads = new Map(
       [...heads].filter(([, event]) => event.pubkey === viewer),
@@ -180,6 +183,7 @@ export function createCommunityCatalog({
       .then((events) => {
         if (closed || owned.signal.aborted) return;
         relayEvents = Object.freeze(events);
+        for (const event of events) if (event.pubkey === viewer) retain(event);
         status = "ready";
         error = undefined;
         publish();

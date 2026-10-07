@@ -1,3 +1,4 @@
+import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
 import { useReviewSidebarMotion } from "./use-review-sidebar-motion";
 import { readReviewOrigin, useReviewEntrance } from "./use-review-entrance";
@@ -30,6 +31,7 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { compareMessages } from "../relay/message-order";
 import { useRowProfiles } from "../relay/react";
+import { rowProfileIds } from "../relay/membership";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { MessageComposer } from "./MessageComposer";
@@ -237,17 +239,20 @@ function ReviewShell({
     ? replies.flatMap((row) => {
         const parsed = parseMediaTimeReply(row.content);
         if (!parsed) return [];
-        const profile = profiles.get(row.authorId);
+        const displayId = row.workflowOwnerId ?? row.authorId;
+        const profile = profiles.get(displayId);
+        const name = profile?.name ?? displayId.slice(0, 10);
         return [
           {
             id: row.id,
             seconds: parsed.anchor.seconds,
             label: parsed.label,
             text: parsed.content,
-            author: profile?.name ?? row.authorId.slice(0, 10),
-            picture: profile?.picture
-              ? session.media(profile.picture)
-              : undefined,
+            author: row.workflowOwnerId ? workflowLabel(name) : name,
+            picture:
+              !row.workflowOwnerId && profile?.picture
+                ? session.media(profile.picture)
+                : undefined,
           },
         ];
       })
@@ -574,9 +579,7 @@ function ReviewComments({
         ?.querySelector(`[data-review-comment="${selectedComment}"]`)
         ?.scrollIntoView?.({ block: "nearest" });
   }, [selectedComment]);
-  const authors = [...new Set(replies.map((row) => row.authorId))]
-    .sort()
-    .join(":");
+  const authors = [...new Set(replies.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
     if (authors)
       void session.profiles

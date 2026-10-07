@@ -2,6 +2,7 @@ import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
+import { messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -29,6 +30,8 @@ export function createMessages(
   relayOrigin?: string,
   /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
   publishReport?: (template: EventTemplate) => Promise<void>,
+  /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
+  signingAuthority?: string,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -37,6 +40,8 @@ export function createMessages(
       throw new Error("This connection cannot publish that operation");
     return outbox;
   };
+  const ownedMessage = (event: EventData) =>
+    !!viewer && messageAuthor(event, signingAuthority) === viewer;
   const text = (content: string) => {
     const value = content.trim();
     if (!value) throw new Error("Message is empty");
@@ -92,7 +97,7 @@ export function createMessages(
       const thread = original && threadReference(original);
       if (original?.kind !== 9 || !thread)
         throw new Error("Load a thread reply before sending it to the channel");
-      if (!viewer || original.pubkey !== viewer || row.authorId !== viewer)
+      if (!ownedMessage(original) || row.authorId !== viewer)
         throw new Error("Only your own messages can be sent to the channel");
       const channelId = original.tags.find(([name]) => name === "h")?.[1];
       if (
@@ -107,7 +112,7 @@ export function createMessages(
       const attachmentSource = find(row.attachmentSourceId ?? row.id);
       if (
         !attachmentSource ||
-        attachmentSource.pubkey !== viewer ||
+        !ownedMessage(attachmentSource) ||
         (attachmentSource.id !== original.id &&
           (attachmentSource.kind !== 40003 ||
             !attachmentSource.tags.some(
@@ -199,7 +204,7 @@ export function createMessages(
       const original = find(messageId);
       if (!original || ![9, 40002].includes(original.kind))
         throw new Error("Load the message before editing it");
-      if (original.pubkey !== viewer)
+      if (!ownedMessage(original))
         throw new Error("Only your own messages can be edited");
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");
@@ -210,7 +215,7 @@ export function createMessages(
         !attachmentSource ||
         (attachmentSource.id !== original.id &&
           (attachmentSource.kind !== 40003 ||
-            attachmentSource.pubkey !== original.pubkey ||
+            !ownedMessage(attachmentSource) ||
             !attachmentSource.tags.some(
               ([name, id]) => name === "e" && id === messageId,
             ) ||
@@ -259,7 +264,7 @@ export function createMessages(
         const event = find(id);
         if (!event || ![7, 9, 40002].includes(event.kind))
           throw new Error("Load the message or reaction before removing it");
-        if (event.pubkey !== viewer)
+        if (event.kind === 7 ? event.pubkey !== viewer : !ownedMessage(event))
           throw new Error(
             "Only your own messages and reactions can be removed",
           );

@@ -33,6 +33,12 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "pairing_account",
+            "pairing_start",
+            "pairing_status",
+            "pairing_confirm",
+            "pairing_deny",
+            "pairing_cancel",
             "identity_restore",
             "identity_import",
             "identity_create",
@@ -89,6 +95,8 @@ fn main() {
             "agent_control_log_challenge",
             "agent_control_read_log",
             "pi_install",
+            "claude_install",
+            "claude_auth_status",
             "agent_security",
             "agent_control_save",
             "agent_control_save_defaults",

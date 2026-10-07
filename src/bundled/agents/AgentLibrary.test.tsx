@@ -44,16 +44,17 @@ it("renders linked identities as separate named tiles while retaining profile-on
     <AgentLibrary session={{ ...owned.session, names }} headerActions={null} />,
   );
   try {
+    fireEvent.click(await screen.findByText(/^Other agents \(/));
     for (const key of keys) {
       const label = `Larry · ${npubEncode(key).slice(-4)}`;
       const card = await screen.findByRole("article", {
         name: `Agent ${label}`,
       });
       fireEvent.click(
-        within(card).getByRole("button", { name: `${label}: public key` }),
+        within(card).getByRole("button", { name: `Actions for ${label}` }),
       );
       const popup = await screen.findByRole("dialog", {
-        name: `${label} public key`,
+        name: `${label} identity details`,
       });
       expect(within(popup).getByText(npubEncode(key))).toBeTruthy();
       fireEvent.keyDown(popup, { key: "Escape" });

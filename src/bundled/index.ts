@@ -1,5 +1,7 @@
 import meshManifest from "./mesh-compute/manifest.json";
 import * as mesh from "./mesh-compute";
+import pairingManifest from "./pairing/manifest.json";
+import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
@@ -55,6 +57,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...builderlabManifest, apiVersion: 1 },
     module: builderlab,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...pairingManifest, apiVersion: 1 },
+    module: pairing,
     enabledByDefault: true,
   },
   {

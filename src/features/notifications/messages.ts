@@ -170,9 +170,11 @@ export function bindMessageNotifications(
               owned.channels
                 .list()
                 .channels.find((item) => item.id === message.channelId),
-              owned.profiles.snapshot().get(message.authorId),
+              owned.profiles
+                .snapshot()
+                .get(message.workflowOwnerId ?? message.authorId),
               owned.names.resolve(
-                message.authorId,
+                message.workflowOwnerId ?? message.authorId,
                 undefined,
                 owned.channels
                   .list()

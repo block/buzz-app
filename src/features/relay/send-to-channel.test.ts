@@ -207,3 +207,54 @@ it("does not restore display-only mention bindings when sharing an edited reply"
     { text: "Edited @Other" },
   ]);
 });
+
+it("shares a relay-attributed reply with edited media only under explicit signing authority", async () => {
+  const attributed = signed(other, {
+    kind: 9,
+    content: "Original",
+    created_at: 5,
+    tags: [
+      ["h", "channel"],
+      ["e", root.id, "", "reply"],
+      ["actor", author.pubkey],
+    ],
+  });
+  const edit = signed(author, {
+    kind: 40003,
+    content: "Edited attributed reply",
+    created_at: 6,
+    tags: [
+      ["h", "channel"],
+      ["e", attributed.id],
+      ["imeta", "url https://example.com/new.png", "m image/png"],
+    ],
+  });
+  const { messages, outbox } = setup([root, attributed, edit]);
+  const row = foldMessages("channel", other.pubkey, [root, attributed, edit], {
+    includeReplies: true,
+    signingAuthority: other.pubkey,
+  }).find((item) => item.id === attributed.id);
+  assert.exists(row);
+  expect(row.authorId).toBe(author.pubkey);
+  expect(() => messages.sendToChannel(row)).toThrow(/Only your own/);
+  const trusted = createMessages(
+    outbox,
+    author.pubkey,
+    (id) => [root, attributed, edit].find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    other.pubkey,
+  );
+  trusted.sendToChannel(row);
+  await outbox.ready();
+  const sent = outbox.snapshot()[0]?.event;
+  assert.exists(sent);
+  expect(sent.content).toBe("Edited attributed reply");
+  expect(sent.tags).toContainEqual(edit.tags[2]);
+  expect(
+    sent.tags.some(([name, id]) => name === "e" && id === attributed.id),
+  ).toBe(false);
+});

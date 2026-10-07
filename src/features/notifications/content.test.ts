@@ -77,3 +77,15 @@ it("normalizes whitespace/control characters in names and body", () => {
     ).title,
   ).toBe(`${"x".repeat(63)}… mentioned you in #${"y".repeat(63)}…`);
 });
+
+it("labels workflow ownership without making the owner the sender, preserving name sanitization", () => {
+  const workflow = { ...message, workflowOwnerId: "b".repeat(64) };
+  expect(
+    messageNotificationText(workflow, "mention", undefined, {
+      name: "Wes\u202E\nOwner",
+    }).title,
+  ).toBe("Workflow · owned by Wes Owner mentioned you in #room");
+  expect(
+    messageNotificationText(workflow, "thread", undefined, undefined).title,
+  ).toBe("Workflow · owned by bbbbbbbbbb replied in #room");
+});

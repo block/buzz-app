@@ -253,19 +253,37 @@ test("clear reclaims every free page from a multi-megabyte archive", () => {
   const file = path(),
     h = harness(file),
     db = new DatabaseSync(file);
-  for (let i = 0; i < 200; i++) h.ingest(event(i));
-  // Inflate synthetic stored envelopes without weakening real ingest validation.
-  db.exec(
-    "UPDATE archive_events SET envelope=zeroblob(16000); PRAGMA wal_checkpoint(TRUNCATE)",
-  );
-  const before = statSync(file).size;
-  h.request({ action: "clear", kind: 24200 });
-  expect(statSync(file).size).toBeLessThan(before);
-  expect(statSync(`${file}-wal`).size).toBe(0);
-  expect(db.prepare("PRAGMA freelist_count").get().freelist_count).toBe(0);
-  expect(h.settings().bytes).toBe(0);
-  db.close();
-  h.store.close();
+  try {
+    // Reclamation exercises stored pages, not 200 fresh-ingest crypto checks and
+    // commits. Seed the same multi-megabyte footprint in one transaction; the
+    // ingest/decoding tests above retain real signed, encrypted envelopes.
+    const insert = db.prepare(
+      "INSERT INTO archive_events(viewer,community,subscription,id,agent,kind,created,received,bytes,envelope) VALUES (?,?,'observer',?,?,24200,?,?,16000,zeroblob(16000))",
+    );
+    const now = Math.floor(Date.now() / 1000);
+    db.exec("BEGIN");
+    for (let i = 0; i < 200; i++)
+      insert.run(
+        viewer,
+        community,
+        i.toString(16).padStart(64, "0"),
+        sender,
+        now,
+        now,
+      );
+    db.exec("COMMIT; PRAGMA wal_checkpoint(TRUNCATE)");
+    const before = statSync(file).size;
+    expect(before).toBeGreaterThanOrEqual(200 * 16000);
+    expect(h.settings().bytes).toBe(200 * 16000);
+    h.request({ action: "clear", kind: 24200 });
+    expect(statSync(file).size).toBeLessThan(before);
+    expect(statSync(`${file}-wal`).size).toBe(0);
+    expect(db.prepare("PRAGMA freelist_count").get().freelist_count).toBe(0);
+    expect(h.settings().bytes).toBe(0);
+  } finally {
+    db.close();
+    h.store.close();
+  }
 });
 
 test("v1 migration preserves encrypted rows, policy settings and CAS revisions", () => {

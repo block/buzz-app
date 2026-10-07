@@ -184,3 +184,30 @@ it("reveals a terminal failure even while content is pending", async () => {
   vi.advanceTimersByTime(240);
   expect(root).not.toHaveAttribute("inert");
 });
+
+it("notifies window chrome only when launch releases the inert root", async () => {
+  const { launchVisible, subscribeLaunch, setLaunchReady } = await import(
+    "./launch"
+  );
+  const observations: boolean[] = [];
+  const unsubscribe = subscribeLaunch(() => {
+    observations.push(launchVisible());
+    expect(document.getElementById("root")).not.toHaveAttribute("inert");
+  });
+  const removedListener = vi.fn();
+  subscribeLaunch(removedListener)();
+  expect(launchVisible()).toBe(true);
+  setLaunchReady(false);
+  vi.advanceTimersByTime(4000);
+  expect(observations).toEqual([]);
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  setLaunchReady(true);
+  await Promise.resolve();
+  expect(launch).toHaveClass("buzz-launch--leaving");
+  expect(launchVisible()).toBe(true);
+  expect(observations).toEqual([]);
+  vi.advanceTimersByTime(240);
+  expect(observations).toEqual([false]);
+  expect(removedListener).not.toHaveBeenCalled();
+  unsubscribe();
+});

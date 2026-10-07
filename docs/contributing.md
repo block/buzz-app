@@ -157,9 +157,11 @@ ports must be integers from 1 to 65535. Browser dev
 prints its selected URL and can use a later port when the requested port is
 occupied. Port selection does not isolate credentials or native plugin data;
 use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
-Both run the development broker with your identity when the public
-`BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
-identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
+A public `BUZZ_DEV_VIEWER` pin enables the legacy development broker for either
+command. Without it, browser development has no live broker identity, while
+supported desktop development can use native identity and relay access. See
+[host modes below](#shared-logic-and-host-boundaries) and
+[the broker setup requirements](../README.md#relay-channels).
 
 After creating a worktree, bootstrap it from the checkout whose local development
 configuration it should inherit:
@@ -194,14 +196,131 @@ Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existi
 icons. This does not change the app identifier, credentials, profiles, or
 notification settings.
 
+## Shared logic and host boundaries
+
+Browser and desktop share the React application, community sessions, durable
+outbox, protocol models and live scheduler. **The goal is one code path per feature
+in development and release:** desktop development uses the same shared frontend
+and Rust host as packaged desktop, not a Node implementation of the feature.
+`dev/` supplies browser-development host support and broker tests, not a second
+owner of feature logic. **Preserve supported browser capabilities:** reduce
+duplicate implementations, not available workflows. Reuse shared feature owners
+rather than add parallel Node feature logic; native-only capabilities do not
+require speculative browser parity. Develop and test those with
+`BUZZ_DEV_VIEWER= just desktop`. Node code does not run in a browser merely because
+it serves one, and packaged desktop has no Node backend.
+
+| Mode | Identity and relay host |
+| --- | --- |
+| `just web`, public `BUZZ_DEV_VIEWER` pin | Node broker using the pinned existing legacy identity (macOS/Linux) |
+| `just web`, no pin | Shell/fixtures; no live broker identity |
+| `just desktop`, public pin | Legacy broker identity/relay access inside the native window; native identity is disabled (not an acceptance mode) |
+| `just desktop`, no pin | Native identity/relay access on supported macOS, Windows and Linux |
+| Packaged desktop | Native host; production builds exclude the dev broker regardless of the pin |
+
+A static frontend build does not supply a standalone browser login/backend.
+The public pin does not migrate keys. Native debug worktrees share a credential
+namespace distinct from release and legacy broker credentials; ports and plugin
+profiles do not isolate those keys. Removing the pin may change the active
+identity, not just the transport. Do not change defaults, credentials or a running
+app as incidental cleanup. See [identity custody and acceptance](identity.md).
+
+### Where behavior belongs
+
+- Put platform-neutral models, edits and protocol policy in their existing
+  `src/features/*` owner, with current callers rather than speculative adapter
+  parity. The Node host and native frontend adapter can reuse dependency-free
+  TypeScript where appropriate;
+  [sidebar edits](../src/features/relay/sidebar-edits.ts) and
+  [community commands](../src/features/communities/admin-protocol.ts) are examples.
+  Shared modules must not depend on Node, Tauri or a dev-host implementation.
+- Keep signing keys, decryption, secure storage, subprocesses and host I/O in the
+  host. Shipped Rust IPC boundaries retain their own validation, signing policy,
+  destination/identity binding, resource limits, cancellation and lifecycle
+  ownership. Moving checks into shared frontend code is not a substitute for Rust
+  enforcement. The relay remains the access-control authority. Existing broker
+  endpoints keep their safety checks while they remain callable; this does not
+  require a Node endpoint or signing-policy copy for a new feature.
+- **Frontend TypeScript checks + Rust enforcement:** both ship. Shared concrete
+  contract cases are the long-term pattern for necessary cross-language logic,
+  not a universal adapter or code generator. Existing JSON fixtures can be read by
+  Vitest and Rust `include_str!`.
+- **Node browser host + Rust native host:** only Rust ships in packaged desktop,
+  but browser workflows still need host support. Share application policy where
+  practical; retain necessary host enforcement and I/O. Shared cases check drift
+  wherever both hosts implement the same contract, without requiring automatic
+  parity. Document intentional or unresolved differences with separate expected
+  outcomes; neither implementation automatically defines intended policy.
+  Changing outcomes is a behavior decision, not a refactor. Do not add a second
+  source of feature policy in `dev/`.
+
+### Review and evidence
+
+A cross-host change names its feature owner/current consumers, supported modes,
+behavior preserved or explicitly approved differences, and the duplicate code it
+removes. Update the feature's contract cases and relevant wiring tests in the
+same change. Reuse existing runners and CI; this is not an extra full-suite gate
+for each edit. Keep feature details with their owner, not copied into this guide.
+
+[Canvas shape cases](../src/features/channel-templates/canvas-signing-contract.json)
+check the existing Node/Rust contract for kind-40100 tag shape, including an
+explicitly rejected native deserialization case; each host separately tests the
+UTF-8 content limit. This is not whole endpoint parity: broker freshness checks,
+native serialized-event limits, HTTP/IPC authorization and publication outcomes
+are separate layers. Keep host-specific checks and regression coverage while the
+corresponding boundary is callable, including after any adapter replacement.
+
+**Manual testing of anything that ships uses `BUZZ_DEV_VIEWER= just desktop`.**
+The explicit empty value overrides a pin inherited from `.env.local`; merely
+unsetting the shell variable does not. This selects the shipped native code path,
+not the release credential namespace or a release bundle. Packaging, OS integration
+and release-specific behavior still need the appropriate packaged-build checks.
+Broker-backed runs, including pinned native windows, do not count as acceptance.
+They remain useful for browser diagnostics and existing broker tests, but do not
+prove native signing, OS storage, networking or filesystem behavior.
+
+Report the exact snapshot and host/mode exercised. Native/live acceptance needs an
+agreed isolated identity/data setup; browser fixtures and test identities must
+never use real keys. Do not launch a native app or switch someone's active identity
+merely to follow this testing guidance.
+
+### Broker consolidation and completion
+
+The behavior-preserving cleanup pass shares status text/emoji limits, DM
+participant-set policy, and sidebar intent rules with their existing
+`src/features/relay` owners. The broker still executes those checks host-side and
+retains its stricter untrusted-envelope checks; native Rust enforcement is
+unchanged. Status reads still validate raw text before trimming, while local edits
+trim first. Star and mute commands share one broker implementation in
+`sidebar-toggle.mjs`; their distinct absent-unstar/unmute behavior stays in the
+shared edit owner. This does not make broker and native signing policies identical.
+
+There is no follow-up retirement queue. Further consolidation needs a demonstrated
+duplicate responsibility, a current shared owner or justified replacement, and
+preserved browser and native behavior. Necessary host-specific enforcement and
+I/O are not duplication to remove merely because two hosts implement them.
+
+A broker endpoint/module can be removed only after a replacement preserves its
+supported browser workflow and custody guarantees, all callers move, and relevant
+regression coverage follows. Native acceptance alone does not prove a browser
+replacement works. Capability retirement is a separate explicit product decision,
+not part of this cleanup; do not weaken a callable endpoint to reduce line count.
+
+Developer tools (`developer-settings.ts`, `live-setup-probe.mjs`) are not Rust
+feature mirrors. Legacy library and hosted-community helpers (`agent-library.mjs`,
+`builderlab.mjs`) are not automatically replaced by native identity. A transport
+replacement or new backend needs a separate design decision. This cleanup changes
+no runtime defaults or credentials.
+
 ## Interactive product iteration
 
 While shaping the first version, default to **edit → human tries the running app
 → adjust**. A manual feedback handoff is not a review or shipping gate.
 
 - Reuse the agreed development worktree and branch, with one owner of product
-  edits. Keep one dev server running: `just web` for shared frontend work, or
-  `just desktop` when native behavior matters. Vite handles supported frontend
+  edits. Keep one dev server running: `BUZZ_DEV_VIEWER= just desktop` for manual
+  testing of shipped behavior. `just web` remains useful for browser-only
+  diagnostics and fixtures, not acceptance. Vite handles supported frontend
   updates without a package rebuild. State when a reload/restart is needed;
   coordinate native launches with the human rather than restarting their app.
 - Make small, coherent changes and hand them back as **ready to try**, naming

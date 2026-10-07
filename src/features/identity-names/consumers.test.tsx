@@ -164,6 +164,9 @@ it("uses channel scope in link previews and activity, and participant scope in s
       />
     </>,
   );
+  await userEvent
+    .setup()
+    .click(screen.getByText("Channel-wide activity · 1 agent"));
   expect(view.container.querySelector("strong")).toHaveTextContent("Larry");
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
   expect(

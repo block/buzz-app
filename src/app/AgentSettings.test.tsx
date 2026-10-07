@@ -18,6 +18,8 @@ import {
 } from "../features/agents/control";
 import { controlFixture } from "../features/agents/control-testing";
 import { AgentSettings } from "./AgentSettings";
+import { AgentHarnessEditor } from "../bundled/agents/AgentHarnessEditor";
+import { agentDraft } from "../bundled/agents/agent-edit";
 import {
   rememberAgentsPreference,
   setRememberAgentsPreference,
@@ -91,10 +93,19 @@ function setupHarnesses(
     installSupported?: boolean;
     updateSupported?: boolean;
     installPi?: NonNullable<AgentControlHost["installPi"]>;
+    claude?: NonNullable<
+      ReturnType<typeof controlFixture>["data"]["claudeSetup"]
+    >;
+    installClaude?: NonNullable<AgentControlHost["installClaude"]>;
+    checkClaudeAuth?: () => Promise<boolean | null>;
   } = {},
 ) {
   const fixture = controlFixture();
   if (pi.installPi) fixture.host.installPi = pi.installPi;
+  if (pi.installClaude) fixture.host.installClaude = pi.installClaude;
+  if (pi.checkClaudeAuth)
+    Object.assign(fixture.host, { checkClaudeAuth: pi.checkClaudeAuth });
+  if (pi.claude) fixture.data.claudeSetup = pi.claude;
   fixture.data.harnessOptions = [
     {
       command: "buzz-agent",
@@ -123,6 +134,14 @@ function setupHarnesses(
         : {}),
       providers: [],
     },
+    {
+      command: "hermes-acp",
+      label: "Hermes Agent",
+      available: false,
+      status: "cli-needed",
+      installSupported: false,
+      providers: [],
+    },
   ];
   const control = createAgentControl(fixture.host);
   disposals.push(() => control.dispose());
@@ -131,7 +150,7 @@ function setupHarnesses(
 }
 
 it.each(["cli-needed", "adapter-needed", "ready"] as const)(
-  "shows the three Harnesses and keeps manual Pi commands collapsed until requested (%s)",
+  "shows Harnesses and keeps manual Pi commands collapsed until requested (%s)",
   async (piStatus) => {
     const user = userEvent.setup();
     setupHarnesses(piStatus);
@@ -193,10 +212,112 @@ it.each(["cli-needed", "adapter-needed", "ready"] as const)(
     }
     await user.hover(screen.getByRole("button", { name: "About ACP" }));
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Buzz talks to harnesses through the Agent Client Protocol (ACP). Goose ships with Buzz and supports ACP natively. Pi needs a small adapter, `buzz-pi-acp`. Your existing CLI setup and sign-in are left untouched.",
+      "Hermes Agent uses its own ACP launcher and sign-in.",
     );
   },
 );
+
+it("discovers Tier 2 Hermes through Add harness and follows installation changes", async () => {
+  const user = userEvent.setup();
+  const { fixture } = setupHarnesses("ready");
+  const list = await screen.findByRole("list", { name: "Harnesses" });
+  expect(within(list).queryByText("Hermes Agent")).not.toBeInTheDocument();
+  const add = screen.getByRole("button", { name: "Add harness" });
+  await user.click(add);
+  const dialog = await screen.findByRole("dialog", { name: "Add harness" });
+  expect(within(dialog).getByText("CLI needed")).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: /Install|Update/ }),
+  ).toBeNull();
+  expect(
+    within(dialog).getByRole("link", { name: "Hermes Agent setup guide" }),
+  ).toHaveAttribute(
+    "href",
+    "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/",
+  );
+  await user.click(within(dialog).getByText("Terminal setup"));
+  expect(within(dialog).getByText("hermes model")).toBeVisible();
+  expect(within(dialog).getByText("hermes acp --check")).toBeVisible();
+  const hermes = fixture.data.harnessOptions?.find(
+    (option) => option.label === "Hermes Agent",
+  );
+  if (!hermes) throw new Error("Missing Hermes option");
+  Object.assign(hermes, {
+    command: "/local/hermes-acp",
+    available: true,
+    status: "ready",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(within(dialog).getByText("Ready")).toBeVisible());
+  expect(within(dialog).getByText("/local/hermes-acp")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(add).toHaveFocus());
+  expect(
+    within(list).getByText("Hermes Agent").closest("li"),
+  ).toHaveTextContent("Ready");
+  expect(
+    within(list).queryByText(/Uses the default model and credentials/),
+  ).toBeNull();
+  expect(within(list).queryByText("Manual Hermes Agent setup")).toBeNull();
+  Object.assign(hermes, {
+    command: "hermes-acp",
+    available: false,
+    status: "cli-needed",
+  });
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() =>
+    expect(within(list).queryByText("Hermes Agent")).not.toBeInTheDocument(),
+  );
+  await user.click(add);
+  expect(
+    within(await screen.findByRole("dialog")).getByText("CLI needed"),
+  ).toBeVisible();
+});
+
+it("keeps Tier 1 harnesses usable when an older desktop has no Hermes option", async () => {
+  const user = userEvent.setup();
+  const { fixture, control } = setupHarnesses("ready");
+  fixture.data.harnessOptions = (fixture.data.harnessOptions ?? []).filter(
+    (option) => option.label !== "Hermes Agent",
+  );
+  await act(() => control.refresh());
+  const list = await screen.findByRole("list", { name: "Harnesses" });
+  expect(within(list).getByText("Goose")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Add harness" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Add harness" }),
+  ).toHaveTextContent("Update the desktop app to check Hermes Agent.");
+});
+
+it("recognizes harness commands independently of native display labels", async () => {
+  const { fixture, control } = setupHarnesses("ready");
+  for (const option of fixture.data.harnessOptions ?? []) {
+    option.label = `Renamed ${option.label}`;
+  }
+  await act(() => control.refresh());
+  const list = await screen.findByRole("list", { name: "Harnesses" });
+  expect(within(list).getByText("Renamed Goose")).toBeVisible();
+  expect(
+    within(list).queryByText("Renamed Hermes Agent"),
+  ).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add harness" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add harness" });
+  expect(
+    within(dialog).getByRole("heading", { name: "Renamed Hermes Agent" }),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("link", {
+      name: "Renamed Hermes Agent setup guide",
+    }),
+  ).toHaveAttribute(
+    "href",
+    "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/",
+  );
+});
 
 it("offers manual copying when clipboard access fails", async () => {
   const user = userEvent.setup();
@@ -261,7 +382,10 @@ it("keeps the last statuses and offers Check again after a failed read", async (
     installSupported: true,
     installPi,
   });
-  expect(await screen.findByText("CLI needed")).toBeVisible();
+  const list = await screen.findByRole("list", { name: "Harnesses" });
+  const piRow = within(list).getByText("Pi", { exact: true }).closest("li");
+  if (!piRow) throw new Error("Missing Pi row");
+  expect(within(piRow).getByText("CLI needed")).toBeVisible();
   const original = fixture.host.snapshot.bind(fixture.host);
   fixture.host.snapshot = vi
     .fn()
@@ -447,4 +571,288 @@ it("keeps bundled Goose Ready during a Pi installation", async () => {
   expect(within(alert).getByText("Full diagnostic output")).not.toBeVisible();
   await user.click(log);
   expect(within(alert).getByText("Full diagnostic output")).toBeVisible();
+});
+
+it("installs Claude Code with durable progress, failed-step logs, retry and native re-detection", async () => {
+  const user = userEvent.setup();
+  let finish!: (report: HarnessInstallReport) => void;
+  const pending = new Promise<HarnessInstallReport>((resolve) => {
+    finish = resolve;
+  });
+  const failed: HarnessInstallReport = {
+    ready: false,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/claude-install.log",
+    output: "npm error EACCES",
+    error: "Installing Claude Code failed",
+  };
+  const install = vi
+    .fn()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValueOnce({ ...failed, ready: true, error: null });
+  const { control, fixture } = setupHarnesses("cli-needed", {
+    installSupported: true,
+    installPi: vi.fn(),
+    claude: {
+      status: "adapter-needed",
+      installSupported: true,
+      loginCommand: "'/fixture/claude' auth login",
+    },
+    installClaude: install,
+  });
+  const row = () =>
+    within(screen.getByRole("listitem", { name: "Claude Code harness" }));
+  await screen.findByRole("listitem", { name: "Claude Code harness" });
+  await user.click(row().getByRole("button", { name: "Install" }));
+  try {
+    expect(await row().findByRole("status")).toHaveTextContent(
+      "Installing Claude Code",
+    );
+    expect(screen.getByRole("button", { name: "Check again" })).toBeDisabled();
+    const piRow = screen.getByText("Pi", { exact: true }).closest("li");
+    if (!piRow) throw new Error("Missing Pi row");
+    expect(
+      within(piRow).getByRole("button", { name: "Install" }),
+    ).toBeDisabled();
+    cleanup();
+    render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+    expect(await row().findByRole("status")).toHaveTextContent(
+      "Installing Claude Code",
+    );
+  } finally {
+    finish(failed);
+  }
+  expect(await row().findByRole("alert")).toHaveTextContent(
+    "Installing Claude Code failed",
+  );
+  await user.click(row().getByText("Claude Code install log"));
+  expect(row().getByText("npm error EACCES")).toBeVisible();
+  expect(row().getByText("/fixture/claude-install.log")).toBeVisible();
+  if (!fixture.data.claudeSetup) throw new Error("Missing Claude fixture");
+  fixture.data.claudeSetup.status = "ready";
+  await user.click(row().getByRole("button", { name: "Install" }));
+  expect(await row().findByText("Sign-in unconfirmed")).toBeVisible();
+  expect(row().queryByRole("alert")).toBeNull();
+  expect(row().queryByRole("button", { name: "Install" })).toBeNull();
+  await user.click(row().getByText("Sign in to Claude Code"));
+  expect(row().getByText("'/fixture/claude' auth login")).toBeVisible();
+  expect(row().getByText(/Couldn’t confirm Claude Code sign-in/)).toBeVisible();
+  expect(install).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true] as const)(
+  "keeps keyboard retry usable and hands off success only while Install owns focus (moved: %s)",
+  async (moveFocus) => {
+    const user = userEvent.setup();
+    let finish!: (report: HarnessInstallReport) => void;
+    const pending = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    const report: HarnessInstallReport = {
+      ready: false,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/claude-install.log",
+      output: "npm error EACCES",
+      error: "Installation failed",
+    };
+    const install = vi.fn(() => pending);
+    const { fixture } = setupHarnesses("ready", {
+      claude: {
+        status: "cli-needed",
+        installSupported: true,
+        loginCommand: "'/fixture/claude' auth login",
+      },
+      installClaude: install,
+      checkClaudeAuth: async () => !moveFocus,
+    });
+    const row = within(
+      await screen.findByRole("listitem", { name: "Claude Code harness" }),
+    );
+    const button = row.getByRole("button", { name: "Install" });
+    for (let i = 0; i < 10 && document.activeElement !== button; i++) {
+      await user.tab();
+    }
+    expect(button).toHaveFocus();
+    await user.keyboard("{Enter}");
+    try {
+      expect(await row.findByText(/Installing Claude Code and/)).toBeVisible();
+      expect(button).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(install).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        finish(report);
+        await pending;
+      });
+    }
+    expect(await row.findByRole("alert")).toHaveTextContent(
+      "Installation failed",
+    );
+    expect(button).toHaveFocus();
+    expect(button).not.toBeDisabled();
+    const retry = new Promise<HarnessInstallReport>((resolve) => {
+      finish = resolve;
+    });
+    install.mockReturnValue(retry);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+    let next: Element | null = null;
+    try {
+      expect(button).toHaveFocus();
+      if (moveFocus) {
+        next = screen.getByRole("button", { name: "Add harness" });
+        for (let i = 0; i < 10 && document.activeElement !== next; i++) {
+          await user.tab();
+        }
+        expect(next).toHaveFocus();
+      }
+      if (!fixture.data.claudeSetup) throw new Error("Missing Claude fixture");
+      fixture.data.claudeSetup.status = "ready";
+    } finally {
+      await act(async () => {
+        finish({ ...report, ready: true, error: null });
+        await retry;
+      });
+    }
+    const status = await row.findByText(moveFocus ? "Sign-in needed" : "Ready");
+    expect(row.queryByRole("button", { name: "Install" })).toBeNull();
+    if (moveFocus) expect(next).toHaveFocus();
+    else expect(status).toHaveFocus();
+  },
+);
+
+it("offers manual Claude setup on unsupported devices without treating setup as an agent choice", async () => {
+  const user = userEvent.setup();
+  const { control, fixture } = setupHarnesses("ready", {
+    claude: {
+      status: "cli-needed",
+      installSupported: false,
+      loginCommand: null,
+    },
+    installClaude: vi.fn(),
+  });
+  const row = within(
+    await screen.findByRole("listitem", { name: "Claude Code harness" }),
+  );
+  expect(row.queryByRole("button", { name: "Install" })).toBeNull();
+  await user.click(row.getByText("Manual Claude Code setup"));
+  expect(
+    row.getByText(/npm install -g @anthropic-ai\/claude-code/),
+  ).toBeVisible();
+  expect(
+    row.getByText(/npm install -g @agentclientprotocol\/claude-agent-acp/),
+  ).toBeVisible();
+  // Exercise creation's real picker with the same native snapshot as Settings.
+  cleanup();
+  render(
+    <AgentHarnessEditor
+      draft={agentDraft(fixture.agent)}
+      options={control.snapshot().data?.harnessOptions ?? []}
+      onChange={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  expect(
+    await screen.findByRole("option", { name: "Buzz Agent" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("option", { name: /Claude/ })).toBeNull();
+  expect(control.snapshot().data?.claudeSetup?.status).toBe("cli-needed");
+});
+
+it.each([true, false, null] as const)(
+  "shows Claude setup guidance only when sign-in needs attention (%s)",
+  async (signedIn) => {
+    const user = userEvent.setup();
+    const checkClaudeAuth = vi.fn().mockResolvedValue(signedIn);
+    setupHarnesses("ready", {
+      claude: {
+        status: "ready",
+        installSupported: true,
+        loginCommand: "'/fixture/claude' auth login",
+      },
+      checkClaudeAuth,
+    });
+    await screen.findByRole("listitem", { name: "Claude Code harness" });
+    const row = () =>
+      within(screen.getByRole("listitem", { name: "Claude Code harness" }));
+    if (signedIn === true) {
+      await waitFor(() => expect(checkClaudeAuth).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(row().getByText("Ready")).toBeVisible());
+      expect(row().queryByText("Sign in to Claude Code")).toBeNull();
+      expect(
+        row().queryByText(/Claude Code and its ACP adapter are installed/),
+      ).toBeNull();
+    } else {
+      expect(
+        await row().findByText(
+          signedIn === false ? "Sign-in needed" : "Sign-in unconfirmed",
+        ),
+      ).toBeVisible();
+      expect(row().queryByText("Ready")).toBeNull();
+      await user.click(row().getByText("Sign in to Claude Code"));
+      expect(row().getByText("'/fixture/claude' auth login")).toBeVisible();
+    }
+    checkClaudeAuth.mockResolvedValue(true);
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(checkClaudeAuth).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(row().getByText("Ready")).toBeVisible());
+    expect(row().queryByText("Sign in to Claude Code")).toBeNull();
+  },
+);
+
+it("ignores a late Claude auth check after Check again and retains an install failure on a ready row", async () => {
+  const user = userEvent.setup();
+  let finish!: (signedIn: boolean) => void;
+  const pending = new Promise<boolean>((resolve) => {
+    finish = resolve;
+  });
+  const checkClaudeAuth = vi
+    .fn()
+    .mockReturnValueOnce(pending)
+    .mockResolvedValue(false);
+  const { control } = setupHarnesses("ready", {
+    claude: {
+      status: "ready",
+      installSupported: true,
+      loginCommand: "'/fixture/claude' auth login",
+    },
+    checkClaudeAuth,
+    installClaude: vi.fn().mockResolvedValue({
+      ready: false,
+      restarted: 0,
+      restartFailures: 0,
+      logPath: "/fixture/claude-install.log",
+      output: "npm error EACCES",
+      error: "Update failed; previous tools retained",
+    }),
+  });
+  await screen.findByRole("listitem", { name: "Claude Code harness" });
+  const row = () =>
+    within(screen.getByRole("listitem", { name: "Claude Code harness" }));
+  try {
+    await waitFor(() => expect(checkClaudeAuth).toHaveBeenCalledTimes(1));
+    expect(row().getByText("Checking sign-in…")).toBeVisible();
+    expect(row().queryByText("Ready")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await row().findByText("Sign-in needed")).toBeVisible();
+  } finally {
+    await act(async () => {
+      finish(true);
+      await pending;
+    });
+  }
+  expect(row().getByText("Sign-in needed")).toBeVisible();
+  checkClaudeAuth.mockResolvedValue(true);
+  await act(async () => {
+    await control.installClaude?.();
+  });
+  expect(await row().findByText("Ready")).toBeVisible();
+  expect(row().getByRole("alert")).toHaveTextContent(
+    "Update failed; previous tools retained",
+  );
+  expect(row().queryByText("Sign in to Claude Code")).toBeNull();
+  await user.click(row().getByText("Claude Code install log"));
+  expect(row().getByText("npm error EACCES")).toBeVisible();
 });

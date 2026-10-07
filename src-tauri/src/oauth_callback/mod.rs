@@ -26,7 +26,6 @@ pub(crate) struct OAuthAttempt {
 struct OAuthRequest {
     authorization_url: String,
     callback_path: String,
-    callback_parameter: Option<String>,
     use_state: Option<bool>,
 }
 type CallbackResult = Result<OAuthCallback, String>;
@@ -70,15 +69,9 @@ impl OAuthCallbackHost {
         {
             return Err("Invalid authorization URL".into());
         }
-        let parameter = request
-            .callback_parameter
-            .as_deref()
-            .unwrap_or("redirect_uri");
-        if parameter.is_empty()
-            || parameter == "state"
-            || authorization
-                .query_pairs()
-                .any(|(name, _)| name == "state" || name == parameter)
+        if authorization
+            .query_pairs()
+            .any(|(name, _)| name == "state" || name == "redirect_uri")
         {
             return Err("Invalid authorization parameters".into());
         }
@@ -116,7 +109,7 @@ impl OAuthCallbackHost {
         let callback = format!("http://{authority}{path}");
         authorization
             .query_pairs_mut()
-            .append_pair(parameter, &callback);
+            .append_pair("redirect_uri", &callback);
         // Native-owned, single-use CSRF correlation (RFC 8252 §8.9; RFC 9700 §2.1).
         // Disabled only for an explicit custom-protocol compatibility exception.
         let expected_state = if request.use_state.unwrap_or(true) {
@@ -186,7 +179,6 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
     state: tauri::State<'_, OAuthCallbackHost>,
     authorization_url: String,
     callback_path: String,
-    callback_parameter: Option<String>,
     use_state: Option<bool>,
 ) -> Result<OAuthAttempt, String> {
     // Register and launch inline so reload cleanup cannot overtake a queued begin.
@@ -196,7 +188,6 @@ pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
             OAuthRequest {
                 authorization_url,
                 callback_path,
-                callback_parameter,
                 use_state,
             },
             |url| {

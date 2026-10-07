@@ -1,4 +1,7 @@
-import { editSidebarAssignment } from "../src/features/relay/sidebar-edits.ts";
+import {
+  editSidebarAssignment,
+  validSidebarAssignment,
+} from "../src/features/relay/sidebar-edits.ts";
 import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
@@ -67,27 +70,17 @@ function validAssignmentIntent(intent) {
     typeof intent === "object" &&
     !Array.isArray(intent) &&
     typeof intent.channelId === "string" &&
-    intent.channelId.trim().length > 0 &&
-    intent.channelId.length <= 256 &&
-    (intent.sectionId === undefined ||
-      (typeof intent.sectionId === "string" &&
-        intent.sectionId.trim().length > 0 &&
-        intent.sectionId.length <= 256)) &&
+    (intent.sectionId === undefined || typeof intent.sectionId === "string") &&
     (intent.createSection === undefined ||
-      (intent.sectionId === undefined &&
-        intent.createSection &&
+      (intent.createSection &&
         typeof intent.createSection === "object" &&
         !Array.isArray(intent.createSection) &&
         typeof intent.createSection.id === "string" &&
-        /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
-          intent.createSection.id,
-        ) &&
         typeof intent.createSection.name === "string" &&
-        intent.createSection.name.trim().length > 0 &&
-        intent.createSection.name.length <= 256 &&
         Object.keys(intent.createSection).every((key) =>
           ["id", "name"].includes(key),
         ))) &&
+    validSidebarAssignment(intent) &&
     Object.keys(intent).every((key) =>
       ["channelId", "sectionId", "createSection"].includes(key),
     )

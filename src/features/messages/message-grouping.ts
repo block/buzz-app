@@ -8,6 +8,9 @@ export function continuesMessageGroup(
     !!previous &&
     !previous.membership &&
     !current.membership &&
+    // Legacy output has no workflow ID: one relay signer is not one workflow.
+    !previous.workflowOwnerId &&
+    !current.workflowOwnerId &&
     !current.sentFromThread &&
     !previous.sentFromThread &&
     previous.channelId === current.channelId &&

@@ -1,8 +1,7 @@
 import { useMentionArchives } from "./use-mention-archives";
 import { useContext } from "react";
 import { DraftMentionRoster } from "./draft-mention-roster";
-import { mentionCandidates } from "./mention-candidates";
-import { useAgentChoices } from "../agents/use-choices";
+import { archivedMention } from "./mention-admission";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { useIdentityNames } from "../identity-names/react";
 import { useListedChannel } from "../relay/listed-channel";
@@ -31,7 +30,6 @@ export function RichComposerInput({
   channelId,
   extensions,
   emoji,
-  inviteAgents = false,
   ...input
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -40,11 +38,13 @@ export function RichComposerInput({
   channelId: string;
   extensions: ConversationExtensions | undefined;
   emoji: readonly CustomEmoji[];
-  inviteAgents?: boolean;
 }) {
   const directory = useReferenceDirectory(session);
-  // Candidates read this channel's roster and state during render.
-  useListedChannel(session.channels, channelId, (channel) => channel);
+  const members = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) => channel?.members,
+  );
   useMentionArchives(session);
   const roster = useContext(DraftMentionRoster);
   const profiles = new Map(directory.profiles);
@@ -54,11 +54,12 @@ export function RichComposerInput({
       name: recipient.name,
     });
   const resolveName = useIdentityNames(session.names);
-  useAgentChoices(session, inviteAgents);
+  // Chips name selections among the people who read this destination. Draft
+  // recipients stay in even when archived, so their chips keep a name.
   const candidates = [
     ...new Set([
-      ...mentionCandidates(session, channelId, inviteAgents, roster).map(
-        (c) => c.recipient.pubkey,
+      ...(roster?.map((p) => p.pubkey) ?? members ?? []).filter(
+        (pubkey) => !archivedMention(session, pubkey),
       ),
       ...draft.recipients.map((p) => p.pubkey),
     ]),

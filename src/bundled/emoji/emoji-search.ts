@@ -110,6 +110,13 @@ export function searchCustomEmoji(
 ): readonly EmojiMatch[] {
   return rankEmoji(query, [], custom, limit);
 }
+/** The one match whose shortcode is the typed name; separator-insensitive ranking
+ * ties (`:1:` for `-1`) and community/Unicode namesakes are not exact. */
+export function exactEmoji(query: string, matches: readonly EmojiMatch[]) {
+  const name = query.toLowerCase();
+  const exact = matches.filter((item) => item.shortcode.toLowerCase() === name);
+  return exact.length === 1 ? exact[0]?.id : undefined;
+}
 function rankEmoji(
   query: string,
   native: readonly Standard[],

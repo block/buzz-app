@@ -17,35 +17,3 @@ export function identityTiles(
     profiles: library.definitions.filter((row) => !linked.has(row.id)),
   };
 }
-
-/** Group visible tiles by explicit profile link, never by display-name equality. */
-export function identityGroups(
-  definitions: AgentLibrary["definitions"],
-  identities: ReturnType<typeof identityTiles>["identities"],
-) {
-  const profiles = new Map(definitions.map((row) => [row.id, row]));
-  const groups = new Map<
-    string | undefined,
-    {
-      id: string | undefined;
-      name: string;
-      identities: ReturnType<typeof identityTiles>["identities"];
-    }
-  >();
-  for (const identity of identities) {
-    const id = identity.definitionId;
-    let group = groups.get(id);
-    if (!group) {
-      group = {
-        id,
-        name: id
-          ? profiles.get(id)?.name || "Unavailable profile"
-          : "No linked profile",
-        identities: [],
-      };
-      groups.set(id, group);
-    }
-    group.identities.push(identity);
-  }
-  return [...groups.values()];
-}

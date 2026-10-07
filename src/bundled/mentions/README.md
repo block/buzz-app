@@ -9,7 +9,9 @@ orders the choices, when Space completes a mention, and what a client sends when
 the user mentions someone outside the channel. Clients that follow it give the
 same search the same list and send the same tags.
 
-The `buzz.mentions` plugin implements the chooser. The relay message writer and
+The `buzz.mentions` plugin implements the chooser: the choice set, matching,
+order, and Space. The composer decides which keys a draft may address and asks
+before sending to people outside the channel. The relay message writer and
 message fold implement the tags. This directory owns the spec and the
 [portable fixtures](mention-rules.fixtures.json).
 
@@ -263,12 +265,14 @@ bin/pnpm exec vitest run src/bundled/mentions/mention-ranking.test.ts \
 
 ## Desktop adapter (informative)
 
-- Choice set: [mention-candidates.ts](../../features/messages/mention-candidates.ts)
+- Choice set: [mention-candidates.ts](mention-candidates.ts)
   and [use-mention-choices.ts](use-mention-choices.ts). Directory pages come from
   [useMentionDirectory.ts](useMentionDirectory.ts).
 - Matching, order, and Space: [mention-ranking.ts](mention-ranking.ts).
 - Query syntax: [mention-query.ts](mention-query.ts).
-- Outside-channel prompt: [useNonmemberMentions.tsx](../../features/messages/useNonmemberMentions.tsx).
+- Recipient admission (host): [mention-admission.ts](../../features/messages/mention-admission.ts).
+  Explicit-choice recency (host): [mention-history.ts](../../features/messages/mention-history.ts).
+- Outside-channel prompt (host): [useNonmemberMentions.tsx](../../features/messages/useNonmemberMentions.tsx).
 - Tags: [messages.ts](../../features/relay/messages.ts) writes them, and
   [fold.ts](../../features/relay/fold.ts) reads them.
 

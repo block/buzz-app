@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { useMentionChoices } from "./use-mention-choices";
-import { mentionCandidates } from "../../features/messages/mention-candidates";
+import { mentionCandidates } from "./mention-candidates";
 import { mentionMatch } from "./mention-ranking";
 
 const empty = { status: "unavailable", entries: [] } as const;

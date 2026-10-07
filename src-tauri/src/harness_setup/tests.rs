@@ -1,5 +1,6 @@
 use super::*;
 use std::io::Write as _;
+#[cfg(unix)]
 use std::process::Stdio;
 
 #[tokio::test]

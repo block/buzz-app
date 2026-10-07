@@ -17,7 +17,7 @@ export type MentionDraft = {
 // inline Markdown delimiters *, ~ and ` end a mention here as well: typing a
 // closing delimiter after a chip keeps its recipient. An underscore remains a
 // name suffix, as it does on the timeline.
-const boundary = (text: string, end: number) =>
+export const mentionBoundary = (text: string, end: number) =>
   end === text.length || /[\s.,!?;:()[\]{}*~`]/u.test(text[end] ?? "");
 /** Old text-only drafts remain text-only: restoring prose never creates notifications. */
 export function mentionDraft(value: unknown): MentionDraft {
@@ -43,7 +43,7 @@ export function mentionDraft(value: unknown): MentionDraft {
           item.start >= 0 &&
           item.end <= text.length &&
           text.slice(item.start, item.end) === `@${item.name}` &&
-          boundary(text, item.end),
+          mentionBoundary(text, item.end),
       )
     : [];
   return {

@@ -171,7 +171,9 @@ function Specimen({ example }: { example: Example }) {
 
 function Gallery() {
   useKeyboardFocusVisibility();
-  const [group, setGroup] = useState("all");
+  const [group, setGroup] = useState(
+    new URLSearchParams(location.search).get("group") ?? "all",
+  );
   const [narrow, setNarrow] = useState(false);
   const [revision, setRevision] = useState(0);
   return (

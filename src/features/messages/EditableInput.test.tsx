@@ -9,7 +9,15 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
@@ -158,6 +166,107 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
   act(() => h.input.undo(false));
   expect(h.input).toHaveValue(":x");
+});
+
+describe("Mac WebKit line breaks", () => {
+  let clear: MockInstance<Selection["removeAllRanges"]>;
+  beforeEach(() => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    clear = vi.spyOn(Selection.prototype, "removeAllRanges");
+  });
+  afterEach(() => vi.restoreAllMocks());
+  /** The native caret ProseMirror wrote back. */
+  const native = () => {
+    const selection = document.getSelection();
+    return [
+      selection?.rangeCount,
+      selection?.isCollapsed,
+      selection?.anchorNode?.textContent,
+      selection?.anchorOffset,
+    ];
+  };
+
+  it.each([false, true])(
+    "refreshes an accepted collapsed caret and restores it natively (code block: %s)",
+    (code) => {
+      const h = mount("ab");
+      if (code) act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => expect(h.input.insertLineBreak()).toBe(true));
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("a\nb");
+      expect(h.input.selectionStart).toBe(2);
+      expect(h.input.selectionEnd).toBe(2);
+      expect(native()).toEqual([1, true, "a\nb", 2]);
+    },
+  );
+
+  it.each([
+    ["paragraph", 2],
+    ["code block", "```\nab\n```".length],
+  ] as const)(
+    "restores the caret after a rejected %s line break",
+    (kind, maxLength) => {
+      const h = mount("ab", { maxLength });
+      if (kind === "code block") act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => h.input.insertLineBreak());
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("ab");
+      expect(native()).toEqual([1, true, "ab", 1]);
+    },
+  );
+
+  it("leaves a range selection alone", () => {
+    const h = mount("ab");
+    act(() => h.input.setSelectionRange(0, 2));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("leaves Chromium alone", () => {
+    vi.spyOn(navigator, "vendor", "get").mockReturnValue("Google Inc.");
+    const h = mount("ab");
+    act(() => h.input.setSelectionRange(1, 1));
+    clear.mockClear();
+    act(() => expect(h.input.insertLineBreak()).toBe(true));
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("preserves inline Markdown when a line break reaches the length limit", async () => {
+    const h = mount("_abcd_", { maxLength: 11 });
+    act(() => {
+      h.input.setSelectionRange(0, 6);
+      h.input.toggleFormat("bold");
+      h.input.setSelectionRange(3, 3);
+    });
+    clear.mockClear();
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(h.input).toHaveValue("_ab\ncd_");
+    expect(h.markdown()).toBe("**_ab\ncd_**");
+  });
+
+  it("preserves formatted pasted link source across a line break", async () => {
+    const h = mount();
+    const source = "[label](https://example.com)";
+    paste(h.input, source);
+    act(() => {
+      h.input.setSelectionRange(0, source.length);
+      h.input.toggleFormat("bold");
+      h.input.setSelectionRange(4, 4);
+    });
+    clear.mockClear();
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(h.input.querySelectorAll(":scope > p")).toHaveLength(1);
+    expect(h.input).toHaveValue("[lab\nel](https://example.com) ");
+    expect(h.markdown()).toBe("**[lab\nel](https://example.com)** ");
+  });
 });
 
 /** Exercise ProseMirror's actual MutationObserver/readDOMChange seam, including

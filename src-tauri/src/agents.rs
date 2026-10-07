@@ -680,10 +680,6 @@ impl AgentHost {
         }
         operation(host)
     }
-    /// The shared OS credential store, for the keys of app-run plugin agents.
-    pub(crate) async fn credentials(&self) -> Result<Arc<dyn Credentials>, String> {
-        run(self.clone(), |host| Ok(host.credentials.clone())).await
-    }
     async fn begin_profile(&self, id: &str) -> Result<ProfilePublication, String> {
         let id = id.to_owned();
         run(self.clone(), move |host| {

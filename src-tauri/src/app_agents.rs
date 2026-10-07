@@ -1,24 +1,28 @@
 //! Native custody for agents the app runs through a plugin (Agents2). The key
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event at a time, and native signs and posts it to the agent's community.
-use crate::agents::{profile_http::authorization, AgentHost};
-use buzz_agent_controller::{AppAgent, AppAgents, NewAppAgent};
+use crate::agents::profile_http::authorization;
+use buzz_agent_controller::{AppAgent, AppAgents, Credentials, NewAppAgent, PlatformCredentials};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Serializes identity file writes, and holds the one key awaiting attestation.
+/// It owns its credential handle so Agents2 never waits on, or fails with, the
+/// harness agent controller (whose storage lock another app may hold).
 #[derive(Clone)]
 pub(crate) struct AppAgentHost(
     Arc<tokio::sync::Mutex<Result<AppAgents, String>>>,
     Arc<tokio::sync::Mutex<Option<NewAppAgent>>>,
+    Arc<dyn Credentials>,
 );
 impl AppAgentHost {
     pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
         Self(
             Arc::new(tokio::sync::Mutex::new(path.map(AppAgents::open))),
             Arc::default(),
+            Arc::new(PlatformCredentials::default()),
         )
     }
 }
@@ -67,17 +71,18 @@ pub(crate) async fn app_agent_create_prepare(
 #[tauri::command]
 pub(crate) async fn app_agent_create_commit(
     state: tauri::State<'_, AppAgentHost>,
-    host: tauri::State<'_, AgentHost>,
     pubkey: String,
     auth: Vec<String>,
 ) -> Result<AppAgentSummary, String> {
-    let prepared = state
-        .1
-        .lock()
-        .await
-        .take_if(|prepared| prepared.pubkey() == pubkey)
-        .ok_or("Create request expired; try again")?;
-    let credentials = host.inner().credentials().await?;
+    let prepared = {
+        let mut pending = state.1.lock().await;
+        match pending.as_ref() {
+            Some(prepared) if prepared.pubkey() == pubkey => pending.take(),
+            _ => None,
+        }
+    }
+    .ok_or("Create request expired; try again")?;
+    let credentials = state.2.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let agents = state.0.blocking_lock();
@@ -93,10 +98,9 @@ pub(crate) async fn app_agent_create_commit(
 #[tauri::command]
 pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
-    host: tauri::State<'_, AgentHost>,
     pubkey: String,
 ) -> Result<(), String> {
-    let credentials = host.inner().credentials().await?;
+    let credentials = state.2.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let agents = state.0.blocking_lock();
@@ -122,7 +126,6 @@ pub(crate) struct AppAgentEvent {
 #[tauri::command]
 pub(crate) async fn app_agent_publish(
     state: tauri::State<'_, AppAgentHost>,
-    host: tauri::State<'_, AgentHost>,
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
@@ -130,7 +133,7 @@ pub(crate) async fn app_agent_publish(
         let agents = state.0.lock().await;
         agents.as_ref().map_err(Clone::clone)?.get(&pubkey)?
     };
-    let credentials = host.inner().credentials().await?;
+    let credentials = state.2.clone();
     let (agent, key) = tauri::async_runtime::spawn_blocking(move || {
         agent.read_key(credentials.as_ref()).map(|key| (agent, key))
     })
@@ -151,7 +154,10 @@ pub(crate) async fn app_agent_publish(
     let response = client
         .post(agent.events_url())
         .header("Content-Type", "application/json")
-        .header("Authorization", authorization(agent.http_auth(&key, &bytes)?)?)
+        .header(
+            "Authorization",
+            authorization(agent.http_auth(&key, &bytes)?)?,
+        )
         .header("x-auth-tag", &agent.auth)
         .body(bytes)
         .send()
@@ -159,8 +165,8 @@ pub(crate) async fn app_agent_publish(
         .map_err(|_| "Agent event unconfirmed; it may or may not have been accepted")?;
     let status = response.status();
     let body = response.bytes().await.unwrap_or_default();
-    let receipt: Value = serde_json::from_slice(&body[..body.len().min(16 * 1024)])
-        .unwrap_or(Value::Null);
+    let receipt: Value =
+        serde_json::from_slice(&body[..body.len().min(16 * 1024)]).unwrap_or(Value::Null);
     if !status.is_success()
         || receipt.get("accepted").and_then(Value::as_bool) != Some(true)
         || receipt.get("event_id").and_then(Value::as_str) != Some(event_id.as_str())

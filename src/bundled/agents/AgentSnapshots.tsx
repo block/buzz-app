@@ -355,7 +355,10 @@ export function AgentSnapshotImport({
             provider: snapshot.definition.provider ?? "",
             databricks: null,
           },
-          environment: {},
+          environment:
+            snapshot.definition.parallelism === undefined
+              ? {}
+              : { BUZZ_ACP_AGENTS: String(snapshot.definition.parallelism) },
           ...(picture ? { picture } : {}),
         },
       );
@@ -546,10 +549,17 @@ export function AgentSnapshotImport({
 function snapshotLimitations(snapshot: AgentSnapshot): string[] {
   const d = snapshot.definition;
   return [
+    ...(d.name !== snapshot.profile.displayName
+      ? ["definition and profile names disagree"]
+      : []),
     ...(d.runtime !== "buzz-agent" ? ["runtime (missing or unsupported)"] : []),
     ...(d.respondTo && d.respondTo !== "owner-only" ? ["response policy"] : []),
     ...(d.respondToAllowlist?.length ? ["source response allowlist"] : []),
-    ...(d.parallelism !== undefined ? ["parallelism"] : []),
+    // AgentEdit persists the editable worker override; RuntimeBundle applies it
+    // after imported settings, and buzz-acp consumes BUZZ_ACP_AGENTS (1..=32).
+    ...(d.parallelism !== undefined && d.parallelism > 32
+      ? ["parallelism (native supports 1–32 workers)"]
+      : []),
     ...(d.namePool?.length ? ["name pool"] : []),
     ...(d.idleTimeoutSeconds !== undefined ? ["idle timeout"] : []),
     ...(d.maxTurnDurationSeconds !== undefined ? ["turn timeout"] : []),

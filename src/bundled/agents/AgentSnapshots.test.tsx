@@ -350,10 +350,91 @@ it("does not read a different community's memory while exporting local config", 
   expect(open).not.toHaveBeenCalled();
 });
 
+it.each(["json", "png"] as const)(
+  "imports ordinary reference %s with explicit worker count through native create",
+  async (format) => {
+    const h = importControl();
+    const snapshot = buildAgentSnapshot(portableAgent());
+    snapshot.definition.sourceIsBuiltin = false;
+    snapshot.definition.parallelism = 1;
+    render(
+      <AgentSnapshotImport
+        control={h.control}
+        destination="https://relay.example.test"
+        owner={"ef".repeat(32)}
+        receivedBytes={encodeAgentSnapshot(snapshot, format)}
+        onClose={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Help with the project.")).toBeVisible();
+    expect(h.create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+    expect(h.create.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({ environment: { BUZZ_ACP_AGENTS: "1" } }),
+    );
+  },
+);
+
+it("preserves absent parallelism and blocks counts outside native worker range", async () => {
+  const h = importControl();
+  const snapshot = buildAgentSnapshot(portableAgent());
+  snapshot.definition.parallelism = 33;
+  const { rerender } = render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "json")}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "native supports 1–32 workers",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+  delete snapshot.definition.parallelism;
+  rerender(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "json")}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
+  expect(h.create.mock.calls[0]?.[3]).toEqual(
+    expect.objectContaining({ environment: {} }),
+  );
+});
+
+it("blocks divergent definition and profile names rather than silently losing one", async () => {
+  const h = importControl();
+  const snapshot = buildAgentSnapshot(portableAgent());
+  snapshot.definition.name = "Different source name";
+  render(
+    <AgentSnapshotImport
+      control={h.control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      receivedBytes={encodeAgentSnapshot(snapshot, "json")}
+      onClose={() => {}}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "definition and profile names disagree",
+  );
+  expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+  expect(h.create).not.toHaveBeenCalled();
+});
+
 it("previews valid but unsupported reference settings and blocks creation", async () => {
   const h = importControl();
   const snapshot = buildAgentSnapshot(portableAgent());
-  snapshot.definition.parallelism = 4;
+  snapshot.definition.parallelism = 33;
   snapshot.definition.respondTo = "allowlist";
   snapshot.definition.respondToAllowlist = ["source-identity"];
   render(

@@ -54,7 +54,8 @@ if (base.status === 0) {
       .split("\0")
       .filter(Boolean);
   const files = changed();
-  const source = /^(?:src|dev)\/.*\.(?:[cm]?[jt]sx?)$/s;
+  const source =
+    /^(?:(?:src|browser-host)\/.*\.(?:[cm]?[jt]sx?)|scripts\/(?:developer-settings(?:\.test)?\.(?:ts|mjs)|live-setup-probe(?:\.test)?\.mjs))$/s;
   const shared =
     /^(?:package\.json|pnpm-lock\.yaml|(?:vitest|vite)\.config\.[cm]?[jt]s|tsconfig[^/]*\.json|tests\/relay-config\.ts|bin\/)/;
   const rust =
@@ -69,7 +70,7 @@ if (base.status === 0) {
   }
   if (design) {
     const input =
-      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$|\.githooks\/pre-push$)/s;
+      /^(?:src\/.*\.(?:css|tsx?|jsx?)$|tests\/fixtures\/design-system(?:\/|\.html$)|scripts\/design-system\/|(?:vite|vitest)\.design\.config\.|scripts\/check-push\.mjs$|lefthook\.yml$)/s;
     if (!files.some((file) => shared.test(file) || input.test(file))) {
       console.log(
         "No design-system inputs changed; remaining checks run in CI.",

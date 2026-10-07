@@ -424,7 +424,7 @@ durable account-owned intent survives without exposing revoked context projectio
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
   reverified disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
-- `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
+- `browser-host/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.
 - `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
   presentation, unchanged summary counts, hover/keyboard-focus treatment, independent

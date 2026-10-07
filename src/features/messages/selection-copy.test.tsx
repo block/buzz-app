@@ -82,6 +82,12 @@ describe("serializeNode", () => {
       "[#design](buzz://channel/design)",
     ],
     [
+      anchor("http://example.com/docs", "docs"),
+      "docs",
+      "docs (http://example.com/docs)",
+      "[docs](http://example.com/docs)",
+    ],
+    [
       anchor("https://example.com/docs", "docs"),
       "docs",
       "docs (https://example.com/docs)",
@@ -164,6 +170,28 @@ describe("serializeNode", () => {
       7,
     );
     expect(serializeNode(paragraph, "markdown", range)).toBe("Desktop");
+  });
+
+  it("copies labelled and shortened raw HTTP links through every clipboard format", () => {
+    const raw = "http://example.com/a/long/destination";
+    const paragraph = query(
+      "p",
+      mount(
+        row(
+          `<p>${anchor(raw, "", "example.com/a/long…")} ${anchor("http://example.com/docs", "docs")}</p>`,
+        ),
+      ),
+    );
+    expect(each(paragraph)).toEqual({
+      text: `${raw} docs (http://example.com/docs)`,
+      markdown: `${raw} [docs](http://example.com/docs)`,
+      html: `<p><a href="${raw}">${raw}</a> <a href="http://example.com/docs">docs</a></p>`,
+    });
+    const template = document.createElement("template");
+    template.innerHTML = serializeNode(paragraph, "html");
+    expect(serializeNode(template.content, "markdown")).toBe(
+      serializeNode(paragraph, "markdown"),
+    );
   });
 
   it("reads its own HTML back into the same Markdown", () => {
@@ -358,7 +386,7 @@ describe("serializeNode", () => {
       "p",
       mount(
         row(
-          `<p>${anchor("javascript:alert(1)", "x")} ${anchor("http://example.com/", "plain")} ${anchor("https://user:pw@example.com/", "", "example.com")} ${anchor("buzz://channel/bad id", "#bad")} ${mention("Spoof", "nostr:npub1invalid")} ${mention("Agent", `buzz:agent-profile:${person}`)}</p>`,
+          `<p>${anchor("javascript:alert(1)", "x")} ${anchor("http://user:pw@example.com/", "plain")} ${anchor("https://user:pw@example.com/", "", "example.com")} ${anchor("buzz://channel/bad id", "#bad")} ${mention("Spoof", "nostr:npub1invalid")} ${mention("Agent", `buzz:agent-profile:${person}`)}</p>`,
         ),
       ),
     );

@@ -727,6 +727,40 @@ it.each([true, false])(
   },
 );
 
+it("adds and edits HTTP links through the composer, but rejects credentialed URLs", () => {
+  const h = mount("docs", { links: true });
+  act(() => h.input.setSelectionRange(0, 4));
+  const add = h.input.editLink();
+  expect(add?.existing).toBe(false);
+  act(() => expect(add?.save("docs", "http://example.com/docs")).toBe(true));
+  expect(h.markdown()).toBe("[docs](http://example.com/docs)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({
+    existing: true,
+    href: "http://example.com/docs",
+  });
+  act(() => expect(edit?.save("guide", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+
+  act(() => h.input.setSelectionRange(1, 1));
+  const unsafe = h.input.editLink();
+  act(() =>
+    expect(unsafe?.save("guide", "http://user:pw@example.com")).toBe(false),
+  );
+  expect(h.markdown()).toBe("[guide](http://localhost:3000/)");
+});
+
+it("edits a detected plain HTTP link", () => {
+  const h = mount("See http://localhost:3000", { links: true });
+  act(() => h.input.setSelectionRange(8, 8));
+  const edit = h.input.editLink();
+  expect(edit).toMatchObject({ existing: true, href: "http://localhost:3000" });
+  act(() => expect(edit?.save("local", "http://localhost:3000")).toBe(true));
+  expect(h.markdown()).toBe("See [local](http://localhost:3000/)");
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };

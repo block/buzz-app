@@ -605,7 +605,7 @@ included.
 
 ### Evidence and remaining acceptance
 
-Archive regression coverage lives in `dev/archive.test.mjs`,
+Archive regression coverage lives in `browser-host/archive.test.mjs`,
 `src-tauri/src/archive/tests.rs`, `src/features/archive/client.test.ts`, the
 activity/session/native transport tests, and `src/app/ArchiveSettings.test.tsx`.
 The real Tauri IPC test exercises command ACL, persisted encrypted rows through two
@@ -617,7 +617,7 @@ agent ownership admission, human acceptance and hosted cross-platform checks rem
 separate gates; consult the PR for results tied to its exact head. Historical
 validation below predates this archive rework and is not evidence for the new head.
 
-`dev/agent-observer.test.mjs`, `dev/relay-broker-live.test.mjs`, and the activity/live
+`browser-host/agent-observer.test.mjs`, `browser-host/relay-broker-live.test.mjs`, and the activity/live
 service tests cover signed/encrypted WS → host decode → SSE → actual session,
 route generations, no chat reconciliation, terminal retention and stale controls.
 `tests/browser/agent-activity.spec.mjs` covers the actual plugin, raw HTML

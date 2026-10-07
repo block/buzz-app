@@ -1,4 +1,4 @@
-// Packaged-desktop Builderlab account backend, mirroring dev/builderlab.mjs route for
+// Packaged-desktop Builderlab account backend, mirroring browser-host/builderlab.mjs route for
 // route. The session credential lives only in this plugin's memory; native code owns
 // the browser callback, host HTTP, and the kind 24243 binding signature.
 import { invoke } from "@tauri-apps/api/core";

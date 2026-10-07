@@ -991,6 +991,76 @@ it("retires a card Start failure after the editor starts and stops the agent", a
   expect(within(management).getByText("Process stopped")).toBeVisible();
   expect(within(management).queryByText(/The agent didn't start/)).toBeNull();
 });
+it("creates and starts Claude with its own defaults after switching from Buzz Agent", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const commit = vi.fn();
+  const start = vi.fn();
+  setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.data.harnessOptions?.push({
+      command: "/fixture/claude-agent-acp",
+      label: "Claude Code",
+      available: true,
+      defaultArgs: [],
+      providers: [],
+    });
+    fixture.host.prepareCreate = async () => ({
+      id: "claude-agent",
+      pubkey: "ab".repeat(32),
+    });
+    fixture.host.commitCreate = commit.mockImplementation(
+      async (_requestId, edit) => {
+        fixture.data.agents.push({
+          ...structuredClone(fixture.agent),
+          id: "claude-agent",
+          name: edit.name,
+          harness: { ...fixture.agent.harness, ...edit.harness },
+          status: "stopped",
+        });
+        return structuredClone(fixture.data);
+      },
+    );
+    fixture.host.action = start.mockImplementation(async (id) => {
+      const agent = fixture.data.agents.find((item) => item.id === id);
+      if (!agent) throw Error("Missing fixture identity");
+      agent.status = "running";
+      return structuredClone(fixture.data);
+    });
+  });
+  await user.click(await screen.findByRole("button", { name: "Create agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(dialog).getByLabelText("Name"), "Claude helper");
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Claude Code" }));
+  expect(
+    within(dialog).getByText(
+      /Claude Code uses its own default model and sign-in/,
+    ),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("combobox", { name: /Provider|Model/ }),
+  ).toBeNull();
+  expect(
+    within(dialog).queryByRole("button", {
+      name: /Browse models|Test connection/,
+    }),
+  ).toBeNull();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Create agent" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit.mock.calls[0]?.[1].harness).toMatchObject({
+    command: "/fixture/claude-agent-acp",
+    args: [],
+    model: "",
+    provider: "",
+  });
+  expect(start).toHaveBeenCalledWith("claude-agent", "start");
+});
+
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
   const add = await screen.findByRole("button", { name: "Create agent" });

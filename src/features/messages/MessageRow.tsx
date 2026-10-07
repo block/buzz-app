@@ -44,7 +44,10 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
-import { MessageManagementItems } from "./MessageManagement";
+import {
+  MessageManagementItems,
+  MessageReadStateItem,
+} from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
@@ -384,7 +387,7 @@ export const MessageRow = memo(function MessageRow({
                   statusBadge={presence === "unknown" ? undefined : presence}
                 />
                 {presence !== "unknown" && (
-                  <span className="sr-only" id={presenceId}>
+                  <span className="sr-only select-none" id={presenceId}>
                     Presence: {presence}
                   </span>
                 )}
@@ -497,6 +500,11 @@ export const MessageRow = memo(function MessageRow({
                     />
                   ) : undefined)
                 }
+                leadingItems={
+                  session ? (
+                    <MessageReadStateItem row={row} session={session} />
+                  ) : undefined
+                }
                 overflowItems={
                   <>
                     {overflowItems ??
@@ -508,8 +516,14 @@ export const MessageRow = memo(function MessageRow({
                 }
               />
             )}
+            {/* Screen-reader text stays out of selections: the clipboard carries
+                what the reader saw, so a continuation copies without a byline. */}
             <div
-              className={layout === "continuation" ? "sr-only" : styles.byline}
+              className={
+                layout === "continuation"
+                  ? "sr-only select-none"
+                  : styles.byline
+              }
             >
               {row.workflowOwnerId && workflowOwnerName ? (
                 <WorkflowByline

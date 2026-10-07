@@ -10,8 +10,8 @@ pub(crate) const MAX_AGENTS: usize = 2000;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionPolicy {
-    #[default]
     Channel,
+    #[default]
     Thread,
 }
 

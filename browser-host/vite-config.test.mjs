@@ -36,6 +36,10 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                   { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
                 );
                 assert.equal(
+                  result.config.plugins.some(p => p?.name === 'buzz-relay-broker'),
+                  command === 'serve',
+                );
+                assert.equal(
                   result.config.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
                   JSON.stringify(command === 'serve' && setting === '0' ? '1' : '0'),
                 );

@@ -9,8 +9,11 @@ import {
 import { keypair } from "./testing";
 import { eventDto, type RelayEvent } from "./events";
 // Test the real host codec with ephemeral identities, never a bypass signer.
-// @ts-expect-error Node-only host module
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Node-only host module
+} from "../../../browser-host/read-state.mjs";
 import type { ReadStateSigning } from "./read-state-host";
 
 const owners: ReturnType<typeof createReadState>[] = [];

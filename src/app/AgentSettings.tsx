@@ -93,7 +93,11 @@ export function AgentSettings({
   const available = coreHarnesses.every((option) => !!option?.status);
   const pi = coreHarnesses[2];
   const presets =
-    options?.filter((option) => !!harnessPreset(option.command)) ?? [];
+    options?.filter(
+      (option) =>
+        !!harnessPreset(option.command) &&
+        harnessKind(option.command) !== "claude",
+    ) ?? [];
   const harnesses = [
     ...coreHarnesses,
     ...presets.filter((option) => option.available),
@@ -439,25 +443,27 @@ export function AgentSettings({
             <p className="text-label text-secondary">
               {selected?.available ? "Installed" : "Setup"}
             </p>
-            {harnessPresets.map((preset) => (
-              <NavigationItem
-                key={preset.id}
-                label={
-                  options?.find(
-                    (option) => harnessPreset(option.command) === preset,
-                  )?.label ?? preset.label
-                }
-                selected={preset === setup}
-                onClick={() => setSelectedPresetId(preset.id)}
-                icon={
-                  preset.id === "hermes" ? (
-                    <HermesLogoIcon size={24} />
-                  ) : (
-                    <TerminalWindowIcon size={24} />
-                  )
-                }
-              />
-            ))}
+            {harnessPresets
+              .filter((preset) => preset.id !== "claude")
+              .map((preset) => (
+                <NavigationItem
+                  key={preset.id}
+                  label={
+                    options?.find(
+                      (option) => harnessPreset(option.command) === preset,
+                    )?.label ?? preset.label
+                  }
+                  selected={preset === setup}
+                  onClick={() => setSelectedPresetId(preset.id)}
+                  icon={
+                    preset.id === "hermes" ? (
+                      <HermesLogoIcon size={24} />
+                    ) : (
+                      <TerminalWindowIcon size={24} />
+                    )
+                  }
+                />
+              ))}
           </nav>
           <section
             aria-labelledby="preset-catalog-title"

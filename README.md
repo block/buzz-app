@@ -4,6 +4,19 @@ Shared React frontend for web and Tauri desktop, with bundled page plugins and
 local desktop plugins managed by `buzzodz`. Channels reads the relay through a
 shared data service; the GitHub plugin adds rich reference panels to channels.
 
+## Source layout
+
+- `src/`: shared browser-compatible application UI and feature logic.
+- [`browser-host/`](browser-host/README.md): Node host for browser development
+  and tests; not a production browser backend or code shipped in desktop.
+- `src-tauri/`: native Rust host used by desktop development and releases.
+- `scripts/`: development/build tooling, including Vite developer settings and
+  the live setup diagnostic probe.
+
+See [shared logic and host boundaries](docs/contributing.md#shared-logic-and-host-boundaries)
+for ownership and runtime modes. Host-specific custody and I/O stay in the host;
+platform-neutral feature policy belongs in its existing `src/features/*` owner.
+
 ## Run
 
 Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
@@ -46,8 +59,10 @@ See the [host-mode matrix](docs/contributing.md#shared-logic-and-host-boundaries
 `just iterate` applies formatting and runs fast checks plus the frontend build.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
 those checks in cached, parallel jobs with sharded browser journeys.
-Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
-`bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
+Staged-file pre-commit and related-test pre-push hooks run through lhm where it
+is installed; otherwise run `just hooks` (or `bin/just hooks` without activation)
+once per clone. See
+[hook behavior and partial staging](docs/contributing.md#git-hooks).
 
 ### Design system
 

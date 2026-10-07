@@ -389,7 +389,8 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         .iter()
         .map(|e| e.field.as_str())
         .collect();
-    assert_eq!(fields, ["name", "system_prompt"]);
+    // Inheriting the device default moves this imported (Channel) agent to Thread, so the restart badge includes it.
+    assert_eq!(fields, ["name", "session_policy", "system_prompt"]);
     assert_eq!(
         fs::read_to_string(dir.path().join("starts")).unwrap(),
         first
@@ -1153,6 +1154,73 @@ fn launch_path_puts_bundled_tools_before_platform_tools() {
 
 #[test]
 #[cfg(unix)]
+fn claude_launch_uses_its_node_and_preserves_harness_defaults() {
+    let dir = tempfile::Builder::new()
+        .prefix("Claude tools ")
+        .tempdir()
+        .unwrap();
+    let runtime = bundle(dir.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.model.clear();
+    saved.harness.provider.clear();
+    let bin = dir.path().join("claude-tools/bin");
+    fs::create_dir_all(&bin).unwrap();
+    let adapter = bin.join("claude-agent-acp");
+    let cli = bin.join("claude");
+    for path in [&adapter, &cli] {
+        fs::copy(dir.path().join("buzz-agent"), path).unwrap();
+    }
+    let node = dir.path().join("runtimes/node/v24.18.0").join(
+        match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("macos", "aarch64") => "darwin-arm64/bin/node",
+            ("macos", _) => "darwin-x64/bin/node",
+            ("linux", "aarch64") => "linux-arm64/bin/node",
+            _ => "linux-x64/bin/node",
+        },
+    );
+    fs::create_dir_all(node.parent().unwrap()).unwrap();
+    fs::copy(dir.path().join("buzz-agent"), &node).unwrap();
+    saved.harness.command = adapter.to_string_lossy().into_owned();
+    let command = runtime
+        .command_with_defaults(&saved, &key, &deployment_defaults())
+        .unwrap();
+    let environment: BTreeMap<_, _> = command.get_envs().collect();
+    let env = |name| environment[std::ffi::OsStr::new(name)].unwrap();
+    assert_eq!(env("BUZZ_ACP_AGENT_COMMAND"), adapter.as_os_str());
+    assert_eq!(env("BUZZ_ACP_AGENT_ARGS"), "");
+    let path: Vec<_> = std::env::split_paths(env("PATH")).collect();
+    assert_eq!(
+        &path[..3],
+        &[dir.path(), node.parent().unwrap(), bin.as_path()]
+    );
+    assert!(!environment.contains_key(std::ffi::OsStr::new("BUZZ_ACP_MODEL")));
+    assert_eq!(env("CLAUDE_CODE_EXECUTABLE"), cli.as_os_str());
+    saved
+        .environment
+        .insert("CLAUDE_CODE_EXECUTABLE".into(), "/custom/claude".into());
+    let override_command = runtime.command(&saved, &key).unwrap();
+    assert!(override_command
+        .get_envs()
+        .any(|(name, value)| name == "CLAUDE_CODE_EXECUTABLE"
+            && value == Some(std::ffi::OsStr::new("/custom/claude"))));
+    saved.harness.model = "old-model".into();
+    assert!(runtime
+        .command(&saved, &key)
+        .unwrap_err()
+        .contains("Use Claude Code defaults"));
+    saved.harness.model.clear();
+    fs::remove_file(&cli).unwrap();
+    // The managed Node remains required even when another installation is on PATH.
+    fs::remove_file(node).unwrap();
+    assert!(runtime
+        .command(&saved, &key)
+        .unwrap_err()
+        .contains("Install Node.js for Claude Code"));
+}
+
+#[test]
+#[cfg(unix)]
 fn start_and_restart_reject_missing_saved_identities() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -1166,6 +1234,90 @@ fn start_and_restart_reject_missing_saved_identities() {
         assert!(controller.action("missing", action).is_err());
     }
     assert!(controller.running.is_empty());
+}
+
+#[test]
+fn external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides() {
+    const FIXTURE: &str = "BUZZ_CLAUDE_LAUNCH_FIXTURE";
+    let Some(root) = std::env::var_os(FIXTURE) else {
+        let dir = tempfile::Builder::new()
+            .prefix("External Claude ")
+            .tempdir()
+            .unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::tests::external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides", "--nocapture"])
+            .env(FIXTURE, dir.path())
+            .env("HOME", dir.path().join("home"))
+            .env("PATH", dir.path().join("tools"))
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
+    let runtime = bundle(&root);
+    let bin = root.join("tools");
+    fs::create_dir_all(&bin).unwrap();
+    let adapter = bin.join(if cfg!(windows) {
+        "claude-agent-acp.cmd"
+    } else {
+        "claude-agent-acp"
+    });
+    let cli = bin.join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
+    let node = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let fixture = root.join(format!("buzz-agent{}", std::env::consts::EXE_SUFFIX));
+    for path in [&adapter, &cli, &node] {
+        fs::copy(&fixture, path).unwrap();
+    }
+    let mut saved = agent(&root);
+    saved.harness.command = adapter.to_string_lossy().into_owned();
+    saved.harness.model.clear();
+    saved.harness.provider.clear();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = runtime.command(&saved, &key).unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_ACP_AGENT_COMMAND")],
+        Some(adapter.as_os_str())
+    );
+    let path: Vec<_> = std::env::split_paths(env[std::ffi::OsStr::new("PATH")].unwrap()).collect();
+    assert_eq!(path[1], bin);
+    if cfg!(windows) {
+        assert!(!env.contains_key(std::ffi::OsStr::new("CLAUDE_CODE_EXECUTABLE")));
+        let native = bin.join("claude.exe");
+        fs::copy(&fixture, &native).unwrap();
+        let command = runtime.command(&saved, &key).unwrap();
+        assert!(command.get_envs().any(
+            |(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value == Some(native.as_os_str())
+        ));
+    } else {
+        assert_eq!(
+            env[std::ffi::OsStr::new("CLAUDE_CODE_EXECUTABLE")],
+            Some(cli.as_os_str())
+        );
+    }
+    fs::remove_file(&cli).unwrap();
+    if cfg!(windows) {
+        fs::remove_file(bin.join("claude.exe")).unwrap();
+    }
+    let custom_cli = root.join(format!("custom-claude{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(&fixture, &custom_cli).unwrap();
+    saved.environment.insert(
+        "CLAUDE_CODE_EXECUTABLE".into(),
+        custom_cli.to_string_lossy().into_owned(),
+    );
+    let command = runtime.command(&saved, &key).unwrap();
+    assert!(command.get_envs().any(|(name, value)| {
+        name == "CLAUDE_CODE_EXECUTABLE" && value == Some(custom_cli.as_os_str())
+    }));
 }
 
 #[test]
@@ -1488,7 +1640,7 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     assert_eq!(env["BUZZ_AGENT_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
-    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("channel"));
+    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("thread"));
     assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
     assert_eq!(
         env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
@@ -2718,6 +2870,8 @@ fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
         host: "https://old.example".into(),
         filter: String::new(),
     });
+    // Pin the policy explicitly so the raw and effective configs agree and only the model is under test.
+    a.session_policy = Some(crate::config::SessionPolicy::Channel);
     let first = crate::restart::spawn_config(&a);
     let matching_default = crate::agent_defaults::AgentDefaults {
         harness: "buzz-agent".into(),

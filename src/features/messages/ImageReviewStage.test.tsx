@@ -48,6 +48,7 @@ function press(target: HTMLElement, from: { x: number; y: number }, to = from) {
   fireEvent.pointerDown(target, {
     pointerId: 1,
     button: 0,
+    isPrimary: true,
     clientX: from.x,
     clientY: from.y,
   });
@@ -726,7 +727,7 @@ it("does not zoom any gallery image with a press held across navigation", () => 
   const image = screen.getByRole("img", { name: "Attachment preview" });
   const stage = image.parentElement;
   if (!stage) throw new Error("Missing stage");
-  fireEvent.pointerDown(image, { pointerId: 1, button: 0 });
+  fireEvent.pointerDown(image, { pointerId: 1, button: 0, isPrimary: true });
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(screen.getByText("2 / 3")).toBeVisible();
   fireEvent.pointerUp(stage, { pointerId: 1 });
@@ -737,6 +738,7 @@ it("does not zoom any gallery image with a press held across navigation", () => 
     {
       pointerId: 1,
       button: 0,
+      isPrimary: true,
     },
   );
   fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
@@ -760,7 +762,12 @@ it.each([
   (_, order) => {
     const { stage, image } = setup();
     for (const pointerId of [1, 2])
-      fireEvent.pointerDown(image, { pointerId, button: 0, clientX: 250 });
+      fireEvent.pointerDown(image, {
+        pointerId,
+        button: 0,
+        isPrimary: pointerId === 1,
+        clientX: 250,
+      });
     for (const pointerId of order)
       fireEvent.pointerUp(stage, { pointerId, clientX: 250 });
     expect(percent()).toBe("100%");
@@ -769,15 +776,41 @@ it.each([
   },
 );
 
+it("does not click-zoom a non-primary image contact without a stage-owned press", () => {
+  const { stage, image } = setup();
+  // The primary contact may be on the toolbar or outside this stage.
+  fireEvent.pointerDown(image, {
+    pointerId: 2,
+    button: 0,
+    isPrimary: false,
+    clientX: 250,
+    clientY: 200,
+  });
+  fireEvent.pointerUp(stage, { pointerId: 2, clientX: 250, clientY: 200 });
+  expect(percent()).toBe("100%");
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("200%");
+});
+
 it.each(["pointerCancel", "lostPointerCapture"] as const)(
   "ends only the owning press on %s",
   (type) => {
     const { stage, image } = setup();
-    fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 250 });
+    fireEvent.pointerDown(image, {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+      clientX: 250,
+    });
     fireEvent[type](stage, { pointerId: 2 });
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
     expect(percent()).toBe("200%");
-    fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 250 });
+    fireEvent.pointerDown(image, {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+      clientX: 250,
+    });
     fireEvent[type](stage, { pointerId: 1 });
     fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
     expect(percent()).toBe("200%");

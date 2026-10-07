@@ -247,7 +247,7 @@ export function ImageReviewStage({
           origin: { x: event.clientX, y: event.clientY },
           offset,
           panning: pannable,
-          click: event.target === image.current,
+          click: event.isPrimary && event.target === image.current,
         };
         // Capture so the release always ends this press, even off the stage.
         event.currentTarget.setPointerCapture(event.pointerId);

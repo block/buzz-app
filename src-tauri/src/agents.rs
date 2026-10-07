@@ -75,6 +75,7 @@ struct HarnessOption {
     update_supported: Option<bool>,
     default_args: Vec<String>,
     providers: &'static [ProviderOption],
+    configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy,
 }
 
 #[derive(Serialize)]
@@ -309,55 +310,62 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             node: buzz_agent_controller::managed_tool(app_data, "node"),
         },
     );
-    let mut options = vec![
-        HarnessOption {
-            command: "buzz-agent".into(),
-            label: "Buzz Agent",
-            available: true,
-            status: "ready",
-            install_supported: None,
-            update_supported: None,
-            default_args: vec![],
-            // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
-            providers: &[
-                ProviderOption {
-                    value: "databricks_v2",
-                    label: "Databricks v2",
-                },
-                ProviderOption {
-                    value: "openai",
-                    label: "OpenAI",
-                },
-            ][usize::from(cfg!(windows))..],
-        },
-        HarnessOption {
-            command: "goose".into(),
-            label: "Goose",
-            available: true,
-            status: "ready",
-            install_supported: None,
-            update_supported: None,
-            default_args: vec![],
-            providers: GOOSE_PROVIDERS,
-        },
-        HarnessOption {
-            command: pi.map_or_else(
-                || "buzz-pi-acp".into(),
-                |p| p.to_string_lossy().into_owned(),
-            ),
-            label: "Pi",
-            available: pi_status == "ready",
-            status: pi_status,
-            install_supported: Some(cfg!(all(
-                any(target_os = "macos", target_os = "linux"),
-                any(target_arch = "x86_64", target_arch = "aarch64")
-            ))),
-            update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
-            default_args: vec![],
-            // Pi reports signed-in providers through its model catalog.
-            providers: &[],
-        },
-    ];
+    let mut options =
+        vec![
+            HarnessOption {
+                command: "buzz-agent".into(),
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-agent"),
+                label: "Buzz Agent",
+                available: true,
+                status: "ready",
+                install_supported: None,
+                update_supported: None,
+                default_args: vec![],
+                // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
+                providers: &[
+                    ProviderOption {
+                        value: "databricks_v2",
+                        label: "Databricks v2",
+                    },
+                    ProviderOption {
+                        value: "openai",
+                        label: "OpenAI",
+                    },
+                ][usize::from(cfg!(windows))..],
+            },
+            HarnessOption {
+                command: "goose".into(),
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("goose"),
+                label: "Goose",
+                available: true,
+                status: "ready",
+                install_supported: None,
+                update_supported: None,
+                default_args: vec![],
+                providers: GOOSE_PROVIDERS,
+            },
+            HarnessOption {
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-pi-acp"),
+                command: pi.map_or_else(
+                    || "buzz-pi-acp".into(),
+                    |p| p.to_string_lossy().into_owned(),
+                ),
+                label: "Pi",
+                available: pi_status == "ready",
+                status: pi_status,
+                install_supported: Some(cfg!(all(
+                    any(target_os = "macos", target_os = "linux"),
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                ))),
+                update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
+                default_args: vec![],
+                // Pi reports signed-in providers through its model catalog.
+                providers: &[],
+            },
+        ];
     options.extend(
         buzz_agent_controller::harness_presets()
             .iter()
@@ -366,6 +374,9 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     );
     let claude = claude_setup(app_data);
     options.push(HarnessOption {
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+            "claude-agent-acp",
+        ),
         command: claude.adapter.map_or_else(
             || "claude-agent-acp".into(),
             |path| path.to_string_lossy().into_owned(),
@@ -386,6 +397,9 @@ fn preset_option(
     command: Option<PathBuf>,
 ) -> HarnessOption {
     HarnessOption {
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+            &preset.command,
+        ),
         available: command.is_some(),
         status: if command.is_some() {
             "ready"

@@ -466,10 +466,45 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         json!({
             "command":"buzz-agent", "label":"Buzz Agent",
             "available":true, "status":"ready", "defaultArgs":[],
-            "providers": providers
+            "providers": providers,
+            "configurationPolicy": {
+                "authentication": "provider", "provider": "selector",
+                "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+                "selectorEnvironment": {"model": "BUZZ_AGENT_MODEL", "provider": "BUZZ_AGENT_PROVIDER"}
+            }
         })
     );
     assert_eq!(before["harnessOptions"][2]["label"], "Pi");
+    assert_eq!(
+        before["harnessOptions"][2]["configurationPolicy"],
+        json!({
+            "authentication": "harnessWithOverrides", "provider": "discovered",
+            "supportedModes": [], "model": "withProvider", "effortDiscovery": "unknown",
+            "selectorEnvironment": null
+        })
+    );
+    assert_eq!(
+        before["harnessOptions"][1]["configurationPolicy"],
+        json!({
+            "authentication": "harnessWithOverrides", "provider": "selector",
+            "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+            "selectorEnvironment": {"model": "GOOSE_MODEL", "provider": "GOOSE_PROVIDER"}
+        })
+    );
+    let external_policy = json!({
+        "authentication": "external", "provider": "external",
+        "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+        "selectorEnvironment": null
+    });
+    for label in ["Hermes Agent", "Claude Code"] {
+        let option = before["harnessOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["label"] == label)
+            .unwrap();
+        assert_eq!(option["configurationPolicy"], external_policy);
+    }
     assert_eq!(
         before["harnessOptions"][2]["available"],
         before["harnessOptions"][2]["status"] == "ready"

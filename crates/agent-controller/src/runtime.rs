@@ -880,16 +880,6 @@ impl Controller {
             .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
             .and_then(|tag| tag.into_iter().nth(1)))
     }
-    /// Sign out's "Also remove my agents": stop and delete every local agent and its key.
-    /// Deployed remote agents keep running remotely; the device wipe drops their record.
-    pub fn remove_local_agents(&mut self) -> Result<()> {
-        for agent in self.store.agents()? {
-            if !agent.deployed_remote() {
-                self.delete(&agent.id, agent.revision)?;
-            }
-        }
-        Ok(())
-    }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
         let agents = self.store.agents()?;
         let agent = agents
@@ -1309,4 +1299,17 @@ pub fn check_owner(attested: Option<&str>, signed_in: Option<&str>) -> Result<()
         ),
         _ => Ok(()),
     }
+}
+
+/// Sign out's "Also remove my agents", run at launch before the wipe: delete every
+/// local agent's key from the registry at `root`. Repeatable, because deleting an
+/// absent key succeeds; the registry itself is left for the wipe. Deployed remote
+/// agents keep running remotely; the wipe drops their record.
+pub fn delete_local_agent_keys(root: PathBuf, credentials: &dyn Credentials) -> Result<()> {
+    for agent in Store::open(root)?.agents()? {
+        if !agent.deployed_remote() {
+            credentials.delete(&agent.credential_id, &agent.pubkey)?;
+        }
+    }
+    Ok(())
 }

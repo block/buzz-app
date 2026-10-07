@@ -65,7 +65,7 @@ fn kept_agents_start_only_for_their_attested_owner() {
     store
         .insert(vec![saved.clone(), unattested.clone()])
         .unwrap();
-    let mut controller = Controller::new(
+    let controller = Controller::new(
         store,
         Arc::new(Memory),
         Err("No fixture runtime".into()),
@@ -80,9 +80,54 @@ fn kept_agents_start_only_for_their_attested_owner() {
     );
     // Launch validation, not this check, refuses a missing attestation.
     assert!(controller.check_owner(&unattested.id, None).is_ok());
-    // Sign out's "Also remove my agents" removes every local agent.
-    controller.remove_local_agents().unwrap();
-    assert!(controller.snapshot().unwrap().agents.is_empty());
+}
+/// Agent keys left in a fake keychain; deleting the second one fails once.
+struct Keychain(std::sync::Mutex<(Vec<String>, bool)>);
+impl Credentials for Keychain {
+    fn delete(&self, id: &str, _: &str) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.1 && id == "second" {
+            state.1 = false;
+            return Err("keychain interrupted".into());
+        }
+        state.0.retain(|kept| kept != id);
+        Ok(())
+    }
+    fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
+        unreachable!()
+    }
+    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>> {
+        unreachable!()
+    }
+    fn add(&self, _: &str, _: &Secret) -> Result<()> {
+        unreachable!()
+    }
+}
+#[test]
+fn sign_out_agent_key_removal_resumes_after_an_interruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut first = agent(dir.path());
+    first.credential_id = "first".into();
+    let mut second = agent(dir.path());
+    second.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    second.pubkey = "ab".repeat(32);
+    second.credential_id = "second".into();
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![first, second])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((
+        vec!["first".into(), "second".into()],
+        true,
+    )));
+    // Interrupted between the two deletions: the first key is gone, the registry stays.
+    assert!(delete_local_agent_keys(root.clone(), &keychain).is_err());
+    assert_eq!(keychain.0.lock().unwrap().0, ["second"]);
+    // Repeating it, including the already-deleted key, finishes the job.
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    assert_eq!(Store::open(root).unwrap().agents().unwrap().len(), 2);
 }
 #[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {

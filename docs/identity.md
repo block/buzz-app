@@ -74,31 +74,35 @@ and ticks "I have my key". **Also wipe this device** requires typing
 `wipe all my data`; **Also remove my agents** appears only with wipe. Wipe clears
 this app's data, local data, WebView storage, caches and plugin storage. It cannot
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
-is unavailable with the development broker (`BUZZ_DEV_VIEWER`).
+is unavailable with the development broker (`BUZZ_DEV_VIEWER`) and in
+development builds, which share the human key, agent keys and plugin storage
+with each other whatever their identifier. Wipe is unavailable while
+`BUZZODZ_HOME` moves plugin storage out of app data.
 
-Every running instance holds a shared lock beside app data. The native
-`sign_out` command refuses unless it can hold that lock alone (no other Buzz
-window is open), and development builds that share the release identifier and
-folders refuse wipe. It never deletes the key in process: it first writes a
-marker beside (not inside) app data recording the wipe and agent choices, then
-deletes local agents and their keys if asked, stops agents as Quit does, and
-restarts. The marker is named for the exact human key store (debug or release),
-so another build never acts on it. If agent removal fails the marker is
-withdrawn and Buzz stays usable; if agents cannot be stopped, the user is asked
-to reopen Buzz, which finishes the sign-out.
+Every running instance takes a shared lock beside app data before it looks for a
+pending sign-out. The native `sign_out` command deletes nothing: it admits one
+sign-out per instance, refuses unless it can hold the lock alone (no other Buzz
+window is open), writes a marker beside (not inside) app data recording the wipe
+and agent choices, stops agents as Quit does, and restarts. The marker is named
+for the exact human key store (debug or release), so another build never acts on
+it. If the marker can't be written nothing has changed; if agents can't be
+stopped, the user is asked to reopen Buzz, which finishes the sign-out.
 
-The next launch takes the lock alone, waiting briefly for the exiting instance,
-and handles the marker before any window, webview storage, service or identity
-read:
+A launch that finds the marker switches to the lock alone, waiting briefly for
+the exiting instance, reads the marker again, and finishes before any window,
+webview storage, service or identity read:
 
-1. With wipe, app data, local data, WebView storage, caches and plugin storage
-   moved by `BUZZODZ_HOME` are renamed aside. App data's agent folder
-   (`agent-controller`) is put back unless agents were removed.
-2. The human item is deleted and a fresh read must find it absent.
-3. The renamed folders and anything recreated in place are deleted, then the
+1. With remove agents, every local agent's key is deleted, read from the agent
+   registry, which stays in place until all are gone.
+2. With wipe, app data, local data, WebView storage and caches are renamed
+   aside. App data's agent folder (`agent-controller`) is put back unless agents
+   were removed.
+3. The human item is deleted and a fresh read must find it absent.
+4. The renamed folders and anything recreated in place are deleted, then the
    marker.
 
-If renaming or the key delete fails, the renames are rolled back. On any failure
+Every step is safe to repeat: deleting an absent key succeeds, and an agent
+registry no longer in place means its keys are already gone. If renaming or the key delete fails, the renames are rolled back. On any failure
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in

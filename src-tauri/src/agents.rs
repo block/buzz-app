@@ -899,14 +899,6 @@ impl AgentHost {
         .await
     }
     /// Sign out's "Also remove my agents"; runs before shutdown fences the host.
-    pub(crate) async fn remove_local_agents(&self) -> Result<(), String> {
-        run(self.clone(), |host| {
-            host.starts.clear();
-            host.queued.clear();
-            host.controller.remove_local_agents()
-        })
-        .await
-    }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
         let mut state = self

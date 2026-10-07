@@ -519,8 +519,17 @@ pub fn run() {
     // A pending Sign out finishes before any window, webview storage, service or
     // identity read; if it can't, Buzz explains and exits without opening.
     let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
-        sign_out::boot(&paths, identity::remove_saved_key)
-            .unwrap_or_else(|message| sign_out::exit_with(&message))
+        sign_out::boot(
+            &paths,
+            |registry| {
+                buzz_agent_controller::delete_local_agent_keys(
+                    registry.to_path_buf(),
+                    &buzz_agent_controller::PlatformCredentials::default(),
+                )
+            },
+            identity::remove_saved_key,
+        )
+        .unwrap_or_else(|message| sign_out::exit_with(&message))
     });
     let identity = IdentityHost::default();
     let agent_identity = identity.clone();

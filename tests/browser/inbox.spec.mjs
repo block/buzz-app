@@ -698,7 +698,10 @@ test("narrow selected detail keeps a rejected read save and its captured Retry v
     // Focus happens one frame before the reveal owner marks navigation done.
     // Moving focus early leaves that owner able to steal it back after Retry.
     await expect
-      .poll(() => page.evaluate(() => window.inboxRevealComplete))
+      .poll(async () => {
+        await page.clock.runFor(16);
+        return page.evaluate(() => window.inboxRevealComplete);
+      })
       .toBe(true);
     const retry = alert.getByRole("button", { name: "Retry inbox" });
     await retry.focus();

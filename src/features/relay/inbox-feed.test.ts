@@ -505,6 +505,77 @@ it("keeps response checks pending on failure and recovers only after retry compl
     checkedResponses: [incoming.id],
   });
 });
+it.each(["complete", "failure", "retire"])(
+  "publishes verified newest conversations while older history is pending (%s)",
+  async (outcome) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const roots = [10, 11].map((at) =>
+      message(h.viewer, "room", "assignment", at),
+    );
+    const incoming = roots.map((root, index) =>
+      message(h.alice, "room", `activity ${index}`, 20 + index, [
+        ["e", root.id, "", "reply"],
+      ]),
+    );
+    const newest = incoming[1],
+      older = incoming[0],
+      newestRoot = roots[1];
+    if (!newest || !older || !newestRoot)
+      throw new Error("Missing fixture conversation");
+    const cold = message(h.alice, "room", "newest cold progress", 30, [
+      ["e", newestRoot.id, "", "reply"],
+    ]);
+    const gate = deferred<RelayEvent[]>();
+    let olderStarted = false;
+    const query = h.query.getMockImplementation();
+    if (!query) throw new Error("Missing fixture query");
+    h.query.mockImplementation((filters) => {
+      const filter = filters[0];
+      if (filter?.since !== undefined) {
+        if (filter["#e"]?.includes(newestRoot.id))
+          return Promise.resolve(filter.until === undefined ? [cold] : []);
+        olderStarted = true;
+        return gate.promise;
+      }
+      return query(filters);
+    });
+    h.live.receive([...roots, ...incoming]);
+    const work = h.session.inboxFeed.ensureResponses(rows(h));
+    try {
+      await vi.waitFor(() => expect(olderStarted).toBe(true));
+      expect(h.session.inboxFeed.snapshot()).toMatchObject({
+        status: "loading",
+        incomplete: [],
+        checkedResponses: expect.arrayContaining([newest.id, cold.id]),
+      });
+      expect(h.session.inboxFeed.snapshot().checkedResponses).not.toContain(
+        older.id,
+      );
+      if (outcome === "retire") await h.clearCache();
+      if (outcome === "failure")
+        gate.reject(new Error("older history offline"));
+    } finally {
+      gate.resolve([]);
+      await work;
+    }
+    if (outcome === "retire") {
+      expect(h.session.inboxFeed.snapshot()).toMatchObject({
+        status: "idle",
+        checkedResponses: [],
+      });
+      expect(rows(h)).toEqual([]);
+    } else {
+      expect(h.session.inboxFeed.snapshot()).toMatchObject({
+        status: outcome === "failure" ? "error" : "ready",
+        checkedResponses: expect.arrayContaining([newest.id, cold.id]),
+      });
+      expect(
+        h.session.inboxFeed.snapshot().checkedResponses.includes(older.id),
+      ).toBe(outcome === "complete");
+    }
+  },
+);
 it("checks one canonical conversation when cold mentions have not regrouped yet", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

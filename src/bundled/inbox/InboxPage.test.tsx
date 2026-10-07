@@ -297,7 +297,10 @@ function fixture(
           if (filter.depth_limit && channelId) threadRequests.push(channelId);
           if (filter.ids && channelId) exactRequests.push(...filter.ids);
           if (
-            (filter.top_level || filter.depth_limit || filter.ids) &&
+            (filter.top_level ||
+              filter.depth_limit ||
+              filter.ids ||
+              filter.since !== undefined) &&
             channelId
           ) {
             await historyGates.get(channelId);
@@ -855,6 +858,30 @@ it.each(["All", "Unread only"])(
   },
 );
 
+it("shows the verified newest conversation while older reply history loads or fails", async () => {
+  const h = fixture({ withDm: true });
+  render(h.view);
+  await screen.findByText("A direct reply");
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  const release = h.holdHistory("room");
+  try {
+    await chooseFilter("Unresponded only", "Filters");
+    await waitFor(() => expect(h.responseChannels).toContain("room"));
+    expect(rows()).toHaveLength(1);
+    expect(screen.getByText("A direct reply")).toBeVisible();
+    expect(screen.getByText("Checking recent activity…")).toBeVisible();
+    expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+    h.failHistory("room");
+  } finally {
+    release();
+  }
+  await screen.findByText("history offline");
+  expect(rows()).toHaveLength(1);
+  expect(screen.getByText("A direct reply")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry inbox" })).toBeVisible();
+});
 it("does not present cold unanswered rows while later replies are loading or unavailable", async () => {
   const h = fixture({ coldReply: true });
   const release = h.holdResponses();

@@ -1371,6 +1371,7 @@ for (const status of ["waiting", "starting"] as const) {
 it.each([
   ["Pi", "installPi", "piInstall", "installClaude"],
   ["Claude Code", "installClaude", "claudeInstall", "installPi"],
+  ["Codex ACP adapter", "installCodex", "codexInstall", "installClaude"],
 ] as const)(
   "runs %s installation outside agent writes, excludes other installs and preserves the report after Stop",
   async (_label, method, stateKey, other) => {

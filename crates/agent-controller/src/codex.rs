@@ -153,14 +153,18 @@ impl CodexLaunchPreflight {
 impl CodexContext {
     /// Resolve the device-selected adapter and CLI without falling back to an
     /// adapter-bundled Codex engine.
-    pub fn installed(workspace: &Path) -> Result<Self> {
-        Self::installed_with(workspace, &BTreeMap::new())
+    pub fn installed(workspace: &Path, app_data: Option<&Path>) -> Result<Self> {
+        Self::installed_with(workspace, &BTreeMap::new(), app_data)
     }
 
     /// Resolve the installed pair with the agent's effective environment. Only
     /// the fixed Codex binding allowlist is admitted into child processes.
-    pub fn installed_with(workspace: &Path, overrides: &BTreeMap<String, String>) -> Result<Self> {
-        let adapter = installed("codex-acp").ok_or("Codex ACP adapter not found")?;
+    pub fn installed_with(
+        workspace: &Path,
+        overrides: &BTreeMap<String, String>,
+        app_data: Option<&Path>,
+    ) -> Result<Self> {
+        let adapter = installed_adapter(app_data).ok_or("Codex ACP adapter not found")?;
         let cli = installed("codex").ok_or("Codex CLI not found")?;
         Self::new(&adapter, &cli, workspace, overrides)
     }
@@ -171,9 +175,10 @@ impl CodexContext {
     pub fn installed_for_agent(
         workspace: &Path,
         effective: &BTreeMap<String, String>,
+        app_data: Option<&Path>,
     ) -> Result<Self> {
         let overrides = agent_environment(effective);
-        Self::installed_with(workspace, &overrides)
+        Self::installed_with(workspace, &overrides, app_data)
     }
 
     /// Resolve an explicit pair. This is the later per-agent binding seam and
@@ -190,7 +195,10 @@ impl CodexContext {
         if !workspace.is_dir() {
             return Err("Codex workspace is not a directory".into());
         }
-        let mut directories = Vec::new();
+        let mut directories: Vec<_> = managed_node(adapter)
+            .and_then(|node| node.parent().map(Path::to_path_buf))
+            .into_iter()
+            .collect();
         for path in [adapter, cli] {
             if let Some(parent) = path.parent().filter(|path| path.is_absolute()) {
                 directories.push(parent.to_path_buf());
@@ -359,6 +367,29 @@ pub(crate) fn validate_native_environment(effective: &BTreeMap<String, String>) 
         return Err(format!("Codex binding does not permit {key}"));
     }
     Ok(())
+}
+
+/// The one adapter lookup shared by readiness, discovery, validation, and launch.
+pub fn installed_adapter(app_data: Option<&Path>) -> Option<PathBuf> {
+    adapter_choice(installed("codex-acp"), app_data)
+}
+
+/// As for Claude Code, a user install wins. Otherwise the app-owned adapter is
+/// used only when its pinned Node is installed to run it.
+fn adapter_choice(user: Option<PathBuf>, app_data: Option<&Path>) -> Option<PathBuf> {
+    user.or_else(|| {
+        let app_data = app_data?;
+        crate::managed_tool(app_data, "node")?;
+        crate::managed_tool(app_data, "codex-acp")
+    })
+}
+
+/// The pinned Node beside an app-owned `<app_data>/codex-tools/bin` adapter.
+fn managed_node(adapter: &Path) -> Option<PathBuf> {
+    let bin = adapter
+        .parent()
+        .filter(|bin| bin.ends_with("codex-tools/bin"))?;
+    crate::managed_tool(bin.parent()?.parent()?, "node")
 }
 
 fn bind(path: &Path, directories: &[PathBuf], label: &str) -> Result<BoundExecutable> {

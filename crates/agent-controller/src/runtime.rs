@@ -457,6 +457,7 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
         "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
+        "codex-acp" => app_data.join("codex-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -581,6 +582,7 @@ pub struct Controller {
     pub(crate) ownership_root: PathBuf,
     pub(crate) protection_paths: Result<Vec<PathBuf>>,
     pub(crate) security_providers: BTreeMap<String, crate::security::Provider>,
+    app_data: Option<PathBuf>,
 }
 impl Controller {
     pub fn new(
@@ -598,7 +600,12 @@ impl Controller {
             ownership_root,
             security_providers: BTreeMap::new(),
             protection_paths: Ok(Vec::new()),
+            app_data: None,
         }
+    }
+    /// Tauri's app-data directory, where Settings installs app-owned tools.
+    pub fn use_app_tools(&mut self, app_data: PathBuf) {
+        self.app_data = Some(app_data);
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
         let (saved, parked) = self.store.inventory()?;
@@ -675,12 +682,14 @@ impl Controller {
         ))
     }
     fn codex_validation_draft(
+        &self,
         agent: &Agent,
         input: serde_json::Value,
     ) -> Result<crate::codex::CodexValidationDraft> {
         let context = crate::codex::CodexContext::installed_for_agent(
             Path::new(&agent.workspace),
             &agent.environment,
+            self.app_data.as_deref(),
         )?;
         context.verify_adapter(&agent.harness.command)?;
         context.adapter_launch(&agent.harness.args)?;
@@ -745,7 +754,7 @@ impl Controller {
         };
         agent.apply(edit)?;
         let agent = crate::agent_defaults::effective(&agent, &defaults);
-        Self::codex_validation_draft(&agent, input).map(Some)
+        self.codex_validation_draft(&agent, input).map(Some)
     }
 
     /// Fence a saved revision and return validation input only when either the
@@ -791,7 +800,7 @@ impl Controller {
         if was_codex && before_execution == after_execution {
             return Ok(None);
         }
-        Self::codex_validation_draft(&after, input).map(Some)
+        self.codex_validation_draft(&after, input).map(Some)
     }
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
         let agent = self.edited_agent(id, revision, edit)?;
@@ -826,6 +835,7 @@ impl Controller {
         crate::codex::CodexContext::installed_for_agent(
             Path::new(&agent.workspace),
             &agent.environment,
+            self.app_data.as_deref(),
         )
     }
     pub fn pi_launch_context(
@@ -874,6 +884,7 @@ impl Controller {
         let context = crate::codex::CodexContext::installed_for_agent(
             Path::new(&agent.workspace),
             &agent.environment,
+            self.app_data.as_deref(),
         )?;
         context.verify_adapter(&agent.harness.command)?;
         context.adapter_launch(&agent.harness.args)?;
@@ -902,10 +913,11 @@ impl Controller {
     }
     /// Resolve an unsaved Codex draft against the same effective defaults used
     /// by a later save or launch.
-    pub fn draft_codex_model_context(edit: AgentEdit) -> Result<crate::codex::CodexContext> {
+    pub fn draft_codex_model_context(&self, edit: AgentEdit) -> Result<crate::codex::CodexContext> {
         crate::codex::CodexContext::installed_for_agent(
             Path::new(&edit.workspace),
             &draft_environment(edit.environment),
+            self.app_data.as_deref(),
         )
     }
     pub fn draft_goose_model_context(&self, edit: AgentEdit) -> Result<GooseModelContext> {

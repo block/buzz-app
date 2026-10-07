@@ -117,6 +117,11 @@ export function AgentSettings({
   const available = coreHarnesses.every((option) => !!option?.status);
   const pi = coreHarnesses[2];
   const codex = state.codexReadiness;
+  const codexInstall = state.codexInstall;
+  const offerCodexInstall =
+    !!control.installCodex &&
+    codex?.status === "checked" &&
+    codex.result?.status === "adapter-needed";
   const codexStatus =
     codex?.status === "checking"
       ? "Checking…"
@@ -124,7 +129,7 @@ export function AgentSettings({
         ? "Check failed"
         : codex?.result
           ? {
-              "binding-ready": "Binding verified",
+              "binding-ready": "Ready",
               "cli-needed": "CLI needed",
               "adapter-needed": "Adapter needed",
               "interpreter-needed": "Node needed",
@@ -144,7 +149,8 @@ export function AgentSettings({
     state.status === "unavailable" ||
     state.busy ||
     installingPi ||
-    state.claudeInstall?.installing;
+    state.claudeInstall?.installing ||
+    codexInstall?.installing;
   const checkAgain = () => {
     setChecking(true);
     void Promise.allSettled([
@@ -266,6 +272,7 @@ export function AgentSettings({
                                 state.status !== "ready" ||
                                 state.busy ||
                                 state.claudeInstall?.installing ||
+                                codexInstall?.installing ||
                                 installingPi
                               }
                               onClick={() => {
@@ -277,6 +284,31 @@ export function AgentSettings({
                                 : "Install"}
                             </Button>
                           )}
+                        {option?.id === "codex" && offerCodexInstall && (
+                          <Button
+                            size="sm"
+                            type="button"
+                            loading={!!codexInstall?.installing}
+                            disabled={
+                              state.status !== "ready" ||
+                              state.busy ||
+                              installingPi ||
+                              state.claudeInstall?.installing ||
+                              codexInstall?.installing
+                            }
+                            onClick={() => {
+                              void control
+                                .installCodex?.()
+                                .then((report) => {
+                                  if (report.ready)
+                                    return control.checkCodex?.();
+                                })
+                                .catch(() => {});
+                            }}
+                          >
+                            Install
+                          </Button>
+                        )}
                       </span>
                     </div>
                     {option &&
@@ -302,17 +334,66 @@ export function AgentSettings({
                         </div>
                       )}
                     {option?.id === "codex" &&
-                      ((codex?.status === "checked" && codex.result?.message) ||
+                      (codexInstall?.installing ||
+                        codexInstall?.report?.error ||
+                        codexInstall?.error) && (
+                        <div className={`${styles.piSetup} space-y-3`}>
+                          {codexInstall.installing ? (
+                            <p role="status">
+                              Installing Node.js and the Codex ACP adapter…
+                            </p>
+                          ) : (
+                            <div role="alert" className="text-body-sm">
+                              <p className="whitespace-pre-wrap break-words">
+                                {codexInstall.report?.error ||
+                                  codexInstall.error}
+                              </p>
+                              {codexInstall.report && (
+                                <details>
+                                  <summary>
+                                    Codex ACP adapter install log
+                                  </summary>
+                                  <p className="break-all">
+                                    {codexInstall.report.logPath}
+                                  </p>
+                                  <pre
+                                    className={`${styles.command} whitespace-pre-wrap break-all`}
+                                  >
+                                    {codexInstall.report.output ||
+                                      "No output was recorded."}
+                                  </pre>
+                                </details>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    {option?.id === "codex" &&
+                      offerCodexInstall &&
+                      !codexInstall?.installing && (
+                        <div className={`${styles.piSetup} space-y-3`}>
+                          <p role="status" className="m-0 text-secondary">
+                            Click Install. Buzz installs Node.js and the Codex
+                            ACP adapter for you. Your Codex CLI and sign-in are
+                            left untouched.
+                          </p>
+                          <details>
+                            <summary>Manual Codex ACP adapter setup</summary>
+                            <p className="mt-3">{codex.result?.message}</p>
+                          </details>
+                        </div>
+                      )}
+                    {option?.id === "codex" &&
+                      !offerCodexInstall &&
+                      ((codex?.status === "checked" &&
+                        codex.result?.status !== "binding-ready" &&
+                        codex.result?.message) ||
                         codex?.error) && (
                         <p
                           role={codex.error ? "alert" : "status"}
                           className="m-0 mt-2 text-secondary"
                         >
                           {codex.error || codex.result?.message}
-                          {codex.status === "checked" &&
-                            codex.result?.adapterVersion &&
-                            codex.result?.cliVersion &&
-                            ` Adapter ${codex.result.adapterVersion}; CLI ${codex.result.cliVersion}.`}
                         </p>
                       )}
                     {option &&

@@ -397,7 +397,7 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     });
     options.push(HarnessOption {
         id: buzz_agent_controller::HarnessIntegration::Codex,
-        command: buzz_agent_controller::installed("codex-acp").map_or_else(
+        command: buzz_agent_controller::codex::installed_adapter(Some(app_data)).map_or_else(
             || "codex-acp".into(),
             |path| path.to_string_lossy().into_owned(),
         ),
@@ -551,6 +551,7 @@ impl Host {
         controller.protect_control_paths(
             crate::Manager::from_env().map(|manager| vec![manager.storage_root().to_path_buf()]),
         );
+        controller.use_app_tools(app_data.clone());
         Ok(Self {
             inventory_warnings,
             controller,
@@ -884,8 +885,12 @@ impl AgentHost {
     pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
         run(self.clone(), |host| host.controller.inherited_workspace()).await
     }
-    pub(crate) async fn default_workspace(&self) -> Result<PathBuf, String> {
-        run(self.clone(), |host| Ok(host.workspace.clone())).await
+    /// Default workspace and app-owned tool storage, as the controller resolves Codex.
+    pub(crate) async fn codex_paths(&self) -> Result<(PathBuf, PathBuf), String> {
+        run(self.clone(), |host| {
+            Ok((host.workspace.clone(), host.app_data.clone()))
+        })
+        .await
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) async fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
@@ -1003,7 +1008,8 @@ impl AgentHost {
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.codex_model_context(id, revision, edit),
             (None, None) => {
-                Controller::draft_codex_model_context(host.controller.effective_draft(edit)?)
+                let edit = host.controller.effective_draft(edit)?;
+                host.controller.draft_codex_model_context(edit)
             }
             _ => Err("Invalid agent model context".into()),
         })

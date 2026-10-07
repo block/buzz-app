@@ -386,13 +386,116 @@ it("checks Codex explicitly, hides stale status while checking, and recovers", a
   expect(screen.queryByText(/Sign in with the selected Codex CLI/)).toBeNull();
   complete({
     status: "binding-ready",
-    message:
-      "CLI, login, and ACP binding verified. Codex agent creation is not enabled yet.",
+    message: "Codex is ready.",
     adapterVersion: "1.10.0",
     cliVersion: "0.151.0",
   });
-  expect(await screen.findByText("Binding verified")).toBeVisible();
-  expect(screen.getByText(/Adapter 1.10.0; CLI 0.151.0/)).toBeVisible();
+  const row = screen.getByText("Codex").closest("li");
+  if (!row) throw new Error("Missing Codex row");
+  expect(await within(row).findByText("Ready")).toBeVisible();
+  // The status is the whole success state; no message or version suffix.
+  expect(row).toHaveTextContent(/^CodexReady$/);
+});
+
+it("offers the Codex ACP adapter Install only when the adapter is missing, then rechecks", async () => {
+  const user = userEvent.setup();
+  const fixture = controlFixture();
+  fixture.data.harnessOptions = [
+    ...(["buzz-agent", "goose", "buzz-pi-acp"] as const).map((command) => ({
+      command,
+      label: command,
+      available: true,
+      status: "ready" as const,
+      providers: [],
+    })),
+    {
+      id: "codex",
+      command: "/tools/codex-acp",
+      label: "Codex",
+      available: true,
+      status: "not-enabled",
+      providers: [],
+    },
+  ];
+  const readiness: CodexReadiness[] = [
+    {
+      status: "adapter-incompatible",
+      message: "The Codex ACP adapter is incompatible with this binding.",
+    },
+    {
+      status: "adapter-needed",
+      message:
+        "Install @agentclientprotocol/codex-acp 1.10.0 or later, then check again.",
+    },
+    { status: "binding-ready", message: "Codex is ready." },
+  ];
+  let ticket = 0;
+  const run = vi.fn(async (): Promise<CodexReadiness> => {
+    const next = readiness.shift();
+    if (!next) throw new Error("Unexpected Codex readiness check");
+    return next;
+  });
+  fixture.host.codexReadiness = {
+    begin: async () => ++ticket,
+    cancel: vi.fn(async () => {}),
+    run,
+  };
+  const failed: HarnessInstallReport = {
+    ready: false,
+    restarted: 0,
+    restartFailures: 0,
+    logPath: "/fixture/codex-install.log",
+    output: "npm ERR! network",
+    error: "Installing the Codex ACP adapter failed",
+  };
+  let complete!: (report: HarnessInstallReport) => void;
+  const install = vi
+    .fn<NonNullable<AgentControlHost["installCodex"]>>()
+    .mockResolvedValueOnce(failed)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+  fixture.host.installCodex = install;
+  const control = createAgentControl(fixture.host);
+  disposals.push(() => control.dispose());
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+
+  expect(await screen.findByText("Adapter incompatible")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+  expect(screen.getByText(/incompatible with this binding/)).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  expect(await screen.findByText("Adapter needed")).toBeVisible();
+  expect(
+    screen.getByText(/Buzz installs Node.js and the Codex ACP adapter/),
+  ).toBeVisible();
+  await user.click(screen.getByText("Manual Codex ACP adapter setup"));
+  expect(
+    screen.getByText(/Install @agentclientprotocol\/codex-acp/),
+  ).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Install" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Installing the Codex ACP adapter failed");
+  await user.click(within(alert).getByText("Codex ACP adapter install log"));
+  expect(within(alert).getByText("npm ERR! network")).toBeVisible();
+  expect(run).toHaveBeenCalledTimes(2);
+
+  await user.click(screen.getByRole("button", { name: "Install" }));
+  expect(
+    await screen.findByText("Installing Node.js and the Codex ACP adapter…"),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
+  complete({ ...failed, ready: true, error: null, output: "" });
+  const row = screen.getByText("Codex").closest("li");
+  if (!row) throw new Error("Missing Codex row");
+  expect(await within(row).findByText("Ready")).toBeVisible();
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+  expect(install).toHaveBeenCalledTimes(2);
 });
 
 it("offers manual copying when clipboard access fails", async () => {

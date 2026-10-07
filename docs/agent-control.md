@@ -357,7 +357,10 @@ Hermes also appears in the main list once its executable is detected:
   The result and private log survive leaving Settings, and completion refreshes
   native detection. Complete external installations take precedence and remain
   untouched. Windows and unsupported architectures retain manual setup with
-  Node.js 22 or newer. The fallback commands are:
+  Node.js 22 or newer. Codex's **Adapter needed** state offers the same
+  app-owned Install for its ACP adapter only; see
+  [Codex binding readiness](codex-binding-readiness.md#adapter-lookup-and-install).
+  The fallback commands are:
 
   ```sh
   npm install -g @anthropic-ai/claude-code@2.1.289

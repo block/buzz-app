@@ -283,6 +283,7 @@ export interface AgentControlHost {
   };
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
   prepareCreate?(
@@ -350,6 +351,7 @@ export interface AgentControlState {
   /** App-lifetime install progress and last result, independent of agent writes. */
   piInstall?: HarnessInstallState;
   claudeInstall?: HarnessInstallState;
+  codexInstall?: HarnessInstallState;
   codexReadiness?: {
     status: "idle" | "checking" | "checked" | "error";
     result: CodexReadiness | null;
@@ -373,6 +375,7 @@ export interface AgentControl {
   models?: AgentModels;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
   checkCodex?(): Promise<void>;
@@ -505,6 +508,7 @@ export function createAgentControl(
     busy: false,
     piInstall: { installing: false, report: null, error: null },
     claudeInstall: { installing: false, report: null, error: null },
+    codexInstall: { installing: false, report: null, error: null },
     codexReadiness: { status: "idle", result: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
@@ -657,12 +661,16 @@ export function createAgentControl(
     );
   };
   async function installHarness(
-    key: "piInstall" | "claudeInstall",
+    key: "piInstall" | "claudeInstall" | "codexInstall",
     label: string,
     execute: () => Promise<HarnessInstallReport>,
   ): Promise<HarnessInstallReport> {
     if (disposed) throw new Error(agentControlUnavailable);
-    if (state.piInstall?.installing || state.claudeInstall?.installing)
+    if (
+      state.piInstall?.installing ||
+      state.claudeInstall?.installing ||
+      state.codexInstall?.installing
+    )
       throw new Error("A Harness installation is already in progress.");
     if (state.status !== "ready" || state.busy)
       throw new Error(`Refresh local agents before installing ${label}.`);
@@ -687,6 +695,7 @@ export function createAgentControl(
   }
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
+  const installCodex = host?.installCodex;
   const checkClaudeAuth = host?.checkClaudeAuth;
   const codexReadiness = host?.codexReadiness;
   const codexValidation = host?.codexValidation;
@@ -823,6 +832,16 @@ export function createAgentControl(
               if (ticket !== null && codexTicket === ticket) codexTicket = null;
             }
           },
+        }
+      : {}),
+    ...(installCodex
+      ? {
+          installCodex: () =>
+            installHarness(
+              "codexInstall",
+              "the Codex ACP adapter",
+              installCodex,
+            ),
         }
       : {}),
     ...(host?.prepareCreate && host.commitCreate

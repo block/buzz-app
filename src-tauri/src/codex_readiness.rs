@@ -308,7 +308,7 @@ pub(crate) async fn codex_readiness_run(
     agents: tauri::State<'_, crate::agents::AgentHost>,
     ticket: u64,
 ) -> Result<Readiness, String> {
-    let workspace = agents.default_workspace().await?;
+    let (workspace, app_data) = agents.codex_paths().await?;
     let owner = state.inner().clone();
     let cancelled = owner.claim(ticket)?;
     let result_cancelled = cancelled.clone();
@@ -325,7 +325,7 @@ pub(crate) async fn codex_readiness_run(
             ticket,
             cleanup_failed: true,
         };
-        let result = check(&workspace, || {
+        let result = check(&workspace, &app_data, || {
             !cancelled.load(Ordering::SeqCst) && !check_owner.closed.load(Ordering::SeqCst)
         });
         finish.cleanup_failed = result
@@ -341,10 +341,14 @@ pub(crate) async fn codex_readiness_run(
     Ok(result)
 }
 
-fn check(workspace: &Path, current: impl Fn() -> bool) -> Result<Readiness, String> {
+fn check(
+    workspace: &Path,
+    app_data: &Path,
+    current: impl Fn() -> bool,
+) -> Result<Readiness, String> {
     #[cfg(not(unix))]
     {
-        let _ = (workspace, current);
+        let _ = (workspace, app_data, current);
         return Ok(Readiness::failed(
             "unsupported",
             "Codex binding is not enabled on this platform yet.",
@@ -352,7 +356,7 @@ fn check(workspace: &Path, current: impl Fn() -> bool) -> Result<Readiness, Stri
     }
     #[cfg(unix)]
     {
-        let context = match CodexContext::installed(workspace) {
+        let context = match CodexContext::installed(workspace, Some(app_data)) {
             Ok(context) => context,
             Err(error) => return Ok(resolution_failure(&error)),
         };
@@ -393,7 +397,7 @@ fn check_context(context: CodexContext, current: &impl Fn() -> bool) -> Result<R
     };
     Ok(Readiness {
         status: "binding-ready",
-        message: "CLI, login, and ACP binding verified. Codex agent creation is not enabled yet.",
+        message: "Codex is ready.",
         adapter_version: Some(binding.adapter_version),
         cli_version: Some(binding.cli_version),
     })

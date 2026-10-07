@@ -24,6 +24,27 @@ explicit `CODEX_CONFIG` value, including an empty value, is rejected until
 readiness can apply and validate those session overrides against the same
 configuration used by the adapter.
 
+## Adapter lookup and Install
+
+Readiness, model discovery, Create and Edit validation, launch, and the saved
+Harness command share one adapter lookup, as Claude Code does. A user-installed
+`codex-acp` wins; Buzz searches `~/.local/bin`, the app's `PATH`,
+`/opt/homebrew/bin`, then `/usr/local/bin`. Otherwise Buzz uses the app-owned
+adapter at `<app data>/codex-tools/bin/codex-acp`, but only when its pinned
+managed Node is also installed. An app-owned adapter always runs on that Node.
+The Codex CLI is never installed by Buzz; it is resolved from the same user
+directories.
+
+When readiness reports **Adapter needed**, Settings offers **Install** on macOS
+and Linux. It reuses the checksum-verified managed Node and installs
+`@agentclientprotocol/codex-acp@2.1.1` into a new `codex-tools/releases`
+directory. The launcher must pass `--version` before activation. A failed
+install keeps the previous release and shows the private install log. Success
+rechecks readiness, so no `PATH` change or symlink is needed. Install shares the
+native install/quit owner with Pi and Claude Code. If a user-installed adapter
+exists, Install refuses and the user updates it in their terminal. An
+incompatible user adapter therefore keeps the manual recovery message.
+
 `HarnessIntegration::Codex` is the policy authority. An editable command basename
 does not grant Codex policy or full-access behavior. The Codex policy admits no
 persisted Default or Advanced mode yet, and its model and effort capabilities

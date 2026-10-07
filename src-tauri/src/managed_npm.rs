@@ -19,38 +19,44 @@ const ADAPTER: &str = "git+https://github.com/salman1993/buzz-pi-acp.git#72015de
 // Both packages are pinned to versions available through the configured npm registry.
 const CLAUDE: &str = "@anthropic-ai/claude-code@2.1.289";
 const CLAUDE_ADAPTER: &str = "@agentclientprotocol/claude-agent-acp@0.85.1";
+// Adapter only: Codex binds to the user's installed CLI and its login.
+const CODEX_ADAPTER: &str = "@agentclientprotocol/codex-acp@2.1.1";
 
 #[derive(Clone, Copy)]
 pub(crate) enum Harness {
     Pi,
     Claude,
+    Codex,
 }
 impl Harness {
     fn prefix(self) -> &'static str {
         match self {
             Self::Pi => "node-tools",
             Self::Claude => "claude-tools",
+            Self::Codex => "codex-tools",
         }
     }
     fn revision(self) -> &'static str {
         match self {
             Self::Pi => adapter_rev(),
             Self::Claude => "claude-2.1.289-acp-0.85.1",
+            Self::Codex => "codex-acp-2.1.1",
         }
     }
-    fn binaries(self) -> [&'static str; 2] {
+    fn binaries(self) -> &'static [&'static str] {
         match self {
-            Self::Pi => ["pi", "buzz-pi-acp"],
-            Self::Claude => ["claude", "claude-agent-acp"],
+            Self::Pi => &["pi", "buzz-pi-acp"],
+            Self::Claude => &["claude", "claude-agent-acp"],
+            Self::Codex => &["codex-acp"],
         }
     }
-    fn packages(self) -> [(&'static str, bool, &'static str); 2] {
+    fn packages(self) -> &'static [(&'static str, bool, &'static str)] {
         match self {
-            Self::Pi => [
+            Self::Pi => &[
                 (PI, false, "Installing Pi failed"),
                 (ADAPTER, true, "Installing the Pi ACP adapter failed"),
             ],
-            Self::Claude => [
+            Self::Claude => &[
                 (CLAUDE, false, "Installing Claude Code failed"),
                 (
                     CLAUDE_ADAPTER,
@@ -58,6 +64,11 @@ impl Harness {
                     "Installing the Claude Code ACP adapter failed",
                 ),
             ],
+            Self::Codex => &[(
+                CODEX_ADAPTER,
+                false,
+                "Installing the Codex ACP adapter failed",
+            )],
         }
     }
 }
@@ -457,13 +468,13 @@ pub(crate) async fn install(
     let prefix = releases.join(&id);
     std::fs::create_dir(&prefix).map_err(|_| "Could not create app-owned npm prefix")?;
     let result = async {
-        for (package, install_links, failure) in harness.packages() {
+        for &(package, install_links, failure) in harness.packages() {
             refuse_linked_prefix(&tools)?;
             refuse_linked_prefix(&prefix)?;
             let mut command = npm_command(&node, app_data, &home, &prefix, package, install_links)?;
             run_step(setup, &mut command, &log, failure).await?;
         }
-        if matches!(harness, Harness::Claude) {
+        if !matches!(harness, Harness::Pi) {
             for name in harness.binaries() {
                 let mut command = tokio::process::Command::new(prefix.join("bin").join(name));
                 scrub(
@@ -489,7 +500,10 @@ pub(crate) async fn install(
         let _ = std::fs::remove_dir_all(&prefix);
         return Err(error);
     }
-    let previous = release_id(&tools.join("bin").join(harness.binaries()[1]));
+    let previous = harness
+        .binaries()
+        .last()
+        .and_then(|name| release_id(&tools.join("bin").join(name)));
     activate(&tools, &id, harness)?;
     let mut keep = vec![id.as_str()];
     keep.extend(previous.as_deref());
@@ -800,6 +814,56 @@ chmod 755 "$prefix/bin/$name"
             .collect();
         left.sort();
         assert_eq!(left, [pinned, newer]);
+    }
+    #[tokio::test]
+    async fn codex_install_activates_only_a_verified_pinned_adapter() {
+        use crate::test_executable::write_executable;
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path();
+        let setup = HarnessSetup::default();
+        let spec = artifact(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        let node_root = node_dir(app_data, spec);
+        std::fs::create_dir_all(node_root.join("bin")).unwrap();
+        std::fs::create_dir_all(node_root.join("lib/node_modules/npm/bin")).unwrap();
+        std::fs::write(node_root.join("lib/node_modules/npm/bin/npm-cli.js"), "").unwrap();
+        // A local npm boundary fixture accepts only the pinned adapter package.
+        let npm = |version_exit| {
+            format!(
+                r#"#!/bin/sh
+set -eu
+[ "$6" = "{CODEX_ADAPTER}" ] || exit 2
+mkdir -p "$5/bin"
+printf '#!/bin/sh\nexit {version_exit}\n' > "$5/bin/codex-acp"
+chmod 755 "$5/bin/codex-acp"
+"#
+            )
+        };
+        let node = node_root.join("bin/node");
+        let log_path = app_data.join("install.log");
+        write_executable(&node, npm(1));
+        let error = install(
+            &setup,
+            app_data,
+            File::create(&log_path).unwrap(),
+            Harness::Codex,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("Verifying codex-acp failed"), "{error}");
+        assert!(buzz_agent_controller::managed_tool(app_data, "codex-acp").is_none());
+        write_executable(&node, npm(0));
+        assert!(install(
+            &setup,
+            app_data,
+            File::create(&log_path).unwrap(),
+            Harness::Codex
+        )
+        .await
+        .unwrap());
+        let shim = buzz_agent_controller::managed_tool(app_data, "codex-acp").unwrap();
+        assert_eq!(shim, app_data.join("codex-tools/bin/codex-acp"));
+        assert!(release_id(&shim).unwrap().starts_with("codex-acp-2.1.1."));
+        assert!(!app_data.join("claude-tools").exists());
     }
     #[test]
     fn npm_installs_only_the_two_approved_packages_into_the_app_owned_prefix() {

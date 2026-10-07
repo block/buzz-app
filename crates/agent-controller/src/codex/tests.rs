@@ -188,3 +188,57 @@ fn agent_context_excludes_defaults_owned_by_other_harnesses() {
         BTreeMap::from([("CODEX_HOME".into(), "/tmp/codex-home".into())])
     );
 }
+
+#[test]
+fn app_owned_adapter_is_a_fallback_bound_to_its_pinned_node() {
+    let root = tempfile::tempdir().unwrap();
+    let app_data = root.path().join("app-data");
+    let workspace = root.path().join("workspace");
+    let user = root.path().join("user-bin");
+    let release = app_data.join("codex-tools/releases/r1");
+    let script = release.join("lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js");
+    for dir in [
+        &workspace,
+        &user,
+        &release.join("bin"),
+        &script.parent().unwrap().into(),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::create_dir_all(app_data.join("codex-tools/bin")).unwrap();
+    tool(&script, "#!/usr/bin/env node\n");
+    let shim = app_data.join("codex-tools/bin/codex-acp");
+    // The npm layout: bin shim -> release shim -> package script.
+    std::os::unix::fs::symlink(&script, release.join("bin/codex-acp")).unwrap();
+    std::os::unix::fs::symlink("../releases/r1/bin/codex-acp", &shim).unwrap();
+    tool(&user.join("codex-acp"), "#!/bin/sh\nexit 0\n");
+    tool(&user.join("codex"), "#!/usr/bin/env node\n");
+    tool(&user.join("node"), "#!/bin/sh\nexit 0\n");
+
+    assert_eq!(
+        adapter_choice(None, Some(&app_data)),
+        None,
+        "no pinned Node"
+    );
+    for platform in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] {
+        let bin = app_data
+            .join("runtimes/node/v24.18.0")
+            .join(platform)
+            .join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        tool(&bin.join("node"), "#!/bin/sh\nexit 0\n");
+    }
+    let node = crate::managed_tool(&app_data, "node").unwrap();
+    assert_eq!(adapter_choice(None, Some(&app_data)), Some(shim.clone()));
+    assert_eq!(adapter_choice(None, None), None);
+    assert_eq!(
+        adapter_choice(Some(user.join("codex-acp")), Some(&app_data)),
+        Some(user.join("codex-acp"))
+    );
+
+    let context =
+        CodexContext::new(&shim, &user.join("codex"), &workspace, &BTreeMap::new()).unwrap();
+    assert_eq!(context.adapter, script.canonicalize().unwrap());
+    assert_eq!(context.interpreter, Some(node.canonicalize().unwrap()));
+    context.verify_adapter(&shim.to_string_lossy()).unwrap();
+}

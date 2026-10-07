@@ -16,6 +16,7 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
+mod catalog;
 mod channel_writes;
 mod kit;
 pub(crate) use channel_writes::{
@@ -287,6 +288,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
     } else if event.kind == 9007 {
         if !channel_writes::creation(event) {
             return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        }
+    } else if matches!(event.kind, 30175 | 30178) {
+        if !catalog::valid(event) {
+            return Err("Malformed catalog publication".into());
         }
     } else if event.kind == 40100 {
         if !valid_canvas(event) {

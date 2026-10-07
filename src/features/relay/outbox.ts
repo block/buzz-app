@@ -688,6 +688,22 @@ export function createOutbox(
             "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
           );
       }
+      if (input.kind === 30175 || input.kind === 30178) {
+        // NIP-AP: a catalog replacement supersedes this device's retained head
+        // even within one second, so share then unshare cannot tie.
+        const d = input.tags.find(([name]) => name === "d")?.[1];
+        for (const { event } of visible)
+          if (
+            event.kind === input.kind &&
+            event.pubkey === viewer &&
+            event.tags.some(([name, value]) => name === "d" && value === d)
+          )
+            createdAt = Math.max(createdAt, event.created_at + 1);
+        if (createdAt > Math.floor(ms / 1000) + 60)
+          throw new Error(
+            "Sharing is changing too quickly or your clock changed. Wait a moment and try again.",
+          );
+      }
       const template = {
         ...input,
         pubkey: viewer,

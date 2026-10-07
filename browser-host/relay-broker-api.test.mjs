@@ -2069,6 +2069,72 @@ test("custom emoji sets sign and publish only as one canonical own coordinate", 
   }
 });
 
+test("catalog publications sign only the owner-to-self NIP-AP envelope", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const { writeKinds } = await (await h.get("session")).json();
+    expect(writeKinds).toEqual(expect.arrayContaining([30175, 30178]));
+    const now = Math.floor(Date.now() / 1000);
+    const agent = {
+      kind: 30175,
+      created_at: now,
+      content: '{"display_name":"Fixture"}',
+      tags: [
+        ["d", "ab".repeat(32)],
+        ["shared", "true"],
+      ],
+    };
+    const team = {
+      kind: 30178,
+      created_at: now,
+      content: '{"v":1,"name":"Crew","members":[]}',
+      tags: [["d", "builtin-team:welcome"]],
+    };
+    for (const template of [agent, team]) {
+      const response = await h.post("sign", template);
+      expect(response.status).toBe(200);
+      const event = await response.json();
+      expect(verifyEvent(event)).toBe(true);
+      expect(event).toMatchObject(template);
+      expect((await h.post("publish", event)).status).toBe(200);
+    }
+    for (const template of [
+      { ...agent, tags: [["d", "Not A Slug"]] },
+      {
+        ...agent,
+        tags: [
+          ["d", "a"],
+          ["shared", "false"],
+        ],
+      },
+      {
+        ...agent,
+        tags: [
+          ["d", "a"],
+          ["shared", "true", "x"],
+        ],
+      },
+      {
+        ...agent,
+        tags: [
+          ["d", "a"],
+          ["p", "ab".repeat(32)],
+        ],
+      },
+      { ...agent, content: '{"display_name":"X","env_vars":{}}' },
+      { ...team, tags: [["d", "has space"]] },
+      { ...team, content: '{"v":1,"name":"Crew"}' },
+    ])
+      expect((await h.post("sign", template)).status).toBe(400);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
 test("memory reads use captured relay and owner, not submitted identity/filter authority, through HTTP host and transport", async () => {
   const owner = new Uint8Array(32);
   owner[31] = 7;

@@ -39,6 +39,7 @@ import {
   readRelayLibrary,
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
+import { createCommunityCatalog } from "../agents/catalog";
 import { archiveHides, createIdentityArchives } from "./identity-archives";
 import {
   createReadState,
@@ -647,6 +648,13 @@ export function createRelaySession(
       : undefined,
     notify,
   );
+  const communityCatalog = createCommunityCatalog({
+    reader: transport && !options.cachedOnly ? requests.reader : undefined,
+    viewer: transport?.viewer ?? "",
+    outbox: writes?.outbox,
+    local: writes?.local,
+    notify,
+  });
   const archives = createIdentityArchives(
     requests.reader,
     transport?.archiveAuthority,
@@ -1786,6 +1794,7 @@ export function createRelaySession(
     emoji: emoji.queries,
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
+    communityCatalog: communityCatalog.queries,
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
@@ -2366,6 +2375,7 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         agentLibrary.clear();
+        communityCatalog.clear();
         archives.clear();
         workflows.interrupt();
         channels.staleHeads();
@@ -2414,6 +2424,7 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               agentLibrary.reconnect();
+              communityCatalog.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
               emoji.reconnect();
@@ -2578,6 +2589,7 @@ export function createRelaySession(
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();
+      communityCatalog.dispose();
       archives.dispose();
     },
     retainedChannels: channels.retainedChannels,

@@ -110,6 +110,53 @@ it("rejects unsupported explicit values instead of silently downgrading", () => 
 });
 
 it.each(["json", "png"] as const)(
+  "normalizes reference nullable option fields in %s while preserving explicit values",
+  (format) => {
+    const source = buildAgentSnapshot(portableAgent());
+    const nullable = {
+      ...source,
+      definition: {
+        name: source.definition.name,
+        systemPrompt: null,
+        runtime: null,
+        model: null,
+        provider: null,
+        parallelism: null,
+        respondTo: null,
+        idleTimeoutSeconds: null,
+        maxTurnDurationSeconds: null,
+      },
+      profile: {
+        displayName: source.profile.displayName,
+        about: null,
+        avatarUrl: null,
+      },
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(nullable));
+    const imported = parseAgentSnapshot(bytes);
+    expect(imported.definition).toEqual({ name: source.definition.name });
+    expect(imported.profile).toEqual({
+      displayName: source.profile.displayName,
+    });
+    const roundtrip = parseAgentSnapshot(encodeAgentSnapshot(imported, format));
+    expect(roundtrip.definition).toEqual(imported.definition);
+    expect(snapshotImportEdit(roundtrip, destination).environment).toEqual({});
+    expect(() =>
+      parse({
+        ...nullable,
+        definition: { ...nullable.definition, sessionPolicy: null },
+      }),
+    ).toThrow("Invalid snapshot manifest");
+    expect(() =>
+      parse({
+        ...nullable,
+        definition: { ...nullable.definition, parallelism: 0 },
+      }),
+    ).toThrow("Invalid snapshot manifest");
+  },
+);
+
+it.each(["json", "png"] as const)(
   "uses the shared %s file cap for send eligibility and import",
   (format) => {
     const bytes = encodeAgentSnapshot(

@@ -128,7 +128,35 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
   if (value.format !== "buzz-agent-snapshot")
     throw new Error("Unsupported snapshot format.");
   if (value.version !== 1) throw new Error("Unsupported snapshot version.");
-  const { definition: d, profile: p, memory: m } = value;
+  const {
+    definition: originalDefinition,
+    profile: originalProfile,
+    memory: m,
+  } = value;
+  // Serde Option<T> accepts null as None. Normalize only known nullable fields;
+  // absent and explicit null both mean inherit/default, never the string "null".
+  const withoutNull = (source: unknown, optional: readonly string[]) => {
+    if (!isRecord(source)) return source;
+    const normalized = { ...source };
+    for (const field of optional)
+      if (normalized[field] === null) delete normalized[field];
+    return normalized;
+  };
+  const d = withoutNull(originalDefinition, [
+    "systemPrompt",
+    "runtime",
+    "model",
+    "provider",
+    "parallelism",
+    "respondTo",
+    "idleTimeoutSeconds",
+    "maxTurnDurationSeconds",
+  ]);
+  const p = withoutNull(originalProfile, [
+    "about",
+    "avatarDataUrl",
+    "avatarUrl",
+  ]);
   if (
     !keys(value, ["format", "version", "definition", "profile", "memory"]) ||
     !isRecord(d) ||
@@ -224,6 +252,8 @@ export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
     throw new Error("Invalid snapshot manifest.");
   return {
     ...value,
+    definition: d,
+    profile: p,
     memory: { ...m, entries: m.entries ?? [] },
   } as AgentSnapshot;
 }

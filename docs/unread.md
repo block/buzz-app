@@ -371,7 +371,9 @@ the journal. Local unread decisions use both sets. Returning keys take the maxim
 frontier before leaving the reserve. Its finite eviction order favors channel,
 thread, then catch-up receipts before individual messages; newest event timestamps
 win within each group. While overrides exist, inherited reserve floors stay protected
-and direct override floors return to the journal.
+and direct override floors return to the journal. Without overrides, the reserve
+also drops a receipt that a kept broader receipt already covers (the same rule the
+journal uses), whether the cover is in the journal or the reserve.
 
 This extends retention only on the same browser profile/install. It cannot recover
 already discarded receipts, prevent loss after exhausting the reserve, or improve a

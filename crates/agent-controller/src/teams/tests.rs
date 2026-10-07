@@ -146,7 +146,7 @@ fn export_is_portable_and_preview_does_not_create_or_start_agents() {
                 description: Some("Safe fixtures".into()),
                 instructions: Some("TEAM_MARKER".into()),
             },
-            &[source.pubkey.clone()],
+            std::slice::from_ref(&source.pubkey),
             &source.relay_url,
         )
         .unwrap();

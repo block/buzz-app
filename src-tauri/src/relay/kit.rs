@@ -392,7 +392,7 @@ async fn decode_team_members(
             serde_json::from_value(raw["value"]["agents"].clone())
                 .map_err(|_| "Invalid team catalog")?
         };
-        if heads.get(&id).is_none_or(|(time, old, _)| {
+        if heads.get(&id).map_or(true, |(time, old, _)| {
             timestamp > *time || (timestamp == *time && event_id < *old)
         }) {
             heads.insert(id, (timestamp, event_id, members));

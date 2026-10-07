@@ -5,7 +5,13 @@ import { openPage } from "./navigation.mjs";
 test.use({ productionBroker: true, savedSidebar: true, largeSidebar: false });
 for (const personal of [false, true]) {
   test.describe(personal ? "personal removal" : "legacy removal", () => {
-    test.use({ personalSidebar: personal });
+    test.use({
+      personalSidebar: personal,
+      initialSidebarSort: {
+        [personal ? "section:personal-work" : "section:work"]: "recent",
+        channels: "recent",
+      },
+    });
     test("confirmed section removal preserves channels and survives reload", async ({
       page,
       app,
@@ -55,8 +61,12 @@ for (const personal of [false, true]) {
       await expect(row).toHaveCount(1);
       await expect
         .poll(() => app.report.sidebarPublications?.length ?? 0)
-        .toBe(1);
-      const { coordinate, blob } = app.report.sidebarPublications[0];
+        .toBe(2);
+      const reset = app.report.sidebarPublications[0];
+      expect(reset.coordinate).toBe("channel-sort");
+      expect(reset.blob.meta.g[`section:${id}`][2]).toBeNull();
+      expect(reset.blob.groups).toEqual({ channels: "recent" });
+      const { coordinate, blob } = app.report.sidebarPublications[1];
       if (personal) {
         expect(coordinate).toContain("buzz-channel-kit-v1:");
         expect(blob.deleted).toBe(false);

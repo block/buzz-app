@@ -357,6 +357,32 @@ export function createSidebarPreferencesStore(
         if (closed || generation !== writeGeneration)
           throw new Error("Sidebar section removal is unavailable");
         writeSignal.throwIfAborted();
+        if (!confirmed || (confirmed.groupSource ?? "legacy") !== source)
+          throw new Error(
+            "The active group source changed; refresh your sidebar before removing this section",
+          );
+        const group = `section:${sectionId}`;
+        if (confirmed.sort?.[group] !== undefined) {
+          if (!writeSort) throw new Error("Sidebar sort reset is unavailable");
+          // Reset while the section is live, so a failed write leaves removal
+          // retryable and cannot strand a live override beyond the decoder cap.
+          const sort = await writeSort(
+            group,
+            "alpha",
+            confirmed.sections.map(({ id }) => id),
+            writeSignal,
+          );
+          if (closed || generation !== writeGeneration)
+            throw new Error("Sidebar section removal is unavailable");
+          writeSignal.throwIfAborted();
+          if (!confirmed || (confirmed.groupSource ?? "legacy") !== source)
+            throw new Error(
+              "The active group source changed; refresh your sidebar before removing this section",
+            );
+          confirmed = { ...confirmed, sort };
+          mutation++;
+          project();
+        }
         const next = await removeSection(sectionId, writeSignal, source);
         if (closed || generation !== writeGeneration)
           throw new Error("Sidebar section removal is unavailable");

@@ -23,7 +23,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
-import { matchName } from "../../features/search/match";
+import { matchPerson } from "../../features/search/person-match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
@@ -53,15 +53,11 @@ import {
 import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
-import { matchPerson } from "../../features/search/person-match";
 
-/** How a name matches typed text. People come from a relay prefix search, so
- * fuzzy matches would depend on which profiles happen to be loaded; only real
- * substrings count. */
-const typedMatch = (name: string, needle: string) => {
-  const match = needle ? matchName(name, needle) : undefined;
-  return match && match.rank <= 3 ? match : undefined;
-};
+/** How a name matches typed text: the shared person name rule, the same as
+ * mentions and New message. */
+const typedMatch = (name: string, needle: string) =>
+  needle ? matchPerson(name, needle) : undefined;
 
 /** Typed text, lowercased. A context, so a query change redraws only the
  * names and not every memoized row. */
@@ -685,7 +681,7 @@ export function ChannelMembersDialog({
   // The relay ranks each page exact, then prefix, then other. Rank merged
   // agents the same way; the stable sort keeps the relay's order within a rank.
   const candidateRank = (person: { pubkey: string; name: string }) =>
-    typedMatch(label(person.pubkey, person.name), needle)?.rank ?? 4;
+    typedMatch(label(person.pubkey, person.name), needle)?.tier ?? 4;
   const available = [...candidates.values()]
     .filter(
       (person) =>

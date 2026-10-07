@@ -491,6 +491,20 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
             "selectorEnvironment": {"model": "GOOSE_MODEL", "provider": "GOOSE_PROVIDER"}
         })
     );
+    let external_policy = json!({
+        "authentication": "external", "provider": "external",
+        "supportedModes": [], "model": "optional", "effortDiscovery": "unknown",
+        "selectorEnvironment": null
+    });
+    for label in ["Hermes Agent", "Claude Code"] {
+        let option = before["harnessOptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["label"] == label)
+            .unwrap();
+        assert_eq!(option["configurationPolicy"], external_policy);
+    }
     assert_eq!(
         before["harnessOptions"][2]["available"],
         before["harnessOptions"][2]["status"] == "ready"

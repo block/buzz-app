@@ -241,6 +241,83 @@ it("switching external harnesses and Buzz resets incompatible selections and use
   });
 });
 
+it.each([
+  {
+    label: "Hermes Agent",
+    command: "/local/hermes-acp",
+    defaultArgs: ["--hermes-default"],
+  },
+  {
+    label: "Claude Code",
+    command: "/local/claude-agent-acp",
+    defaultArgs: ["--claude-default"],
+  },
+])(
+  "uses native-shaped $label preset defaults when leaving Buzz Agent",
+  async ({ label, command, defaultArgs }) => {
+    const externalPolicy = {
+      authentication: "external" as const,
+      provider: "external" as const,
+      supportedModes: [],
+      model: "optional" as const,
+      effortDiscovery: "unknown" as const,
+      selectorEnvironment: null,
+    };
+    let current = {
+      ...agentDraft(controlFixture().agent),
+      command: "buzz-agent",
+      provider: "databricks_v2",
+      model: "old-model",
+      args: '["old-argument"]',
+    };
+    function Editor() {
+      const [draft, setDraft] = useState(current);
+      current = draft;
+      return (
+        <AgentHarnessEditor
+          draft={draft}
+          options={[
+            {
+              command: "buzz-agent",
+              label: "Buzz Agent",
+              providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+              defaultArgs: [],
+              configurationPolicy: {
+                ...externalPolicy,
+                authentication: "provider",
+                provider: "selector",
+                selectorEnvironment: {
+                  model: "BUZZ_AGENT_MODEL",
+                  provider: "BUZZ_AGENT_PROVIDER",
+                },
+              },
+            },
+            {
+              command,
+              label,
+              providers: [],
+              defaultArgs,
+              configurationPolicy: externalPolicy,
+            },
+          ]}
+          onChange={(patch) => setDraft((draft) => ({ ...draft, ...patch }))}
+        />
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Editor />);
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(await screen.findByRole("option", { name: label }));
+    expect(current).toMatchObject({
+      command,
+      args: JSON.stringify(defaultArgs),
+      provider: "",
+      model: "",
+    });
+  },
+);
+
 it("disables Pi's provider list while signed-in providers load and keeps the current choice", () => {
   const f = controlFixture();
   render(

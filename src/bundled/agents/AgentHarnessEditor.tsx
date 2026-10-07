@@ -78,12 +78,13 @@ export function AgentHarnessEditor({
         ]}
         onChange={(command, pickedOption) => {
           const option = options.find((item) => item.command === command);
-          const enteringExternal = option?.configurationPolicy
-            ? option.configurationPolicy.authentication ===
-              "harnessWithOverrides"
-            : !!option &&
-              (harnessPreset(option.command) ||
-                ["goose", "pi"].includes(harnessKind(option.command) ?? ""));
+          const enteringExternal =
+            !!option &&
+            (!!harnessPreset(option.command) ||
+              (option.configurationPolicy
+                ? option.configurationPolicy.authentication ===
+                  "harnessWithOverrides"
+                : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
           onChange({
             command,
             ...(pickedOption && option && (enteringExternal || external)

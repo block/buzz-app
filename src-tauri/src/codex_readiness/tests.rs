@@ -61,6 +61,7 @@ fn shutdown_waits_for_running_work_to_retire() {
             owner: worker,
             ticket,
             cleanup_failed: false,
+            retained: Vec::new(),
         });
     });
     ready.wait();
@@ -98,7 +99,7 @@ fn cleanup_failure_is_sticky_for_shutdown_and_future_admission() {
     let ticket = host.begin().unwrap();
     host.claim(ticket).unwrap();
     host.started(ticket).unwrap();
-    host.finished(ticket, true);
+    host.finished(ticket, true, Vec::new());
     assert!(host.begin().is_err());
     assert!(host.shutdown().is_err());
 }
@@ -184,7 +185,7 @@ fi
         );
 
         let (_root, ready) = fixture_context(ADAPTER, CLI);
-        let result = check_context(ready, &|| true).unwrap();
+        let result = check_context(ready, &|| true, &mut Vec::new()).unwrap();
         assert_eq!(result.status, "binding-ready");
         assert_eq!(result.adapter_version.as_deref(), Some("1.10.0"));
         assert_eq!(result.cli_version.as_deref(), Some("0.151.0"));
@@ -192,7 +193,9 @@ fi
         let old = ADAPTER.replace("1.10.0", "0.16.0");
         let (_root, context) = fixture_context(&old, CLI);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "adapter-incompatible"
         );
 
@@ -202,7 +205,9 @@ fi
         );
         let (_root, context) = fixture_context(ADAPTER, &signed_out);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "signed-out"
         );
 
@@ -212,14 +217,18 @@ fi
         );
         let (_root, context) = fixture_context(ADAPTER, &broken);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "configuration-error"
         );
 
         let wrong_handshake = ADAPTER.replace("\"version\":\"1.10.0\"", "\"version\":\"2.0.0\"");
         let (_root, context) = fixture_context(&wrong_handshake, CLI);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "adapter-incompatible"
         );
 
@@ -229,7 +238,9 @@ fi
         );
         let (_root, context) = fixture_context(&wrong_identity, CLI);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "adapter-incompatible"
         );
     }
@@ -243,19 +254,23 @@ fi
 "#;
         let (_root, context) = fixture_context(flood, CLI);
         assert_eq!(
-            check_context(context, &|| true).unwrap().status,
+            check_context(context, &|| true, &mut Vec::new())
+                .unwrap()
+                .status,
             "output-limit"
         );
 
         let (_root, context) = fixture_context(ADAPTER, CLI);
         assert_eq!(
-            check_context(context, &|| false).unwrap().status,
+            check_context(context, &|| false, &mut Vec::new())
+                .unwrap()
+                .status,
             "cancelled"
         );
 
         let hanging = script("#!/bin/sh\nsleep 60\n");
         assert_eq!(
-            readiness_probe(Command::new(hanging.path()), &[], &|| true)
+            readiness_probe(Command::new(hanging.path()), &[], &|| true, &mut Vec::new())
                 .err()
                 .unwrap()
                 .status,
@@ -276,7 +291,7 @@ fi
             &BTreeMap::new(),
         )
         .unwrap();
-        let result = check_context(context, &|| true).unwrap();
+        let result = check_context(context, &|| true, &mut Vec::new()).unwrap();
         assert_eq!(result.status, "binding-ready", "{}", result.message);
         eprintln!(
             "Codex binding verified: adapter {}; CLI {}",
@@ -288,12 +303,26 @@ fi
     #[test]
     fn bounded_probe_reports_success_failure_timeout_and_cancellation() {
         let success = script("#!/bin/sh\nprintf 'codex-cli 0.151.0\\n'\n");
-        let output = probe(Command::new(success.path()), &[], PROBE_TIMEOUT, &|| true).unwrap();
+        let output = probe(
+            Command::new(success.path()),
+            &[],
+            PROBE_TIMEOUT,
+            &|| true,
+            &mut Vec::new(),
+        )
+        .unwrap();
         assert!(output.success);
         assert_eq!(output.stdout, "codex-cli 0.151.0\n");
 
         let failure = script("#!/bin/sh\nprintf 'private detail' >&2\nexit 1\n");
-        let output = probe(Command::new(failure.path()), &[], PROBE_TIMEOUT, &|| true).unwrap();
+        let output = probe(
+            Command::new(failure.path()),
+            &[],
+            PROBE_TIMEOUT,
+            &|| true,
+            &mut Vec::new(),
+        )
+        .unwrap();
         assert!(!output.success);
         assert_eq!(output.stderr, "private detail");
 
@@ -303,20 +332,26 @@ fi
             &[],
             Duration::from_millis(30),
             &|| true,
+            &mut Vec::new(),
         )
         .err()
         .unwrap()
         .contains("timed out"));
-        assert!(
-            probe(Command::new(hanging.path()), &[], PROBE_TIMEOUT, &|| false)
-                .err()
-                .unwrap()
-                .contains("cancelled")
-        );
+        assert!(probe(
+            Command::new(hanging.path()),
+            &[],
+            PROBE_TIMEOUT,
+            &|| false,
+            &mut Vec::new()
+        )
+        .err()
+        .unwrap()
+        .contains("cancelled"));
 
         let marker = tempfile::NamedTempFile::new().unwrap();
         let tree = script("#!/bin/sh\nsleep 60 &\nprintf '%s %s' \"$$\" \"$!\" > \"$1\"\nwait\n");
         let marker_path = marker.path().to_string_lossy().into_owned();
+        let mut retained = Vec::new();
         let current = || {
             std::fs::read_to_string(marker.path())
                 .map(|value| value.split_whitespace().count() != 2)
@@ -327,12 +362,17 @@ fi
             &[&marker_path],
             PROBE_TIMEOUT,
             &current,
+            &mut retained,
         )
         .err()
         .unwrap()
         .contains("cancelled"));
         let pids = std::fs::read_to_string(marker.path()).unwrap();
         let pids: Vec<_> = pids.split_whitespace().collect();
+        assert!(
+            retained.is_empty(),
+            "confirmed cleanup must not be retained"
+        );
         assert_eq!(pids.len(), 2);
         for pid in pids {
             assert!(!Command::new("/bin/ps")
@@ -347,21 +387,58 @@ fi
     #[test]
     fn bounded_probe_stops_output_floods() {
         let flooding = script("#!/bin/sh\nwhile :; do printf 1234567890; done\n");
-        assert!(
-            probe(Command::new(flooding.path()), &[], PROBE_TIMEOUT, &|| true)
-                .err()
-                .unwrap()
-                .contains("output exceeded")
-        );
+        assert!(probe(
+            Command::new(flooding.path()),
+            &[],
+            PROBE_TIMEOUT,
+            &|| true,
+            &mut Vec::new()
+        )
+        .err()
+        .unwrap()
+        .contains("output exceeded"));
 
         let finite = script(
             "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 7000 ]; do printf 1234567890; i=$((i + 1)); done\n",
         );
-        assert!(
-            probe(Command::new(finite.path()), &[], PROBE_TIMEOUT, &|| true)
-                .err()
-                .unwrap()
-                .contains("output exceeded")
-        );
+        assert!(probe(
+            Command::new(finite.path()),
+            &[],
+            PROBE_TIMEOUT,
+            &|| true,
+            &mut Vec::new()
+        )
+        .err()
+        .unwrap()
+        .contains("output exceeded"));
+    }
+
+    #[test]
+    fn shutdown_retires_retained_cleanup_before_allowing_exit() {
+        let host = Host::default();
+        let ticket = host.begin().unwrap();
+        host.claim(ticket).unwrap();
+        host.started(ticket).unwrap();
+        let live = script("#!/bin/sh\necho $$\nexec sleep 60\n");
+        let mut command = Command::new(live.path());
+        command.stdout(Stdio::piped());
+        let mut process = ContainedProcess::spawn(&mut command).unwrap();
+        let mut stdout = std::io::BufReader::new(process.take_stdout().unwrap());
+        let mut pid = String::new();
+        std::io::BufRead::read_line(&mut stdout, &mut pid).unwrap();
+        let pid = pid.trim();
+        // A failed stop hands the live tree to the host instead of dropping it.
+        host.finished(ticket, false, vec![process]);
+        assert!(host.begin().is_err());
+
+        host.shutdown().unwrap();
+        assert!(host.tickets.lock().unwrap().retained.is_empty());
+        assert!(!Command::new("/bin/ps")
+            .args(["-p", pid, "-o", "pid="])
+            .output()
+            .unwrap()
+            .status
+            .success());
+        host.shutdown().unwrap();
     }
 }

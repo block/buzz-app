@@ -1,6 +1,7 @@
 //! Explicit, bounded Codex binding checks. No model discovery or inference.
 #[cfg(unix)]
-use buzz_agent_controller::{codex::CodexContext, ContainedProcess};
+use buzz_agent_controller::codex::CodexContext;
+use buzz_agent_controller::ContainedProcess;
 use serde::Serialize;
 #[cfg(unix)]
 use serde_json::json;
@@ -61,6 +62,8 @@ struct Tickets {
     active: Option<Active>,
     running: bool,
     cleanup_failed: bool,
+    /// Processes whose stop failed; shutdown retries them before allowing exit.
+    retained: Vec<ContainedProcess>,
 }
 
 struct Active {
@@ -73,10 +76,13 @@ struct Finish {
     owner: Arc<Host>,
     ticket: u64,
     cleanup_failed: bool,
+    retained: Vec<ContainedProcess>,
 }
 impl Drop for Finish {
     fn drop(&mut self) {
-        self.owner.finished(self.ticket, self.cleanup_failed);
+        let retained = std::mem::take(&mut self.retained);
+        self.owner
+            .finished(self.ticket, self.cleanup_failed, retained);
     }
 }
 
@@ -100,7 +106,7 @@ impl Host {
             .tickets
             .lock()
             .map_err(|_| "Codex readiness is unavailable")?;
-        if tickets.cleanup_failed {
+        if tickets.cleanup_failed || !tickets.retained.is_empty() {
             return Err("Codex readiness cleanup could not be confirmed".into());
         }
         if let Some(active) = &tickets.active {
@@ -164,10 +170,11 @@ impl Host {
         Ok(())
     }
 
-    fn finished(&self, ticket: u64, cleanup_failed: bool) {
+    fn finished(&self, ticket: u64, cleanup_failed: bool, retained: Vec<ContainedProcess>) {
         if let Ok(mut tickets) = self.tickets.lock() {
             tickets.running = false;
             tickets.cleanup_failed |= cleanup_failed;
+            tickets.retained.extend(retained);
             if tickets.active.as_ref().map(|active| active.ticket) == Some(ticket) {
                 tickets.active = None;
             }
@@ -199,7 +206,11 @@ impl Host {
                 return Err("Codex readiness cleanup could not be confirmed".into());
             }
         }
-        if tickets.cleanup_failed {
+        // Retry under the lock so a concurrent shutdown cannot report success early.
+        tickets
+            .retained
+            .retain_mut(|process| process.stop().is_err());
+        if tickets.cleanup_failed || !tickets.retained.is_empty() {
             Err("Codex readiness cleanup could not be confirmed".into())
         } else {
             Ok(())
@@ -239,13 +250,15 @@ pub(crate) async fn codex_readiness_run(
             owner: check_owner.clone(),
             ticket,
             cleanup_failed: true,
+            retained: Vec::new(),
         };
-        let result = check(&workspace, || {
-            !cancelled.load(Ordering::SeqCst) && !check_owner.closed.load(Ordering::SeqCst)
-        });
-        finish.cleanup_failed = result
-            .as_ref()
-            .is_ok_and(|readiness| readiness.status == "cleanup-failed");
+        let result = check(
+            &workspace,
+            || !cancelled.load(Ordering::SeqCst) && !check_owner.closed.load(Ordering::SeqCst),
+            &mut finish.retained,
+        );
+        // Unconfirmed cleanup is now owned by `retained`; only a panic stays latched.
+        finish.cleanup_failed = false;
         result
     })
     .await;
@@ -256,10 +269,14 @@ pub(crate) async fn codex_readiness_run(
     Ok(result)
 }
 
-fn check(workspace: &Path, current: impl Fn() -> bool) -> Result<Readiness, String> {
+fn check(
+    workspace: &Path,
+    current: impl Fn() -> bool,
+    retained: &mut Vec<ContainedProcess>,
+) -> Result<Readiness, String> {
     #[cfg(not(unix))]
     {
-        let _ = (workspace, current);
+        let _ = (workspace, current, retained);
         return Ok(Readiness::failed(
             "unsupported",
             "Codex binding is not enabled on this platform yet.",
@@ -274,7 +291,7 @@ fn check(workspace: &Path, current: impl Fn() -> bool) -> Result<Readiness, Stri
         if !current() {
             return Err("Codex readiness check was cancelled".into());
         }
-        check_context(context, &current)
+        check_context(context, &current, retained)
     }
 }
 
@@ -301,11 +318,16 @@ fn resolution_failure(error: &str) -> Readiness {
 }
 
 #[cfg(unix)]
-fn check_context(context: CodexContext, current: &impl Fn() -> bool) -> Result<Readiness, String> {
-    let adapter = match readiness_probe(context.adapter_command(), &["--version"], current) {
-        Ok(output) => output,
-        Err(status) => return Ok(status),
-    };
+fn check_context(
+    context: CodexContext,
+    current: &impl Fn() -> bool,
+    retained: &mut Vec<ContainedProcess>,
+) -> Result<Readiness, String> {
+    let adapter =
+        match readiness_probe(context.adapter_command(), &["--version"], current, retained) {
+            Ok(output) => output,
+            Err(status) => return Ok(status),
+        };
     let adapter_version = parse_version(&adapter.stdout, &["@agentclientprotocol/codex-acp "]);
     let Some(adapter_version) = adapter_version else {
         return Ok(Readiness::failed(
@@ -319,7 +341,7 @@ fn check_context(context: CodexContext, current: &impl Fn() -> bool) -> Result<R
                 "The Codex ACP adapter is incompatible. Install @agentclientprotocol/codex-acp 1.10.0 or later.",
             ));
     }
-    let cli = match readiness_probe(context.cli_command(), &["--version"], current) {
+    let cli = match readiness_probe(context.cli_command(), &["--version"], current, retained) {
         Ok(output) => output,
         Err(status) => return Ok(status),
     };
@@ -335,7 +357,12 @@ fn check_context(context: CodexContext, current: &impl Fn() -> bool) -> Result<R
             "The selected Codex CLI version could not be verified. Update Codex, then check again.",
         ));
     }
-    let login = match readiness_probe(context.cli_command(), &["login", "status"], current) {
+    let login = match readiness_probe(
+        context.cli_command(),
+        &["login", "status"],
+        current,
+        retained,
+    ) {
         Ok(output) => output,
         Err(status) => return Ok(status),
     };
@@ -352,7 +379,7 @@ fn check_context(context: CodexContext, current: &impl Fn() -> bool) -> Result<R
             "Codex could not read its configuration or login. Repair it, then check again.",
         ));
     }
-    if let Err(status) = initialize(&context, &adapter_version, current) {
+    if let Err(status) = initialize(&context, &adapter_version, current, retained) {
         return Ok(status);
     }
     Ok(Readiness {
@@ -368,8 +395,9 @@ fn readiness_probe(
     command: Command,
     args: &[&str],
     current: &impl Fn() -> bool,
+    retained: &mut Vec<ContainedProcess>,
 ) -> Result<Output, Readiness> {
-    probe(command, args, PROBE_TIMEOUT, current).map_err(|error| {
+    probe(command, args, PROBE_TIMEOUT, current, retained).map_err(|error| {
         if error.contains("cancelled") {
             Readiness::failed("cancelled", "Codex readiness check was cancelled.")
         } else if error.contains("timed out") {
@@ -406,6 +434,7 @@ fn probe(
     args: &[&str],
     timeout: Duration,
     current: &impl Fn() -> bool,
+    retained: &mut Vec<ContainedProcess>,
 ) -> Result<Output, String> {
     command
         .args(args)
@@ -425,29 +454,24 @@ fn probe(
     let deadline = Instant::now() + timeout;
     loop {
         if !current() {
-            process
-                .stop()
-                .map_err(|_| "Codex readiness process cleanup failed")?;
+            retire(process, retained)?;
             let _ = (out.join(), err.join());
             return Err("Codex readiness check was cancelled".into());
         }
         if overflow.load(Ordering::SeqCst) {
-            process
-                .stop()
-                .map_err(|_| "Codex readiness process cleanup failed")?;
+            retire(process, retained)?;
             let _ = (out.join(), err.join());
             return Err("Codex readiness output exceeded its limit".into());
         }
-        if !process
-            .alive()
-            .map_err(|_| "Codex readiness process cleanup failed")?
-        {
+        let Ok(alive) = process.alive() else {
+            retire(process, retained)?;
+            return Err("Codex readiness process cleanup failed".into());
+        };
+        if !alive {
             break;
         }
         if Instant::now() >= deadline {
-            process
-                .stop()
-                .map_err(|_| "Codex readiness process cleanup failed")?;
+            retire(process, retained)?;
             let _ = (out.join(), err.join());
             return Err("Codex readiness check timed out".into());
         }
@@ -470,6 +494,19 @@ fn probe(
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+/// Stop `process`, or keep its ownership so shutdown can retry retirement.
+#[cfg(unix)]
+fn retire(
+    mut process: ContainedProcess,
+    retained: &mut Vec<ContainedProcess>,
+) -> Result<(), String> {
+    if process.stop().is_err() {
+        retained.push(process);
+        return Err("Codex readiness process cleanup failed".into());
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -502,6 +539,7 @@ fn initialize(
     context: &CodexContext,
     adapter_version: &str,
     current: &impl Fn() -> bool,
+    retained: &mut Vec<ContainedProcess>,
 ) -> Result<(), Readiness> {
     let mut command = context.adapter_command();
     command
@@ -647,7 +685,7 @@ fn initialize(
         }
     };
     drop(stdin);
-    if process.stop().is_err() {
+    if retire(process, retained).is_err() {
         return Err(Readiness::failed(
             "cleanup-failed",
             "The Codex ACP adapter process could not be cleaned up.",

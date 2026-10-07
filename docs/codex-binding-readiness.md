@@ -60,6 +60,7 @@ timeout, excessive output, cleanup failure, cancellation, and unknown failures.
 Checks use one-shot tickets. A newer request cancels the previous request; late
 begin and completion results cannot replace the latest UI state. App shutdown
 cancels the owned request and waits for native cleanup before allowing exit.
+A process whose cleanup fails stays owned, and each later shutdown retries it.
 During a retry, Settings shows **Checking…** instead of presenting the previous
 successful result as current.
 

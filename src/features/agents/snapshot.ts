@@ -2,7 +2,7 @@
 import type { AgentView } from "./control";
 import { memorySlug, type MemoryEntry } from "./memory";
 
-const MAX_FILE = 4 * 1024 * 1024;
+export const MAX_AGENT_SNAPSHOT_FILE_BYTES = 4 * 1024 * 1024;
 const MAGIC = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const encoder = new TextEncoder();
@@ -103,7 +103,7 @@ const keys = (record: Record<string, unknown>, allowed: string[]) =>
 
 /** Fail closed on unknown fields: a future writer cannot smuggle credentials as "config". */
 export function parseAgentSnapshot(bytes: Uint8Array): AgentSnapshot {
-  if (bytes.length > MAX_FILE)
+  if (bytes.length > MAX_AGENT_SNAPSHOT_FILE_BYTES)
     throw new Error("Snapshot exceeds the size limit.");
   const raw =
     bytes.length >= 8 &&
@@ -377,7 +377,7 @@ export function encodeAgentSnapshot(
     const parts: Uint8Array[] = [];
     let at = 8;
     if (
-      artwork.length > MAX_FILE ||
+      artwork.length > MAX_AGENT_SNAPSHOT_FILE_BYTES ||
       !artwork.subarray(0, 8).every((v, i) => v === MAGIC[i])
     )
       throw new Error("Invalid snapshot artwork.");
@@ -411,7 +411,7 @@ export function encodeAgentSnapshot(
     chunk("tEXt", concat([keyword, encoder.encode(base64)])),
     ...imageParts.slice(1),
   ]);
-  if (png.length > MAX_FILE)
+  if (png.length > MAX_AGENT_SNAPSHOT_FILE_BYTES)
     throw new Error("Snapshot exceeds the size limit.");
   parseAgentSnapshot(png);
   return png;
@@ -423,7 +423,10 @@ function pngManifest(bytes: Uint8Array) {
     ended = false;
   while (offset + 12 <= bytes.length) {
     const length = u32(bytes, offset);
-    if (length > MAX_FILE || offset + 12 + length > bytes.length)
+    if (
+      length > MAX_AGENT_SNAPSHOT_FILE_BYTES ||
+      offset + 12 + length > bytes.length
+    )
       throw new Error("Invalid PNG snapshot.");
     const type = decoder.decode(bytes.subarray(offset + 4, offset + 8));
     const payload = bytes.subarray(offset + 8, offset + 8 + length);

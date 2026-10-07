@@ -3,6 +3,7 @@ import { controlFixture } from "./control-testing";
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
+  MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
 } from "./snapshot";
 const portableAgent = () => {
@@ -15,6 +16,21 @@ const portableAgent = () => {
 const utf8 = new TextEncoder();
 const parse = (value: unknown) =>
   parseAgentSnapshot(utf8.encode(JSON.stringify(value)));
+
+it.each(["json", "png"] as const)(
+  "uses the shared %s file cap for send eligibility and import",
+  (format) => {
+    const bytes = encodeAgentSnapshot(
+      buildAgentSnapshot(portableAgent()),
+      format,
+    );
+    expect(bytes.length).toBeLessThanOrEqual(MAX_AGENT_SNAPSHOT_FILE_BYTES);
+    expect(parseAgentSnapshot(bytes).format).toBe("buzz-agent-snapshot");
+    expect(() =>
+      parseAgentSnapshot(new Uint8Array(MAX_AGENT_SNAPSHOT_FILE_BYTES + 1)),
+    ).toThrow("Snapshot exceeds the size limit.");
+  },
+);
 
 it("exports the native listener fallback explicitly across different destination defaults", () => {
   const source = portableAgent();

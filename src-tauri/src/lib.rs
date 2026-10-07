@@ -32,6 +32,7 @@ mod identity;
 
 mod notifications;
 mod os_idle;
+mod window_controls;
 mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
@@ -517,6 +518,7 @@ pub fn run() {
         builder
     };
     let builder = builder
+        .plugin(window_controls::init())
         .plugin(window_state::builder().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())

@@ -25,6 +25,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const owner of owners.splice(0)) await owner.dispose();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -383,6 +384,66 @@ it.each([
     } finally {
       gate.resolve();
       await Promise.allSettled([enrolling, removing]);
+    }
+  },
+);
+
+it.each(["session replacement", "silent disposal"])(
+  "releases the registration lock after %s without discarding its receipt",
+  async (boundary) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const h = await fixture();
+    h.enrollment.remember(h.enrollment.capture(), agent);
+    const started = deferred<void>();
+    const publication = deferred<void>();
+    h.publish.mockImplementationOnce(() => {
+      started.resolve();
+      return publication.promise;
+    });
+    const draining = deferred<void>();
+    const subscribe = h.relay.subscribe;
+    vi.spyOn(h.relay, "subscribe").mockImplementation((listener) => {
+      const stop = subscribe(listener);
+      draining.resolve();
+      return stop;
+    });
+    const controller = new AbortController();
+    let settled = false;
+    const enrolling = h.enrollment
+      .recover([agent], controller.signal, () => true)
+      .catch((error) => error)
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await started.promise;
+      const event = h.publish.mock.calls[0]?.[0];
+      controller.abort();
+      await draining.promise;
+      if (boundary === "session replacement") await h.restart();
+      else {
+        await h.dispose();
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(await enrolling).toMatchObject({ name: "AbortError" });
+      if (boundary === "silent disposal") await h.restart();
+      expect(h.relay.snapshot().session.outbox?.snapshot()).toEqual([
+        expect.objectContaining({
+          delivery: "unknown",
+          event: expect.objectContaining({ id: event?.id }),
+        }),
+      ]);
+      expect(h.enrollment.pending([agent])).toEqual([agent.pubkey]);
+      const restored = createEnrollment(h.relay, h.reader, h.login);
+      await restored.recover([agent], h.signal, () => true);
+      expect(h.publish).toHaveBeenCalledTimes(2);
+      expect(h.publish.mock.calls[1]?.[0]).toEqual(event);
+      expect(h.sign).toHaveBeenCalledTimes(1);
+      expect(restored.pending([agent])).toEqual([]);
+    } finally {
+      publication.resolve();
     }
   },
 );

@@ -38,7 +38,9 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   server/account scope and agent pubkey. Standard Web Locks, also used by the
   app's read-state sync, order registration and deletion
   for the same scope across app windows; deletion waits for an issued registration
-  attempt to settle, even when its caller cancels. Setup requires Web Locks.
+  attempt to settle, even when its caller cancels. If that session retires, the
+  lock drain ends without confirming or discarding its receipt; a ten-second
+  bound also covers disposal without notification. Setup requires Web Locks.
   Successful deletion retires failed or confirmed registration receipts.
   Deletion does not archive identities, remove channel memberships, erase history,
   or clean registrations in other communities.

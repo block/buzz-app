@@ -115,7 +115,6 @@ export function enrollmentFixture(
       for (const listener of listeners) listener();
     },
     async restart() {
-      await owner.session.outbox?.ready();
       owner.dispose();
       await closed.promise;
       closed = deferred<void>();

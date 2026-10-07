@@ -215,15 +215,27 @@ export function createEnrollment(
       try {
         await delivered(outbox, id, signal);
       } finally {
-        // Cancelling the caller does not cancel an issued native request. Hold
-        // the lock until its outbox attempt settles (including its deadline).
+        // Cancelling the caller does not cancel an issued native request. Drain
+        // its attempt while the session is live; retirement freezes the outbox.
         if (
           outbox.snapshot().find((item) => item.event.id === id)?.delivery ===
           "sending"
-        )
-          await delivered(outbox, id, new AbortController().signal).catch(
-            () => {},
-          );
+        ) {
+          const drain = new AbortController();
+          const retired = () => {
+            if (relay.snapshot().session !== session) drain.abort();
+          };
+          const stop = relay.subscribe(retired);
+          // Match the normal outbox deadline, including disposal without notice.
+          const timer = setTimeout(() => drain.abort(), 10_000);
+          try {
+            retired();
+            await delivered(outbox, id, drain.signal).catch(() => {});
+          } finally {
+            clearTimeout(timer);
+            stop();
+          }
+        }
       }
       check();
     }

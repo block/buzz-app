@@ -169,6 +169,99 @@ it("marks cold history incomplete before unread subscribers observe its body", a
     stop();
   }
 });
+it.each(["canonical", "legacy"])(
+  "withholds cold %s ancestry through failed history and checks its stored overlays on retry",
+  async (mode) => {
+    const channelId =
+      mode === "canonical" ? "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd" : "room";
+    const origin = "https://relay.test";
+    const h = setup(channelId, origin);
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const root = message(h.viewer, channelId, "assignment", 12);
+    const parent = message(h.alice, channelId, "ANCESTOR ORIGINAL BODY", 15, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    const mention = message(h.alice, channelId, "needs input", 20, [
+      ["e", parent.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]);
+    const edit = signed(h.alice, {
+      kind: 40003,
+      created_at: 21,
+      content: "ANCESTOR CURRENT BODY",
+      tags: [
+        ["h", channelId],
+        ["e", parent.id],
+      ],
+    });
+    h.live.receive([mention]);
+    const observed: boolean[] = [];
+    const stop = h.session.unread.subscribeInbox(() => {
+      if (rows(h).some((item) => item.messageIds.includes(parent.id)))
+        observed.push(
+          h.session.inboxFeed.snapshot().incomplete.includes(parent.id),
+        );
+    });
+    const history = deferred<RelayEvent[]>();
+    let recovery = false;
+    const query = h.query.getMockImplementation();
+    if (!query) throw new Error("Missing fixture query");
+    h.query.mockImplementation(async (filters) => {
+      const filter = filters[0];
+      if (filter?.ids)
+        return filter.ids.includes(parent.id) ? [parent] : [root];
+      if (filter?.kinds?.includes(9) && filter["#e"]) {
+        if (!recovery) return history.promise;
+        if (!filter.thread_window) return [];
+        return [
+          signed(h.relay, {
+            kind: 39007,
+            created_at: 30,
+            tags: [
+              ["d", await threadBinding(filter, origin, h.viewer.pubkey)],
+              ["h", channelId],
+              ["e", root.id],
+            ],
+            content: JSON.stringify({
+              version: 1,
+              direction: "older",
+              has_more: false,
+              next_cursor: null,
+            }),
+          }),
+        ];
+      }
+      if (filter?.kinds?.includes(40003) && filter["#e"]?.includes(parent.id))
+        return filter.until === undefined ? [edit] : [];
+      return query(filters);
+    });
+    const work = h.session.inboxFeed.ensureResponses(rows(h));
+    try {
+      await vi.waitFor(() => expect(observed.length).toBeGreaterThan(0));
+      expect(observed.every(Boolean)).toBe(true);
+      expect(h.session.inboxFeed.snapshot().incomplete).toContain(parent.id);
+    } finally {
+      history.reject(new Error("ancestry history unavailable"));
+      await work;
+      stop();
+    }
+    expect(h.session.inboxFeed.snapshot()).toMatchObject({ status: "error" });
+    expect(h.session.inboxFeed.snapshot().incomplete).toContain(parent.id);
+    recovery = true;
+    await h.session.inboxFeed.ensureResponses(rows(h));
+    expect(h.session.inboxFeed.snapshot()).toMatchObject({
+      status: "ready",
+      incomplete: [],
+    });
+    expect(
+      rows(h).some((item) => item.preview === "ANCESTOR CURRENT BODY"),
+    ).toBe(true);
+    expect(
+      rows(h).some((item) => item.preview === "ANCESTOR ORIGINAL BODY"),
+    ).toBe(false);
+  },
+);
 it("batches history and edit-deletion targets within the real reader's request budget", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

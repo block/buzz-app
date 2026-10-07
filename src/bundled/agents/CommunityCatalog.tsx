@@ -289,6 +289,7 @@ export function catalogSeed(agent: CatalogAgent): CatalogSeed {
     ...(agent.runtime ? { runtime: agent.runtime } : {}),
     ...(agent.model ? { model: agent.model } : {}),
     ...(agent.provider ? { provider: agent.provider } : {}),
+    ...(agent.avatarUrl ? { picture: agent.avatarUrl } : {}),
   };
 }
 

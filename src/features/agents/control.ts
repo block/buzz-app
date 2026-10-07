@@ -213,6 +213,8 @@ export type CatalogSeed = CloneSettings & {
   runtime?: string;
   model?: string;
   provider?: string;
+  /** Already-filtered HTTPS artwork from the publication. */
+  picture?: string;
 };
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;

@@ -67,7 +67,11 @@ export function seededDraft(
         option.available !== false &&
         harnessKind(option.command) === seed.runtime,
     );
-  const seeded = { ...draft, sessionPolicy: seed.sessionPolicy };
+  const seeded = {
+    ...draft,
+    sessionPolicy: seed.sessionPolicy,
+    ...(seed.picture ? { picture: seed.picture } : {}),
+  };
   if (!chosen) return seeded;
   const runtime = {
     ...seeded,

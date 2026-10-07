@@ -383,6 +383,7 @@ it.each([
           model: "their-model",
           provider: "their-provider",
           session_policy: "thread",
+          avatar_url: "https://media.example.test/preset.png",
         }),
         created_at: 1,
       }),
@@ -443,6 +444,7 @@ it.each([
     // The preset owns its model and credentials; the default harness differs.
     expect(commit.mock.calls[0]?.[1]).toMatchObject({
       sessionPolicy: "thread",
+      picture: "https://media.example.test/preset.png",
       harness: { command, args: [], model: "", provider: "" },
     });
   },

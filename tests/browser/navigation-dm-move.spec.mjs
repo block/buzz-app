@@ -31,6 +31,9 @@ test("Move conversation saves a DM in a section and restores it there after relo
   await expect(
     page.getByRole("menu", { name: "Actions for Alice Fixture" }),
   ).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("dm-move-row-menu.png"),
+  });
   const move = page.getByRole("menuitem", {
     name: "Move conversation",
     exact: true,

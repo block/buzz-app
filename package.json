@@ -14,7 +14,6 @@
     "preview": "vite preview",
     "author:build": "node scripts/build-author.mjs",
     "typecheck": "tsc --noEmit",
-    "hooks:install": "node scripts/install-hooks.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "tauri": "tauri",

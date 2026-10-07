@@ -46,8 +46,10 @@ See the [host-mode matrix](docs/contributing.md#shared-logic-and-host-boundaries
 `just iterate` applies formatting and runs fast checks plus the frontend build.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
 those checks in cached, parallel jobs with sharded browser journeys.
-Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
-`bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
+Staged-file pre-commit and related-test pre-push hooks run through lhm where it
+is installed; otherwise run `just hooks` (or `bin/just hooks` without activation)
+once per clone. See
+[hook behavior and partial staging](docs/contributing.md#git-hooks).
 
 ### Design system
 

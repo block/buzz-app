@@ -78,6 +78,7 @@ function fixture(personal = true) {
     legacy = { ...legacy, starred: starred ? [channelId] : [] };
     return legacy.starred;
   });
+  const sort = vi.fn(async () => ({}));
   const publish = vi.fn(async (event: RelayEvent) => {
     events.push(event);
   });
@@ -95,6 +96,7 @@ function fixture(personal = true) {
       writeSidebarAssignment: assignment,
       removeSidebarSection: removal,
       writeSidebarStar: star,
+      writeSidebarSort: sort,
       channelKit: {
         decode: async (rows) =>
           rows.map((event) => ({
@@ -116,6 +118,7 @@ function fixture(personal = true) {
     query,
     assignment,
     removal,
+    sort,
     star,
     publish,
     prepare,
@@ -327,6 +330,12 @@ it.each([false, true])(
     try {
       await f.preferences.ensure();
       await f.preferences.removeSection("work");
+      expect(f.sort).toHaveBeenCalledWith(
+        "section:work",
+        "alpha",
+        ["work"],
+        expect.any(AbortSignal),
+      );
       expect(f.preferences.snapshot().data).toMatchObject({
         sections: [],
         assignments: {},

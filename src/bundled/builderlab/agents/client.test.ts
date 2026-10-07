@@ -43,7 +43,7 @@ async function fixture(subject = "user") {
   return {
     session,
     host,
-    client: createAgentClient(host, session),
+    client: createAgentClient(host, session, () => undefined),
     signal: new AbortController().signal,
   };
 }
@@ -222,7 +222,10 @@ it.each(["network", "server", "malformed", "cancel"])(
       }),
     );
     // A fresh consumer after navigation/restart reuses the persisted intent.
-    await createAgentClient(h.host, h.session).register("Helper", h.signal);
+    await createAgentClient(h.host, h.session, () => undefined).register(
+      "Helper",
+      h.signal,
+    );
     const bodies = vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
@@ -322,3 +325,26 @@ it.each(["sign-out", "cancel"])(
     expect(h.host.request).not.toHaveBeenCalled();
   },
 );
+
+it("does not enroll into a previous community after a switch during signing", async () => {
+  const h = await fixture();
+  let community = "wss://community.example";
+  const client = createAgentClient(h.host, h.session, () => community);
+  const held = deferred<typeof proof>();
+  h.host.prepareRemoteAgentAuthorization = vi.fn(() => held.promise);
+  const pending = client.attest(
+    {
+      id: row.agent_id,
+      name: row.agent_name,
+      pubkey: row.agent_pubkey,
+      status: "Unattested",
+    },
+    h.signal,
+    () => true,
+  );
+  expect(h.host.prepareRemoteAgentAuthorization).toHaveBeenCalledOnce();
+  community = "wss://other.example";
+  held.resolve(proof);
+  await expect(pending).rejects.toThrow("Community changed");
+  expect(h.host.request).not.toHaveBeenCalled();
+});

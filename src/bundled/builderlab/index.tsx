@@ -1,3 +1,4 @@
+import { communityDestination } from "../../features/communities/destination";
 import type { PluginModule } from "../../plugins/api";
 import { Login } from "./login/Login";
 import {
@@ -9,7 +10,7 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 
-export const inject = ["host", "settingsCards"];
+export const inject = ["host", "settingsCards", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -24,7 +25,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     browserCredential(ctx.host, signal),
   );
   ctx.effect(() => () => session.dispose());
-  const agents = createAgentClient(ctx.host, session);
+  const agents = createAgentClient(ctx.host, session, () => {
+    const selected = ctx.communityReader.snapshot().selected;
+    return selected
+      ? communityDestination(selected).url.replace(/^https:/, "wss:")
+      : undefined;
+  });
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",

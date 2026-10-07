@@ -28,7 +28,11 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   return "Unknown";
 }
 
-export function createAgentClient(host: Host, session: OAuthSession) {
+export function createAgentClient(
+  host: Host,
+  session: OAuthSession,
+  communityUrl: () => string | undefined,
+) {
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
     if (
@@ -170,6 +174,7 @@ export function createAgentClient(host: Host, session: OAuthSession) {
       if (!active())
         throw new DOMException("Builderlab card is inactive.", "AbortError");
       const credential = session.credential();
+      const community = communityUrl();
       if (!host.prepareRemoteAgentAuthorization)
         throw new Error(
           "Remote agent authorization is unavailable in this Buzz build.",
@@ -181,11 +186,14 @@ export function createAgentClient(host: Host, session: OAuthSession) {
       check(credential, signal);
       if (!active())
         throw new DOMException("Builderlab card is inactive.", "AbortError");
+      if (communityUrl() !== community)
+        throw new Error("Community changed. Use Finish setup to try again.");
       const result = await request(
         "attest-agent",
         {
           agent_pubkey: agent.pubkey,
           owner_auth_tag_json: JSON.stringify(tag),
+          ...(community ? { community_url: community } : {}),
         },
         signal,
       );

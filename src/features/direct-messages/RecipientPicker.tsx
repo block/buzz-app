@@ -15,11 +15,13 @@ export function RecipientPicker({
   session,
   selected,
   disabled,
+  excludedPubkeys = [],
   onChange,
 }: {
   session: RelaySession;
   selected: Recipient[];
   disabled: boolean;
+  excludedPubkeys?: readonly string[];
   onChange(people: Recipient[]): void;
 }) {
   const [query, setQuery] = useState("");
@@ -69,6 +71,7 @@ export function RecipientPicker({
   const eligible = directory.people.filter(
     (person) =>
       person.pubkey !== session.viewer &&
+      !excludedPubkeys.includes(person.pubkey) &&
       (!person.isAgent || controlled.has(person.pubkey)) &&
       !selected.some((item) => item.pubkey === person.pubkey),
   );
@@ -140,6 +143,7 @@ export function RecipientPicker({
       disabled ||
       selection.current.length >= 8 ||
       person.pubkey === session.viewer ||
+      excludedPubkeys.includes(person.pubkey) ||
       (person.isAgent && !controlled.has(person.pubkey)) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )

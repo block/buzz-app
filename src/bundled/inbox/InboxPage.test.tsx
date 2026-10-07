@@ -565,6 +565,54 @@ it.each(["close", "draft", "drafts"] as const)(
   },
 );
 
+it("reconciles saved preferences from another window", async () => {
+  const h = fixture({ withWriter: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("A thread update"),
+  );
+  if (!row) throw Error("Missing thread row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  await screen.findByRole("checkbox", { name: "Archive on send" });
+  act(() => {
+    for (const [key, value] of [
+      [
+        "inbox:filters",
+        {
+          show: "all",
+          activity: "bogus",
+          sender: "agents",
+          attention: "unread",
+        },
+      ],
+      ["inbox:archive-on-send", false],
+    ] as const) {
+      const storageKey = `buzz-view.v1:${JSON.stringify([h.owner.session.scope, key])}`;
+      localStorage.setItem(storageKey, JSON.stringify(value));
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: storageKey,
+          storageArea: localStorage,
+        }),
+      );
+    }
+  });
+  expect(screen.getByRole("combobox", { name: "Show" })).toHaveTextContent(
+    "Inbox + archived",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Activity type" }),
+  ).toHaveTextContent("All activity");
+  expect(screen.getByRole("combobox", { name: "Sender" })).toHaveTextContent(
+    "Agents",
+  );
+  expect(screen.getByRole("checkbox", { name: "Unread only" })).toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Archive on send" }),
+  ).not.toBeChecked();
+});
+
 function fixture(
   options: {
     failRoster?: boolean;

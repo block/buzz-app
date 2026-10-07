@@ -255,6 +255,26 @@ export function InboxView({
   const archiveRevision = useSyncExternalStore(subscribeArchives, () =>
     viewRevision(archiveScope, archiveKey),
   );
+  const filtersRevision = useSyncExternalStore(subscribeArchives, () =>
+    viewRevision(archiveScope, filtersKey),
+  );
+  const sendPreferenceRevision = useSyncExternalStore(subscribeArchives, () =>
+    viewRevision(archiveScope, "inbox:archive-on-send"),
+  );
+  useEffect(() => {
+    void filtersRevision;
+    setFilters(readFilters(archiveScope));
+    setLimit(50);
+  }, [archiveScope, filtersRevision]);
+  useEffect(() => {
+    void sendPreferenceRevision;
+    const saved = readView<unknown>(
+      archiveScope,
+      "inbox:archive-on-send",
+      true,
+    );
+    setArchiveOnSend(typeof saved === "boolean" ? saved : true);
+  }, [archiveScope, sendPreferenceRevision]);
   const archives = useMemo(
     () => archiveIndex(readArchives(archiveRevision)),
     [archiveRevision],

@@ -1,6 +1,10 @@
-import type { AgentControl, AgentEdit, AgentView } from "./control";
+import type { AgentControl, AgentView } from "./control";
 
-import type { AgentSnapshot } from "./snapshot";
+import {
+  parseAgentSnapshot,
+  snapshotImportEdit,
+  type AgentSnapshot,
+} from "./snapshot";
 
 export type MemberSnapshot = AgentSnapshot;
 export interface TeamSnapshot {
@@ -35,44 +39,18 @@ export async function importTeamMembers(
   const agents: AgentView[] = [];
   // An uncertain commit requires a fresh native read before any explicit retry.
   await control.refresh();
+  // Validate every member against the shared foundation before creating any copy.
+  const state = control.snapshot().data;
+  const edits = snapshot.members.map((member) =>
+    snapshotImportEdit(
+      parseAgentSnapshot(new TextEncoder().encode(JSON.stringify(member))),
+      { ...state, teamMember: true },
+    ),
+  );
   for (const [index, member] of snapshot.members.entries()) {
     const request = requests[index];
-    if (!request) throw new Error("Invalid member creation request.");
-    const state = control.snapshot().data;
-    const options = state?.harnessOptions ?? [];
-    const requested =
-      member.definition.runtime ??
-      state?.defaultSettings?.harness ??
-      "buzz-agent";
-    const chosen = options.find(
-      (option) =>
-        option.available !== false &&
-        (option.command
-          .split(/[\\/]/)
-          .pop()
-          ?.replace(/\.exe$/i, "") === requested ||
-          (requested === "goose" && option.command.endsWith("goose-acp"))),
-    );
-    if (!chosen)
-      throw new Error(
-        `No ACP runtimes found. Make sure an agent runtime (e.g. Goose) is installed.`,
-      );
-    const edit: AgentEdit = {
-      name: member.profile.displayName,
-      systemPrompt: member.definition.systemPrompt ?? "",
-      sessionPolicy: member.definition.sessionPolicy ?? "channel",
-      picture: member.profile.avatarDataUrl ?? member.profile.avatarUrl ?? "",
-      workspace: state?.defaultWorkspace ?? "",
-      harness: {
-        command: chosen.command,
-        args: chosen.defaultArgs ?? [],
-        model: member.definition.model ?? "",
-        provider: member.definition.provider ?? "",
-      },
-      environment: {
-        BUZZ_ACP_AGENTS: String(member.definition.parallelism ?? 10),
-      },
-    };
+    const edit = edits[index];
+    if (!request || !edit) throw new Error("Invalid member creation request.");
     const agent = await control.create(request, destination, owner, edit, {
       member: { ...member, memory: { level: "none", entries: [] } },
       team,

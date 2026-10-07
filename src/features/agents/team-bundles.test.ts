@@ -40,7 +40,7 @@ it("retains identity requests on partial failure, preserves separate instruction
     expect(edit.systemPrompt).toBe(
       `INDIVIDUAL_${request === "one" ? "One" : "Two"}`,
     );
-    expect(edit.environment).toEqual({ BUZZ_ACP_AGENTS: "10" });
+    expect(edit.environment).toEqual({});
     if (request === "two" && failSecond)
       throw new Error("Fixture credential failure");
     const agent = {
@@ -115,7 +115,7 @@ it("rejects unavailable local runtime before creating any identity", async () =>
       false,
       "team-a",
     ),
-  ).rejects.toThrow("No ACP runtimes found");
+  ).rejects.toThrow("unavailable");
   expect(fixture.host.prepareCreate).not.toHaveBeenCalled();
   control.dispose();
 });
@@ -218,3 +218,124 @@ it("resumes public receipts after remount without storing prompts or memories", 
       .requests,
   ).not.toEqual(first.requests);
 });
+
+it.each([
+  ["claude", "/local/claude-agent-acp"],
+  ["hermes", "/local/hermes-acp"],
+  ["pi", "/local/buzz-pi-acp"],
+  ["goose", "/local/goose-acp"],
+] as const)(
+  "uses shared local %s mapping and preserves original receipt settings",
+  async (runtime, command) => {
+    const fixture = controlFixture();
+    fixture.data.harnessOptions = [
+      {
+        command,
+        available: true,
+        label: runtime,
+        status: "ready",
+        defaultArgs: [],
+        providers: [],
+      },
+    ];
+    const source = snapshot.members[0];
+    if (!source) throw new Error("Missing fixture member");
+    const member = structuredClone(source);
+    member.definition = {
+      ...member.definition,
+      runtime,
+      parallelism: 3,
+      respondTo: "allowlist",
+      respondToAllowlist: ["source-owner"],
+      namePool: ["One"],
+      idleTimeoutSeconds: 30,
+      maxTurnDurationSeconds: 60,
+    };
+    member.profile.about = "Portable description";
+    const created = { ...fixture.agent, id: "copy" };
+    const create = vi.fn<
+      NonNullable<import("./control").AgentControl["create"]>
+    >(async () => created);
+    const control = {
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({ data: fixture.data }),
+      create,
+    } as unknown as import("./control").AgentControl;
+    await importTeamMembers(
+      control,
+      { ...snapshot, members: [member] },
+      ["request"],
+      "https://relay.example",
+      "ef".repeat(32),
+      true,
+      "team-a",
+    );
+    expect(create).toHaveBeenCalledWith(
+      "request",
+      "https://relay.example",
+      "ef".repeat(32),
+      expect.objectContaining({
+        harness: expect.objectContaining({ command }),
+        environment: {},
+      }),
+      expect.objectContaining({ member, team: "team-a", keepAllowlist: true }),
+    );
+    delete member.definition.parallelism;
+    await importTeamMembers(
+      control,
+      { ...snapshot, members: [member] },
+      ["omitted"],
+      "https://relay.example",
+      "ef".repeat(32),
+      false,
+      "team-a",
+    );
+    expect(create.mock.calls[1]?.[3]).toEqual(
+      expect.objectContaining({ environment: {} }),
+    );
+  },
+);
+
+it.each(["claude", "hermes", "pi"])(
+  "rejects invalid %s selectors before any team identity is created",
+  async (runtime) => {
+    const fixture = controlFixture();
+    fixture.data.harnessOptions = [
+      {
+        command: `${runtime === "claude" ? "claude-agent" : runtime === "pi" ? "buzz-pi" : runtime}-acp`,
+        available: true,
+        label: runtime,
+        status: "ready",
+        defaultArgs: [],
+        providers: [],
+      },
+    ];
+    const source = snapshot.members[0];
+    if (!source) throw new Error("Missing fixture member");
+    const member = structuredClone(source);
+    member.definition = {
+      ...member.definition,
+      runtime,
+      provider: "unsupported",
+      model: "",
+    };
+    const create = vi.fn();
+    const control = {
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({ data: fixture.data }),
+      create,
+    } as unknown as import("./control").AgentControl;
+    await expect(
+      importTeamMembers(
+        control,
+        { ...snapshot, members: [member] },
+        ["second"],
+        "https://relay.example",
+        "ef".repeat(32),
+        false,
+        "team-a",
+      ),
+    ).rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+  },
+);

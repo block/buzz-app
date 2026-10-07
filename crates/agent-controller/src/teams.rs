@@ -207,15 +207,32 @@ impl TeamSnapshot {
         Ok(())
     }
 }
+/// Signed private catalog head, including NIP-01 replaceable-event ordering.
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TeamCatalogEntry {
+    pub created_at: u64,
+    pub event_id: String,
+    pub members: Vec<String>,
+}
 impl Controller {
     pub fn reconcile_team_bindings(
         &mut self,
         community: &str,
         owner: &str,
-        teams: &std::collections::BTreeMap<String, Vec<String>>,
+        teams: &std::collections::BTreeMap<String, TeamCatalogEntry>,
     ) -> Result<()> {
         let relay = crate::config::canonical_relay(community)?;
-        if !crate::config::canonical_key(owner) || teams.len() > 500 {
+        if !crate::config::canonical_key(owner)
+            || teams.len() > 500
+            || teams.values().any(|head| {
+                !crate::config::canonical_key(&head.event_id)
+                    || head
+                        .members
+                        .iter()
+                        .any(|member| !crate::config::canonical_key(member))
+            })
+        {
             return Err("Invalid team catalog".into());
         }
         self.store.reconcile_team_bindings(&relay, owner, teams)

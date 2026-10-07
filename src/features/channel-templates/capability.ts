@@ -153,7 +153,6 @@ export function createChannelKit({
             });
           }
         }
-        await host.reconcileTeams?.(signal);
         if (generation === epoch) update({ status: "ready", entries });
       } catch (error) {
         if (!signal.aborted && generation === epoch)

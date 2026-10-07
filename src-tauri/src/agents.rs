@@ -1664,7 +1664,7 @@ pub(crate) async fn agent_control_team_instructions(
             .ok_or("Agent no longer exists")?;
         if !teams
             .get(&team)
-            .is_some_and(|members| members.contains(&agent.pubkey))
+            .is_some_and(|head| head.members.contains(&agent.pubkey))
         {
             return Err("Team no longer contains this member; refresh before deploying".into());
         }

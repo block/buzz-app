@@ -483,8 +483,8 @@ fn catalog_removal_releases_only_obsolete_bindings_and_preserves_pending_imports
             ("team-c", "https://relay.example")
         )
         .unwrap());
-    teams.insert("team-a".into(), vec![]); // deletion or removal
-    teams.insert("team-c".into(), vec![agent.pubkey.clone()]);
+    teams.insert("team-a".into(), catalog(1, vec![])); // deletion or removal
+    teams.insert("team-c".into(), catalog(1, vec![agent.pubkey.clone()]));
     control
         .reconcile_team_bindings("https://relay.example", &owner(), &teams)
         .unwrap();
@@ -497,7 +497,7 @@ fn catalog_removal_releases_only_obsolete_bindings_and_preserves_pending_imports
             ("team-b", "https://relay.example")
         )
         .is_err());
-    teams.insert("team-c".into(), vec![]);
+    teams.insert("team-c".into(), catalog(2, vec![]));
     control
         .reconcile_team_bindings("https://foreign.example", &owner(), &teams)
         .unwrap();
@@ -526,4 +526,81 @@ fn catalog_removal_releases_only_obsolete_bindings_and_preserves_pending_imports
         control.store.agents().unwrap()[0].imported["teamBindings"],
         serde_json::json!(["team-new"])
     );
+}
+
+fn catalog(created_at: u64, members: Vec<String>) -> crate::TeamCatalogEntry {
+    crate::TeamCatalogEntry {
+        created_at,
+        event_id: format!("{created_at:064x}"),
+        members,
+    }
+}
+
+#[test]
+fn late_catalog_removal_cannot_erase_a_newer_live_binding_even_after_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "ordering",
+            &BundleMember {
+                team: "team-a".into(),
+                member: member(),
+                instructions: "SHARED".into(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let agent = control.store.agents().unwrap().remove(0);
+    let old = std::collections::BTreeMap::from([("team-a".into(), catalog(1, vec![]))]);
+    let fresh = std::collections::BTreeMap::from([
+        ("team-a".into(), catalog(2, vec![agent.pubkey.clone()])),
+        ("team-b".into(), catalog(2, vec![agent.pubkey.clone()])),
+    ]);
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
+        .unwrap();
+    control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "SHARED",
+            &owner(),
+            ("team-a", "https://relay.example"),
+        )
+        .unwrap();
+    drop(control);
+    let mut control = controller(root.path());
+    assert!(control
+        .reconcile_team_bindings("https://relay.example", &owner(), &old)
+        .is_err());
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
+        .unwrap();
+    assert!(control
+        .apply_team_instructions(
+            &agent.id,
+            agent.revision,
+            "OTHER",
+            &owner(),
+            ("team-b", "https://relay.example")
+        )
+        .is_err());
+    assert_eq!(
+        control.store.agents().unwrap()[0].imported["teamBindings"],
+        serde_json::json!(["team-a"])
+    );
+    // Same timestamp uses the NIP-01 lower-event-ID winner; a late loser is refused.
+    let mut winner = fresh.clone();
+    winner.get_mut("team-a").unwrap().event_id = "00".repeat(32);
+    control
+        .reconcile_team_bindings("https://relay.example", &owner(), &winner)
+        .unwrap();
+    assert!(control
+        .reconcile_team_bindings("https://relay.example", &owner(), &fresh)
+        .is_err());
 }

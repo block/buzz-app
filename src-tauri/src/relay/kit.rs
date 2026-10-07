@@ -310,7 +310,10 @@ pub(crate) async fn relay_kit_sign(
 pub(crate) async fn current_team_members(
     host: &IdentityHost,
     community: &str,
-) -> Result<(String, std::collections::BTreeMap<String, Vec<String>>)> {
+) -> Result<(
+    String,
+    std::collections::BTreeMap<String, buzz_agent_controller::TeamCatalogEntry>,
+)> {
     let owner = host.viewer().await?;
     let response = send(
         host,
@@ -339,7 +342,7 @@ async fn decode_team_members(
     community: &str,
     owner: &str,
     events: Vec<Value>,
-) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
+) -> Result<std::collections::BTreeMap<String, buzz_agent_controller::TeamCatalogEntry>> {
     if events.len() >= 500 {
         return Err("Team catalog reached its read limit".into());
     }
@@ -403,7 +406,16 @@ async fn decode_team_members(
     }
     Ok(heads
         .into_iter()
-        .map(|(id, (_, _, members))| (id, members))
+        .map(|(id, (created_at, event_id, members))| {
+            (
+                id,
+                buzz_agent_controller::TeamCatalogEntry {
+                    created_at,
+                    event_id,
+                    members,
+                },
+            )
+        })
         .collect())
 }
 
@@ -551,7 +563,7 @@ mod binding_catalog_tests {
                 .await
                 .unwrap();
             assert_eq!(teams.len(), 1);
-            assert!(teams["team-a"].is_empty());
+            assert!(teams["team-a"].members.is_empty());
             assert!(!teams.contains_key("pending-import"));
         }
         let mut deleted = raw;
@@ -561,6 +573,7 @@ mod binding_catalog_tests {
             decode_team_members(&host, community, &owner, vec![old.clone(), tombstone])
                 .await
                 .unwrap()["team-a"]
+                .members
                 .is_empty()
         );
         let mut corrupt = old.clone();

@@ -66,6 +66,9 @@ test("Move conversation saves a DM in a section and restores it there after relo
   expect((await assignmentSaved).ok()).toBe(true);
   await expect(work).toBeVisible();
   await expect(directMessages).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("dm-moved-to-work.png"),
+  });
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
   expect(
     app.report.sidebarPublications.find(

@@ -175,7 +175,7 @@ it("renders Running without a Disconnect control and separates refresh errors", 
   render(<Component />);
   await screen.findByText("Sharing is off. Connected to community compute.");
   expect(screen.queryByText("Connected")).not.toBeInTheDocument();
-  // Legacy Buzz and the donor design have one control: Share this machine.
+  // Legacy Buzz and the donor design have one control: Share compute.
   expect(
     screen.queryByRole("button", {
       name: /Disconnect|Connect|Cancel connection/,
@@ -196,7 +196,7 @@ it("renders Running without a Disconnect control and separates refresh errors", 
   dispose();
 });
 
-it("polls transient states serially, stops at Running, and cancels on unmount", async () => {
+it("polls transient states serially, refreshes Running activity, and cancels on unmount", async () => {
   vi.useFakeTimers();
   let state = "starting";
   native.invoke.mockImplementation((command) =>
@@ -248,7 +248,7 @@ it("polls transient states serially, stops at Running, and cancels on unmount", 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(native.invoke).toHaveBeenCalledTimes(count);
+    expect(native.invoke).toHaveBeenCalledTimes(count + 1);
     state = "stopping";
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -301,16 +301,16 @@ it("starts sharing the selected model through the existing community lease", asy
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  await screen.findByRole("switch", { name: "Share this machine" });
+  await screen.findByRole("switch", { name: "Share compute" });
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
-    screen.getByRole("switch", { name: "Share this machine" }),
+    screen.getByRole("switch", { name: "Share compute" }),
   ).not.toHaveAttribute("aria-disabled", "true");
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/models/local.gguf" } },
   );
-  fireEvent.click(screen.getByRole("switch", { name: "Share this machine" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Share compute" }));
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
       lease: "share-lease",
@@ -322,7 +322,8 @@ it("starts sharing the selected model through the existing community lease", asy
 });
 
 it.each([
-  ["starting", "Starting /models/local.gguf…", true],
+  // Off can cancel a serve that is still starting, e.g. a long download.
+  ["starting", "Starting /models/local.gguf…", false],
   ["ready", "Preparing /models/local.gguf", false],
   ["failed", "Mesh needs recovery. Load failed.", false],
 ] as const)(
@@ -366,7 +367,7 @@ it.each([
     expect(
       screen.getByLabelText("Model reference or local GGUF path"),
     ).toBeDisabled();
-    const stop = screen.getByRole("switch", { name: "Share this machine" });
+    const stop = screen.getByRole("switch", { name: "Share compute" });
     if (disabled) {
       expect(stop).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(stop);
@@ -426,9 +427,7 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  fireEvent.click(
-    await screen.findByRole("switch", { name: "Share this machine" }),
-  );
+  fireEvent.click(await screen.findByRole("switch", { name: "Share compute" }));
   await screen.findByText("Shutdown not confirmed");
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() =>
@@ -436,9 +435,10 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
       screen.getByLabelText("Model reference or local GGUF path"),
     ).toBeEnabled(),
   );
-  expect(
-    screen.getByRole("switch", { name: "Share this machine" }),
-  ).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByRole("switch", { name: "Share compute" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
 });
 
 it("restores a disarmed model hint and sends sharing only on explicit resume", async () => {
@@ -472,7 +472,7 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
   apply(ctx);
   render(<Component />);
   const resume = await screen.findByRole("switch", {
-    name: "Share this machine",
+    name: "Share compute",
   });
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
@@ -613,9 +613,7 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
   apply(ctx);
   render(<Component />);
   fireEvent.click(await screen.findByRole("button", { name: "Reset to Auto" }));
-  await screen.findByText(
-    "Auto — chooses a model for this device when sharing starts.",
-  );
+  await screen.findByText("Chooses on start");
   expect(sharing).toBe("/running.gguf");
   expect(
     native.invoke.mock.calls.filter(
@@ -629,10 +627,8 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
     auto: true,
     resetOnly: true,
   });
-  fireEvent.click(screen.getByRole("switch", { name: "Share this machine" }));
-  fireEvent.click(
-    await screen.findByRole("switch", { name: "Share this machine" }),
-  );
+  fireEvent.click(screen.getByRole("switch", { name: "Share compute" }));
+  fireEvent.click(await screen.findByRole("switch", { name: "Share compute" }));
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
       lease: "lease",
@@ -738,7 +734,7 @@ it("foreground A to B to A preserves compute and requires explicit replacement",
     screen.queryByRole("button", { name: "Reset to Auto" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("switch", { name: "Share this machine" }),
+    screen.queryByRole("switch", { name: "Share compute" }),
   ).not.toBeInTheDocument();
   await navigate("https://a.example:viewer");
   await screen.findByText(/^Sharing fixture-model/);
@@ -810,6 +806,38 @@ it("unsupported native builds report unavailable without invoking missing select
   expect(Component).toBeDefined();
 });
 
+it.each([
+  ["starting", "Sharing is off. Connecting to community compute…", false],
+  ["stopping", "Stopping…", true],
+] as const)(
+  "a consumer that is %s never freezes Share; only a shutdown waits",
+  async (phase, label, disabled) => {
+    native.invoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "mesh_compute_select"
+          ? "share-lease"
+          : { available: true, lifecycle: { state: phase }, sharing: null },
+      ),
+    );
+    mountSharing();
+    await screen.findByText(label);
+    const share = screen.getByRole("switch", { name: "Share compute" });
+    if (disabled) {
+      expect(share).toHaveAttribute("aria-disabled", "true");
+      return;
+    }
+    // A join that never settles must not lock the member out of sharing.
+    expect(share).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(share);
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith(
+        "mesh_compute_share",
+        expect.objectContaining({ lease: "share-lease", auto: true }),
+      ),
+    );
+  },
+);
+
 function mountSharing() {
   const snapshot = {
     status: "ready",
@@ -847,7 +875,7 @@ it("failed with saved sharing: Off persists the disarm, then On stays blocked un
   });
   mountSharing();
   const toggle = await screen.findByRole("switch", {
-    name: "Share this machine",
+    name: "Share compute",
   });
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   expect(
@@ -881,7 +909,7 @@ it("a failed disarm write leaves sharing visibly enabled with the error", async 
   });
   mountSharing();
   const toggle = await screen.findByRole("switch", {
-    name: "Share this machine",
+    name: "Share compute",
   });
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   fireEvent.click(toggle);
@@ -911,7 +939,7 @@ it("a transient selection failure is retried without restoring sharing before Of
   });
   mountSharing();
   const toggle = await screen.findByRole("switch", {
-    name: "Share this machine",
+    name: "Share compute",
   });
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   fireEvent.click(toggle);
@@ -957,7 +985,7 @@ it("unsafe failed runtime with no lease: Off disarms consent without selection o
   });
   mountSharing();
   const toggle = await screen.findByRole("switch", {
-    name: "Share this machine",
+    name: "Share compute",
   });
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   fireEvent.click(toggle);
@@ -1020,7 +1048,7 @@ for (const retire of ["identity", "dispose"] as const) {
     } as unknown as Parameters<PluginModule["apply"]>[0]);
     render(<Component />);
     const toggle = await screen.findByRole("switch", {
-      name: "Share this machine",
+      name: "Share compute",
     });
     await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
     fireEvent.click(toggle);
@@ -1053,3 +1081,274 @@ for (const retire of ["identity", "dispose"] as const) {
     ).toBe(false);
   });
 }
+
+it.each(["stopped", "ready"])(
+  "does not open a widget for a non-sharing consumer that is %s",
+  async (state) => {
+    native.invoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "mesh_compute_select"
+          ? "lease"
+          : {
+              available: true,
+              lifecycle: { state },
+              sharing: null,
+            },
+      ),
+    );
+    const snapshot = {
+      status: "ready",
+      viewer: "viewer",
+      scope: "https://fixture.example:viewer",
+    };
+    let Component!: React.ComponentType;
+    let dispose!: () => void;
+    apply({
+      relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+      effect: (setup: () => () => void) => {
+        dispose = setup();
+      },
+      settingsCards: {
+        register: (card: { component: React.ComponentType }) => {
+          Component = card.component;
+        },
+      },
+    } as unknown as Parameters<PluginModule["apply"]>[0]);
+    try {
+      render(<Component />);
+      const button = await screen.findByRole("button", {
+        name: "Open activity widget",
+      });
+      expect(button).toBeDisabled();
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(native.invoke).not.toHaveBeenCalledWith(
+        "mesh_compute_widget_open",
+        undefined,
+      );
+    } finally {
+      await act(async () => {
+        dispose();
+      });
+    }
+  },
+);
+it("opens the activity widget for restored sharing and allows retry after an open failure", async () => {
+  let opens = 0;
+  native.invoke.mockImplementation((command) => {
+    if (command === "mesh_compute_widget_open") {
+      opens++;
+      return opens === 1
+        ? Promise.reject("window unavailable")
+        : Promise.resolve();
+    }
+    return Promise.resolve(
+      command === "mesh_compute_select"
+        ? "share-lease"
+        : {
+            available: true,
+            lifecycle: { state: "ready" },
+            sharing: "/models/local.gguf",
+            modelReady: true,
+          },
+    );
+  });
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  let dispose!: () => void;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: (setup: () => () => void) => {
+      dispose = setup();
+    },
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  render(<Component />);
+  await screen.findByText("Couldn’t open activity widget: window unavailable");
+  expect(opens).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "Open activity widget" }));
+  await waitFor(() => expect(opens).toBe(2));
+  expect(
+    screen.queryByText("Couldn’t open activity widget: window unavailable"),
+  ).not.toBeInTheDocument();
+  act(() => dispose());
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith(
+      "mesh_compute_widget_close",
+      undefined,
+    ),
+  );
+});
+it("closes a pending widget open before a re-enabled plugin opens its window", async () => {
+  let resolve!: () => void;
+  const gate = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const commands: string[] = [];
+  native.invoke.mockImplementation((command) => {
+    commands.push(command);
+    if (command === "mesh_compute_widget_open") return gate;
+    return Promise.resolve(
+      command === "mesh_compute_select"
+        ? "share-lease"
+        : {
+            available: true,
+            lifecycle: { state: "ready" },
+            sharing: "fixture-model",
+            modelReady: true,
+          },
+    );
+  });
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  let dispose!: () => void;
+  const ctx = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: (setup: () => () => void) => {
+      dispose = setup();
+    },
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0];
+  apply(ctx);
+  const mounted = render(<Component />);
+  try {
+    await waitFor(() => expect(commands).toContain("mesh_compute_widget_open"));
+    act(() => {
+      dispose();
+      mounted.unmount();
+    });
+    apply(ctx);
+    render(<Component />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Share compute" }),
+      ).toBeChecked(),
+    );
+    expect(commands).not.toContain("mesh_compute_widget_close");
+  } finally {
+    await act(async () => {
+      resolve();
+      await gate;
+    });
+  }
+  await waitFor(() =>
+    expect(
+      commands.filter((command) => command.startsWith("mesh_compute_widget_")),
+    ).toEqual([
+      "mesh_compute_widget_open",
+      "mesh_compute_widget_close",
+      "mesh_compute_widget_open",
+    ]),
+  );
+  act(() => dispose());
+  await waitFor(() =>
+    expect(
+      commands.filter((command) => command === "mesh_compute_widget_close"),
+    ).toHaveLength(2),
+  );
+});
+
+it("refreshes shared-compute activity and stops polling when unmounted", async () => {
+  vi.useFakeTimers();
+  let reads = 0;
+  const activity = {
+    outputTokens: 1234,
+    completedRequests: 7,
+    finishedRequests: 8,
+    activeRequests: 0,
+    retries: 1,
+    tokensPerSecond: null,
+    otherNodes: 3,
+    sharingNodes: 1,
+  };
+  native.invoke.mockImplementation((command) => {
+    if (command === "mesh_compute_select") return Promise.resolve("lease");
+    if (command === "mesh_compute_status") {
+      reads++;
+      return Promise.resolve({
+        available: true,
+        lifecycle: { state: "ready" },
+        sharing: null,
+        activity: reads <= 2 ? activity : null,
+      });
+    }
+    return Promise.resolve();
+  });
+  const snapshot = {
+    status: "ready",
+    viewer: "viewer",
+    scope: "https://fixture.example:viewer",
+  };
+  let Component!: React.ComponentType;
+  let dispose!: () => void;
+  apply({
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    effect: (setup: () => () => void) => {
+      dispose = setup();
+    },
+    settingsCards: {
+      register: (card: { component: React.ComponentType }) => {
+        Component = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  try {
+    await act(async () => {
+      render(<Component />);
+    });
+    expect(reads).toBe(2);
+    expect(
+      screen.getByRole("region", { name: "Shared-compute activity" }),
+    ).toHaveTextContent("1,234");
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(
+      screen.getByText("Other sharing nodes").nextElementSibling,
+    ).toHaveTextContent("1");
+    expect(screen.getByText(/Includes your requests/)).not.toBeVisible();
+    expect(screen.getByText("Retries")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+    expect(screen.getByText(/Includes your requests/)).toBeVisible();
+    expect(screen.getByText("Retries")).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4999);
+    });
+    expect(reads).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(reads).toBe(3);
+    expect(
+      screen.getByText("Activity is currently unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("1,234")).not.toBeInTheDocument();
+    cleanup();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(reads).toBe(3);
+  } finally {
+    cleanup();
+    await act(async () => {
+      dispose();
+    });
+    vi.useRealTimers();
+  }
+});

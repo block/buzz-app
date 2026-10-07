@@ -1,6 +1,7 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
+use buzz_credential_store as credentials;
 use nostr::{
     event::Event,
     key::{Keys, SecretKey as NostrSecretKey},
@@ -15,13 +16,43 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, String>;
 const INVALID: &str = "Enter a valid nsec private key";
 const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
-// Debug identities must never occupy the create-only release item.
+
+// Public development profile names isolate local test accounts, never keys.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
-const SERVICE: &str = if cfg!(debug_assertions) {
-    "dev.local.buzz.foundation.identity.debug"
-} else {
-    "dev.local.buzz.foundation.identity"
-};
+fn profile_service(profile: Option<&str>, development: bool) -> Result<String> {
+    if !development {
+        return Ok("dev.local.buzz.foundation.identity".into());
+    }
+    let Some(profile) = profile else {
+        return Ok(credentials::HUMAN_SERVICE.into());
+    };
+    if profile.is_empty()
+        || profile.len() > 64
+        || !profile
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("Development identity profile must be 1–64 letters, digits or hyphens".into());
+    }
+    Ok(format!(
+        "dev.local.buzz.foundation.identity.debug.{profile}"
+    ))
+}
+
+#[cfg(all(
+    any(target_os = "macos", target_os = "windows", target_os = "linux"),
+    not(test)
+))]
+fn identity_service() -> Result<String> {
+    if !cfg!(debug_assertions) {
+        return profile_service(None, false);
+    }
+    match std::env::var("BUZZ_DEV_IDENTITY_PROFILE") {
+        Ok(profile) => profile_service(Some(&profile), true),
+        Err(std::env::VarError::NotPresent) => profile_service(None, true),
+        Err(_) => Err("Development identity profile must be valid text".into()),
+    }
+}
 
 // Batch-local conversation keys avoid repeating ECDH for every self-encrypted slot.
 // Callers enforce their encoded-payload budget before reaching this helper.
@@ -159,11 +190,21 @@ trait Store: Send + Sync {
     fn add(&self, value: &[u8]) -> Result<()>;
 }
 struct OsStore;
+#[cfg(not(test))]
+fn read_saved() -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match credentials::read_human() {
+        Ok(value) => Ok(Some(value)),
+        Err(credentials::Error::Absent) => Ok(None),
+        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; no identity was created.".into()),
+        Err(credentials::Error::Busy) => Err("Another Buzz app is accessing secure storage. Retry shortly.".into()),
+        Err(credentials::Error::Corrupt) => Err(MALFORMED.into()),
+        Err(_) => Err("Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.".into()),
+    }
+}
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
     use super::*;
     use security_framework::os::macos::keychain::SecKeychain;
-    const ACCOUNT: &str = "human";
     fn error(error: security_framework::base::Error) -> String {
         match error.code() {
             -25299 => {
@@ -178,8 +219,12 @@ mod platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            let service = identity_service()?;
+            if service == credentials::HUMAN_SERVICE {
+                return read_saved();
+            }
             let keychain = SecKeychain::default().map_err(error)?;
-            match keychain.find_generic_password(SERVICE, ACCOUNT) {
+            match keychain.find_generic_password(&service, credentials::HUMAN_ACCOUNT) {
                 Ok((password, _)) => Ok(Some(Zeroizing::new(password.to_vec()))),
                 Err(e) if e.code() == -25300 => Ok(None),
                 Err(e) => Err(error(e)),
@@ -188,7 +233,7 @@ mod platform {
         fn add(&self, value: &[u8]) -> Result<()> {
             SecKeychain::default()
                 .map_err(error)?
-                .add_generic_password(SERVICE, ACCOUNT, value)
+                .add_generic_password(&identity_service()?, credentials::HUMAN_ACCOUNT, value)
                 .map_err(error)
         }
     }
@@ -196,8 +241,7 @@ mod platform {
 #[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
 mod keyring_platform {
     use super::*;
-    use buzz_credential_store::{self as credentials, Error};
-    const ACCOUNT: &str = "human";
+    use buzz_credential_store::Error;
     fn error(error: Error) -> String {
         match error {
             Error::Occupied => "An identity is already saved; nothing was overwritten. Restart to restore it.",
@@ -209,14 +253,18 @@ mod keyring_platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            match credentials::read(SERVICE, ACCOUNT) {
+            let service = identity_service()?;
+            if service == credentials::HUMAN_SERVICE {
+                return read_saved();
+            }
+            match credentials::read(&service, credentials::HUMAN_ACCOUNT) {
                 Ok(value) => Ok(Some(value)),
                 Err(Error::Absent) => Ok(None),
                 Err(e) => Err(error(e)),
             }
         }
         fn add(&self, value: &[u8]) -> Result<()> {
-            credentials::add(SERVICE, ACCOUNT, value).map_err(error)
+            credentials::add(&identity_service()?, credentials::HUMAN_ACCOUNT, value).map_err(error)
         }
     }
 }

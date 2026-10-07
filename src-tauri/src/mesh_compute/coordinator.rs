@@ -124,11 +124,7 @@ async fn reconcile(
             .await
             .map_err(|e| e.to_string())?;
         // Restart only with retained admission; failed status discovery cannot widen it.
-        let targets = availability_from_events(retained_records.clone())
-            .serve_targets
-            .into_iter()
-            .map(|target| target.endpoint_addr)
-            .collect();
+        let targets = availability_from_events(retained_records.clone()).serve_targets;
         return super::start_with_evidence(
             app,
             &host,
@@ -291,6 +287,7 @@ mod tests {
                 owner,
                 &member.public_key().to_hex(),
                 false,
+                None,
                 None,
                 None,
             )

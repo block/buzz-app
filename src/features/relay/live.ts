@@ -18,7 +18,7 @@ export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
-/** Channel REQs awaiting EOSE at once. `dev/live-setup-probe.mjs` compares others. */
+/** Channel REQs awaiting EOSE at once. `scripts/live-setup-probe.mjs` compares others. */
 export const SETUP_CONCURRENCY = 4;
 const MAX_QUOTA_RETRIES = 3;
 /** Host-owned server cooldown survives socket/POST replacement.

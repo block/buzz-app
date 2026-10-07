@@ -23,6 +23,7 @@ pub(crate) use channel_writes::{
     relay_kit_prepare,
 };
 pub(crate) use kit::relay_kit_sign;
+mod media_blocks;
 mod media_preparation;
 mod project_git;
 pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
@@ -911,13 +912,23 @@ fn upload_id(value: Option<&str>) -> Result<&str> {
 /// sends `PUT /upload` for the resulting bytes. Shared TypeScript (`hostUpload`) owns limits, error mapping and
 /// descriptor validation, as it does for the dev broker.
 #[tauri::command]
-pub(crate) async fn relay_upload(
+pub(crate) async fn relay_upload<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<RelayResponse> {
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
     let id = upload_id(header("x-buzz-upload-id"))?;
+    // A raw body cannot carry a Channel argument, so its ID travels as a header.
+    let progress = header("x-buzz-upload-progress")
+        .map(|value| {
+            value
+                .parse::<tauri::ipc::JavaScriptChannelId>()
+                .map(|channel| channel.channel_on(webview))
+                .map_err(|_| "Invalid upload progress channel".to_string())
+        })
+        .transpose()?;
     let url = origin(header("x-buzz-community").unwrap_or_default())?
         .join("/upload")
         .map_err(|_| "Invalid relay path")?;
@@ -945,10 +956,18 @@ pub(crate) async fn relay_upload(
             Err(error)
         }
     } else if let Some(mode) = preparation.as_deref() {
-        upload_prepared(host.inner(), url, body.clone(), mode, &mut cancelled).await
+        upload_prepared(
+            host.inner(),
+            url,
+            body.clone(),
+            mode,
+            progress,
+            &mut cancelled,
+        )
+        .await
     } else {
         tokio::select! {
-            result = upload(host.inner(), url, kind, body.clone()) => result,
+            result = upload(host.inner(), url, kind, body.clone(), progress) => result,
             _ = &mut cancelled => Err("Upload cancelled".into()),
         }
     };
@@ -967,6 +986,7 @@ async fn upload_prepared(
     url: Url,
     body: Vec<u8>,
     mode: &str,
+    progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
     let (body, kind) = match media_preparation::prepare(body, mode, cancelled).await {
@@ -983,7 +1003,7 @@ async fn upload_prepared(
         }
     };
     tokio::select! {
-        result = upload(host, url, Some(kind), body) => result,
+        result = upload(host, url, Some(kind), body, progress) => result,
         _ = cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -1007,11 +1027,44 @@ async fn hash_upload(body: Vec<u8>) -> Result<(Vec<u8>, String)> {
     .map_err(|_| "Upload hashing could not complete".into())
 }
 
+/// Byte counts for the calling webview's upload progress bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct UploadSent {
+    sent: u64,
+    total: u64,
+}
+type UploadProgress = tauri::ipc::Channel<UploadSent>;
+const UPLOAD_CHUNK: usize = 64 * 1024;
+
+/// Streams the body in chunks. Each report counts the bytes handed to the
+/// connection once its chunk is yielded, so the last chunk reports `total`
+/// without relying on another poll. Reports are limited to whole-percent changes.
+fn progress_chunks(
+    body: Vec<u8>,
+    report: impl Fn(UploadSent) + Send + 'static,
+) -> impl Iterator<Item = std::io::Result<bytes::Bytes>> + Send + 'static {
+    let body = bytes::Bytes::from(body);
+    let total = body.len() as u64;
+    let mut reported = None;
+    (0..body.len().div_ceil(UPLOAD_CHUNK)).map(move |index| {
+        let start = index * UPLOAD_CHUNK;
+        let end = usize::min(start + UPLOAD_CHUNK, body.len());
+        let sent = end as u64;
+        let percent = sent * 100 / total;
+        if reported != Some(percent) {
+            reported = Some(percent);
+            report(UploadSent { sent, total });
+        }
+        Ok(body.slice(start..end))
+    })
+}
+
 async fn upload(
     host: &IdentityHost,
     url: Url,
     kind: Option<&str>,
     body: Vec<u8>,
+    progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
     let kind = kind
         .filter(|kind| valid_type(kind))
@@ -1032,7 +1085,15 @@ async fn upload(
         .header("Authorization", auth)
         .header("Content-Type", kind)
         .header("X-SHA-256", hash)
-        .body(body)
+        .header(reqwest::header::CONTENT_LENGTH, body.len())
+        .body(match progress {
+            Some(channel) => reqwest::Body::wrap_stream(futures_util::stream::iter(
+                progress_chunks(body, move |sent| {
+                    let _ = channel.send(sent);
+                }),
+            )),
+            None => body.into(),
+        })
         .send()
         .await
         .map_err(|_| "Upload did not finish")?;
@@ -1046,8 +1107,9 @@ const MAX_MEDIA: usize = 100 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
-/// The relay's own cap on a single 206 response.
-const MAX_MEDIA_RANGE: usize = 16 * 1024 * 1024;
+/// Only `media_blocks` sends `Range`, always for one block, so a 206 is never
+/// buffered past it.
+const MAX_MEDIA_RANGE: usize = media_blocks::BLOCK as usize;
 
 /// `buzz-media://` serves relay `GET /media/*` to `<img>`, `<video>` and
 /// `<audio>`, which cannot send the required Blossom `Authorization` header.
@@ -1064,7 +1126,8 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, range)) => fetch_media(&host, url, range).await,
+            Ok((url, Some((start, end)))) => media_blocks::read(&host, &url, start, end).await,
+            Ok((url, None)) => fetch_media(&host, url, None).await,
             Err(status) => Err(status),
         };
         responder.respond(response.unwrap_or_else(|status| {
@@ -1256,7 +1319,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
 /// `convertFileSrc(url, "buzz-media")` on every desktop platform.
 fn media_request(
     request: &tauri::http::Request<Vec<u8>>,
-) -> std::result::Result<(Url, Option<String>), u16> {
+) -> std::result::Result<(Url, Option<(u64, u64)>), u16> {
     if request.method() != tauri::http::Method::GET {
         return Err(405);
     }
@@ -1295,7 +1358,7 @@ fn media_url(target: &str) -> Option<Url> {
 }
 
 /// One `bytes=START-[END]` range, bounded so a response fits one buffer.
-fn media_range(value: &str) -> Option<String> {
+fn media_range(value: &str) -> Option<(u64, u64)> {
     let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
     let start: u64 = start.parse().ok()?;
     let last = start.checked_add(MEDIA_CHUNK - 1)?;
@@ -1304,7 +1367,7 @@ fn media_range(value: &str) -> Option<String> {
     } else {
         end.parse::<u64>().ok()?.min(last)
     };
-    (end >= start).then(|| format!("bytes={start}-{end}"))
+    (end >= start).then_some((start, end))
 }
 
 async fn fetch_media(

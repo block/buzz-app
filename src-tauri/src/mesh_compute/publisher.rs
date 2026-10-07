@@ -204,14 +204,17 @@ async fn send(
     status: Option<&buzz_mesh_compute::lifecycle::NodeStatus>,
 ) -> Result<(), String> {
     let path = super::mesh_owner_path()?;
-    let owner = tauri::async_runtime::spawn_blocking(move || {
-        load_owner_at(&path).map_err(|e| e.to_string())
+    // The first hardware survey can be slow, so it joins the blocking owner load.
+    let (owner, device) = tauri::async_runtime::spawn_blocking(move || {
+        load_owner_at(&path)
+            .map(|owner| (owner, publication::local_device()))
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|_| "Mesh owner loading failed")??;
     let builder = match status {
-        Some(status) => publication::sdk_status_event(&owner, member, serving, status),
-        None => publication::status_event(&owner, member, false, None, None),
+        Some(status) => publication::sdk_status_event(&owner, member, serving, status, device),
+        None => publication::status_event(&owner, member, false, None, None, None),
     }
     .map_err(|e| e.to_string())?;
     let event = identity

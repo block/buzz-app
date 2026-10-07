@@ -3,9 +3,12 @@
 #[cfg(feature = "mesh")]
 use tauri::Manager;
 
+#[cfg(any(feature = "mesh", test))]
+mod activity;
 mod agent;
 #[cfg(feature = "mesh")]
 pub(crate) mod sharing;
+pub(crate) mod widget;
 #[cfg(feature = "mesh")]
 pub(crate) use agent::community_origin as agent_community;
 pub(crate) use agent::prepare_agent;
@@ -90,22 +93,27 @@ pub async fn mesh_compute_status(
             .lock()
             .map(|prefs| (prefs.hint().cloned(), prefs.error().map(str::to_owned)))
             .unwrap_or_default();
-        let model_ready = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
-            host.lifecycle.status().await.ok().is_some_and(|status| {
-                status
-                    .payload
-                    .get("llama_ready")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-            })
+        let runtime = if host.lifecycle.phase() == buzz_mesh_compute::lifecycle::Phase::Ready {
+            host.lifecycle.status().await.ok()
         } else {
-            false
+            None
         };
+        let model_ready = runtime.as_ref().is_some_and(|status| {
+            status
+                .payload
+                .get("llama_ready")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        });
+        let activity = runtime
+            .as_ref()
+            .and_then(|status| activity::snapshot(&status.payload));
         Ok(serde_json::json!({
             "available": true,
             "modelReady": model_ready,
             "finishingJoin": host.lifecycle.finishing_join(),
             "boundCommunity": host.lease.current()?.map(|(_, community)| community),
+            "activity": activity,
             "savedSharing": saved,
             "settingsError": settings_error,
             "lifecycle": host.lifecycle.phase(),
@@ -241,7 +249,7 @@ async fn start_with_evidence(
     identity: &crate::identity::IdentityHost,
     lease: &str,
     mut owners: Vec<String>,
-    targets: Vec<String>,
+    targets: Vec<buzz_mesh_compute::discovery_types::MeshServeTarget>,
     evidence: Vec<nostr::event::Event>,
 ) -> Result<(), String> {
     let community = host.lease.community(lease)?;
@@ -251,15 +259,17 @@ async fn start_with_evidence(
         .lock()
         .map_err(|_| "Mesh sharing unavailable")?
         .clone();
+    let path = mesh_owner_path()?;
+    let owner =
+        buzz_mesh_compute::identity::ensure_owner_at(&path).map_err(|error| error.to_string())?;
+    // Never dial this machine's own advert; it can outlive the runtime it names.
+    let targets = buzz_mesh_compute::discovery::peer_join_tokens(targets, &owner);
     if targets.is_empty() && sharing.is_none() {
         return Err(
             "No live community member is sharing compute; start serving on a member first".into(),
         );
     }
     host.lease.with_current(lease, |_| {
-        let path = mesh_owner_path()?;
-        let owner = buzz_mesh_compute::identity::ensure_owner_at(&path)
-            .map_err(|error| error.to_string())?;
         owners.push(owner.clone());
         let admission = (
             uuid::Uuid::new_v4().to_string(),
@@ -311,6 +321,15 @@ async fn start_with_evidence(
 
 #[cfg(feature = "mesh")]
 fn mesh_owner_path() -> Result<std::path::PathBuf, String> {
+    // Same-machine test nodes need distinct SDK identities as well as ports.
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("BUZZ_MESH_OWNER_PATH") {
+        let path = std::path::PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err("Development Mesh owner path must be absolute".into());
+        }
+        return Ok(path);
+    }
     buzz_mesh_compute::identity::default_owner_path().map_err(|error| error.to_string())
 }
 #[cfg(feature = "mesh")]

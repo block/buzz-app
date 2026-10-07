@@ -55,6 +55,7 @@ export function AgentCreateDialog({
   source,
   initialSettings,
   sharedCompute = false,
+  preset,
   onClose,
   onOpenHarnesses,
 }: {
@@ -66,6 +67,8 @@ export function AgentCreateDialog({
   source?: AgentView;
   initialSettings?: CloneSettings | undefined;
   sharedCompute?: boolean;
+  /** Prefilled name and instructions; the owner still reviews before creating. */
+  preset?: { name: string; systemPrompt: string } | undefined;
   onClose(): void;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
@@ -82,9 +85,12 @@ export function AgentCreateDialog({
         };
     return {
       ...initial,
+      ...(preset
+        ? { name: preset.name, systemPrompt: preset.systemPrompt }
+        : {}),
       ...(sharedCompute
         ? {
-            name: "Community agent",
+            name: preset?.name ?? "Community agent",
             command: "buzz-agent",
             args: "[]",
             provider: "relay-mesh",

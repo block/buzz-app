@@ -53,14 +53,19 @@ catch-up (including a message taller than the viewport):
   count (see [Relevant replies](#relevant-replies)) are all attention, and stay
   unread until read in their thread. Replies outside the viewer's conversations
   do not count at all, so there is no reply activity to quiet. Mentions,
-  broadcasts, DMs and manual intent are not quieted. Participation discovered
+  broadcasts and marked messages are not quieted. Participation discovered
   later makes a reply relevant again, with its own unread state intact.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
-  channel/thread inheritance or remote override baselines. Automatic catch-up does
-  not clear manual-unread intent and uses the same cancellable reading lease.
+  channel/thread inheritance or remote override baselines. Channel catch-up ends
+  a local manual unread on the channel itself; message and thread manual-unread
+  intent stays. Catch-up uses the same cancellable reading lease.
+- A DM is read whole. Any earned dwell in a DM, on visible rows or at the bottom,
+  advances the DM's channel frontier through the newest retained verified message
+  (replies included) and ends a local manual unread on the DM. It writes no
+  `activity:` or per-message marks. Like catch-up, it never uses wall time.
 
 This intentionally relaxes the old individual-row-only policy for ordinary
 backlog and the thread being read, without reading unopened threads' replies.
@@ -195,26 +200,58 @@ Every top-level message counts. A reply counts only when it is in one of the
 viewer's conversations, or it is a DM, mentions the viewer, or is broadcast to the
 channel. A conversation is the set of direct replies to one parent message. The
 viewer is part of it when the viewer wrote the parent or also replied to that
-parent. A nested thread under someone else's reply therefore stays quiet until the
-viewer posts in it or is mentioned there. Explicit per-message unread intent still
+parent, or wrote or replied anywhere under the same canonical thread root, as in
+the reference client. A thread the viewer has not posted in therefore stays
+quiet, apart from mentions and broadcasts. Explicit per-message unread intent still
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
+**Follow thread** / **Unfollow thread** in a message's menu records an explicit
+choice for the message's canonical thread root (`threadRootId ?? id`), so every
+reply under that root, at any depth, uses it. Follow makes the thread one of the
+viewer's conversations without posting; Unfollow removes it even after the
+viewer wrote the root or replied, and replying again does not undo it. Mentions
+and broadcasts still count, as they do outside conversations. Without a choice
+the label shows Unfollow exactly when that root-wide participation applies, so
+the label and the alerts agree; a mention alone is not a follow. A restored
+roster shows no menu until membership is confirmed. DMs have no menu item: every DM message is
+direct attention. `session.unread.following(channelId, rootId)` reads the
+effective state and `follow(channelId, rootId, following)` saves a choice,
+throwing without change when it cannot. Choices are device-local, like the
+reference client: `buzz.thread-follows.v1:<partition>` in local storage, keyed by
+`channel:root`, newest 1,000 kept, shared with other windows through storage
+events and forgotten with the rest of a left community's device state.
+
 Membership is checked in the reply's own channel, and lookups are keyed by
 channel and parent, so a reply in another channel that tags the same parent
-gets its own answer. It starts from retained
-evidence. When a reply is otherwise unread but its conversation is undecided
-(the parent is not loaded, or the viewer's own reply to it is not), a projection
-that evaluates the reply queues one relay lookup for that parent. The fetch runs
-in a microtask, at background priority, in batches of up to 50 parents from one
-channel:
+gets its own answer. It starts from retained evidence. A saved Follow with
+reply-only retained evidence also queues bounded structural recovery of its
+missing root by ID. It does not ask for viewer participation: the saved choice
+already decides membership. Until a same-channel root is verified, thread
+receipts and Activity grouping cannot apply to that reply. When a reply is
+otherwise unread but its conversation is undecided (the parent is not loaded,
+or the viewer's own reply to it is not), a projection
+that evaluates the reply queues one relay lookup for that parent. The same
+lookup decides the whole thread: the viewer wrote the parent or the canonical
+root, or replied anywhere under the root. One lookup per parent keeps demand
+within one per retained reply, so the retained window (at most 4,096 events)
+cannot need more than the 4,096 remembered lookups. That bounds what the
+current window needs, not every queued lookup: lookups queued before an
+overflow reset still drain. A positive result counts only through the root its
+witness names (the same `channel:root` set the Follow label reads), so a reply
+whose root tag disagrees with another reply to the same parent is decided by
+its own root. The fetch
+runs in a microtask, at background priority, in batches of up to 50 parents
+from one channel:
 
 - the missing parents, and the replies' roots, by ID;
-- the viewer's replies in that channel that tag those parents (`#e`, `#h`,
-  `include_aux`, limit 500). `#e` also matches root tags, so a full page is
-  split and asked again; a full page for one parent pages back in time until
-  the viewer's direct reply appears (at most ten pages). Only replies whose
-  reply tag names the parent count, and deleted ones do not.
+- the viewer's replies in that channel that tag those parents or their roots
+  (`#e`, `#h`, `include_aux`, limit 500). `#e` also matches root tags, so a
+  full page is split and asked again; a full page for one parent pages back in
+  time until a deciding reply appears (at most ten pages). Only replies whose
+  reply tag names the parent, or whose root tag names its root, count, and
+  deleted ones do not. The viewer's own fetched parent or root is the witness
+  when there is one.
 
 While a lookup is queued or running, the reply is quiet and its attention is
 `unknown` with `pending: true`; a live notification for it waits instead of
@@ -256,7 +293,8 @@ still require retained evidence of their own.
 | Intent | Durable frontier | Local manual-unread clears |
 | --- | --- | --- |
 | Automatic visible dwell | Individual verified message | None |
-| Automatic bottom dwell | Ordinary channel activity or that thread’s replies through verified evidence | None |
+| Automatic bottom dwell | Ordinary channel activity or that thread’s replies through verified evidence | Channel only (channel bottom, not a thread) |
+| Automatic DM dwell (visible rows or bottom) | DM channel through the newest retained verified message | DM channel only |
 | `markThrough(target, messageId)` | Explicit verified target prefix | That target only |
 | `markChannelRead(channelId)` | Channel through max(click time, newest retained verified message) | Channel, retained messages, verified same-channel reply roots, and threads whose top-level root is retained |
 | Channel read with no evidence | Click time on frontier-capable hosts; none otherwise | Channel only |
@@ -309,10 +347,16 @@ kept broader mark already covers, and gives the freed space to the next marks in
 A cover that did not fit replaces nothing. A dropped mark gives its interaction order to
 its cover, so the smaller wire budget protects the cover as it would have protected the
 dropped read. Coverage uses retained evidence: a message mark under its channel mark, a thread mark under its
-channel mark, and a catch-up mark under its channel or thread mark. A thread mark never
-replaces a message mark: a reply finds its channel from its own event, but finds its
-thread only while its root is loaded. Catch-up marks never make another mark redundant:
-older clients ignore them and read through the message, thread and channel marks.
+channel mark, a catch-up mark under its channel or thread mark, and the mark of an
+ordinary top-level message under its channel's `activity:` mark. That last rule needs
+the channel's known type, because an `activity:` mark never reads DM messages (reading
+a DM writes its channel mark instead); a roster can list a channel before its metadata
+gives the type. Mentions, broadcasts and
+DM messages keep their marks. A thread or thread catch-up mark never replaces a message
+mark: a reply finds its channel from its own event, but finds its thread only while its
+root is loaded. Older desktop and mobile clients ignore `activity:`, so they show the
+ordinary top-level messages it covers as unread. This is accepted; it never makes a
+read in those clients unread here.
 Marks without retained evidence are kept, and nothing is dropped while any override
 exists. Reading an already covered message saves nothing. Only frontier-only hints can
 be pruned; older messages may look unread again. No synthetic channel prefix is
@@ -380,7 +424,7 @@ durable account-owned intent survives without exposing revoked context projectio
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
   reverified disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
-- `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
+- `browser-host/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.
 - `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
   presentation, unchanged summary counts, hover/keyboard-focus treatment, independent

@@ -21,6 +21,10 @@ import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import { SharedComputeModelPicker } from "./SharedComputeModelPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { ProviderApiKeyField } from "./ProviderApiKeyField";
+import { harnessPreset } from "../../features/agents/harness-presets";
+import { PresetSetupHint } from "../../features/agents/PresetSetupHint";
+import { Button } from "../../shared/design-system/ui/Button";
+import { harnessPolicy } from "./harness-policy";
 
 // Draft → Agent defaults → build floor, as native resolves it; null when a
 // saved or global BUZZ_AGENT_PROVIDER override hides the effective value.
@@ -50,6 +54,11 @@ function providerApiKey(
   savedKeys: string[],
   data: AgentControlState["data"],
 ) {
+  if (
+    harnessPolicy(data?.harnessOptions, draft.command)?.authentication ===
+    "external"
+  )
+    return undefined;
   if (draft.command.split("/").at(-1) === "buzz-pi-acp")
     return PI_API_KEYS[draft.provider];
   if (harnessKind(draft.command) === "buzz-agent")
@@ -92,8 +101,11 @@ export function AgentSettingsFields({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const [piProviders, setPiProviders] = useState<string[] | null>([]);
+  const [providerSelection, setProviderSelection] = useState(0);
   const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
   const goose = isGoose(draft.command);
+  const preset = harnessPreset(draft.command);
+  const policy = harnessPolicy(state.data?.harnessOptions, draft.command);
   const globalKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   // Saved and global environment values are write-only; removing an agent's
   // key exposes the global key rather than the visible scalar default.
@@ -126,11 +138,13 @@ export function AgentSettingsFields({
   const buzzAgent = harnessKind(draft.command) === "buzz-agent";
   const windows = /Win/i.test(globalThis.navigator?.platform ?? "");
   // An environment selector can override the visible scalar default.
-  const [modelKey, providerKey] = buzzAgent
-    ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
-    : goose
-      ? ["GOOSE_MODEL", "GOOSE_PROVIDER"]
-      : [undefined, undefined];
+  const [modelKey, providerKey] = policy
+    ? [policy.selectorEnvironment?.model, policy.selectorEnvironment?.provider]
+    : buzzAgent
+      ? ["BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"]
+      : goose
+        ? ["GOOSE_MODEL", "GOOSE_PROVIDER"]
+        : [undefined, undefined];
   const providerHidden = !!providerKey && overridden(providerKey);
   const modelHidden =
     (!!modelKey && overridden(modelKey)) || (buzzAgent && !modelDefaultKnown);
@@ -202,6 +216,9 @@ export function AgentSettingsFields({
             defaultProvider={defaultProvider}
             piProviders={piProviders}
             onChange={change}
+            onProviderSelected={() =>
+              setProviderSelection((value) => value + 1)
+            }
             onOpenHarnesses={onOpenHarnesses}
             discardEdits={discardEdits}
           />
@@ -257,7 +274,39 @@ export function AgentSettingsFields({
               </p>
             </div>
           )}
-          {buzzAgent && buzzProvider === "relay-mesh" ? (
+          {preset ? (
+            <div className="space-y-3 text-body-sm">
+              <p className="m-0 text-secondary">
+                {preset.label} uses its own default model and sign-in.{" "}
+                <PresetSetupHint hint={preset.setupHint} />
+              </p>
+              {(draft.model || draft.provider) && (
+                <div className="space-y-3">
+                  <p role="alert">
+                    This agent has model or provider settings that Buzz cannot
+                    apply to {preset.label} yet. Use {preset.label} defaults
+                    before saving or starting.
+                  </p>
+                  {draft.model && (
+                    <p>
+                      Current model: <code>{draft.model}</code>
+                    </p>
+                  )}
+                  {draft.provider && (
+                    <p>
+                      Current provider: <code>{draft.provider}</code>
+                    </p>
+                  )}
+                  <Button
+                    disabled={disabled}
+                    onClick={() => change({ model: "", provider: "" })}
+                  >
+                    Use {preset.label} defaults
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : buzzAgent && buzzProvider === "relay-mesh" ? (
             <SharedComputeModelPicker
               id={id}
               draft={draft}
@@ -267,6 +316,8 @@ export function AgentSettingsFields({
             />
           ) : (
             <AgentModelPicker
+              policy={policy}
+              providerSelection={providerSelection}
               onPiProviders={setPiProviders}
               disabled={disabled}
               id={id}
@@ -290,7 +341,7 @@ export function AgentSettingsFields({
                 options: [
                   {
                     value: "",
-                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "thread" ? "Each thread" : "Entire channel"})`,
+                    label: `Use agent defaults (${state.data?.defaultSettings?.sessionPolicy === "channel" ? "Entire channel" : "Each thread"})`,
                   },
                   { value: "channel", label: "Entire channel" },
                   { value: "thread", label: "Each thread" },
@@ -362,7 +413,9 @@ export function AgentSettingsFields({
                   <p className="text-body-sm text-secondary">
                     {pi
                       ? 'Pi needs both Provider and Model to override its defaults. Advanced Pi options follow --; for example: ["--", "--extension", "/absolute/path/to/extension.ts"]. PI_CODING_AGENT_DIR can select a local Pi configuration directory.'
-                      : "Environment overrides take precedence over provider and model selections."}{" "}
+                      : preset
+                        ? `Configure ${preset.label}'s model and sign-in in the harness itself. Buzz model and provider overrides are unavailable.`
+                        : "Environment overrides take precedence over provider and model selections."}{" "}
                     Arguments are passed literally, not through a shell.
                   </p>
                 </div>

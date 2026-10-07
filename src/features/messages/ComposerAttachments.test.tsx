@@ -22,6 +22,54 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+it("shows a queued image's preview without a busy spinner until upload work starts", () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:photo"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const item: DraftAttachment = {
+    id: "photo",
+    file: new File(["png"], "photo.png", { type: "image/png" }),
+    status: "queued",
+  };
+  const props = {
+    items: [item],
+    disabled: false,
+    remove: vi.fn(),
+    retry: vi.fn(),
+    media: () => undefined,
+  };
+  const root = render(<ComposerAttachments {...props} />);
+  const remove = screen.getByRole("button", { name: "Remove photo.png" });
+  expect(
+    screen
+      .getByRole("button", { name: "Preview photo.png" })
+      .querySelector("img")
+      ?.getAttribute("src"),
+  ).toBe("blob:photo");
+  // Queued files wait for Send; nothing is in flight to spin for.
+  expect(remove.hasAttribute("data-uploading")).toBe(false);
+  expect(remove.querySelectorAll("svg")).toHaveLength(1);
+
+  for (const status of ["preparing", "uploading"] as const) {
+    root.rerender(
+      <ComposerAttachments {...props} items={[{ ...item, status }]} />,
+    );
+    expect(remove.hasAttribute("data-uploading")).toBe(true);
+    expect(remove.querySelectorAll("svg")).toHaveLength(2);
+  }
+  for (const status of ["ready", "error"] as const) {
+    root.rerender(
+      <ComposerAttachments {...props} items={[{ ...item, status }]} />,
+    );
+    expect(remove.hasAttribute("data-uploading")).toBe(false);
+    expect(remove.querySelectorAll("svg")).toHaveLength(1);
+  }
+});
+
 it("replaces a failed original-video preview with authenticated converted media", async () => {
   const revoke = vi.fn();
   vi.stubGlobal(

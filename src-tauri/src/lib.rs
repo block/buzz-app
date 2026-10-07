@@ -9,6 +9,7 @@ use oauth_callback::{
 };
 #[cfg(test)]
 mod browser_permissions_tests;
+mod pairing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
@@ -28,11 +29,16 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod mesh_compute;
+use mesh_compute::widget::{
+    mesh_compute_widget_close, mesh_compute_widget_open, mesh_compute_widget_status,
+};
 use mesh_compute::{mesh_compute_inventory, mesh_compute_status, mesh_compute_stop, MeshHost};
 mod identity;
 
 mod notifications;
 mod os_idle;
+mod window_controls;
+mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
@@ -48,12 +54,15 @@ use relay::{
     relay_sign_sidebar, relay_upload, relay_upload_cancel, relay_workflow_runs,
 };
 mod terminal;
+#[cfg(test)]
+mod test_executable;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod managed_pi;
+mod managed_npm;
 mod pi_models;
+use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
@@ -69,9 +78,9 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{pi_install, HarnessSetup};
+use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
-use host_request::plugin_host_request;
+use host_request::{plugin_host_fetch, plugin_host_fetch_cancel, plugin_host_request, HostStreams};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -402,6 +411,15 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         mesh_compute_inventory,
         mesh_compute_status,
         mesh_compute_stop,
+        mesh_compute_widget_open,
+        mesh_compute_widget_close,
+        mesh_compute_widget_status,
+        pairing::pairing_account,
+        pairing::pairing_start,
+        pairing::pairing_status,
+        pairing::pairing_confirm,
+        pairing::pairing_deny,
+        pairing::pairing_cancel,
         identity_restore,
         identity_import,
         identity_create,
@@ -450,6 +468,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        plugin_host_fetch,
+        plugin_host_fetch_cancel,
         agent_control_create_prepare,
         agent_control_create_authorize,
         agent_control_create_commit,
@@ -458,6 +478,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_log_challenge,
         agent_control_read_log,
         pi_install,
+        claude_install,
+        claude_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,
@@ -526,10 +548,17 @@ pub fn run() {
         builder
     };
     let builder = builder
+        .plugin(window_controls::init())
+        .plugin(window_state::builder().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_window("main") {
+                if let Err(error) = window_state::restore(&window) {
+                    eprintln!("Could not restore Buzz window: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());
@@ -593,6 +622,7 @@ pub fn run() {
         .manage(IdentityHost::default())
         .manage(MeshHost::default())
         .manage(archive::ArchiveHost::default())
+        .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -602,6 +632,7 @@ pub fn run() {
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
+        .manage(HostStreams::default())
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
@@ -634,9 +665,13 @@ pub fn run() {
             {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<pairing::Pairing>().cancel_all();
+            }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

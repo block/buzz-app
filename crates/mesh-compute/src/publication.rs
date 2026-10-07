@@ -3,9 +3,41 @@ use mesh_llm_host_runtime::crypto::OwnerKeypair;
 use nostr::event::{EventBuilder, Kind, Tag};
 use serde_json::{json, Value};
 
-use crate::discovery_types::{dedupe_models, MeshModelOption, MeshServeTarget, MESH_STATUS_KIND};
+use crate::discovery_types::{
+    dedupe_models, MeshModelOption, MeshServeTarget, MeshTargetCapacity, MESH_STATUS_KIND,
+};
 use crate::identity::{member_binding_bytes, member_endpoint_binding_bytes};
 use crate::transport_policy::validate_advertised_endpoint;
+
+/// Facts about this machine that members see beside its shared models.
+/// Allowlisted: the chip name and rated memory. Hostnames are deliberately not
+/// published: managed machines report asset tags, which name nothing useful
+/// and leak inventory identifiers to the community.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LocalDevice {
+    pub name: Option<String>,
+    pub vram_gb: Option<f64>,
+}
+
+/// Survey this machine once per process; heartbeats reuse the answer. Memory
+/// is the same rated capacity the model catalog shows as "AI memory".
+pub fn local_device() -> &'static LocalDevice {
+    static DEVICE: std::sync::OnceLock<LocalDevice> = std::sync::OnceLock::new();
+    DEVICE.get_or_init(|| {
+        let survey = mesh_llm_system::hardware::survey();
+        LocalDevice {
+            name: survey.gpu_name.as_deref().and_then(device_label),
+            vram_gb: mesh_llm_system::vram::rated_capacity_gb(survey.vram_bytes)
+                .map(|gb| gb as f64),
+        }
+    })
+}
+
+/// Trimmed and bounded; a blank OS report is no name rather than an empty one.
+fn device_label(reported: &str) -> Option<String> {
+    let name = reported.trim();
+    (!name.is_empty()).then(|| name.chars().take(64).collect())
+}
 
 /// Project the pinned SDK wrapper; its payload is untyped JSON, not a typed model schema.
 pub fn sdk_status_event(
@@ -13,6 +45,7 @@ pub fn sdk_status_event(
     member: &str,
     serving: bool,
     status: &mesh_llm_sdk::EmbeddedNodeStatus,
+    device: &LocalDevice,
 ) -> anyhow::Result<EventBuilder> {
     status_event(
         owner,
@@ -20,6 +53,7 @@ pub fn sdk_status_event(
         serving,
         Some(&status.payload),
         status.invite_token.as_deref(),
+        Some(device),
     )
 }
 
@@ -31,6 +65,7 @@ pub fn status_event(
     serving: bool,
     status: Option<&Value>,
     endpoint: Option<&str>,
+    device: Option<&LocalDevice>,
 ) -> anyhow::Result<EventBuilder> {
     nostr::key::PublicKey::from_hex(member)?;
     let models = if serving {
@@ -60,15 +95,21 @@ pub fn status_event(
                     node_name: status
                         .and_then(|v| v["node_id"].as_str())
                         .map(str::to_owned),
-                    capacity: None,
+                    capacity: device.and_then(|device| device.vram_gb).map(|vram_gb| {
+                        MeshTargetCapacity {
+                            vram_gb: Some(vram_gb),
+                        }
+                    }),
                     endpoint_id: Some(endpoint.endpoint_id.clone()),
                     device_id: None,
-                    device_name: None,
+                    device_name: device.and_then(|device| device.name.clone()),
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let payload = json!({
+    // Capacity is advertised only while serving; a consumer contributes none.
+    let device = device.filter(|_| !targets.is_empty());
+    let mut payload = json!({
         "ownerId": owner.owner_id(),
         "ownerVerifyingKey": hex::encode(owner.verifying_key().as_bytes()),
         "ownerBindingSig": hex::encode(owner.sign_bytes(&member_binding_bytes(member))),
@@ -76,6 +117,13 @@ pub fn status_event(
         "models": models,
         "serveTargets": targets,
     });
+    // Top-level keys classic Buzz's snapshot reader already understands.
+    if let Some(name) = device.and_then(|device| device.name.as_deref()) {
+        payload["deviceName"] = json!(name);
+    }
+    if let Some(vram_gb) = device.and_then(|device| device.vram_gb) {
+        payload["my_vram_gb"] = json!(vram_gb);
+    }
     Ok(
         EventBuilder::new(Kind::Custom(MESH_STATUS_KIND as u16), payload.to_string()).tags([
             Tag::parse([
@@ -222,10 +270,16 @@ mod tests {
             invite_token: Some(token.clone()),
             payload: raw.clone(),
         };
-        let event = sdk_status_event(&owner, &member.public_key().to_hex(), true, &sdk)
-            .unwrap()
-            .finalize(&member)
-            .unwrap();
+        let event = sdk_status_event(
+            &owner,
+            &member.public_key().to_hex(),
+            true,
+            &sdk,
+            &LocalDevice::default(),
+        )
+        .unwrap()
+        .finalize(&member)
+        .unwrap();
         let payload: Value = serde_json::from_str(&event.content).unwrap();
         assert_eq!(payload["serveTargets"].as_array().unwrap().len(), 1);
         assert_eq!(
@@ -255,6 +309,7 @@ mod tests {
             true,
             Some(&raw),
             Some(&token),
+            None,
         )
         .unwrap()
         .finalize(&member)
@@ -292,6 +347,7 @@ mod tests {
             false,
             Some(&raw),
             Some(&token),
+            None,
         )
         .unwrap()
         .finalize(&member)
@@ -312,8 +368,53 @@ mod tests {
             &Keys::generate().public_key().to_hex(),
             true,
             Some(&raw),
-            Some("invalid-token")
+            Some("invalid-token"),
+            None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn serving_note_names_the_device_and_its_memory_only_while_serving() {
+        let member = Keys::generate();
+        let owner = OwnerKeypair::generate();
+        let token = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
+            "192.168.1.20:9999".parse().unwrap(),
+        )]);
+        let raw = json!({"hosted_models": ["ready-model"]});
+        let device = LocalDevice {
+            name: device_label("  Apple M4 Max "),
+            vram_gb: Some(64.0),
+        };
+        let membership = EventBuilder::new(Kind::Custom(13534), "")
+            .tags([Tag::parse(["member", &member.public_key().to_hex()]).unwrap()])
+            .finalize(&Keys::generate())
+            .unwrap();
+        let note = |serving| {
+            status_event(
+                &owner,
+                &member.public_key().to_hex(),
+                serving,
+                Some(&raw),
+                Some(&token),
+                Some(&device),
+            )
+            .unwrap()
+            .finalize(&member)
+            .unwrap()
+        };
+        let serving = note(true);
+        let payload: Value = serde_json::from_str(&serving.content).unwrap();
+        // Classic Buzz reads these top-level keys; this app reads the targets.
+        assert_eq!(payload["deviceName"], "Apple M4 Max");
+        assert_eq!(payload["my_vram_gb"], 64.0);
+        let target = &availability_from_events(vec![membership.clone(), serving]).serve_targets[0];
+        assert_eq!(target.device_name.as_deref(), Some("Apple M4 Max"));
+        assert_eq!(target.capacity.as_ref().and_then(|c| c.vram_gb), Some(64.0));
+        // A stopped heartbeat contributes no capacity and names no device.
+        let stopped = note(false);
+        assert!(!stopped.content.contains("Apple M4 Max"));
+        assert!(!stopped.content.contains("my_vram_gb"));
+        assert_eq!(device_label("   "), None);
     }
 }

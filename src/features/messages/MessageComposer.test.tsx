@@ -6,7 +6,15 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import {
   act,
   cleanup,
@@ -32,6 +40,7 @@ import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { OutgoingEvent } from "../relay/outbox";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
@@ -47,6 +56,10 @@ import type {
 import { readView, writeView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
+import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
+import * as emojiSearch from "../../bundled/emoji/emoji-search";
+import type { EmojiSnapshot } from "../relay/emoji-directory";
+import { emojiQuery } from "../../bundled/emoji/emoji-query";
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { setRememberAgentsPreference } from "./mention-preferences";
@@ -142,9 +155,9 @@ function mount(
     },
   ];
   const emojiListeners = new Set<() => void>();
-  let emoji = {
-    status: "ready" as const,
-    entries: [] as readonly CustomEmoji[],
+  let emoji: Pick<EmojiSnapshot, "status" | "entries"> = {
+    status: "ready",
+    entries: [],
   };
   const outboxListeners = new Set<() => void>();
   let pending: readonly OutgoingEvent[] = [];
@@ -363,9 +376,9 @@ function mount(
       });
       return published;
     },
-    replaceCompletionProvider() {
+    replaceCompletionProvider(pluginId = "test") {
       act(() => {
-        completions = [completion("2")];
+        completions = [{ ...completion("2"), pluginId }];
         for (const listener of completionListeners) listener();
       });
     },
@@ -389,9 +402,12 @@ function mount(
         for (const listener of libraryListeners) listener();
       });
     },
-    setEmoji(entries: readonly CustomEmoji[]) {
+    setEmoji(
+      entries: readonly CustomEmoji[],
+      status: EmojiSnapshot["status"] = "ready",
+    ) {
       act(() => {
-        emoji = { status: "ready", entries };
+        emoji = { status, entries };
         for (const listener of emojiListeners) listener();
       });
     },
@@ -746,10 +762,16 @@ it.each(["click", "Enter", "Tab"])(
   },
 );
 
-it.each([undefined, "other"])(
-  "leaves space alone if the latest publication's exact match is %s",
-  (spaceId) => {
+it.each([
+  [" ", "test", undefined],
+  [" ", "test", "other"],
+  [":", "buzz.emoji", undefined],
+  [":", "buzz.emoji", "other"],
+])(
+  "leaves %s alone for %s if the latest publication's exact match is %s",
+  (key, pluginId, spaceId) => {
     const h = mount();
+    h.replaceCompletionProvider(pluginId);
     const input = h.input();
     input.focus();
     h.fill("!search");
@@ -764,7 +786,7 @@ it.each([undefined, "other"])(
     });
     act(() => {
       publish({ items, spaceId });
-      expect(fireEvent.keyDown(input, { key: " " })).toBe(true);
+      expect(fireEvent.keyDown(input, { key })).toBe(true);
     });
     expect(input).toHaveValue("!search");
     expect(h.messages.send).not.toHaveBeenCalled();
@@ -925,6 +947,8 @@ async function mountUploadComposer(
     threadRootId?: string;
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
+    emojiRead?: () => Promise<RelayEvent[]>;
+    editable?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -939,6 +963,7 @@ async function mountUploadComposer(
   const uploadCalls: {
     file: File;
     signal: AbortSignal;
+    progress: ((sent: number, total: number) => void) | undefined;
     result: ReturnType<typeof deferred<ReturnType<typeof uploadDescriptor>>>;
   }[] = [];
   const sign = vi.fn(async (template: EventTemplate) =>
@@ -954,24 +979,45 @@ async function mountUploadComposer(
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
       media: (url) => url,
-      uploadAttachment(file, signal) {
+      uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
-        uploadCalls.push({ file, signal, result });
+        uploadCalls.push({ file, signal, progress, result });
         return result.promise;
       },
       async query(filters) {
+        if (
+          filters.some((filter) => filter.kinds?.includes(30030)) &&
+          options.emojiRead
+        )
+          return options.emojiRead();
         return filters.flatMap((filter) =>
-          filter.kinds?.includes(39002)
-            ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
-            : filter.kinds?.includes(39000)
-              ? [metadata(relay, "channel", "General", 1700000000)]
-              : [],
+          filter["#d"]?.includes("other")
+            ? filter.kinds?.includes(39002)
+              ? [roster(relay, "other", other.members, other.time)]
+              : [metadata(relay, "other", "Random", other.time)]
+            : filter.kinds?.includes(39002)
+              ? [roster(relay, "channel", [viewer.pubkey], 1700000000)]
+              : filter.kinds?.includes(39000)
+                ? [metadata(relay, "channel", "General", 1700000000)]
+                : [],
         );
       },
-      writer: { kinds: [9], sign, publish },
+      writer: { kinds: options.editable ? [9, 40003, 5] : [9], sign, publish },
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
+  const other = { members: [] as string[], time: 1700000000 };
+  /** Changes membership of an unrelated channel; losing it revokes access. */
+  const otherMembership = (joined: boolean) => {
+    other.members = joined ? [viewer.pubkey] : [];
+    other.time++;
+    return act(() =>
+      owner.session.read([
+        { kinds: [39002], "#d": ["other"], limit: 1 },
+        { kinds: [39000], "#d": ["other"], limit: 1 },
+      ]),
+    );
+  };
   await act(() =>
     owner.session.read([
       { kinds: [39002], "#d": ["channel"], limit: 1 },
@@ -990,14 +1036,25 @@ async function mountUploadComposer(
         ? { replyParentId: options.replyParentId }
         : {})}
     />,
-    { reactStrictMode: true },
+    { reactStrictMode: true, wrapper: ToastProvider },
   );
   const input = () => within(view.container).getByRole("textbox");
   const form = () => within(view.container).getByRole("form");
   const send = () =>
     within(view.container).getByRole("button", { name: "Send message" });
   owners.push(owner);
-  return { ...view, owner, input, form, send, uploadCalls, sign, publish };
+  return {
+    ...view,
+    owner,
+    input,
+    form,
+    send,
+    scope,
+    uploadCalls,
+    sign,
+    publish,
+    otherMembership,
+  };
 }
 
 it("keeps picker, paste and drop attachments local until Send starts upload and publish", async () => {
@@ -1025,15 +1082,24 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("picker.txt");
   expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
-  expect(screen.getByText("Uploading attachments…")).toHaveAttribute(
+  // Send hands the files to the background upload and frees the composer.
+  expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0);
+  expect(screen.getByText("Uploading", { exact: true })).toHaveAttribute(
     "role",
     "status",
   );
-  expect(h.send()).toBeDisabled();
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
+  expect(h.input()).toBeEnabled();
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("picker.txt"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  // Without byte reports, a finished file does not step the bar to 33%.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  act(() => h.uploadCalls[1]?.progress?.(4, 5));
+  // The third file is not prepared yet; its transfer total is unknown.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  expect(screen.queryByText(/%|\d/)).toBeNull();
   await act(async () => {
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
   });
@@ -1048,9 +1114,10 @@ it("keeps picker, paste and drop attachments local until Send starts upload and 
   );
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[pasted.txt](<");
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[dropped.txt](<");
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
 });
 
-it("clears the send upload error banner after removing failed attachments", async () => {
+it("restores a failed background upload into the composer with Desktop's toast", async () => {
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("metadata.txt"));
   await waitFor(() =>
@@ -1066,8 +1133,13 @@ it("clears the send upload error banner after removing failed attachments", asyn
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual([UPLOAD_FAILURES.metadata, UPLOAD_FAILURES.metadata]),
+    ).toEqual([UPLOAD_FAILURES.metadata]),
   );
+  expect(
+    screen.getByText(`Upload failed: ${UPLOAD_FAILURES.metadata}`),
+  ).toBeVisible();
+  expect(h.input()).toHaveValue("caption");
+  expect(h.publish).not.toHaveBeenCalled();
 
   await userEvent.click(
     screen.getByRole("button", { name: "Remove metadata.txt" }),
@@ -1075,6 +1147,455 @@ it("clears the send upload error banner after removing failed attachments", asyn
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(within(h.form()).queryByText("metadata.txt")).not.toBeInTheDocument();
+});
+
+it.each(["cleanup", "restore"] as const)(
+  "retains a failed attachment send until %s storage recovers",
+  async (phase) => {
+    const h = await mountUploadComposer();
+    attachByPaste(h.input(), attachmentFile("retained.txt"));
+    await userEvent.type(h.input(), "recover this caption");
+    const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
+    const original = Storage.prototype.setItem;
+    let failWrites = phase === "cleanup";
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === key && failWrites) throw Error("storage full");
+        return original.call(this, name, value);
+      });
+    try {
+      fireEvent.click(h.send());
+      await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+      if (phase === "cleanup") {
+        expect(h.input()).toHaveAttribute("contenteditable", "false");
+        expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+          text: "recover this caption",
+        });
+      }
+      if (phase === "restore") {
+        expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+          text: "",
+        });
+        failWrites = true;
+      }
+      await act(async () =>
+        h.uploadCalls[0]?.result.reject(new Error("upload unavailable")),
+      );
+      if (phase === "restore") {
+        await screen.findByRole("button", {
+          name: "Retry failed send recovery",
+        });
+        expect(h.input()).toHaveValue("");
+        failWrites = false;
+        await userEvent.click(
+          screen.getByRole("button", { name: "Retry failed send recovery" }),
+        );
+      } else {
+        await waitFor(() =>
+          expect(h.input()).toHaveValue("recover this caption"),
+        );
+      }
+      await waitFor(() =>
+        expect(h.input()).toHaveValue("recover this caption"),
+      );
+      expect(within(h.form()).getByText("retained.txt")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Retry draft cleanup" }),
+      ).toBeNull();
+      expect(h.publish).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  },
+);
+
+it("offers emoji catalog refresh after an attachment publication fails preparation", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("emoji.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji.txt")),
+  );
+  await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
+  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry message preparation" }),
+  ).toBeVisible();
+  available = true;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry message preparation" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(h.input()).toHaveValue("caption :party:");
+  expect(within(h.form()).getByText("emoji.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("does not overwrite a later local edit when a background upload fails", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await userEvent.type(h.input(), "later work");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(h.input()).toHaveValue("later work");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "later work",
+  });
+  expect(
+    screen.getByText(/Failed send was kept because this draft changed/),
+  ).toBeVisible();
+  const retry = screen.getByRole("button", {
+    name: "Retry failed send recovery",
+  });
+  await userEvent.click(retry);
+  expect(h.input()).toHaveValue("later work");
+  await userEvent.clear(h.input());
+  await userEvent.click(retry);
+  await waitFor(() => expect(h.input()).toHaveValue("original caption"));
+  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Retry failed send recovery" }),
+  ).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("restores a failed upload after the composer remounts in the same session", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("remount.txt"));
+  await userEvent.type(h.input(), "remount caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  await waitFor(() =>
+    expect(within(again.container).getByRole("textbox")).toHaveValue(
+      "remount caption",
+    ),
+  );
+  expect(within(again.container).getByText("remount.txt")).toBeVisible();
+});
+
+it("reconciles failed-cleanup recovery after remount before stale cleanup can overwrite the caption", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("retained.txt"));
+  await userEvent.type(h.input(), "recover this caption");
+  const key = `buzz-view.v1:${JSON.stringify([h.scope, "draft:channel"])}`;
+  const original = Storage.prototype.setItem;
+  let failCleanup = true;
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === key && failCleanup) throw Error("storage full");
+      return original.call(this, name, value);
+    });
+  try {
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    expect(h.input()).toHaveAttribute("contenteditable", "false");
+    h.unmount();
+    const again = render(
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+      />,
+      { wrapper: ToastProvider },
+    );
+    const replacement = within(again.container).getByRole("textbox");
+    expect(replacement).toHaveAttribute("contenteditable", "false");
+    failCleanup = false;
+    await act(async () =>
+      h.uploadCalls[0]?.result.reject(new Error("offline")),
+    );
+    await waitFor(() =>
+      expect(replacement).toHaveValue("recover this caption"),
+    );
+    expect(replacement).toHaveAttribute("contenteditable", "true");
+    expect(within(again.container).getByText("retained.txt")).toBeVisible();
+    expect(
+      within(again.container).queryByRole("button", {
+        name: "Retry draft cleanup",
+      }),
+    ).toBeNull();
+    await userEvent.type(replacement, " again");
+    expect(replacement).toHaveValue(" againrecover this caption");
+    expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+      text: " againrecover this caption",
+    });
+    expect(h.publish).not.toHaveBeenCalled();
+  } finally {
+    write.mockRestore();
+  }
+});
+
+it("retains a remounted later edit conflict until clearing it and explicitly retrying recovery", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  const replacement = within(again.container).getByRole("textbox");
+  await userEvent.type(replacement, "later edit");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  const retry = screen.getByRole("button", {
+    name: "Retry failed send recovery",
+  });
+  expect(replacement).toHaveValue("later edit");
+  await userEvent.click(retry);
+  expect(replacement).toHaveValue("later edit");
+  expect(within(again.container).queryByText("original.txt")).toBeNull();
+  await userEvent.clear(replacement);
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({ text: "" });
+  await userEvent.click(retry);
+  await waitFor(() => expect(replacement).toHaveValue("original caption"));
+  expect(replacement).toHaveAttribute("contenteditable", "true");
+  expect(within(again.container).getByText("original.txt")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Retry failed send recovery" }),
+  ).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("does not replace an active message edit when a remounted upload recovers", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const replacement = within(again.container).getByRole("textbox");
+  fireEvent.keyDown(replacement, { key: "ArrowUp" });
+  expect(replacement).toHaveAccessibleName("Edit message");
+  expect(replacement).toHaveValue("Original message");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(replacement).toHaveAccessibleName("Edit message");
+  expect(replacement).toHaveValue("Original message");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "original caption",
+  });
+  fireEvent.click(
+    within(again.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  await waitFor(() => expect(replacement).toHaveValue("original caption"));
+  expect(within(again.container).getByText("original.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("defers a failed upload recovery until an empty active message edit ends", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+  );
+  const editor = h.input();
+  fireEvent.keyDown(editor, { key: "ArrowUp" });
+  expect(editor).toHaveAccessibleName("Edit message");
+  await userEvent.clear(editor);
+  expect(editor).toHaveValue("");
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(editor).toHaveAccessibleName("Edit message");
+  expect(editor).toHaveValue("");
+  expect(within(h.form()).queryByText("original.txt")).toBeNull();
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    text: "original caption",
+  });
+  fireEvent.click(
+    within(h.form()).getByRole("button", { name: "Save changes" }),
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(h.form()).getByRole("button", { name: "Cancel edit" }),
+  );
+  await waitFor(() => expect(editor).toHaveValue("original caption"));
+  expect(within(h.form()).getByText("original.txt")).toBeVisible();
+});
+
+it("retains preparation retry when recovery is deferred by an edit then unmounted", async () => {
+  const h = await mountUploadComposer({
+    editable: true,
+    emojiRead: async () => {
+      throw Error("catalog offline");
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("edit-remount.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const row = editableMessage({ authorId: viewer });
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+  );
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  await userEvent.clear(h.input());
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
+  );
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(
+    within(h.form()).queryByRole("button", {
+      name: "Retry message preparation",
+    }),
+  ).toBeNull();
+  h.unmount();
+  const returned = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[row]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const composer = within(returned.container);
+  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
+  expect(composer.getByText("edit-remount.txt")).toBeVisible();
+  expect(composer.getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  expect(
+    composer.getByRole("button", { name: "Retry message preparation" }),
+  ).toBeVisible();
+});
+
+it("offers message preparation retry after a failed attachment send remounts", async () => {
+  let available = false;
+  const h = await mountUploadComposer({
+    emojiRead: async () => {
+      if (!available) throw Error("catalog offline");
+      return [];
+    },
+  });
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+  );
+  attachByPaste(h.input(), attachmentFile("emoji-remount.txt"));
+  await userEvent.type(h.input(), "caption :party:");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  await act(async () =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
+  );
+  const again = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  const composer = within(again.container);
+  await waitFor(() =>
+    expect(composer.getByRole("textbox")).toHaveValue("caption :party:"),
+  );
+  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  expect(composer.getByRole("alert")).toHaveTextContent(
+    "Community emoji unavailable",
+  );
+  available = true;
+  fireEvent.click(
+    composer.getByRole("button", { name: "Retry message preparation" }),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
+  );
+  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
+  expect(composer.getByText("emoji-remount.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+  again.unmount();
+  const returned = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(
+    within(returned.container).queryByRole("button", {
+      name: "Retry message preparation",
+    }),
+  ).toBeNull();
+  expect(within(returned.container).getByRole("textbox")).toHaveValue(
+    "caption :party:",
+  );
 });
 
 it("keeps a remaining upload failure banner when removing one of two failed files", async () => {
@@ -1093,7 +1614,7 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed", "first failed"]),
+    ).toEqual(["first failed"]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
   fireEvent.click(h.send());
@@ -1104,7 +1625,7 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["first failed again", "first failed again"]),
+    ).toEqual(["first failed again"]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
   fireEvent.click(h.send());
@@ -1119,13 +1640,12 @@ it("keeps a remaining upload failure banner when removing one of two failed file
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["second failed", "second failed"]),
+    ).toEqual(["second failed"]),
   );
 
   await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
 
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
-    "second failed",
     "second failed",
   ]);
   expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument();
@@ -1152,8 +1672,8 @@ it("retains successful attachment uploads after a later file fails and retries o
   await screen.findAllByRole("alert");
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
     "relay down",
-    "relay down",
   ]);
+  expect(screen.getByText("Upload failed: relay down")).toBeVisible();
   expect(h.input()).toHaveValue("caption");
   expect(h.publish).not.toHaveBeenCalled();
 
@@ -1172,11 +1692,10 @@ it("retains successful attachment uploads after a later file fails and retries o
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[retry.txt](<");
 });
 
-it("recovers disabled mid-upload attachments and retries without re-uploading ready files", async () => {
+it("finishes a background send in its original channel after the composer unmounts", async () => {
   const h = await mountUploadComposer();
-  const scope = `https://relay.example.test:${h.owner.session.viewer}`;
   attachByPaste(h.input(), attachmentFile("ready.txt"));
-  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  attachByPaste(h.input(), attachmentFile("late.txt"));
   await waitFor(() =>
     expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
   );
@@ -1187,61 +1706,24 @@ it("recovers disabled mid-upload attachments and retries without re-uploading re
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
-  expect(h.uploadCalls[1]?.file.name).toBe("paused.txt");
 
-  try {
-    h.rerender(
-      <MessageComposer
-        session={h.owner.session}
-        scope={scope}
-        channelId="channel"
-        channelName="General"
-        disabled
-      />,
-    );
-    expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
-    await waitFor(() =>
-      expect(
-        screen.getByText("Upload paused. Retry to continue."),
-      ).toBeVisible(),
-    );
-    expect(screen.getByText(/Upload failed/)).toBeVisible();
-    expect(screen.getByRole("button", { name: /Retry/ })).toBeDisabled();
-    expect(h.publish).not.toHaveBeenCalled();
-    expect(h.sign).not.toHaveBeenCalled();
-  } finally {
-    await act(async () => {
-      h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt"));
-    });
-  }
-
-  h.rerender(
-    <MessageComposer
-      session={h.owner.session}
-      scope={scope}
-      channelId="channel"
-      channelName="General"
-    />,
-  );
-  const retry = await screen.findByRole("button", { name: /Retry/ });
-  expect(retry).toBeEnabled();
-  await userEvent.click(retry);
-  await waitFor(() => expect(h.send()).toBeEnabled());
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
-  expect(h.uploadCalls[2]?.file.name).toBe("paused.txt");
+  h.unmount();
+  expect(h.uploadCalls[1]?.signal.aborted).toBe(false);
   await act(async () => {
-    h.uploadCalls[2]?.result.resolve(uploadDescriptor("paused.txt"));
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("late.txt"));
   });
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const event = h.publish.mock.calls[0]?.[0];
+  expect(event?.tags).toContainEqual(["h", "channel"]);
+  expect(event?.content).toContain("caption");
+  expect(event?.content).toContain("[ready.txt](<");
+  expect(event?.content).toContain("[late.txt](<");
   expect(h.sign).toHaveBeenCalledTimes(1);
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
-  expect(h.publish.mock.calls[0]?.[0].content).toContain("[paused.txt](<");
 });
 
-it("cancels an in-flight attachment send when the composer destination changes", async () => {
-  const h = await mountUploadComposer({ threadRootId: "b".repeat(64) });
+it("keeps a background send on its original thread when the composer moves", async () => {
+  const root = "b".repeat(64);
+  const h = await mountUploadComposer({ threadRootId: root });
   attachByPaste(h.input(), attachmentFile());
   await waitFor(() => expect(h.send()).toBeEnabled());
   fireEvent.click(h.send());
@@ -1255,14 +1737,17 @@ it("cancels an in-flight attachment send when the composer destination changes",
       threadRootId={"c".repeat(64)}
     />,
   );
-  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
   await act(async () => {
     h.uploadCalls[0]?.result.resolve(uploadDescriptor());
   });
-  expect(h.publish).not.toHaveBeenCalled();
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
+  expect(tags).toContainEqual(["e", root, "", "reply"]);
+  expect(tags.flat()).not.toContain("c".repeat(64));
 });
 
-it("recovers a reply-target abort during attachment upload and sends the retained draft to the new target", async () => {
+it("keeps a background reply on the parent captured at Send", async () => {
   const root = "a".repeat(64);
   const child = "b".repeat(64);
   const h = await mountUploadComposer({
@@ -1273,35 +1758,250 @@ it("recovers a reply-target abort during attachment upload and sends the retaine
   await waitFor(() => expect(h.send()).toBeEnabled());
   fireEvent.click(h.send());
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-
-  try {
-    h.rerender(
-      <MessageComposer
-        session={h.owner.session}
-        scope={`https://relay.example.test:${h.owner.session.viewer}`}
-        channelId="channel"
-        channelName="General"
-        threadRootId={root}
-      />,
-    );
-    expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
-    expect(h.publish).not.toHaveBeenCalled();
-    await waitFor(() => expect(h.send()).toBeEnabled());
-  } finally {
-    await act(async () => {
-      h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
-    });
-  }
-
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={root}
+    />,
+  );
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
   await act(async () => {
-    h.uploadCalls[1]?.result.resolve(uploadDescriptor("reply.txt"));
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("reply.txt"));
   });
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
-  const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
-  expect(tags).not.toContainEqual(["e", child, "", "reply"]);
-  expect(tags).toContainEqual(["e", root, "", "reply"]);
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual([
+    "e",
+    child,
+    "",
+    "reply",
+  ]);
+});
+
+it("blocks Send in a conversation until its background send settles", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  await userEvent.type(h.input(), "look at this");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+
+  // Composition stays open; only Send waits, so the text cannot overtake.
+  await userEvent.type(h.input(), "thoughts?");
+  expect(h.input()).toHaveValue("thoughts?");
+  expect(h.send()).toBeDisabled();
+  fireEvent.submit(h.form());
+  await act(async () => {});
+  expect(h.publish).not.toHaveBeenCalled();
+
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("look at this");
+  expect(h.publish.mock.calls[1]?.[0].content).toBe("thoughts?");
+});
+
+it("cancels the newest background send, restores its draft and leaves older sends running", async () => {
+  const root = "b".repeat(64);
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("one.txt"));
+  await userEvent.type(h.input(), "first");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={`https://relay.example.test:${h.owner.session.viewer}`}
+      channelId="channel"
+      channelName="General"
+      threadRootId={root}
+    />,
+  );
+  attachByPaste(h.input(), attachmentFile("two.txt"));
+  await userEvent.type(h.input(), "second");
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.input()).toHaveValue("");
+
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(false);
+  await waitFor(() => expect(h.input()).toHaveValue("second"));
+  expect(within(h.form()).getByText("two.txt")).toBeVisible();
+  expect(screen.queryByText(/Upload failed/)).toBeNull();
+
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt"));
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("two.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("first");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[one.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].tags).not.toContainEqual([
+    "e",
+    root,
+    "",
+    "root",
+  ]);
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
+});
+
+it.each([
+  ["an unrelated channel's access is revoked", "revoke"],
+  ["the cache is cleared", "clear"],
+] as const)("restores a background send when %s", async (_case, trigger) => {
+  const h = await mountUploadComposer();
+  if (trigger === "revoke") await h.otherMembership(true);
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.input()).toHaveValue("");
+
+  if (trigger === "revoke") await h.otherMembership(false);
+  else await act(() => h.owner.clearCache());
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("caption"));
+  expect(within(h.form()).getByText("notes.txt")).toBeVisible();
+  expect(screen.getByText(/^Upload failed: /)).toBeVisible();
+  expect(screen.queryByText(/^Uploading/)).toBeNull();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("uses transferred sizes after image preparation and resets unknown totals on retry", async () => {
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:photo"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  const h = await mountUploadComposer();
+  // A GIF comment is metadata: preparation strips it before transfer.
+  const gif = new File(
+    [
+      new Uint8Array([
+        ...new TextEncoder().encode("GIF89a"),
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0x21,
+        0xfe,
+        4,
+        1,
+        2,
+        3,
+        4,
+        0,
+        0x3b,
+      ]),
+    ],
+    "photo.gif",
+    { type: "image/gif" },
+  );
+  attachByPaste(h.input(), gif);
+  attachByPaste(h.input(), attachmentFile("note.txt", "1234567890"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const first = h.uploadCalls[0];
+  expect(first?.file.size).toBeLessThan(gif.size);
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
+  act(() => first?.progress?.(first.file.size, first.file.size));
+  // The next file has not been prepared: its transfer size is still unknown.
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  await act(async () =>
+    first?.result.resolve({
+      ...uploadDescriptor("photo.gif"),
+      size: first.file.size,
+    }),
+  );
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  act(() => h.uploadCalls[1]?.progress?.(5, 10));
+  const expected = Math.round(
+    (((first?.file.size ?? 0) + 5) / ((first?.file.size ?? 0) + 10)) * 100,
+  );
+  expect(bar).toHaveAttribute("aria-valuenow", String(expected));
+  expect(bar.firstElementChild).toHaveStyle({
+    transform: `scaleX(${((first?.file.size ?? 0) + 5) / ((first?.file.size ?? 0) + 10)})`,
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+  await act(async () =>
+    h.uploadCalls[1]?.result.reject(new Error("relay down")),
+  );
+  await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+  await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  const retryBar = screen.getByRole("progressbar", { name: "Uploading" });
+  expect(retryBar).not.toHaveAttribute("aria-valuenow");
+  act(() => h.uploadCalls[2]?.progress?.(2, 20));
+  expect(retryBar).toHaveAttribute(
+    "aria-valuenow",
+    String(
+      Math.round(
+        (((first?.file.size ?? 0) + 2) / ((first?.file.size ?? 0) + 20)) * 100,
+      ),
+    ),
+  );
+  await act(async () =>
+    h.uploadCalls[2]?.result.resolve({
+      ...uploadDescriptor("note.txt"),
+      size: 10,
+    }),
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+});
+
+it("fills the bar for a single-chunk upload while its response is held", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const bar = screen.getByRole("progressbar", { name: "Uploading" });
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  // The host's only report for a body within one chunk is the whole body.
+  act(() => h.uploadCalls[0]?.progress?.(5, 5));
+  expect(bar).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByText("Uploading", { exact: true })).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("never publishes a background send after its session closes", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(screen.getByText("Uploading", { exact: true })).toBeVisible();
+
+  act(() => h.owner.dispose());
+  expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(screen.queryByText(/^Uploading/)).toBeNull());
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.sign).not.toHaveBeenCalled();
 });
 
 it("retries publish-unknown attachment sends with the same signed event and no re-upload", async () => {
@@ -2040,6 +2740,189 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
     [],
     [],
   );
+});
+
+/** The real Emoji provider; the fixture provider above never publishes an exact match. */
+function mountEmojiTypeahead() {
+  // jsdom has no canvas; previews fall back to the uncentred glyph.
+  const context = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockImplementation(() => null);
+  onTestFinished(() => context.mockRestore());
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "typeahead",
+      key: "buzz.emoji/typeahead",
+      pluginId: "buzz.emoji",
+      revision: "1",
+      title: "Emoji",
+      match: ({ text, start }) => emojiQuery(text, start),
+      component: EmojiCompletion,
+    },
+  ];
+  return mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => completions, subscribe: () => () => {} },
+    },
+  });
+}
+// ":" is Shift+; on US layouts, so the typed colon arrives with shiftKey set.
+const colon = (input: ComposerInputElement) =>
+  fireEvent.keyDown(input, { key: ":", shiftKey: true });
+
+it.each([
+  ["hello :-1", "hello 👎"],
+  [":+1", "👍"],
+  ["say :SMILE", "say 😄"],
+])(
+  "replaces an exact shortcode with its emoji on the closing colon: %s",
+  async (typed, expected) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    const label = `:${typed.slice(typed.lastIndexOf(":") + 1).toLowerCase()}:`;
+    await screen.findByRole("option", { name: label });
+    expect(colon(h.input())).toBe(false);
+    expect(h.input()).toHaveValue(expected);
+    expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+      expected.length,
+      expected.length,
+    ]);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  },
+);
+
+it("keeps the typed colon after a partial shortcode and never accepts emoji on Space", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("hello :smil");
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("hello :smil");
+  h.fill("hello :-1");
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(true);
+  expect(h.input()).toHaveValue("hello :-1");
+});
+
+it.each(["at 10:30", "see http"])(
+  "leaves the colon in times and URLs alone: %s",
+  (typed) => {
+    const h = mountEmojiTypeahead();
+    h.fill(typed);
+    // No syntax match means no provider mounts, so no asynchronous search is pending.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(colon(h.input())).toBe(true);
+    expect(h.input()).toHaveValue(typed);
+  },
+);
+
+it("keeps a shortcode literal inside inline code", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("run :-1");
+  act(() => {
+    h.input().setSelectionRange(0, 7);
+    h.input().toggleFormat("code");
+    h.input().setSelectionRange(7, 7);
+  });
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue("run :-1");
+});
+
+it("waits for the community catalog before authorizing a Unicode replacement", async () => {
+  const h = mountEmojiTypeahead();
+  h.setEmoji([], "loading");
+  h.fill(":smile");
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(true);
+  expect(h.input()).toHaveValue(":smile");
+  // Release the pending catalog with a namesake after Unicode has settled.
+  h.setEmoji([{ shortcode: "smile", url: "https://emoji.test/smile.png" }]);
+  await screen.findByRole("option", { name: ":smile: Unicode emoji" });
+  expect(colon(h.input())).toBe(true);
+  // A later complete, unambiguous catalog permits the same query without typing.
+  h.setEmoji([]);
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("😄");
+});
+
+it("keeps Unicode suggestions and retry without replacement after a community failure", async () => {
+  const h = mountEmojiTypeahead();
+  h.setEmoji([], "error");
+  h.fill(":smile");
+  await screen.findByText(
+    "Community emoji unavailable; Unicode results shown.",
+  );
+  expect(screen.getByRole("option", { name: ":smile:" })).toBeInTheDocument();
+  expect(colon(h.input())).toBe(true);
+  await h.user.click(screen.getByRole("option", { name: "Retry suggestions" }));
+  expect(h.session.emoji.refresh).toHaveBeenCalledOnce();
+  h.setEmoji([]);
+  await screen.findByRole("option", { name: ":smile:" });
+  expect(colon(h.input())).toBe(false);
+});
+
+it("keeps custom suggestions and retry without replacement after a Unicode failure", async () => {
+  const search = vi
+    .spyOn(emojiSearch, "searchEmoji")
+    .mockRejectedValue(new Error("chunk unavailable"));
+  onTestFinished(() => search.mockRestore());
+  const h = mountEmojiTypeahead();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  h.fill(":party");
+  await screen.findByText("Unicode emoji unavailable. Custom matches shown.");
+  expect(screen.getByRole("option", { name: ":party:" })).toBeInTheDocument();
+  expect(colon(h.input())).toBe(true);
+  search.mockRestore();
+  await h.user.click(screen.getByRole("option", { name: "Retry suggestions" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Unicode emoji unavailable. Custom matches shown."),
+    ).toBeNull(),
+  );
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue(":party:");
+});
+
+it.each([
+  ["```\n:-1\n```", 7],
+  ["~~~\n:-1", 7],
+  ["`run :-1`", 8],
+  ["    :-1", 7],
+])(
+  "keeps a shortcode literal inside raw Markdown code: %s",
+  async (text, caret) => {
+    const h = mountEmojiTypeahead();
+    h.fill(text);
+    act(() => h.input().setSelectionRange(caret, caret));
+    fireEvent(document, new Event("selectionchange"));
+    await screen.findByRole("option", { name: ":-1:" });
+    expect(colon(h.input())).toBe(true);
+    expect(h.input()).toHaveValue(text);
+  },
+);
+
+it("restores the typed colon and collapsed caret with one undo, and isolates subsequent typing", async () => {
+  const h = mountEmojiTypeahead();
+  h.fill("hello :-1");
+  await screen.findByRole("option", { name: ":-1:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue("hello 👎");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello :-1:");
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([10, 10]);
+  act(() => h.input().undo(true));
+  expect(h.input()).toHaveValue("hello 👎");
+  await h.user.type(h.input(), "!");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello 👎");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("hello :-1:");
 });
 
 it("rejects overlong and over-limit tool edits without changing accepted intent", () => {
@@ -3311,6 +4194,98 @@ it("inserts mention links without new notification recipients during edits", () 
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+const pasteText = (input: ComposerInputElement, text: string) =>
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? text : ""),
+      },
+    });
+  });
+
+it("notifies a pasted identity link for a member under their current name, not an unknown key", () => {
+  const h = mount();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+  const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+  pasteText(
+    h.input(),
+    `Ask [@Honey](${profileTarget(first.pubkey)}) and ${eve} `,
+  );
+  expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+  expect(
+    within(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).getAllByRole("button"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    `Ask @Honey Bee and ${eve} `,
+    [first.pubkey],
+    [],
+  );
+});
+
+for (const channelType of ["stream", "forum"] as const)
+  it(`offers a pasted nonmember with a known profile like the picker in ${channelType}`, async () => {
+    const h = mount();
+    const list = {
+      status: "ready",
+      channels: [{ id: "channel", channelType, members: ["d".repeat(64)] }],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add: vi.fn() },
+    });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey Bee" }]]));
+    // The pasted label never names the recipient; an uncached key stays display-only.
+    const eve = `[@Eve](${profileTarget("e".repeat(64))})`;
+    pasteText(
+      h.input(),
+      `Ask [@Jane](${profileTarget(first.pubkey)}) and ${eve} `,
+    );
+    expect(h.input()).toHaveValue(`Ask @Honey Bee and ${eve} `);
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(1);
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey Bee is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Do nothing" }));
+    await act(async () => {});
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+      "channel",
+      `Ask @Honey Bee and ${eve} `,
+      [],
+    ]);
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  });
+
+it("keeps pasted identity links display-only during edits", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const link = `[@Honey](${profileTarget(second.pubkey)})`;
+  pasteText(h.input(), ` ${link} `);
+  expect(h.input()).toHaveValue(`Original message ${link} `);
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    `Original message ${link} `,
+    "c".repeat(64),
+  );
+});
+
 it.each([
   { authorId: second.pubkey },
   { agentEnvelope: true as const },
@@ -3674,6 +4649,49 @@ for (const channelType of ["stream", "forum"] as const)
       expect(add).not.toHaveBeenCalled();
     },
   );
+
+it.each(["Do nothing", "Invite"])(
+  "after %s, the next draft carries an outside agent only if it was notified",
+  async (action) => {
+    const h = mount();
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async (_channel: string, pubkey: string) => {
+      list.channels[0]?.members.push(pubkey);
+    });
+    // A managed agent outside the channel, offered because the viewer can add it.
+    const real = h.session.agentChoices;
+    const offered = {
+      ...real.snapshot(),
+      identities: [{ ...first, managed: true }],
+    };
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+      agentChoices: { ...real, snapshot: () => offered },
+    });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    fireEvent.submit(screen.getByRole("form"));
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    await h.user.keyboard("again");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    // A reference is not addressed again, so the send needs no second prompt.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(h.messages.send).toHaveBeenCalledTimes(2);
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual(
+      action === "Invite" ? [first.pubkey] : [],
+    );
+  },
+);
 
 it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
@@ -4198,6 +5216,30 @@ it("retires composer transients and revoked insert commands without replacing th
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("adds an HTTP link in the dialog and reports unsafe destinations accurately", () => {
+  const h = mount();
+  h.fill("docs");
+  const editor = h.input();
+  act(() => editor.setSelectionRange(0, 4));
+  fireEvent.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+  expect(screen.getByRole("dialog", { name: "Add link" })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+    target: { value: "http://user:pw@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Use an HTTP(S) URL or a valid buzz:// link.",
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
+    target: { value: "http://example.com/docs" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(editor).toHaveValue("docs");
+  expect(h.input().innerHTML).toContain("http://example.com/docs");
+});
+
 it("restores the retained editor when the Link dialog closes normally", async () => {
   const h = mount();
   const editor = h.input();
@@ -4339,9 +5381,7 @@ it.each([undefined, "root"])(
     await h.user.click(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
-    expect(retired).toHaveBeenCalledExactlyOnceWith(
-      threadRootId ? "reply-id" : "channel-id",
-    );
+    expect(retired).toHaveBeenCalledExactlyOnceWith();
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },
@@ -4434,7 +5474,7 @@ it.each([false, true])(
       expect(readView("scope", "draft:channel", "missing")).toMatchObject({
         text: remembered ? "@Honey " : "",
       });
-      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
+      expect(retired).toHaveBeenCalledExactlyOnceWith();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       fail.mockRestore();

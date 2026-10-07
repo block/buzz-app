@@ -1299,7 +1299,7 @@ async fn sidebar_signer_matches_projection_lengths_and_preserves_unknown_sort_en
         host.decode_sidebar(vec![event]).await.unwrap()["channel-sections"],
         existing
     );
-    // Same preservation vector as dev/sidebar-sort.test.mjs: unrelated modes,
+    // Same preservation vector as browser-host/sidebar-sort.test.mjs: unrelated modes,
     // section keys and top-level metadata survive an override update.
     let sort = serde_json::json!({"version":1,"future":{"x":1},"groups":{
         "channels":"recent","section:elsewhere":"recent","future":"next-mode","section:work":"recent"
@@ -1738,12 +1738,9 @@ fn download_names_are_safe_and_collisions_do_not_overwrite() {
 
 #[test]
 fn media_ranges_are_single_and_bounded() {
-    assert_eq!(media_range("bytes=0-").as_deref(), Some("bytes=0-4194303"));
-    assert_eq!(media_range("bytes=10-20").as_deref(), Some("bytes=10-20"));
-    assert_eq!(
-        media_range("bytes=100-999999999").as_deref(),
-        Some("bytes=100-4194403")
-    );
+    assert_eq!(media_range("bytes=0-"), Some((0, 4194303)));
+    assert_eq!(media_range("bytes=10-20"), Some((10, 20)));
+    assert_eq!(media_range("bytes=100-999999999"), Some((100, 4194403)));
     assert!(media_range(&format!("bytes={}-", u64::MAX)).is_none());
     for value in [
         "bytes=-500",
@@ -1839,6 +1836,274 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     assert_strict(&blossom_event(&headers), "get", server);
 }
 
+/// Serves `blob` by `Range`, failing the first `failures` requests with 503,
+/// and records every upstream `Range` header.
+fn ranged_media_server(
+    blob: Vec<u8>,
+    failures: usize,
+) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let ranges = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = ranges.clone();
+    std::thread::spawn(move || {
+        for socket in listener.incoming() {
+            let mut socket = socket.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            let headers = String::from_utf8_lossy(&bytes).into_owned();
+            let range = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("range: bytes="))
+                .unwrap()
+                .to_owned();
+            let count = {
+                let mut seen = seen.lock().unwrap();
+                seen.push(format!("bytes={range}"));
+                seen.len()
+            };
+            if count <= failures {
+                socket
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .unwrap();
+                continue;
+            }
+            let (first, last) = range.split_once('-').unwrap();
+            let first: usize = first.parse().unwrap();
+            if first >= blob.len() {
+                let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", blob.len());
+                socket.write_all(head.as_bytes()).unwrap();
+                continue;
+            }
+            let last = last.parse::<usize>().unwrap().min(blob.len() - 1);
+            let body = &blob[first..=last];
+            let head = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Range: bytes {first}-{last}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                blob.len(),
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).unwrap();
+            socket.write_all(body).unwrap();
+        }
+    });
+    (base, ranges)
+}
+
+fn media_blob(length: u64) -> Vec<u8> {
+    (0..length).map(|index| (index % 251) as u8).collect()
+}
+
+#[tokio::test]
+async fn tiny_media_reads_share_one_signed_block_fetch() {
+    let blob = media_blob(3000);
+    let (base, ranges) = ranged_media_server(blob.clone(), 0);
+    let url = base
+        .join(&format!("/media/{}.mp4", "c".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    // AVFoundation's opening reads, two of them racing from separate players.
+    let (header, atom) = tokio::join!(
+        media_blocks::read(&host, &url, 0, 7),
+        media_blocks::read(&host, &url, 32, 39),
+    );
+    let (header, atom) = (header.unwrap(), atom.unwrap());
+    assert_eq!(header.body(), &blob[0..8]);
+    assert_eq!(atom.body(), &blob[32..40]);
+    let tail = media_blocks::read(&host, &url, 2990, 2990 + 4 * 1024 * 1024 - 1)
+        .await
+        .unwrap();
+    assert_eq!(tail.status(), 206);
+    assert_eq!(tail.body(), &blob[2990..]);
+    let header = |name| tail.headers().get(name).unwrap().to_str().unwrap();
+    assert_eq!(header("content-range"), "bytes 2990-2999/3000");
+    assert_eq!(header("content-type"), "video/mp4");
+    assert_eq!(header("accept-ranges"), "bytes");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(
+        *ranges.lock().unwrap(),
+        [format!("bytes=0-{}", media_blocks::BLOCK - 1)]
+    );
+}
+
+#[tokio::test]
+async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(block + 100);
+    let (base, ranges) = ranged_media_server(blob.clone(), 0);
+    let url = base
+        .join(&format!("/media/{}.mp4", "d".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let across = media_blocks::read(&host, &url, block - 4, block + 3)
+        .await
+        .unwrap();
+    assert_eq!(across.body(), &blob[block as usize - 4..block as usize + 4]);
+    assert_eq!(
+        across.headers()["content-range"],
+        format!("bytes {}-{}/{}", block - 4, block + 3, block + 100)
+    );
+    assert_eq!(
+        media_blocks::read(&host, &url, block + 100, block + 200)
+            .await
+            .unwrap_err(),
+        416
+    );
+    assert_eq!(
+        *ranges.lock().unwrap(),
+        [
+            format!("bytes=0-{}", block - 1),
+            format!("bytes={block}-{}", 2 * block - 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn failed_media_blocks_are_fetched_again() {
+    let blob = media_blob(64);
+    let (base, ranges) = ranged_media_server(blob.clone(), 1);
+    let url = base
+        .join(&format!("/media/{}.mp4", "e".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    assert_eq!(
+        media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+        503
+    );
+    let retried = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    assert_eq!(retried.body(), &blob[..8]);
+    assert_eq!(ranges.lock().unwrap().len(), 2);
+}
+
+/// Answers each connection with the next canned response, ignoring the request.
+fn scripted_media_server(
+    responses: Vec<Vec<u8>>,
+) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = served.clone();
+    std::thread::spawn(move || {
+        for (socket, response) in listener.incoming().zip(responses) {
+            let mut socket = socket.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // The client may hang up on an oversized body.
+            let _ = socket.write_all(&response);
+        }
+    });
+    (base, served)
+}
+
+fn media_response(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\n{headers}Connection: close\r\n\r\n"
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    response
+}
+
+#[tokio::test]
+async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
+    let block = media_blocks::BLOCK;
+    for (name, length) in [("f", 64), ("0", block + 64)] {
+        let blob = media_blob(length);
+        let whole = media_response("200 OK", &format!("Content-Length: {length}\r\n"), &blob);
+        let (base, served) = scripted_media_server(vec![whole.clone(), whole]);
+        let url = base
+            .join(&format!("/media/{}.mp4", name.repeat(64)))
+            .unwrap();
+        let host = IdentityHost::fixture();
+        for _ in 0..2 {
+            let response = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.body(), &blob);
+            assert!(response.headers().get("content-range").is_none());
+        }
+        // A whole response is never cached as a block.
+        assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn invalid_partial_media_blocks_are_rejected_and_retried() {
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(3000);
+    let oversized = media_blob(2 * block);
+    let partial = |range: &str, body: &[u8]| {
+        let length = format!("Content-Length: {}\r\n", body.len());
+        let range = if range.is_empty() {
+            String::new()
+        } else {
+            format!("Content-Range: {range}\r\n")
+        };
+        media_response("206 Partial Content", &format!("{range}{length}"), body)
+    };
+    let cases = [
+        (partial("", &blob), 502),
+        (partial("bytes 0-x/3000", &blob), 502),
+        (partial("bytes 8-15/3000", &blob[8..16]), 502),
+        (partial("bytes 0-7/3000", &blob[..8]), 502),
+        (
+            partial(
+                &format!("bytes 0-{}/{}", 2 * block - 1, 4 * block),
+                &oversized,
+            ),
+            413,
+        ),
+        // No Content-Length: the 1 MiB cap applies while buffering.
+        (
+            media_response(
+                "206 Partial Content",
+                &format!("Content-Range: bytes 0-{}/{}\r\n", 2 * block - 1, 4 * block),
+                &oversized,
+            ),
+            413,
+        ),
+    ];
+    let expected: Vec<u16> = cases.iter().map(|(_, status)| *status).collect();
+    let mut responses: Vec<Vec<u8>> = cases.into_iter().map(|(response, _)| response).collect();
+    responses.push(partial("bytes 0-2999/3000", &blob));
+    let (base, served) = scripted_media_server(responses);
+    let url = base
+        .join(&format!("/media/{}.mp4", "1".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    for status in expected.iter() {
+        assert_eq!(
+            media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+            *status
+        );
+    }
+    let read = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    assert_eq!(read.status(), 206);
+    assert_eq!(read.body(), &blob[..8]);
+    assert_eq!(read.headers()["content-range"], "bytes 0-7/3000");
+    // Rejections were never cached; the valid block now is.
+    assert_eq!(
+        media_blocks::read(&host, &url, 2992, 2999)
+            .await
+            .unwrap()
+            .body(),
+        &blob[2992..]
+    );
+    assert_eq!(
+        served.load(std::sync::atomic::Ordering::SeqCst),
+        expected.len() + 1
+    );
+}
+
 #[tokio::test]
 async fn media_proxy_passes_relay_denials_through_without_a_body() {
     let (base, task) = fixture_server(
@@ -1868,6 +2133,7 @@ async fn upload_signs_the_exact_bytes_it_sends() {
         url.clone(),
         Some("image/png"),
         body.clone(),
+        None,
     )
     .await
     .unwrap();
@@ -1885,9 +2151,82 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
     assert_strict(&event, "upload", server);
     assert_eq!(tag(&event, "x"), [hash.as_str()]);
-    assert!(upload(&IdentityHost::fixture(), url, None, Vec::new())
-        .await
-        .is_err());
+    assert!(
+        upload(&IdentityHost::fixture(), url, None, Vec::new(), None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn upload_reports_bytes_handed_to_the_connection() {
+    let (base, task) = fixture_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+    );
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let channel = tauri::ipc::Channel::new(move |message| {
+        let tauri::ipc::InvokeResponseBody::Json(json) = message else {
+            panic!("progress must be JSON");
+        };
+        sink.lock()
+            .unwrap()
+            .push(serde_json::from_str::<serde_json::Value>(&json).unwrap());
+        Ok(())
+    });
+    // Four 64 KiB chunks, ASCII for the fixture server's text comparison.
+    let body = vec![b'a'; 3 * UPLOAD_CHUNK + 1];
+    let result = upload(
+        &IdentityHost::fixture(),
+        base.join("/upload").unwrap(),
+        Some("image/png"),
+        body.clone(),
+        Some(channel),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.status, 200);
+    let (headers, sent) = task.join().unwrap();
+    assert_eq!(sent.as_bytes(), body);
+    assert!(headers
+        .lines()
+        .any(|line| line == format!("content-length: {}", body.len())));
+    let total = body.len();
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UPLOAD_CHUNK, 2 * UPLOAD_CHUNK, 3 * UPLOAD_CHUNK, total]
+            .map(|sent| serde_json::json!({ "sent": sent, "total": total }))
+    );
+}
+
+#[test]
+fn single_chunk_upload_reports_its_whole_body() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 5263], move |sent| sink.lock().unwrap().push(sent));
+    assert_eq!(chunks.count(), 1);
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [UploadSent {
+            sent: 5263,
+            total: 5263
+        }]
+    );
+}
+
+#[test]
+fn progress_reports_change_by_whole_percent_only() {
+    let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reports.clone();
+    let chunks = progress_chunks(vec![0; 1000 * UPLOAD_CHUNK], move |sent| {
+        sink.lock().unwrap().push(sent.sent)
+    });
+    assert_eq!(chunks.count(), 1000);
+    let reports = reports.lock().unwrap();
+    // Percent 0 (first nine chunks) through 100, once each.
+    assert_eq!(reports.len(), 101);
+    assert!(reports.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(reports.last(), Some(&(1000 * UPLOAD_CHUNK as u64)));
 }
 
 #[test]
@@ -2081,56 +2420,49 @@ async fn preference_batches_reject_invalid_ciphertext_after_signature_verificati
 }
 
 #[test]
-fn canvas_signing_bounds_revision_preconditions_and_allows_exact_legacy_retries() {
-    let channel = vec![
-        "h".to_string(),
-        "11111111-1111-4111-8111-111111111111".to_string(),
-    ];
-    let event = |tags| EventTemplate {
+fn canvas_signing_shape_matches_shared_contract() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/features/channel-templates/canvas-signing-contract.json"
+    ))
+    .unwrap();
+    let cases = cases.as_array().unwrap();
+    assert!(!cases.is_empty(), "shared Canvas signing corpus is empty");
+    for case in cases {
+        // Tag shape plus EventTemplate deserialization, not IPC wiring, broker
+        // freshness, the native signing budget or publication.
+        let event = serde_json::from_value::<EventTemplate>(serde_json::json!({
+            "kind": 40100, "created_at": 100, "content": "# Plan", "tags": case["tags"]
+        }));
+        let accepted = if case["deserializes"] == false {
+            assert!(event.is_err(), "{}", case["name"]);
+            false
+        } else {
+            let event = event.unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+            validate_event("https://relay.test", &event).is_ok()
+        };
+        assert_eq!(
+            accepted,
+            case["accepted"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+#[test]
+fn canvas_content_is_bounded_in_utf8_bytes() {
+    let mut event = EventTemplate {
         kind: 40100,
-        content: "# Plan".into(),
         created_at: 100,
-        tags,
+        content: "é".repeat(12 * 1024),
+        tags: vec![vec![
+            "h".into(),
+            "11111111-1111-4111-8111-111111111111".into(),
+        ]],
     };
-    assert!(validate_event("https://relay.test", &event(vec![channel.clone()])).is_ok());
-    for revision in ["none".to_string(), "a".repeat(64)] {
-        assert!(validate_event(
-            "https://relay.test",
-            &event(vec![
-                channel.clone(),
-                vec!["expected-revision".into(), revision]
-            ])
-        )
-        .is_ok());
-    }
-    for tags in [
-        vec![],
-        vec![channel.clone(), channel.clone()],
-        vec![channel.clone(), vec!["p".into(), "a".repeat(64)]],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "bad".into()],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "A".repeat(64)],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "none".into(), "extra".into()],
-        ],
-        vec![
-            channel.clone(),
-            vec!["expected-revision".into(), "none".into()],
-            vec!["expected-revision".into(), "none".into()],
-        ],
-        vec![channel.clone(), vec![]],
-    ] {
-        assert!(validate_event("https://relay.test", &event(tags)).is_err());
-    }
-    let mut too_large = event(vec![channel]);
-    too_large.content = "é".repeat(13 * 1024);
-    assert!(validate_event("https://relay.test", &too_large).is_err());
+    assert!(validate_event("https://relay.test", &event).is_ok());
+    event.content.push('x');
+    assert!(validate_event("https://relay.test", &event).is_err());
 }
 
 #[test]

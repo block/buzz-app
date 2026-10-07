@@ -185,18 +185,25 @@ it("renders four exclusive sections with all setups on one exact-key card", asyn
   expect(screen.getAllByRole("article", { name: "Agent Shared" })).toHaveLength(
     1,
   );
+  fireEvent.click(within(card).getByLabelText("Manage Shared"));
+  const management = await screen.findByRole("dialog", {
+    name: "Manage Shared",
+  });
   // Each saved setup keeps its own controls, including the one in another community.
-  expect(within(card).getAllByRole("button", { name: "Stop" })).toHaveLength(2);
   expect(
-    within(card).getByText("Installed Buzz · Development Buzz"),
+    within(management).getAllByRole("button", { name: "Stop" }),
+  ).toHaveLength(2);
+  expect(
+    within(management).getByText("Installed Buzz · Development Buzz"),
   ).not.toBeVisible();
   fireEvent.click(
-    within(card).queryByText("Identity & sources") ??
-      within(card).getByLabelText(/^Details for /),
+    within(management).queryByText("Identity & sources") ??
+      within(management).getByLabelText(/^Details for /),
   );
   expect(
-    within(card).getByText("Installed Buzz · Development Buzz"),
+    within(management).getByText("Installed Buzz · Development Buzz"),
   ).toBeVisible();
+  fireEvent.click(within(management).getByRole("button", { name: "Close" }));
   expect(
     within(
       screen.getByRole("region", { name: "Local agents in other communities" }),

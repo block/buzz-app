@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { allowsOutsideMentions } from "../../features/messages/mention-candidates";
+import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 
 type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>

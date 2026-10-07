@@ -19,9 +19,19 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 buzz-mesh-compute = { path = "../crates/mesh-compute", optional = true }
-tauri = { version = "2", features = ["unstable"] }
+buzz-pairing = { path = "../crates/pairing" }
+nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
+tokio-util = "0.7"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+tauri = { version = "2", features = ["unstable", "macos-private-api"] }
 wry = { version = "=0.55.1", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
+buzz-credential-store = { path = "../crates/credential-store" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
@@ -30,7 +40,8 @@ tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-ut
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+bytes = "1"
 url = "2"
 percent-encoding = "2"
 tauri-plugin-dialog = "2"
@@ -38,6 +49,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-window-state = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 bech32 = "0.11"
@@ -49,6 +61,7 @@ tempfile = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
+hex = "0.4"
 tokio = { version = "1", features = ["test-util"] }
 secp256k1 = { version = "0.31", features = ["std"] }
 tauri = { version = "2", features = ["test"] }
@@ -78,9 +91,6 @@ zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] 
 futures-lite = "=2.6.1"
 gtk = "0.18"
 webkit2gtk = "=2.0.2"
-
-[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
-buzz-credential-store = { path = "../crates/credential-store" }
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 user-idle = { version = "0.6", default-features = false }

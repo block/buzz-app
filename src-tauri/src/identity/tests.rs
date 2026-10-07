@@ -206,14 +206,35 @@ fn uppercase_import_keeps_the_exact_key_and_mixed_case_is_rejected() {
 #[test]
 fn development_and_release_items_are_separate() {
     assert_eq!(
-        SERVICE,
+        credentials::HUMAN_SERVICE,
         if cfg!(debug_assertions) {
             "dev.local.buzz.foundation.identity.debug"
         } else {
             "dev.local.buzz.foundation.identity"
         }
     );
-    assert!(!SERVICE.starts_with("buzz-desktop"));
+    assert_eq!(credentials::HUMAN_ACCOUNT, "human");
+    assert!(!credentials::HUMAN_SERVICE.starts_with("buzz-desktop"));
+}
+
+#[test]
+fn test_profiles_are_isolated_and_release_ignores_them() {
+    let provider = profile_service(Some("compute-provider"), true).unwrap();
+    let consumer = profile_service(Some("compute-consumer"), true).unwrap();
+    assert_ne!(provider, consumer);
+    assert_ne!(provider, credentials::HUMAN_SERVICE);
+    assert!(!provider.starts_with("buzz-desktop"));
+    assert_eq!(
+        profile_service(None, true).unwrap(),
+        credentials::HUMAN_SERVICE
+    );
+    for invalid in ["", "../other", "a b", "nsec1!", &"a".repeat(65)] {
+        assert!(profile_service(Some(invalid), true).is_err());
+        assert_eq!(
+            profile_service(Some(invalid), false).unwrap(),
+            "dev.local.buzz.foundation.identity"
+        );
+    }
 }
 
 #[test]

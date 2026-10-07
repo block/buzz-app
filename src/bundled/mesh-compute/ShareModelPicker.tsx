@@ -1,8 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
+import {
+  CheckIcon,
+  DownloadIcon,
+  CpuIcon,
+  MonitorIcon,
+  RobotIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import styles from "./Compute.module.css";
 
 type Catalog = {
   gpuName: string | null;
@@ -18,7 +26,6 @@ type Catalog = {
   }[];
 };
 const CUSTOM = "__custom__";
-
 const FIT_LABELS: Record<string, string> = {
   comfortable: "fits comfortably",
   tight: "fits, tight on memory",
@@ -35,7 +42,11 @@ export function ShareModelPicker({
   resetDisabled,
   onRecommendation,
   runningModel,
+  children,
+  activity,
 }: {
+  children?: ReactNode;
+  activity?: ReactNode;
   model: string;
   onChange: (model: string) => void;
   disabled: boolean;
@@ -90,11 +101,69 @@ export function ShareModelPicker({
   const entry = catalog?.entries.find((entry) => entry.model === displayModel);
   return (
     <div>
-      {catalog && (
-        <p className="text-body-sm text-secondary">
-          {catalog.gpuName ?? "Hardware"} · {catalog.vramDisplay} AI memory
-        </p>
-      )}
+      <div className={styles.deviceOverview}>
+        {activity}
+        <dl className={styles.deviceTiles}>
+          <div className={styles.deviceTile}>
+            <dt>
+              <MonitorIcon size={18} /> Hardware
+            </dt>
+            <dd>{catalog?.gpuName ?? "—"}</dd>
+          </div>
+          <div className={styles.deviceTile}>
+            <dt>
+              <CpuIcon size={18} /> AI memory{" "}
+              {entry && (
+                <span className={styles.headerStatus}>
+                  <span
+                    className={styles.statusBadge}
+                    data-positive={entry.fit === "comfortable"}
+                  >
+                    {entry.fit === "unknown"
+                      ? "Fit unknown"
+                      : entry.fit.replaceAll("_", " ")}
+                  </span>
+                </span>
+              )}
+            </dt>
+            <dd>{catalog?.vramDisplay ?? "—"}</dd>
+          </div>
+          <div className={`${styles.deviceTile} ${styles.modelTile}`}>
+            <dt>
+              <RobotIcon size={18} /> Model{" "}
+              <span className={styles.headerStatus}>
+                {entry && (
+                  <span>
+                    <span
+                      className={styles.statusBadge}
+                      title={
+                        entry.installed
+                          ? "GGUF cached; additional serving files may download"
+                          : "Downloads when sharing starts"
+                      }
+                    >
+                      {entry.installed ? (
+                        <CheckIcon size={14} />
+                      ) : (
+                        <DownloadIcon size={14} />
+                      )}
+                      {entry.installed
+                        ? "Cached"
+                        : `Download ${entry.size ?? "required"}`}
+                    </span>
+                  </span>
+                )}{" "}
+                <span className={styles.modeBadge}>
+                  {auto ? "Auto" : "Manual"}
+                </span>
+              </span>
+            </dt>
+            <dd title={displayModel}>
+              {entry?.name ?? (displayModel || "Chooses on start")}
+            </dd>
+          </div>
+        </dl>
+      </div>
       {error ? (
         <p role="alert">
           {error}{" "}
@@ -104,16 +173,6 @@ export function ShareModelPicker({
         </p>
       ) : (
         !catalog && <p role="status">Loading model choices…</p>
-      )}
-      {auto && (
-        <p className="text-body">
-          {catalog?.recommended
-            ? `Auto — ${entry?.name ?? catalog.recommended} (${catalog.recommended.split(":").at(-1)}) for this device`
-            : "Auto — chooses a model for this device when sharing starts."}
-        </p>
-      )}
-      {entry && !advanced && !auto && (
-        <p className="text-body">{entry.name} — selected model.</p>
       )}
       {catalog && !catalog.recommended && !model && !auto && (
         <p>No recommended model is available. Choose a model under Advanced.</p>
@@ -126,88 +185,108 @@ export function ShareModelPicker({
             Auto selection applies next time sharing starts.
           </p>
         )}
-      {!auto && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={resetDisabled ?? disabled}
-          onClick={() => {
-            onReset();
-            setCustom(false);
-            setAdvanced(false);
-          }}
-        >
-          Reset to Auto
-        </Button>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => setAdvanced(!advanced)}
-        aria-expanded={advanced}
-      >
-        Advanced
-      </Button>
-      {catalog && advanced && (
-        <Select
-          label="Model to share"
-          variant="field"
-          value={custom || (displayModel && !entry) ? CUSTOM : displayModel}
-          disabled={disabled}
-          onValueChange={(value) => {
-            setCustom(value === CUSTOM);
-            onChange(value === CUSTOM ? "" : value);
-          }}
-          groups={[
-            {
-              label: "Recommended and curated",
-              options: catalog.entries
-                .filter((entry) => entry.curated)
-                .map((entry) => ({
-                  value: entry.model,
-                  label: `${entry.name}${entry.model === catalog.recommended ? " — recommended" : ""}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
-                })),
-            },
-            {
-              label: "Advanced",
-              options: [
-                ...catalog.entries
-                  .filter((entry) => !entry.curated)
-                  .map((entry) => ({
-                    value: entry.model,
-                    label: `${entry.name}${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}`,
-                  })),
-                { value: CUSTOM, label: "Custom model or local GGUF" },
-              ],
-            },
-          ]}
-        />
-      )}
-      {entry && (
-        <p className="text-body-sm text-secondary">
-          {entry.installed
-            ? "Downloaded"
-            : `Downloads ${entry.size ?? "the model"} when sharing starts`}
-          {entry.fit === "unknown"
-            ? "."
-            : ` · ${FIT_LABELS[entry.fit] ?? entry.fit.replaceAll("_", " ")}.`}
-        </p>
-      )}
-      {advanced &&
-        (custom ||
-          !catalog ||
-          catalog.entries.length === 0 ||
-          (model && !entry)) && (
-          <label htmlFor={id} className="text-body-sm">
-            Model reference or local GGUF path
-            <Input
-              id={id}
-              value={model}
-              onChange={(event) => onChange(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
+      {children}
+      <div className={styles.options}>
+        <div className={styles.toolbar}>
+          {!auto && (
+            <Button
+              variant="subtle"
+              size="sm"
+              disabled={resetDisabled ?? disabled}
+              onClick={() => {
+                onReset();
+                setCustom(false);
+                setAdvanced(false);
+              }}
+            >
+              Reset to Auto
+            </Button>
+          )}
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={() => setAdvanced(!advanced)}
+            aria-expanded={advanced}
+          >
+            Advanced
+          </Button>
+        </div>
+        {advanced && (
+          <div className={styles.advancedPanel}>
+            {entry && (
+              <p className="m-0 text-body-sm text-secondary">
+                {entry.installed
+                  ? "Additional serving files may download."
+                  : `Downloads ${entry.size ?? "model weights"} when you share.`}
+              </p>
+            )}
+            {catalog && advanced && (
+              <Select
+                label="Model to share"
+                variant="field"
+                value={
+                  custom || (displayModel && !entry) ? CUSTOM : displayModel
+                }
+                disabled={disabled}
+                onValueChange={(value) => {
+                  setCustom(value === CUSTOM);
+                  onChange(value === CUSTOM ? "" : value);
+                }}
+                groups={[
+                  {
+                    label: "Recommended and curated",
+                    options: catalog.entries
+                      .filter((entry) => entry.curated)
+                      .map((entry) => ({
+                        value: entry.model,
+                        label: `${entry.name}${entry.model === catalog.recommended ? " — recommended" : ""}${optionDetail(entry)}`,
+                        disabled: tooLarge(entry, displayModel),
+                      })),
+                  },
+                  {
+                    label: "Advanced",
+                    options: [
+                      ...catalog.entries
+                        .filter((entry) => !entry.curated)
+                        .map((entry) => ({
+                          value: entry.model,
+                          label: `${entry.name}${optionDetail(entry)}`,
+                          disabled: tooLarge(entry, displayModel),
+                        })),
+                      { value: CUSTOM, label: "Custom model or local GGUF" },
+                    ],
+                  },
+                ]}
+              />
+            )}
+            {advanced &&
+              (custom ||
+                !catalog ||
+                catalog.entries.length === 0 ||
+                (model && !entry)) && (
+                <label htmlFor={id} className="text-body-sm">
+                  Model reference or local GGUF path
+                  <Input
+                    id={id}
+                    value={model}
+                    onChange={(event) => onChange(event.target.value)}
+                    disabled={disabled}
+                  />
+                </label>
+              )}
+          </div>
         )}
+      </div>
     </div>
   );
 }
+
+const fitLabel = (fit: string) => FIT_LABELS[fit] ?? fit.replaceAll("_", " ");
+
+function optionDetail(entry: Catalog["entries"][number]): string {
+  return `${entry.size ? ` · ${entry.size}` : ""}${entry.installed ? " · installed" : " · download"}${entry.fit === "unknown" ? "" : ` · ${fitLabel(entry.fit)}`}`;
+}
+
+/** A model this machine can't hold is not offered, unless it's already chosen. */
+const tooLarge = (entry: Catalog["entries"][number], selected: string) =>
+  entry.fit === "too_large" && entry.model !== selected;

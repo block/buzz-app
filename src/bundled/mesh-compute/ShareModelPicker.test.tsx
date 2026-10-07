@@ -51,15 +51,47 @@ function Fixture() {
 it("selects the SDK-backed recommendation and discloses the download before sharing", async () => {
   invoke.mockResolvedValue(catalog);
   render(<Fixture />);
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
-  await screen.findByText("Auto — Fixture model (Q4) for this device");
+  await screen.findByText("Fixture GPU");
+  await screen.findByText("Fixture model");
+  expect(screen.getByText("32 GB")).toBeVisible();
+  expect(screen.getByText("Auto")).toBeVisible();
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByText("Download 6GB")).toBeVisible();
+  expect(screen.getByText("comfortable")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(screen.getByRole("combobox")).toHaveTextContent("recommended");
-  expect(
-    screen.getByText("Downloads 6GB when sharing starts · fits comfortably."),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Downloads 6GB when you share.")).toBeInTheDocument();
   expect(invoke).toHaveBeenCalledWith("mesh_compute_catalog");
+});
+it("labels each option's fit and refuses models too large for this machine", async () => {
+  invoke.mockResolvedValue({
+    ...catalog,
+    entries: [
+      ...catalog.entries,
+      {
+        model: "fixture/huge:Q8",
+        name: "Huge model",
+        size: "90GB",
+        installed: false,
+        curated: true,
+        fit: "too_large",
+      },
+    ],
+  });
+  render(<Fixture />);
+  await screen.findByText("Fixture model");
+  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  fireEvent.click(screen.getByRole("combobox"));
+  expect(
+    await screen.findByRole("option", {
+      name: /Fixture model.*fits comfortably/,
+    }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByRole("option", {
+      name: /Huge model.*too large for this machine/,
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
 });
 it("keeps manual selection usable on catalog failure and retries the catalog", async () => {
   invoke
@@ -73,7 +105,7 @@ it("keeps manual selection usable on catalog failure and retries the catalog", a
     { target: { value: "/local.gguf" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  await screen.findByText("Fixture GPU");
   expect(
     screen.getByLabelText("Model reference or local GGUF path"),
   ).toHaveValue("/local.gguf");
@@ -119,18 +151,14 @@ it("bounds loading and ignores a late response after timeout", async () => {
     await act(async () => {
       release(catalog);
     });
-    expect(
-      screen.queryByText("Fixture GPU · 32 GB AI memory"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Fixture GPU")).not.toBeInTheDocument();
     invoke.mockResolvedValue(catalog);
     await act(async () => {
       fireEvent.click(
         screen.getByRole("button", { name: "Retry model catalog" }),
       );
     });
-    expect(
-      screen.getByText("Auto — Fixture model (Q4) for this device"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Fixture model")).toBeInTheDocument();
   } finally {
     cleanup();
     vi.useRealTimers();
@@ -149,14 +177,12 @@ it("resets a custom selection to the device recommendation without keeping custo
     { target: { value: "/old.gguf" } },
   );
   fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  await screen.findByText("Fixture GPU");
   fireEvent.click(screen.getByRole("button", { name: "Reset to Auto" }));
   expect(
     screen.queryByLabelText("Model reference or local GGUF path"),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByText("Auto — Fixture model (Q4) for this device"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Fixture model")).toBeInTheDocument();
 });
 
 it("reset remains available during sharing and delegates persistence instead of changing the running model", async () => {
@@ -191,7 +217,7 @@ it("controlled Auto does not write a recommendation as an override", async () =>
       disabled={false}
     />,
   );
-  await screen.findByText("Fixture GPU · 32 GB AI memory");
+  await screen.findByText("Fixture GPU");
   expect(onChange).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("button", { name: "Reset to Auto" }),
@@ -210,7 +236,7 @@ it("shows a next-start notice only when Auto differs from the running model", as
       disabled={true}
     />,
   );
-  await screen.findByText("Auto — Fixture model (Q4) for this device");
+  await screen.findByText("Fixture model");
   expect(
     screen.queryByText("Auto selection applies next time sharing starts."),
   ).not.toBeInTheDocument();

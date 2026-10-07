@@ -67,6 +67,7 @@ pub enum Phase {
 
 struct Slot {
     phase: Phase,
+    generation: u64,
     serving: bool,
     joining: bool,
     retryable: bool,
@@ -86,6 +87,7 @@ impl Default for Lifecycle {
             progress: crate::progress::Progress::default(),
             slot: Arc::new(Mutex::new(Slot {
                 phase: Phase::Stopped,
+                generation: 0,
                 serving: false,
                 joining: false,
                 retryable: false,
@@ -99,6 +101,10 @@ impl Default for Lifecycle {
 impl Lifecycle {
     pub fn phase(&self) -> Phase {
         self.slot.lock().expect("mesh slot poisoned").phase.clone()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.slot.lock().expect("mesh slot poisoned").generation
     }
 
     /// Ask the owned SDK handle for status; never discover a node by a guessed port.
@@ -213,6 +219,7 @@ impl Lifecycle {
         let (stop, mut stopping) = watch::channel(false);
         slot.retryable = false;
         slot.phase = Phase::Starting;
+        slot.generation += 1;
         slot.serving = serving;
         slot.dial = Some(dial);
         slot.stop = Some(stop);
@@ -651,9 +658,11 @@ mod tests {
     #[tokio::test]
     async fn status_reads_the_owned_node_only_after_start_and_rejects_after_stop() {
         let owner = Lifecycle::default();
+        assert_eq!(owner.generation(), 0);
         assert!(owner.status().await.is_err());
         let (node, stopped, release, mut joined) = fixture();
         owner.launch(async { Ok(node) }).unwrap();
+        assert_eq!(owner.generation(), 1);
         owner.enqueue("ready-barrier".into()).unwrap();
         joined.recv().await.unwrap();
         assert_eq!(
@@ -663,6 +672,15 @@ mod tests {
         owner.stop();
         stopped.await.unwrap();
         assert!(owner.status().await.is_err());
+        release.send(()).unwrap();
+        wait_stopped(&owner).await;
+        let (node, stopped, release, mut joined) = fixture();
+        owner.launch(async { Ok(node) }).unwrap();
+        assert_eq!(owner.generation(), 2);
+        owner.enqueue("ready-barrier".into()).unwrap();
+        joined.recv().await.unwrap();
+        owner.stop();
+        stopped.await.unwrap();
         release.send(()).unwrap();
         wait_stopped(&owner).await;
     }

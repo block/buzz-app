@@ -29,6 +29,7 @@ fn status(member: &Keys, owner: &OwnerKeypair, port: u16) -> nostr::event::Event
         true,
         Some(&json!({"hosted_models": ["fixture-model"]})),
         Some(&token),
+        None,
     )
     .unwrap()
     .finalize(member)
@@ -156,4 +157,39 @@ fn one_member_can_advertise_two_distinct_owner_devices() {
     actual.sort();
     assert_eq!(actual, expected);
     assert_ne!(targets[0].endpoint_addr, targets[1].endpoint_addr);
+}
+
+#[test]
+fn a_restarting_consumer_never_joins_its_own_lingering_advert() {
+    // Share Off stops the serve runtime, then a consumer restarts for running
+    // agents. This machine's serving note is still fresh at that moment; joining
+    // it made the SDK reject its own node id and retry forever.
+    let relay = Keys::generate();
+    let member = Keys::generate();
+    let this_machine = OwnerKeypair::generate();
+    let other_machine = OwnerKeypair::generate();
+    let own = status(&member, &this_machine, 47916);
+    let peer = status(&member, &other_machine, 47917);
+    let events = verify_evidence(
+        vec![roster(&relay, &[&member]), own, peer],
+        &relay.public_key(),
+    )
+    .unwrap();
+    let targets = availability_from_events(events).serve_targets;
+    assert_eq!(targets.len(), 2);
+    let peer_token = targets
+        .iter()
+        .find(|target| target.owner_id.as_deref() == Some(other_machine.owner_id().as_str()))
+        .map(|target| target.endpoint_addr.clone())
+        .unwrap();
+    assert_eq!(
+        peer_join_tokens(targets.clone(), &this_machine.owner_id()),
+        vec![peer_token]
+    );
+    // Alone in the community, there is nothing to join: not a retry loop.
+    let alone = targets
+        .into_iter()
+        .filter(|target| target.owner_id.as_deref() == Some(this_machine.owner_id().as_str()))
+        .collect();
+    assert!(peer_join_tokens(alone, &this_machine.owner_id()).is_empty());
 }

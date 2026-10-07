@@ -48,7 +48,7 @@ Sessions are focused work conversations built on ordinary private channels.
 - `src/features/sessions` shares composition, recipient selection, and presentation.
 - `src/features/relay/work-sessions.ts` uses the existing durable outbox for private
   stream creation (kind 9007), invitations (kind 9000), and receipt recovery.
-- `dev/session-commands.mjs` restricts the host signing boundary to these exact
+- `browser-host/session-commands.mjs` restricts the host signing boundary to these exact
   command shapes. No custom relay operation or migration is needed.
 - `session-window.ts` loads ordinary channel rows and complete message overlays
   with bounded paging. Signed membership remains the authority for reads.

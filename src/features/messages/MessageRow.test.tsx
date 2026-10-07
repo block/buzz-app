@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -20,6 +21,7 @@ import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
@@ -1082,6 +1084,67 @@ it("retires the fullscreen image viewer when its retained row is suspended", () 
   }
 });
 
+it.each(["peer", "own"] as const)(
+  "lists Mark unread above Copy message for a managed %s message",
+  async (author) => {
+    const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
+    const operations: never[] = [];
+    const session = {
+      viewer: author === "own" ? row.authorId : "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: { report: vi.fn(async () => {}) },
+      outbox: {
+        supports: () => true,
+        subscribe: () => () => {},
+        snapshot: () => operations,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        attention: () => ({ unread: false, forced: false, viewing: true }),
+        following: () => false,
+      },
+    } as unknown as RelaySession;
+    renderDom(
+      <MessageManagement session={session} channelId={row.channelId}>
+        <MessageRow
+          row={{ ...row, threadRootId: "a".repeat(64) }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </MessageManagement>,
+    );
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(
+        author === "own"
+          ? [
+              "Mark unread",
+              "Copy message",
+              "Send to channel",
+              "Edit message",
+              "Delete message",
+              "Follow thread",
+              "Report",
+            ]
+          : ["Mark unread", "Copy message", "Follow thread", "Report"],
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",
   async (delivery) => {
@@ -1090,7 +1153,12 @@ it.each(["sending", "failed"] as const)(
       viewer: row.authorId,
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: {},
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
     } as unknown as RelaySession;
     renderDom(
       <MessageRow
@@ -1541,7 +1609,12 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { sendToChannel: send },
       outbox: { supports: () => true },
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
     } as unknown as RelaySession;
     const reply: ChannelMessage = {
       ...row,
@@ -1586,7 +1659,12 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
   const session = {
     messages: { report },
     channels: {},
-    unread: { subscribe: () => () => {}, snapshot: () => undefined },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
   } as unknown as RelaySession;
   const tree = (active: boolean) => (
     <ToastProvider>
@@ -1622,6 +1700,48 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
     view.rerender(tree(true));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(report).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+  }
+});
+
+it("presents automation, links the owner and discloses the separate relay signer", async () => {
+  const ownerId = "ab".repeat(32),
+    signer = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: {
+        ...row,
+        authorId: ownerId,
+        signerId: signer,
+        workflowOwnerId: ownerId,
+      },
+      profile: { name: "Wes" },
+      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    expect(screen.getByText("Workflow")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View workflow owner Wes profile" }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Workflow message details" }),
+    );
+    expect(
+      await screen.findByText(/the owner did not sign this message/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Signed by the relay").nextElementSibling,
+    ).toHaveTextContent(npubEncode(signer));
+    expect(
+      screen.getByText("Owner public key").nextElementSibling,
+    ).toHaveTextContent(npubEncode(ownerId));
+    expect(
+      screen.queryByRole("button", { name: "View Relay profile" }),
+    ).toBeNull();
   } finally {
     cleanup();
   }

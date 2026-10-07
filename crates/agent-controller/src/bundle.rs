@@ -10,6 +10,12 @@ struct Source {
     revision: String,
     tools: Vec<String>,
     goose: GooseSource,
+    #[serde(default)]
+    patch: Option<RuntimePatch>,
+}
+#[derive(Deserialize)]
+struct RuntimePatch {
+    sha256: String,
 }
 #[derive(Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +33,8 @@ struct Manifest {
     target: String,
     files: BTreeMap<String, String>,
     goose: GooseSource,
+    #[serde(default)]
+    patch: Option<String>,
 }
 /// App resource provenance/integrity check, not a defense against a same-user
 /// attacker able to replace the application itself. No PATH/old-app fallback.
@@ -63,6 +71,7 @@ impl RuntimeBundle {
         if manifest.version != 2
             || manifest.revision != source.revision
             || manifest.goose != source.goose
+            || manifest.patch.as_deref() != source.patch.as_ref().map(|patch| patch.sha256.as_str())
             || manifest.target != env!("BUZZ_RUNTIME_TARGET")
             || manifest.files.len() != source.tools.len()
         {

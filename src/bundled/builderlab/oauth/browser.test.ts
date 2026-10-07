@@ -3,7 +3,7 @@ import type { Host } from "../../../features/host/service";
 import { browserCredential, type BrowserBridge, oauthTarget } from "./browser";
 import { deferred } from "../test-helpers";
 beforeEach(() =>
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz"),
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
 );
 afterEach(() => vi.unstubAllEnvs());
 
@@ -24,6 +24,7 @@ function fixture() {
     cancel: vi.fn(async () => {}),
   };
   const host: Host = {
+    fetch: vi.fn(),
     runCommand: vi.fn(),
     request: vi.fn(async ({ url }) => ({
       status: 200,
@@ -38,13 +39,14 @@ function fixture() {
   return { host, bridge, controller: new AbortController() };
 }
 it("acquires a verified credential through the code-only callback", async () => {
-  const origin = "https://app.builderlab.xyz";
+  const origin = "https://builderlab.example";
   const { host, bridge, controller } = fixture();
   expect(await browserCredential(host, controller.signal, bridge)).toEqual({
     value: "private-token",
-    account: { email: "a@example.com" },
+    account: { subject: "user", email: "a@example.com" },
   });
   const options = vi.mocked(bridge.begin).mock.calls[0]?.[0];
+  expect(options).not.toHaveProperty("id");
   const login = new URL(options?.authorizationUrl ?? "");
   expect(login.origin).toBe(origin);
   expect(login.pathname).toBe("/api/goose/v1/auth/login");
@@ -52,10 +54,7 @@ it("acquires a verified credential through the code-only callback", async () => 
     type: "cli",
     product: "builderlab",
   });
-  expect(options).toMatchObject({
-    callbackParameter: "returnTo",
-    useState: false,
-  });
+  expect(options).toMatchObject({ useState: true });
   expect(options?.callbackPath).toMatch(/^\/callback\/[0-9a-f-]{36}$/);
   expect(host.request).toHaveBeenNthCalledWith(
     1,
@@ -138,7 +137,7 @@ it.each([
   [undefined, ""],
   [123, ""],
 ])(
-  "accepts an account without workspace data and keeps only email %j",
+  "accepts an account without workspace data and keeps subject and email %j",
   async (email, expected) => {
     const { host, bridge, controller } = fixture();
     vi.mocked(host.request)
@@ -159,7 +158,7 @@ it.each([
       });
     expect(await browserCredential(host, controller.signal, bridge)).toEqual({
       value: "private-token",
-      account: { email: expected },
+      account: { subject: "user", email: expected },
     });
   },
 );
@@ -226,11 +225,11 @@ it.each(["begin", "wait", "exchange", "account"] as const)(
 );
 
 it("uses the configured public URL without a deployment default", async () => {
-  expect(oauthTarget("https://app.builderlab.xyz/")).toBe(
-    "https://app.builderlab.xyz/api/goose",
+  expect(oauthTarget("https://builderlab.example/")).toBe(
+    "https://builderlab.example/api/goose",
   );
-  expect(oauthTarget("https://app.builderlab.xyz/deployment/")).toBe(
-    "https://app.builderlab.xyz/deployment/api/goose",
+  expect(oauthTarget("https://builderlab.example/deployment/")).toBe(
+    "https://builderlab.example/deployment/api/goose",
   );
   expect(oauthTarget("https://login.example:8443/deployment/")).toBe(
     "https://login.example:8443/deployment/api/goose",
@@ -244,10 +243,10 @@ it("uses the configured public URL without a deployment default", async () => {
   expect(host.request).not.toHaveBeenCalled();
 });
 it.each([
-  "http://app.builderlab.xyz",
-  "https://user:secret@app.builderlab.xyz",
-  "https://app.builderlab.xyz/?query=x",
-  "https://app.builderlab.xyz/#x",
+  "http://builderlab.example",
+  "https://user:secret@builderlab.example",
+  "https://builderlab.example/?query=x",
+  "https://builderlab.example/#x",
 ])("refuses unsafe configuration %s", (value) => {
   expect(() => oauthTarget(value)).toThrow("does not support");
 });

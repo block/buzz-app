@@ -45,6 +45,8 @@ export type ChannelSummary = Readonly<{
 }>;
 export type Profile = Readonly<{
   name: string;
+  /** The name is an identity fragment, not a name supplied by kind-0 content. */
+  nameIsFallback?: true;
   picture?: string;
   about?: string;
   /** Self-declared NIP-05 identifier; not proof of DNS verification. */

@@ -8,6 +8,7 @@ import {
   defaultNamingPolicy,
 } from "./testing";
 import { createNameProvider } from "./directory";
+import { foldProfiles } from "../relay/profiles";
 
 it("scopes native names to the session community and follows edits and disposal", () => {
   const key = "a".repeat(64);
@@ -383,3 +384,45 @@ it("reuses one policy run per candidate scope across mixed case, outside keys, a
   expect(scoped(b)?.name).toBe("Blake");
   expect(resolve).toHaveBeenCalledTimes(13);
 });
+
+it.each([
+  '{"about":"Artwork-only agent"}',
+  '{"name":" ","display_name":""}',
+  "malformed",
+  '{"name":"aaaaaaaaaa"}',
+])(
+  "uses saved aliases for unnamed public profiles but respects an explicit key-like name (%s)",
+  (content) => {
+    const key = "a".repeat(64);
+    const profiles = foldProfiles([
+      {
+        id: "1".repeat(64),
+        pubkey: key,
+        created_at: 1,
+        kind: 0,
+        content,
+        tags: [["auth", "b".repeat(64), "", "c".repeat(128)]],
+      },
+    ]);
+    const source: NameSource = {
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: () => () => {},
+        ensure: async () => {},
+      },
+      agentLibrary: {
+        snapshot: () => ({
+          status: "ready",
+          definitions: [],
+          identities: [{ pubkey: key, name: "Saved Luna" }],
+        }),
+        subscribe: () => () => {},
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    };
+    expect(agentDirectory.scope(source)(key)?.name).toBe(
+      content === '{"name":"aaaaaaaaaa"}' ? "aaaaaaaaaa" : "Saved Luna",
+    );
+  },
+);

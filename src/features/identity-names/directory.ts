@@ -47,7 +47,9 @@ export function createNameProvider(
             // A signed public agent profile is the cross-client name source. The
             // host's saved-library alias remains a fallback; same-community
             // native settings still override it below.
-            profiles.get(key)?.isAgent && profileName
+            profiles.get(key)?.isAgent &&
+              !profiles.get(key)?.nameIsFallback &&
+              profileName
               ? profileName
               : row.name.trim() || profileName || "Agent",
           );

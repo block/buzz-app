@@ -37,6 +37,7 @@ impl AgentHost {
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
+            crate::identity::IdentityHost::fixture_owner(),
         )
     }
 }
@@ -2589,16 +2590,17 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let (release, held) = std::sync::mpsc::channel();
-    let host = AgentHost::initialize_with(move || {
-        held.recv().map_err(|_| "Initialization gate closed")?;
-        Host::open(
-            root.join("store"),
-            root.join("legacy"),
-            root.join("workspace"),
-            Err(RUNTIME_GATE.into()),
-            Arc::new(RejectingCredentials),
-        )
-    });
+    let host =
+        AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+            held.recv().map_err(|_| "Initialization gate closed")?;
+            Host::open(
+                root.join("store"),
+                root.join("legacy"),
+                root.join("workspace"),
+                Err(RUNTIME_GATE.into()),
+                Arc::new(RejectingCredentials),
+            )
+        });
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let executable = dir.path().join("launcher");
@@ -2626,10 +2628,11 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
 async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     for shutdown in [false, true] {
         let (release, held) = std::sync::mpsc::channel();
-        let host = AgentHost::initialize_with(move || {
-            held.recv().map_err(|_| "Initialization gate closed")?;
-            Err("Synthetic initialization failure".into())
-        });
+        let host =
+            AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+                held.recv().map_err(|_| "Initialization gate closed")?;
+                Err("Synthetic initialization failure".into())
+            });
         let mut registration = std::pin::pin!(run::<()>(host.clone(), |_| {
             panic!("registration must not execute without a usable host")
         }));

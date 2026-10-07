@@ -53,6 +53,38 @@ fn agent(workspace: &Path) -> Agent {
     }
 }
 #[test]
+fn kept_agents_start_only_for_their_attested_owner() {
+    const OWNER: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let saved = agent(dir.path());
+    let mut unattested = agent(dir.path());
+    unattested.id = agent_id(&"ab".repeat(32), "wss://relay.example");
+    unattested.pubkey = "ab".repeat(32);
+    unattested.auth_tag = None;
+    store
+        .insert(vec![saved.clone(), unattested.clone()])
+        .unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No fixture runtime".into()),
+        dir.path().join("ownership"),
+    );
+    assert!(controller.check_owner(&saved.id, Some(OWNER)).is_ok());
+    let refusal = controller.check_owner(&saved.id, Some(PUB)).unwrap_err();
+    assert!(refusal.contains("different Buzz identity"), "{refusal}");
+    assert_eq!(
+        controller.check_owner(&saved.id, None).unwrap_err(),
+        refusal
+    );
+    // Launch validation, not this check, refuses a missing attestation.
+    assert!(controller.check_owner(&unattested.id, None).is_ok());
+    // Sign out's "Also remove my agents" removes every local agent.
+    controller.remove_local_agents().unwrap();
+    assert!(controller.snapshot().unwrap().agents.is_empty());
+}
+#[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("config");

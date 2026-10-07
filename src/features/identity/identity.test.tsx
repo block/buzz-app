@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createIdentity, nativeIdentityEnabled } from "./service";
 import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
+import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => true),
@@ -300,3 +301,58 @@ it.each(["Linux x86_64", "Win32"])(
     identity.dispose();
   },
 );
+
+it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phrase when wiping", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const user = userEvent.setup();
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  const confirm = () => screen.getByRole("button", { name: /^Sign out/ });
+  const haveKey = screen.getByRole("checkbox", { name: "I have my key" });
+  expect(haveKey).toHaveAttribute("aria-disabled", "true");
+  expect(confirm()).toBeDisabled();
+  vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  vi.mocked(invoke).mockResolvedValueOnce(key);
+  await user.click(screen.getByRole("button", { name: "Copy private key" }));
+  expect(confirm()).toBeDisabled();
+  await user.click(haveKey);
+  expect(confirm()).toBeEnabled();
+  await user.click(
+    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+  );
+  expect(confirm()).toBeDisabled();
+  await user.click(
+    screen.getByRole("checkbox", { name: "Also remove my agents" }),
+  );
+  await user.type(screen.getByLabelText(/to confirm/), WIPE_PHRASE);
+  expect(confirm()).toBeEnabled();
+  vi.mocked(invoke).mockResolvedValueOnce(undefined);
+  await user.click(confirm());
+  expect(invoke).toHaveBeenLastCalledWith("sign_out", {
+    wipe: true,
+    removeAgents: true,
+  });
+  identity.dispose();
+});
+
+it("keeps the dialog open and shows the error when native sign out refuses", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  const user = userEvent.setup();
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  vi.mocked(invoke).mockResolvedValueOnce(key);
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
+  vi.mocked(invoke).mockRejectedValueOnce("Agents didn't stop");
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Agents didn't stop",
+  );
+  expect(invoke).toHaveBeenLastCalledWith("sign_out", {
+    wipe: false,
+    removeAgents: false,
+  });
+  identity.dispose();
+});

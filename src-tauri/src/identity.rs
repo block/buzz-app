@@ -151,6 +151,8 @@ impl Key {
 trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
+    /// Only Sign out may call this, from the next launch; an absent item is success.
+    fn delete(&self) -> Result<()>;
 }
 struct OsStore;
 #[cfg(not(test))]
@@ -194,6 +196,19 @@ mod platform {
                 )
                 .map_err(error)
         }
+        fn delete(&self) -> Result<()> {
+            match SecKeychain::default()
+                .map_err(error)?
+                .find_generic_password(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT)
+            {
+                Ok((_, item)) => {
+                    item.delete();
+                    Ok(())
+                }
+                Err(e) if e.code() == -25300 => Ok(()),
+                Err(e) => Err(error(e)),
+            }
+        }
     }
 }
 #[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
@@ -221,6 +236,12 @@ mod keyring_platform {
             )
             .map_err(error)
         }
+        fn delete(&self) -> Result<()> {
+            match credentials::delete(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT) {
+                Ok(()) | Err(Error::Absent) => Ok(()),
+                Err(e) => Err(error(e)),
+            }
+        }
     }
 }
 // Native tests cannot touch an OS credential store, even via the default host.
@@ -235,6 +256,22 @@ impl Store for OsStore {
     fn add(&self, _: &[u8]) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
+    fn delete(&self) -> Result<()> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
+}
+
+/// Delete the saved human key and confirm a fresh read finds nothing.
+fn remove_key(store: &dyn Store) -> Result<()> {
+    store.delete()?;
+    match store.read()? {
+        None => Ok(()),
+        Some(_) => Err("Your key is still saved in secure storage".into()),
+    }
+}
+/// Sign out's next-launch step; never reachable from the webview.
+pub(crate) fn remove_saved_key() -> Result<()> {
+    remove_key(&OsStore)
 }
 
 #[derive(Default)]
@@ -243,6 +280,8 @@ enum State {
     Unread,
     Missing,
     Ready(Key),
+    /// An unfinished sign-out may have left the key saved; never read or replace it.
+    Blocked(String),
 }
 struct Identity {
     state: State,
@@ -261,6 +300,7 @@ impl Identity {
         }
         match &self.state {
             State::Ready(key) => key.viewer().map(Some),
+            State::Blocked(error) => Err(error.clone()),
             _ => Ok(None),
         }
     }
@@ -565,6 +605,17 @@ impl IdentityHost {
         })))
     }
 
+    /// The owner key of synthetic agent attestations in agent-controller tests.
+    #[cfg(test)]
+    pub(crate) fn fixture_owner() -> Self {
+        let mut key = [0; 32];
+        key[31] = 2;
+        Self(Arc::new(Mutex::new(Identity {
+            state: State::Ready(Key(Zeroizing::new(key))),
+            store: Box::new(OsStore),
+        })))
+    }
+
     pub(crate) async fn viewer(&self) -> Result<String> {
         with_identity(self.clone(), |identity| {
             identity
@@ -861,12 +912,18 @@ impl IdentityHost {
         .await
     }
 }
-impl Default for IdentityHost {
-    fn default() -> Self {
+impl IdentityHost {
+    /// `blocked` reports a sign-out that could not finish at launch.
+    pub(crate) fn new(blocked: Option<String>) -> Self {
         Self(Arc::new(Mutex::new(Identity {
-            state: State::Unread,
+            state: blocked.map_or(State::Unread, State::Blocked),
             store: Box::new(OsStore),
         })))
+    }
+}
+impl Default for IdentityHost {
+    fn default() -> Self {
+        Self::new(None)
     }
 }
 async fn with_identity<T: Send + 'static>(

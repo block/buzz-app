@@ -25,6 +25,13 @@ impl Store for Arc<Memory> {
         *saved = Some(value.to_vec());
         Ok(())
     }
+    fn delete(&self) -> Result<()> {
+        if *self.write_denied.lock().unwrap() {
+            return Err("delete denied".into());
+        }
+        *self.saved.lock().unwrap() = None;
+        Ok(())
+    }
 }
 fn identity(store: &Arc<Memory>) -> Identity {
     Identity {
@@ -422,4 +429,31 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let mut foreign = builderlab_challenge();
     foreign["origin"] = "https://example.com".into();
     assert!(invoke(foreign).is_err());
+}
+
+#[test]
+fn remove_key_deletes_then_confirms_absence() {
+    let store = Arc::new(Memory::default());
+    identity(&store).save(None).unwrap();
+    remove_key(&store).unwrap();
+    assert_eq!(identity(&store).restore().unwrap(), None);
+    // Absent is already signed out.
+    remove_key(&store).unwrap();
+    identity(&store).save(None).unwrap();
+    *store.write_denied.lock().unwrap() = true;
+    assert!(remove_key(&store).is_err());
+    assert!(store.saved.lock().unwrap().is_some());
+}
+#[test]
+fn unfinished_sign_out_blocks_restore_create_and_export() {
+    let store = Arc::new(Memory::default());
+    let mut owner = Identity {
+        state: State::Blocked("Sign out could not finish".into()),
+        store: Box::new(store.clone()),
+    };
+    assert_eq!(owner.restore().unwrap_err(), "Sign out could not finish");
+    assert!(owner.save(None).is_err());
+    assert!(owner.export().is_err());
+    assert_eq!(*store.reads.lock().unwrap(), 0);
+    assert!(store.saved.lock().unwrap().is_none());
 }

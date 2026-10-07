@@ -860,6 +860,39 @@ impl Controller {
             })
             .collect())
     }
+    /// Kept agents answer only to the owner who authorized them, not to whoever
+    /// signs in next. `signed_in` is `None` when no human identity is available.
+    /// A missing or malformed attestation is refused later by launch validation.
+    pub fn check_owner(&self, id: &str, signed_in: Option<&str>) -> Result<()> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        let owner = agent
+            .auth_tag
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+            .and_then(|tag| tag.into_iter().nth(1));
+        match owner {
+            Some(owner) if signed_in != Some(owner.as_str()) => Err(
+                "This agent belongs to a different Buzz identity. Sign in with its owner's key to start it."
+                    .into(),
+            ),
+            _ => Ok(()),
+        }
+    }
+    /// Sign out's "Also remove my agents": stop and delete every local agent and its key.
+    /// Deployed remote agents keep running remotely; the device wipe drops their record.
+    pub fn remove_local_agents(&mut self) -> Result<()> {
+        for agent in self.store.agents()? {
+            if !agent.deployed_remote() {
+                self.delete(&agent.id, agent.revision)?;
+            }
+        }
+        Ok(())
+    }
     pub fn delete(&mut self, id: &str, revision: u64) -> Result<ControlSnapshot> {
         let agents = self.store.agents()?;
         let agent = agents

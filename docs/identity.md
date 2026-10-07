@@ -29,8 +29,10 @@ and may roam under Windows policy; locks do not coordinate machines.
 Neither Windows Credential Manager nor Secret Service supplies per-app access
 isolation from other programs running as the same OS user.
 
-There is no file/environment fallback, automatic legacy migration, human key
-replacement or human delete command. The existing **explicit agent import** may
+There is no file/environment fallback, automatic legacy migration or human key
+replacement. The human key is deleted from this device only by
+[Sign out of Buzz](#sign-out-of-buzz); no other command or plugin service can
+delete it. The existing **explicit agent import** may
 read only the selected old Buzz service/account and copy the selected agent key
 into this app's separate agent namespace; it never writes the old blob. Agent
 import remains macOS-only; Create also saves new agent keys through the
@@ -62,6 +64,36 @@ The main app and its same-origin plugins are trusted, not isolated security
 principals; plugin JavaScript can invoke `identity_export` directly. Not registering
 a plugin key service is an API ownership choice, not a sandbox. The main-webview
 command permission is not proof of a human gesture.
+
+## Sign out of Buzz
+
+Settings → Profile → **Sign out of Buzz** removes this identity from this device
+only; the npub and its history stay on relays. The dialog embeds the private-key
+controls above. Confirm stays disabled until the user reveals or copies the key
+and ticks "I have my key". **Also wipe this device** requires typing
+`wipe all my data`; **Also remove my agents** appears only with wipe. Wipe cannot
+reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
+is unavailable with the development broker (`BUZZ_DEV_VIEWER`).
+
+The native `sign_out` command never deletes the key in process. It deletes local
+agents and their keys first if asked, stops agents as Quit does, writes a marker
+file beside (not inside) app data recording the wipe and agent choices, and
+restarts. The next launch handles the marker before any window, webview storage
+or identity read:
+
+1. With wipe, app data, local data/WebView storage and caches are renamed aside.
+   App data's agent registry is put back unless agents were removed.
+2. The human item is deleted and a fresh read must find it absent.
+3. The renamed folders are deleted, then the marker.
+
+If renaming or the key delete fails, the renames are rolled back and the marker
+is kept. Until every step succeeds the identity owner refuses restore, create,
+import and export and shows a fixed error, so the next launch retries and no new
+identity can write data a retry would wipe. Without wipe, local data stays: it is
+already scoped by public key, so signing back in with the same key finds it.
+Builderlab and hosted-community logins live only in memory and end with the
+restart. Kept agents start only while the signed-in key matches the owner in
+their saved attestation (see [local agent controls](agent-control.md)).
 
 ## Packaged connection
 
@@ -127,7 +159,8 @@ Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
 native private-key controls. Without the pin, supported desktop development uses
 the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
-synchronize copies automatically; neither operation is in this scope.
+synchronize copies automatically; neither operation is in this scope. Sign out
+does not touch that old blob.
 
 ## Try the UI without credentials
 

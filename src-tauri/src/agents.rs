@@ -655,14 +655,17 @@ pub(crate) struct AgentHost(
     Arc<Mutex<Result<Host, String>>>,
     Arc<AtomicBool>,
     Arc<tokio::sync::Mutex<()>>,
+    /// Starts compare each agent's attested owner with the signed-in human.
+    crate::identity::IdentityHost,
 );
 impl AgentHost {
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
+        identity: crate::identity::IdentityHost,
     ) -> Self {
         buzz_agent_controller::warm_tools_path();
-        Self::initialize_with(move || {
+        Self::initialize_with(identity, move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
                 Host::open(
@@ -675,7 +678,10 @@ impl AgentHost {
             })
         })
     }
-    fn initialize_with(open: impl FnOnce() -> Result<Host, String> + Send + 'static) -> Self {
+    fn initialize_with(
+        identity: crate::identity::IdentityHost,
+        open: impl FnOnce() -> Result<Host, String> + Send + 'static,
+    ) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
         )));
@@ -687,7 +693,12 @@ impl AgentHost {
             .clone()
             .try_lock_owned()
             .expect("new admission mutex");
-        let owner = Self(state.clone(), closed.clone(), admission.clone());
+        let owner = Self(
+            state.clone(),
+            closed.clone(),
+            admission.clone(),
+            identity.clone(),
+        );
         tauri::async_runtime::spawn(async move {
             let opened = tauri::async_runtime::spawn_blocking(open)
                 .await
@@ -699,7 +710,7 @@ impl AgentHost {
                 *state = opened;
             }
             drop(initializing); // restore itself enters through native admission.
-            Self(state, closed, admission).restore().await;
+            Self(state, closed, admission, identity).restore().await;
         });
         owner
     }
@@ -884,6 +895,15 @@ impl AgentHost {
                 Controller::draft_pi_model_context(host.controller.effective_draft(edit)?)
             }
             _ => Err("Invalid agent model context".into()),
+        })
+        .await
+    }
+    /// Sign out's "Also remove my agents"; runs before shutdown fences the host.
+    pub(crate) async fn remove_local_agents(&self) -> Result<(), String> {
+        run(self.clone(), |host| {
+            host.starts.clear();
+            host.queued.clear();
+            host.controller.remove_local_agents()
         })
         .await
     }
@@ -1262,6 +1282,8 @@ async fn start_guarded(
     }
     // OS permission prompts never hold the controller. Stop/quit invalidate the
     // ticket while the OS owns its dialog; a late key cannot start a listener.
+    // The human key is read the same way, for the owner check below.
+    let signed_in = owner.3.viewer().await.ok();
     let acquired = if preflight.is_ok() {
         tauri::async_runtime::spawn_blocking(move || {
             if !restore && replay_floor.is_none() && guard.is_none() {
@@ -1291,7 +1313,12 @@ async fn start_guarded(
     }
     run(owner, move |host| {
         let replay_floor = host.take_start(&id, ticket)?.replay_floor;
-        let key = match acquired {
+        // Kept agents answer to the owner who authorized them, not whoever signs in next.
+        let key = match acquired.and_then(|key| {
+            host.controller
+                .check_owner(&id, signed_in.as_deref())
+                .map(|()| key)
+        }) {
             Ok(key) => key,
             Err(error) => {
                 host.controller.record_error(&id, error);

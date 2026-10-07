@@ -221,6 +221,7 @@ it("batches history and edit-deletion targets within the real reader's request b
     viewer: h.viewer.pubkey,
     relayAuthor: h.relay.pubkey,
     query: h.query,
+    media: () => undefined,
   });
   const feed = createInboxFeed({
     viewer: h.viewer.pubkey,

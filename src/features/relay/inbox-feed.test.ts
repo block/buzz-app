@@ -6,6 +6,7 @@ import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
 import { threadBinding } from "./thread-window";
+import { matchesEvent } from "./projection";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -129,6 +130,113 @@ it("checks the viewer's later reply before presenting an older mention as unresp
   await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
   expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
   expect(h.session.channels.window("room").rows).toEqual([]);
+});
+it("marks cold history incomplete before unread subscribers observe its body", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 12);
+  const first = message(h.alice, "room", "progress", 20, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const cold = message(h.alice, "room", "OLD BODY", 30, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.live.receive([root, first]);
+  const observed: boolean[] = [];
+  const stop = h.session.unread.subscribeInbox(() => {
+    if (rows(h).some((item) => item.messageIds.includes(cold.id)))
+      observed.push(
+        h.session.inboxFeed.snapshot().incomplete.includes(cold.id),
+      );
+  });
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  h.query.mockImplementation((filters) =>
+    filters[0]?.since !== undefined
+      ? Promise.resolve(filters[0].until === undefined ? [cold] : [])
+      : query(filters),
+  );
+  try {
+    await h.session.inboxFeed.ensureResponses(rows(h));
+    expect(observed.length).toBeGreaterThan(0);
+    expect(observed.every(Boolean)).toBe(true);
+    expect(h.session.inboxFeed.snapshot()).toMatchObject({
+      status: "ready",
+      incomplete: [],
+    });
+  } finally {
+    stop();
+  }
+});
+it("batches history and edit-deletion targets within the real reader's request budget", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "assignment", 12);
+  const history = Array.from({ length: 1000 }, (_, index) =>
+    message(h.alice, "room", `progress ${index}`, 20 + index, [
+      ["e", root.id, "", "reply"],
+    ]),
+  );
+  const edits = history.map((event) =>
+    signed(h.alice, {
+      kind: 40003,
+      created_at: 1100,
+      content: "edited progress",
+      tags: [
+        ["h", "room"],
+        ["e", event.id],
+      ],
+    }),
+  );
+  const deletions = edits.map((event) =>
+    signed(h.alice, {
+      kind: 5,
+      created_at: 1200,
+      content: "",
+      tags: [["e", event.id]],
+    }),
+  );
+  const events = [root, ...history, ...edits, ...deletions];
+  h.query.mockImplementation(async ([filter]) =>
+    events
+      .filter((event) => filter && matchesEvent(event, filter))
+      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+      .filter(
+        (event) =>
+          filter?.until === undefined ||
+          event.created_at < filter.until ||
+          (event.created_at === filter.until &&
+            event.id > (filter.before_id ?? "")),
+      )
+      .slice(0, filter?.limit),
+  );
+  const first = history[0];
+  if (!first) throw new Error("Missing history fixture");
+  h.live.receive([root, first]);
+  await h.session.inboxFeed.ensureResponses(rows(h));
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+    error: undefined,
+  });
+  expect(h.session.inboxFeed.snapshot().checkedResponses).toHaveLength(1000);
+  expect(rows(h)[0]?.preview).toBe("progress 999"); // Deleted edits cannot supply a preview.
+  for (const kinds of [
+    [40003, 5, 9005],
+    [5, 9005],
+  ]) {
+    const requests = h.query.mock.calls
+      .flatMap(([filters]) => filters)
+      .filter((filter) => filter.kinds?.join() === kinds.join());
+    expect(new Set(requests.flatMap((filter) => filter["#e"] ?? []))).toEqual(
+      new Set(
+        (kinds.includes(40003) ? history : edits).map((event) => event.id),
+      ),
+    );
+    expect(requests.every((filter) => byteSize([filter]) < 64 * 1024)).toBe(
+      true,
+    );
+  }
 });
 it.each(["complete", "paged", "cold ancestors", "missing bounds"])(
   "checks a cold nested reply with only an intermediate parent tag (%s)",

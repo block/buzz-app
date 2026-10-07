@@ -785,6 +785,76 @@ it("checks reply history only for candidates matching Activity and Sender", asyn
   expect(h.responseChannels).toEqual(["dm-room", "dm-room"]);
 });
 
+it.each(["All", "Unread only"])(
+  "withholds cold history bodies when leaving Unresponded for %s during failed overlays",
+  async (filter) => {
+    const h = fixture();
+    render(h.view);
+    await screen.findByText("Please review this");
+    await waitFor(() =>
+      expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+    );
+    if (!h.root) throw new Error("Missing fixture root");
+    const cold = message(h.alice, "room", "COLD ORIGINAL BODY", 40, [
+      ["e", h.root.id, "", "reply"],
+    ]);
+    const edit = signed(h.alice, {
+      kind: 40003,
+      created_at: 41,
+      content: "COLD CURRENT BODY",
+      tags: [
+        ["h", "room"],
+        ["e", cold.id],
+      ],
+    });
+    h.events.push(cold, edit);
+    const release = h.holdAux();
+    try {
+      await chooseFilter("Threads");
+      await chooseFilter("Unresponded only", "Filters");
+      await waitFor(() =>
+        expect(
+          h.owner.session.unread
+            .inbox()
+            .items.some((item) => item.messageIds.includes(cold.id)),
+        ).toBe(true),
+      );
+      await chooseFilter(filter, "Filters");
+      expect(
+        rows().some((row) => row.textContent?.includes("Preview updating…")),
+      ).toBe(true);
+      expect(screen.queryByText("COLD ORIGINAL BODY")).not.toBeInTheDocument();
+      const pending = rows().find((row) =>
+        row.textContent?.includes("Preview updating…"),
+      );
+      if (!pending) throw new Error("Missing pending row");
+      fireEvent.click(within(pending).getByRole("button", { name: /^Open / }));
+      expect(
+        screen.getByRole("region", { name: "Inbox detail" }),
+      ).not.toHaveTextContent("COLD ORIGINAL BODY");
+      h.failAux();
+    } finally {
+      await act(async () => release());
+    }
+    await screen.findByText("auxiliary history unavailable");
+    expect(
+      screen.getByRole("region", { name: "Inbox detail" }),
+    ).toHaveTextContent("Preview unavailable. Retry inbox.");
+    expect(screen.queryByText("COLD ORIGINAL BODY")).not.toBeInTheDocument();
+    h.failAux(false);
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    await waitFor(() =>
+      expect(h.owner.session.inboxFeed.snapshot()).toMatchObject({
+        status: "ready",
+        incomplete: [],
+      }),
+    );
+    expect(
+      rows().some((row) => row.textContent?.includes("COLD CURRENT BODY")),
+    ).toBe(true);
+  },
+);
+
 it("does not present cold unanswered rows while later replies are loading or unavailable", async () => {
   const h = fixture({ coldReply: true });
   const release = h.holdResponses();

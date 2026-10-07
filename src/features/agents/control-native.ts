@@ -20,8 +20,6 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         community,
         memoryLevel,
       }),
-    restoreTeamMemory: (id, memory) =>
-      invoke("agent_control_team_memory_restore", { id, memory }),
     applyTeamInstructions: (id, revision, instructions, team, community) =>
       invoke("agent_control_team_instructions", {
         id,

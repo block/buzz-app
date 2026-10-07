@@ -235,10 +235,6 @@ export interface AgentControlHost {
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  restoreTeamMemory?(
-    id: string,
-    memory: TeamSnapshot["members"][number]["memory"],
-  ): Promise<{ written: number; total: number; errors: string[] }>;
   applyTeamInstructions?(
     id: string,
     revision: number,
@@ -328,10 +324,6 @@ export interface AgentControl {
     community: string,
     memoryLevel?: "none" | "core" | "everything",
   ): Promise<TeamSnapshot>;
-  restoreTeamMemory?(
-    id: string,
-    memory: TeamSnapshot["members"][number]["memory"],
-  ): Promise<{ written: number; total: number; errors: string[] }>;
   applyTeamInstructions?(
     id: string,
     revision: number,
@@ -675,18 +667,6 @@ export function createAgentControl(
                 "Creation was not confirmed; refresh agents before trying again.",
               );
             return agent;
-          },
-        }
-      : {}),
-    ...(host?.restoreTeamMemory
-      ? {
-          restoreTeamMemory: (
-            id: string,
-            memory: TeamSnapshot["members"][number]["memory"],
-          ) => {
-            if (!host.restoreTeamMemory)
-              throw new Error("Memory restoration is unavailable.");
-            return host.restoreTeamMemory(id, memory);
           },
         }
       : {}),

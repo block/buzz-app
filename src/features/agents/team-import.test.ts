@@ -40,14 +40,14 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 function fixture() {
-  const restoreTeamMemory = vi.fn(async () => ({
+  const writeSnapshotMemory = vi.fn(async () => ({
     written: 1,
     total: 1,
     errors: [] as string[],
   }));
   const control = {
     previewTeam: vi.fn(async () => structuredClone(snapshot)),
-    restoreTeamMemory,
+    writeSnapshotMemory,
   } as unknown as AgentControl;
   const savePortable = vi.fn();
   const kit = {
@@ -55,10 +55,10 @@ function fixture() {
     snapshot: () => ({ entries: [] }),
     savePortable,
   } as unknown as ChannelKit;
-  return { control, kit, restoreTeamMemory, savePortable };
+  return { control, kit, writeSnapshotMemory, savePortable };
 }
 it("imports memory-bearing definitions without restoring memory unless explicitly requested", async () => {
-  const { control, kit, restoreTeamMemory, savePortable } = fixture();
+  const { control, kit, writeSnapshotMemory, savePortable } = fixture();
   const result = await importTeamSnapshot(control, kit, snapshot, {
     destination: "https://relay.example",
     owner: "b".repeat(64),
@@ -73,14 +73,14 @@ it("imports memory-bearing definitions without restoring memory unless explicitl
     false,
     result.id,
   );
-  expect(restoreTeamMemory).not.toHaveBeenCalled();
+  expect(writeSnapshotMemory).not.toHaveBeenCalled();
   expect(result.memories).toEqual([]);
   expect(savePortable.mock.calls[0]?.[1].team).toEqual(snapshot.team);
   expect(result.agents[0]?.pubkey).toBe("a".repeat(64));
 });
 it("retains the same creation requests on memory failure and reports per-member retry outcomes", async () => {
-  const { control, kit, restoreTeamMemory } = fixture();
-  restoreTeamMemory.mockResolvedValueOnce({
+  const { control, kit, writeSnapshotMemory } = fixture();
+  writeSnapshotMemory.mockResolvedValueOnce({
     written: 0,
     total: 1,
     errors: ["not confirmed"],
@@ -101,8 +101,8 @@ it("retains the same creation requests on memory failure and reports per-member 
     { pubkey: "a".repeat(64), written: 0, total: 1, errors: ["not confirmed"] },
   ]);
   expect(second.memories[0]?.written).toBe(1);
-  expect(restoreTeamMemory).toHaveBeenCalledWith(
+  expect(writeSnapshotMemory).toHaveBeenCalledWith(
     "copy",
-    snapshot.members[0]?.memory,
+    snapshot.members[0]?.memory.entries,
   );
 });

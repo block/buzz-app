@@ -864,6 +864,9 @@ it("keeps private catalog ready when native binding reconciliation is unavailabl
   expect(f.capability.snapshot().entries[0]?.eventId).toBe(id);
   expect(f.host.reconcileTeams).not.toHaveBeenCalled();
   await expect(
-    f.capability.save({ ...record.value, name: "Updated" }, id),
+    f.capability.save(
+      { type: "team", id: "team", name: "Updated", agents: [] },
+      id,
+    ),
   ).resolves.toBeTypeOf("string");
 });

@@ -1573,8 +1573,6 @@ pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
 mod snapshot_memory;
 
 mod profile_http;
-mod team_memory;
-pub(crate) use team_memory::agent_control_team_memory_restore;
 
 #[cfg(test)]
 pub(crate) mod tests;

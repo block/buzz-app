@@ -90,14 +90,21 @@ export async function importTeamSnapshot(
     errors: string[];
   }[] = [];
   if (options.restoreMemory) {
-    if (!control.restoreTeamMemory)
+    if (!control.writeSnapshotMemory)
       throw new Error("Memory restoration is unavailable");
     for (const [index, agent] of agents.entries()) {
       const memory = validated.members[index]?.memory;
       if (!memory?.entries?.length) continue;
       try {
-        const result = await control.restoreTeamMemory(agent.id, memory);
-        memories.push({ pubkey: agent.pubkey, ...result });
+        const result = await control.writeSnapshotMemory(
+          agent.id,
+          memory.entries,
+        );
+        memories.push({
+          pubkey: agent.pubkey,
+          ...result,
+          total: result.total ?? memory.entries.length,
+        });
       } catch (error) {
         memories.push({
           pubkey: agent.pubkey,

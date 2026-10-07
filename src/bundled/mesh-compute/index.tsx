@@ -189,7 +189,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot.status === "ready" && snapshot.viewer && snapshot.scope
         ? snapshot.scope.slice(0, -(snapshot.viewer.length + 1))
         : undefined;
-    const boundCommunity = status?.boundCommunity ?? scope;
+    const boundCommunity = status?.available ? status.boundCommunity : null;
     const otherCommunity = Boolean(
       viewedCommunity && boundCommunity && viewedCommunity !== boundCommunity,
     );
@@ -504,7 +504,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
               owner={snapshot.viewer}
             />
           )}
-        {community && (
+        {isTauri() && status?.available && community && (
           <CommunityMesh
             key={community.id}
             community={community.id}

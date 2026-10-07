@@ -2672,6 +2672,11 @@ async fn shared_compute_restore_waits_for_community_before_attempting_credential
         Ok(())
     })
     .unwrap();
+    let mesh = crate::mesh_compute::MeshHost::default();
+    crate::mesh_compute::retire_selection(&mesh, &host, "https://other.example", "viewer")
+        .await
+        .unwrap();
+    assert!(host.with(|h| Ok(h.queued.contains_key(&id))).unwrap());
     host.restore_mesh("https://other.example".into()).await;
     assert!(host.with(|h| Ok(h.queued.contains_key(&id))).unwrap());
     let relay = host

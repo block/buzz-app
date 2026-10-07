@@ -116,3 +116,46 @@ it("retains saved selection on failure and retries to an empty catalog with Auto
     control.dispose();
   }
 });
+
+it("keeps incomplete arguments editable and only refetches discovery inputs", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  let draft = {
+    ...agentDraft(f.agent),
+    command: "buzz-agent",
+    provider: "relay-mesh",
+    model: "auto",
+  };
+  const props = { control, disabled: false, onChange: vi.fn() };
+  const view = render(<SharedComputeModelPicker {...props} draft={draft} />);
+  try {
+    await screen.findByText(/No shared models advertised yet/);
+    expect(run).toHaveBeenCalledTimes(1);
+    draft = {
+      ...draft,
+      name: "New name",
+      systemPrompt: "New instructions",
+      model: "saved",
+    };
+    view.rerender(<SharedComputeModelPicker {...props} draft={draft} />);
+    expect(run).toHaveBeenCalledTimes(1);
+    draft = { ...draft, args: "[" };
+    view.rerender(<SharedComputeModelPicker {...props} draft={draft} />);
+    await screen.findByText("Arguments must be a JSON array of strings.");
+    expect(run).toHaveBeenCalledTimes(1);
+    draft = { ...draft, args: '["--verbose"]' };
+    view.rerender(<SharedComputeModelPicker {...props} draft={draft} />);
+    await screen.findByText(/No shared models advertised yet/);
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});

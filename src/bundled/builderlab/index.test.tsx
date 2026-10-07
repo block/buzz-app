@@ -4,13 +4,16 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ClientSnapshot } from "../../features/communities/service";
 import { HostService } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
+import { createOAuthSession } from "./oauth/session";
+import { enrollmentFixture } from "./agents/enrollment-testing";
+import { createNameProvider } from "../../features/identity-names/directory";
+import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -29,13 +32,17 @@ afterEach(() => {
 it("an unconfigured desktop build shows setup guidance and cannot start login", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "");
   const root = new Context();
-  root.provide("communityReader", {
-    snapshot: () => ({ selected: null }) as ClientSnapshot,
-    subscribe: () => () => {},
-  });
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
+  const community = enrollmentFixture(
+    createOAuthSession(async () => {
+      throw new Error("unused");
+    }),
+    null,
+  );
+  root.provide("relay", community.relay);
+  root.provide("communityReader", community.reader);
   try {
     runtime.reconcile([
       {
@@ -60,6 +67,7 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();
+    await community.dispose();
   }
 });
 
@@ -73,9 +81,9 @@ it("binds login, list and creation to the plugin host and clears the session on 
     if (command === "oauth_callback_wait")
       return { parameters: [["code", "one-time"]] };
     if (command === "oauth_callback_cancel") return;
-    if (command === "identity_restore") return "cd".repeat(32);
+    if (command === "identity_restore") return community.viewer;
     if (command === "identity_prepare_remote_agent_authorization")
-      return ["auth", "cd".repeat(32), "", "ef".repeat(64)];
+      return ["auth", community.viewer, "", "ef".repeat(64)];
     if (command === "plugin_host_request")
       return {
         status: 200,
@@ -98,13 +106,16 @@ it("binds login, list and creation to the plugin host and clears the session on 
     throw new Error(`Unexpected command ${command}`);
   });
   const root = new Context();
-  root.provide("communityReader", {
-    snapshot: () => ({ selected: "primary" }) as ClientSnapshot,
-    subscribe: () => () => {},
-  });
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
+  const community = enrollmentFixture(
+    createOAuthSession(async () => {
+      throw new Error("unused");
+    }),
+  );
+  root.provide("relay", community.relay);
+  root.provide("communityReader", community.reader);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
     source: "bundled",
@@ -159,9 +170,39 @@ it("binds login, list and creation to the plugin host and clears the session on 
     );
     await user.click(screen.getByRole("button", { name: "Create agent" }));
     expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Registration confirmed in this community."),
+    ).toBeInTheDocument();
+    expect(community.events).toHaveLength(1);
+    expect(community.events[0]).toMatchObject({
+      pubkey: community.viewer,
+      kind: 30177,
+      content: JSON.stringify({
+        name: "Helper",
+        parallelism: 1,
+        respond_to: "owner-only",
+      }),
+    });
+    expect(community.events[0]?.tags).toContainEqual(["d", "ab".repeat(32)]);
+    const relaySession = community.relay.snapshot().session;
+    const names = createNameProvider({
+      id: "agents",
+      resolve: resolveIdentityNames,
+    });
+    expect(
+      names.scope({
+        agentLibrary: relaySession.agentLibrary,
+        profiles: relaySession.profiles,
+        viewer: community.viewer,
+        relayUrl: "https://community.example",
+      })("ab".repeat(32)),
+    ).toEqual({ name: "Helper" });
+    expect(
+      community.relay.snapshot().session.agentChoices.snapshot().selectable,
+    ).toEqual([{ pubkey: "ab".repeat(32), name: "Helper", managed: false }]);
     expect(native.invoke).toHaveBeenCalledWith(
       "identity_prepare_remote_agent_authorization",
-      { owner: "cd".repeat(32), agentPubkey: "ab".repeat(32) },
+      { owner: community.viewer, agentPubkey: "ab".repeat(32) },
     );
     const mutations = native.invoke.mock.calls
       .filter(
@@ -172,7 +213,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
       .map(([, input]) => input);
     expect(mutations).toHaveLength(2);
     expect(JSON.parse(mutations[1].request.body).community_url).toBe(
-      "wss://primary.example",
+      "wss://community.example",
     );
     expect(
       mutations.every(
@@ -200,5 +241,6 @@ it("binds login, list and creation to the plugin host and clears the session on 
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();
+    await community.dispose();
   }
 });

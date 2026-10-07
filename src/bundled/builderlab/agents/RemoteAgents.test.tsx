@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../../features/host/service";
@@ -8,9 +15,15 @@ import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { createAgentClient } from "./client";
 import { RemoteAgents } from "./RemoteAgents";
+import { enrollmentFixture } from "./enrollment-testing";
+import { PublishRejected } from "../../../features/relay/outbox";
 
-afterEach(() => {
+const enrollments: ReturnType<typeof enrollmentFixture>[] = [];
+
+afterEach(async () => {
   cleanup();
+  for (const fixture of enrollments.splice(0)) await fixture.dispose();
+  vi.restoreAllMocks();
   localStorage.clear();
 });
 const row = {
@@ -24,16 +37,18 @@ const response = (agents: unknown[], status = 200): HostResponse => ({
   headers: {},
   body: JSON.stringify({ status: 1, agents }),
 });
-async function fixture() {
+async function fixture(selected: string | null = null) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const session = createOAuthSession(async () => ({
     value: "secret",
     account: { subject: "user", email: "a@example.com" },
   }));
   await session.signIn();
+  const community = enrollmentFixture(session, selected);
+  enrollments.push(community);
   const request = vi.fn(async (_input: HostRequest) => response([row]));
   const authorize = vi.fn(
-    async () => ["auth", "cd".repeat(32), "", "ef".repeat(64)] as const,
+    async () => ["auth", community.viewer, "", "ef".repeat(64)] as const,
   );
   const client = createAgentClient(
     {
@@ -44,7 +59,14 @@ async function fixture() {
     session,
     () => undefined,
   );
-  return { session, client, request, authorize };
+  return {
+    session,
+    client,
+    request,
+    authorize,
+    community,
+    enrollment: community.enrollment,
+  };
 }
 afterEach(() => vi.unstubAllEnvs());
 it("loads automatically, refreshes and hides account data on sign-out", async () => {
@@ -93,54 +115,171 @@ it.each(["sign-out", "unmount"])(
   },
 );
 
-it("keeps creation controls locked through registration and attestation, then clears the submitted name", async () => {
-  const h = await fixture();
+it("keeps creation controls locked through registration, attestation and relay confirmation", async () => {
+  const h = await fixture("https://community.example");
   h.request.mockResolvedValueOnce(response([]));
   render(<RemoteAgents {...h} active={() => true} />);
   await screen.findByText("No remote agents yet.");
   const held = deferred<HostResponse>();
   const attestation = deferred<HostResponse>();
+  const publication = deferred<void>();
+  const publish = h.community.publish.getMockImplementation();
+  if (!publish) throw new Error("Missing publisher");
+  h.community.publish.mockImplementationOnce(async (event) => {
+    await publication.promise;
+    return publish(event);
+  });
   h.request
     .mockReturnValueOnce(held.promise)
     .mockReturnValueOnce(attestation.promise);
   const user = userEvent.setup();
-  await user.type(
-    screen.getByRole("textbox", { name: "Agent name" }),
-    "Helper",
-  );
-  await user.click(screen.getByRole("button", { name: "Create agent" }));
-  expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Refresh agents" })).toBeDisabled();
-  await act(async () =>
-    held.resolve({
-      status: 200,
-      headers: {},
-      body: JSON.stringify({
-        status: 1,
-        agent_id: row.agent_id,
-        agent_pubkey: row.agent_pubkey,
-      }),
+  const registered = {
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      status: 1,
+      agent_id: row.agent_id,
+      agent_pubkey: row.agent_pubkey,
     }),
-  );
-  expect(h.request).toHaveBeenCalledTimes(3);
-  expect(screen.getByText("Helper · Unattested")).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Finish setup" })).toBeDisabled();
-  await act(async () =>
-    attestation.resolve({ status: 200, headers: {}, body: '{"status":1}' }),
-  );
-  expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+  };
+  try {
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Agent name" })).toBeEnabled(),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Agent name" }),
+      "Helper",
+    );
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Refresh agents" }),
+    ).toBeDisabled();
+    await act(async () => held.resolve(registered));
+    await waitFor(() => expect(h.request).toHaveBeenCalledTimes(3));
+    expect(screen.getByText("Helper · Unattested")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finish setup" })).toBeDisabled();
+    await act(async () =>
+      attestation.resolve({ status: 200, headers: {}, body: '{"status":1}' }),
+    );
+    await waitFor(() => expect(h.community.publish).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Helper · Active")).toBeInTheDocument();
+    expect(
+      screen.getByText("Community registration pending."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBeDisabled();
+    await act(async () => publication.resolve());
+    expect(
+      await screen.findByText("Registration confirmed in this community."),
+    ).toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      held.resolve(registered);
+      attestation.resolve({ status: 200, headers: {}, body: '{"status":1}' });
+      publication.resolve();
+    });
+  }
   expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Agent name" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Refresh agents" })).toBeEnabled();
 });
-it("keeps the registered identity visible after failed attestation and finishes without registering again", async () => {
-  const h = await fixture();
-  h.request.mockResolvedValueOnce(response([]));
-  render(<RemoteAgents {...h} active={() => true} />);
-  await screen.findByText("No remote agents yet.");
-  h.request
-    .mockResolvedValueOnce({
+
+it.each(["Active", "Revoked"])(
+  "retries only the selected agent and rechecks a previously Active agent now %s",
+  async (status) => {
+    const h = await fixture("https://community.example");
+    const second = {
+      ...row,
+      agent_id: "two",
+      agent_name: "Second",
+      agent_pubkey: "bc".repeat(32),
+    };
+    h.request.mockResolvedValue(response([row, second]));
+    for (const agent of [row, second])
+      h.enrollment.remember(h.enrollment.capture(), {
+        id: agent.agent_id,
+        name: agent.agent_name,
+        pubkey: agent.agent_pubkey,
+        status: "Active",
+      });
+    let refused = true;
+    const publish = h.community.publish.getMockImplementation();
+    if (!publish) throw new Error("Missing publisher");
+    h.community.publish.mockImplementation(async (event) => {
+      if (
+        refused &&
+        event.tags.some(
+          ([key, value]) => key === "d" && value === row.agent_pubkey,
+        )
+      )
+        throw new PublishRejected("registration refused");
+      return publish(event);
+    });
+    render(<RemoteAgents {...h} active={() => true} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "registration refused",
+    );
+    expect(screen.getByText("Helper · Active")).toBeInTheDocument();
+    const user = userEvent.setup();
+    const secondRow = screen.getByText("Second · Active").closest("li");
+    if (!secondRow) throw new Error("Missing second agent row");
+    await user.click(
+      within(secondRow).getByRole("button", { name: "Retry community setup" }),
+    );
+    expect(
+      await screen.findByText("Registration confirmed in this community."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Community registration pending."),
+    ).toBeInTheDocument();
+    refused = false;
+    h.request.mockResolvedValue(
+      response([{ ...row, status: status === "Active" ? 2 : 3 }, second]),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Retry community setup" }),
+    );
+    if (status === "Active") {
+      await waitFor(() =>
+        expect(
+          screen.getAllByText("Registration confirmed in this community."),
+        ).toHaveLength(2),
+      );
+      expect(
+        screen.queryByText("Community registration pending."),
+      ).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Agent is no longer Active",
+      );
+      expect(screen.getByText("Helper · Revoked")).toBeInTheDocument();
+      expect(
+        screen.getByText("Community registration pending."),
+      ).toBeInTheDocument();
+    }
+    expect(
+      h.request.mock.calls.every(([input]) =>
+        input.url.endsWith("/list-agents"),
+      ),
+    ).toBe(true);
+    expect(h.authorize).not.toHaveBeenCalled();
+    expect(h.request).toHaveBeenCalledTimes(3);
+    expect(h.community.publish).toHaveBeenCalledTimes(
+      status === "Active" ? 3 : 2,
+    );
+  },
+);
+it.each(["attestation", "enrollment storage"])(
+  "keeps the registered identity after %s failure and finishes without registering again",
+  async (failure) => {
+    const h = await fixture(
+      failure === "enrollment storage" ? "https://community.example" : null,
+    );
+    h.request.mockResolvedValueOnce(response([]));
+    render(<RemoteAgents {...h} active={() => true} />);
+    await screen.findByText("No remote agents yet.");
+    const registered = {
       status: 200,
       headers: {},
       body: JSON.stringify({
@@ -148,29 +287,59 @@ it("keeps the registered identity visible after failed attestation and finishes 
         agent_id: row.agent_id,
         agent_pubkey: row.agent_pubkey,
       }),
-    })
-    .mockResolvedValueOnce(response([], 503));
-  const user = userEvent.setup();
-  await user.type(
-    screen.getByRole("textbox", { name: "Agent name" }),
-    "Helper",
-  );
-  await user.click(screen.getByRole("button", { name: "Create agent" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 503");
-  expect(screen.getByText("Helper · Unattested")).toBeInTheDocument();
-  h.request.mockResolvedValueOnce({
-    status: 200,
-    headers: {},
-    body: '{"status":1}',
-  });
-  await user.click(screen.getByRole("button", { name: "Finish setup" }));
-  expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
-  expect(
-    h.request.mock.calls.filter(([input]) =>
-      input.url.endsWith("/register-agent"),
-    ),
-  ).toHaveLength(1);
-});
+    };
+    const registration = deferred<HostResponse>();
+    h.request.mockReturnValueOnce(registration.promise);
+    if (failure === "attestation")
+      h.request.mockResolvedValueOnce(response([], 503));
+    const user = userEvent.setup();
+    try {
+      await waitFor(() =>
+        expect(
+          screen.getByRole("textbox", { name: "Agent name" }),
+        ).toBeEnabled(),
+      );
+      await user.type(
+        screen.getByRole("textbox", { name: "Agent name" }),
+        "Helper",
+      );
+      await user.click(screen.getByRole("button", { name: "Create agent" }));
+      await waitFor(() => expect(h.request).toHaveBeenCalledTimes(2));
+      if (failure === "enrollment storage")
+        vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+          throw new Error("storage unavailable");
+        });
+      await act(async () => registration.resolve(registered));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        failure === "attestation" ? "HTTP 503" : "storage unavailable",
+      );
+      expect(screen.getByText("Helper · Unattested")).toBeInTheDocument();
+      if (failure === "enrollment storage") {
+        expect(h.authorize).not.toHaveBeenCalled();
+        expect(h.community.publish).not.toHaveBeenCalled();
+        vi.restoreAllMocks();
+      }
+      h.request.mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: '{"status":1}',
+      });
+      await user.click(screen.getByRole("button", { name: "Finish setup" }));
+      expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+      if (failure === "enrollment storage")
+        expect(
+          await screen.findByText("Registration confirmed in this community."),
+        ).toBeInTheDocument();
+      expect(
+        h.request.mock.calls.filter(([input]) =>
+          input.url.endsWith("/register-agent"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await act(async () => registration.resolve(registered));
+    }
+  },
+);
 it("does not attest or show a held registration after sign-out", async () => {
   const h = await fixture();
   render(<RemoteAgents {...h} active={() => true} />);

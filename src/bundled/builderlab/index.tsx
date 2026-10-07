@@ -9,8 +9,9 @@ import {
 import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
+import { createEnrollment } from "./agents/enrollment";
 
-export const inject = ["host", "settingsCards", "communityReader"];
+export const inject = ["host", "settingsCards", "relay", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -31,6 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? communityDestination(selected).url.replace(/^https:/, "wss:")
       : undefined;
   });
+  const enrollment = createEnrollment(ctx.relay, ctx.communityReader, session);
   ctx.settingsCards.register({
     id: "login",
     title: "Builderlab",
@@ -47,7 +49,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           }
           active={active}
         />
-        <RemoteAgents client={agents} session={session} active={active} />
+        <RemoteAgents
+          client={agents}
+          session={session}
+          enrollment={enrollment}
+          active={active}
+        />
       </>
     ),
   });

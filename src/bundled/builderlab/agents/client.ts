@@ -169,6 +169,7 @@ export function createAgentClient(
       agent: RemoteAgent,
       signal: AbortSignal,
       active: () => boolean,
+      owner?: string,
     ): Promise<RemoteAgent> {
       signal.throwIfAborted();
       if (!active())
@@ -188,6 +189,10 @@ export function createAgentClient(
         throw new DOMException("Builderlab card is inactive.", "AbortError");
       if (communityUrl() !== community)
         throw new Error("Community changed. Use Finish setup to try again.");
+      if (owner && tag[1] !== owner)
+        throw new Error(
+          "Agent authorization and community identities differ. Retry with the same Buzz identity.",
+        );
       const result = await request(
         "attest-agent",
         {

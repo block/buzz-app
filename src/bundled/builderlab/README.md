@@ -10,7 +10,8 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login. Requests
   reuse the OAuth credential through native host HTTP; sign-out and navigation
-  discard late results. Listing does not enroll agents into Buzz communities.
+  discard late results. Existing catalog agents are not automatically registered
+  into Buzz communities.
   Creation registers a name, then attests its key using the host's existing
   owner authorization. When a community is selected, attestation includes its
   WebSocket URL to enroll with Beekeeper; Personal space omits it. An unattested
@@ -18,8 +19,16 @@ The bundled `block.builderlab` plugin adds Settings → Integrations → Builder
   registration UUIDs survive restart and are scoped to server, verified account
   and name. Retry the same name after an
   uncertain failure within the server's seven-day replay window. Credentials
-  and owner proofs are never stored. Creation does not add channel membership
-  or make the agent selectable in Buzz conversations.
+  and owner proofs are never stored.
+  With a connected community selected, activation is followed by owner-signed
+  kind-30177 registration through the session's durable outbox. Completion waits
+  for relay acceptance and shared agent discovery. Names use the existing shared
+  naming service; picker, archive and membership policies remain in their owners.
+  Pending enrollment intent is scoped to server, account, community and Buzz
+  identity. Opening Settings after reconnect/restart resumes intended Active
+  creations; **Retry community setup** reuses a pending publication without
+  registering or attesting again. Personal space skips relay registration.
+  Creation never adds channel membership.
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
 as its server address and appends `/api/goose`.

@@ -258,9 +258,9 @@ Bundled Buzz tools and harness-owned pinned runtimes remain first. Explicit
 agent PATH directories are also included, but cannot displace those tools.
 Empty, relative, and duplicate Unix directories are omitted. Only PATH comes
 back from the shell: other variables exported by startup files are not copied
-into the agent. The existing launch environment allowlist, explicit saved
-provider settings, and managed identity overrides are unchanged. This is tool
-discovery, not an OS sandbox or a restriction on access to files on the machine.
+into the agent. Agent launches use the environment allowlist, explicit saved
+provider settings, and managed identity overrides. This is tool discovery, not
+an OS sandbox or a restriction on access to files on the machine.
 
 ## Harnesses and agent defaults
 

@@ -368,10 +368,10 @@ are ordinary shared components, not another registry.
 
 Only open intent crosses pages: the panel component can remount under a new page,
 so this mechanism does not promise persistent agent sessions or drafts. The bundled
-Bestie page currently supplies art and truthful not-connected copy, with no send
-control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
+Bestie plugin composes native local-agent controls, a private session chat and
+relay memory, without a top-bar launcher. Both browser and Rust native/CLI catalogs
 keep it bundled but off by default; saved enabled or disabled flags still win.
-Enable it under Settings → Plugins.
+Enable it under Settings → Plugins. See [Local Bestie](local-bestie.md).
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.

@@ -13,6 +13,48 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
+
+it.each([false, true])(
+  "persists prepared identity before any create publication (checkpoint fails=%s)",
+  async (fails) => {
+    const fixture = controlFixture();
+    const identity = { id: "new-local-agent", pubkey: "cd".repeat(32) };
+    fixture.host.prepareCreate = vi.fn(async () => identity);
+    const commit = vi.fn(async () => ({
+      ...fixture.data,
+      agents: [...fixture.data.agents, { ...fixture.agent, ...identity }],
+    }));
+    fixture.host.commitCreate = commit;
+    const authorize = vi
+      .spyOn(communityApi, "communityRequest")
+      .mockResolvedValue({ auth: [] });
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const checkpoint = vi.fn((prepared) => {
+      expect(prepared).toEqual(identity);
+      expect(authorize).not.toHaveBeenCalled();
+      expect(commit).not.toHaveBeenCalled();
+      if (fails) throw new Error("Storage unavailable");
+    });
+    const pending = control.create?.(
+      "request",
+      "https://relay.example.test",
+      "owner",
+      agentEdit(agentDraft(fixture.agent)),
+      checkpoint,
+    );
+    if (fails) {
+      await expect(pending).rejects.toThrow();
+      expect(authorize).not.toHaveBeenCalled();
+      expect(commit).not.toHaveBeenCalled();
+    } else {
+      await expect(pending).resolves.toMatchObject(identity);
+      expect(authorize).toHaveBeenCalledOnce();
+      expect(commit).toHaveBeenCalledOnce();
+    }
+    expect(checkpoint).toHaveBeenCalledOnce();
+  },
+);
 it("words save results by restart count", () => {
   expect(savedMessage(0)).toBe("Saved.");
   expect(savedMessage(undefined)).toBe("Saved.");
@@ -42,6 +84,29 @@ it("browser is unavailable without any host or runner", async () => {
   expect(control.snapshot().status).toBe("unavailable");
   await expect(control.action("x", "start")).rejects.toThrow("desktop app");
 });
+it.each([
+  ["Invalid or host-reserved environment key", true],
+  [new Error("RAW OUTPUT MUST NOT DISPLAY"), false],
+])(
+  "retains sanitized native read failures without exposing raw errors (%s)",
+  async (error, visible) => {
+    const fixture = controlFixture();
+    vi.spyOn(fixture.host, "snapshot").mockRejectedValue(error);
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    expect(control.snapshot().status).toBe("error");
+    expect(control.snapshot().error).not.toContain("RAW OUTPUT");
+    if (visible)
+      expect(control.snapshot().error).toContain(
+        "Invalid or host-reserved environment key",
+      );
+    else
+      expect(control.snapshot().error).toBe(
+        "Could not refresh local agents. Current host status is unconfirmed.",
+      );
+    control.dispose();
+  },
+);
 it("coalesces reads and cannot replace post-action state with a stale read", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);

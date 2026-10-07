@@ -12,38 +12,9 @@ import { AgentSettingsFields } from "./AgentSettingsFields";
 import {
   agentDraft,
   agentEdit,
-  harnessKind,
+  newAgentDraft,
   type AgentDraft,
 } from "./agent-edit";
-
-/** The Agent defaults harness is copied at creation; the rest is inherited at start. */
-function newAgentDraft(state: AgentControlState): AgentDraft {
-  const defaults = state.data?.defaultSettings;
-  const chosen = state.data?.harnessOptions?.find(
-    (option) =>
-      option.available !== false &&
-      harnessKind(option.command) === (defaults?.harness ?? "buzz-agent"),
-  );
-  const command = chosen?.command ?? "buzz-agent";
-  const inherits = defaults?.harness === "buzz-agent" && !!defaults.provider;
-  return {
-    revision: 0,
-    name: "",
-    systemPrompt: "",
-    sessionPolicy: null,
-    workspace: state.data?.defaultWorkspace ?? "",
-    command,
-    args: JSON.stringify(chosen?.defaultArgs ?? []),
-    model: "",
-    provider:
-      command !== "buzz-agent" ||
-      inherits ||
-      state.data?.agentDefaults?.provider
-        ? ""
-        : (chosen?.providers[0]?.value ?? "databricks_v2"),
-    environment: {},
-  };
-}
 
 type CreatePhase = "creating" | "starting" | "publishing" | "checking";
 

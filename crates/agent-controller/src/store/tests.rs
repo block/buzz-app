@@ -327,6 +327,7 @@ fn environment_patch_preserves_deletes_and_rejects_host_overrides_without_writin
         "BUZZ_ACP_SETUP_PAYLOAD",
         "BUZZ_ACP_REPLAY_FLOOR",
         "buzz_acp_agents",
+        "buzz_acp_channels",
         "PI_ACP_PI_COMMAND",
         "BUZZ_AGENT_CONFIG_DIR",
         "BUZZ_MANAGED_AGENT",
@@ -440,6 +441,63 @@ fn worker_count_override_persists_only_within_runtime_limits() {
     assert!(!store.agents().unwrap()[0]
         .environment
         .contains_key("BUZZ_ACP_AGENTS"));
+}
+
+#[test]
+fn channel_override_persists_and_rejects_invalid_values_without_writing() {
+    let home = "11111111-1111-4111-8111-111111111111";
+    let other = "22222222-2222-4222-8222-222222222222";
+    for command in [
+        "buzz-agent",
+        "custom-acp",
+        "goose-acp",
+        "/opt/tools/buzz-pi-acp",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().to_owned()).unwrap();
+        let a = fixture();
+        store.insert(vec![a.clone()]).unwrap();
+        let channels = format!("{home},{other}");
+        for value in [home, channels.as_str()] {
+            let revision = store.agents().unwrap()[0].revision;
+            let mut update = edit();
+            update.harness.command = command.into();
+            update
+                .environment
+                .insert("BUZZ_ACP_CHANNELS".into(), Some(value.into()));
+            store.save(&a.id, revision, update).unwrap();
+        }
+        drop(store);
+        let mut store = Store::open(dir.path().to_owned()).unwrap();
+        let saved = store.agents().unwrap().remove(0);
+        assert_eq!(saved.environment["BUZZ_ACP_CHANNELS"], channels);
+        let before = fs::read(store.path()).unwrap();
+        for value in [
+            String::new(),
+            ",".into(),
+            "not-a-channel".into(),
+            "11111111111141118111111111111111".into(),
+            "11111111-1111-4111-8111-11111111111z".into(),
+            "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
+            format!("{home},"),
+            format!(",{home}"),
+            format!("{home}, {other}"),
+        ] {
+            let mut update = edit();
+            update.harness.command = command.into();
+            update
+                .environment
+                .insert("BUZZ_ACP_CHANNELS".into(), Some(value));
+            assert!(store.save(&a.id, saved.revision, update).is_err());
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+        let mut update = edit();
+        update.harness.command = command.into();
+        update.environment.insert("BUZZ_ACP_CHANNELS".into(), None);
+        store.save(&a.id, saved.revision, update).unwrap();
+        let saved = store.agents().unwrap().remove(0);
+        assert!(!saved.environment.contains_key("BUZZ_ACP_CHANNELS"));
+    }
 }
 
 #[test]

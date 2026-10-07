@@ -175,36 +175,56 @@ describe("Mac WebKit line breaks", () => {
     clear = vi.spyOn(Selection.prototype, "removeAllRanges");
   });
   afterEach(() => vi.restoreAllMocks());
+  /** The native caret ProseMirror wrote back. */
+  const native = () => {
+    const selection = document.getSelection();
+    return [
+      selection?.rangeCount,
+      selection?.isCollapsed,
+      selection?.anchorNode?.textContent,
+      selection?.anchorOffset,
+    ];
+  };
 
-  it("refreshes an accepted collapsed caret and restores it natively", () => {
-    const h = mount("ab");
-    act(() => h.input.setSelectionRange(1, 1));
-    clear.mockClear();
-    act(() => expect(h.input.insertLineBreak()).toBe(true));
-    expect(clear).toHaveBeenCalledTimes(1);
-    expect(h.input).toHaveValue("a\nb");
-    expect(h.input.selectionStart).toBe(2);
-    expect(h.input.selectionEnd).toBe(2);
-    const native = document.getSelection();
-    expect(native?.rangeCount).toBe(1);
-    expect(native?.isCollapsed).toBe(true);
-    expect(native?.anchorNode?.textContent).toBe("a\nb");
-    expect(native?.anchorOffset).toBe(2);
-  });
+  it.each([false, true])(
+    "refreshes an accepted collapsed caret and restores it natively (code block: %s)",
+    (code) => {
+      const h = mount("ab");
+      if (code) act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => expect(h.input.insertLineBreak()).toBe(true));
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("a\nb");
+      expect(h.input.selectionStart).toBe(2);
+      expect(h.input.selectionEnd).toBe(2);
+      expect(native()).toEqual([1, true, "a\nb", 2]);
+    },
+  );
 
-  it("leaves range selections and rejected line breaks alone", () => {
+  it.each([
+    ["paragraph", 2],
+    ["code block", "```\nab\n```".length],
+  ] as const)(
+    "restores the caret after a rejected %s line break",
+    (kind, maxLength) => {
+      const h = mount("ab", { maxLength });
+      if (kind === "code block") act(() => h.input.toggleFormat("code_block"));
+      act(() => h.input.setSelectionRange(1, 1));
+      clear.mockClear();
+      act(() => h.input.insertLineBreak());
+      expect(clear).toHaveBeenCalledTimes(1);
+      expect(h.input).toHaveValue("ab");
+      expect(native()).toEqual([1, true, "ab", 1]);
+    },
+  );
+
+  it("leaves a range selection alone", () => {
     const h = mount("ab");
     act(() => h.input.setSelectionRange(0, 2));
     clear.mockClear();
     act(() => expect(h.input.insertLineBreak()).toBe(true));
     expect(clear).not.toHaveBeenCalled();
-
-    const limited = mount("ab", { maxLength: 2 });
-    act(() => limited.input.setSelectionRange(1, 1));
-    clear.mockClear();
-    act(() => expect(limited.input.insertLineBreak()).toBe(false));
-    expect(clear).not.toHaveBeenCalled();
-    expect(limited.input).toHaveValue("ab");
   });
 
   it("leaves Chromium alone", () => {

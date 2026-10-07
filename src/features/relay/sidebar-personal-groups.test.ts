@@ -64,6 +64,16 @@ function fixture(personal = true) {
     legacy = { ...legacy, assignments };
     return legacy;
   });
+  const removal = vi.fn(async (sectionId: string) => {
+    legacy = {
+      ...legacy,
+      sections: legacy.sections.filter(({ id }) => id !== sectionId),
+      assignments: Object.fromEntries(
+        Object.entries(legacy.assignments).filter(([, id]) => id !== sectionId),
+      ),
+    };
+    return legacy;
+  });
   const star = vi.fn(async ({ channelId, starred }) => {
     legacy = { ...legacy, starred: starred ? [channelId] : [] };
     return legacy.starred;
@@ -83,6 +93,7 @@ function fixture(personal = true) {
       query,
       decodeSidebarPreferences: async () => legacy,
       writeSidebarAssignment: assignment,
+      removeSidebarSection: removal,
       writeSidebarStar: star,
       channelKit: {
         decode: async (rows) =>
@@ -104,6 +115,7 @@ function fixture(personal = true) {
     ...owner,
     query,
     assignment,
+    removal,
     star,
     publish,
     prepare,
@@ -307,3 +319,56 @@ it.each(["clearCache", "dispose"] as const)(
     }
   },
 );
+
+it.each([false, true])(
+  "removes only the section in the active store (personal=%s)",
+  async (personal) => {
+    const f = fixture(personal);
+    try {
+      await f.preferences.ensure();
+      await f.preferences.removeSection("work");
+      expect(f.preferences.snapshot().data).toMatchObject({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      });
+      if (personal) {
+        expect(f.removal).not.toHaveBeenCalled();
+        const event = f.publish.mock.calls.at(-1)?.[0];
+        if (!event) throw new Error("Missing personal group publication");
+        const saved = JSON.parse(event.content);
+        expect(saved.deleted).toBe(false);
+        expect(saved.value).toMatchObject({
+          type: "groups",
+          id: "personal",
+          groups: [],
+          assignments: {},
+        });
+        await f.preferences.refresh();
+        expect(f.preferences.snapshot().data?.groupSource).toBe("personal");
+      } else {
+        expect(f.removal).toHaveBeenCalledOnce();
+        expect(f.publish).not.toHaveBeenCalled();
+      }
+      expect(f.assignment).not.toHaveBeenCalled();
+      expect(f.star).not.toHaveBeenCalled();
+    } finally {
+      f.dispose();
+    }
+  },
+);
+it("rejects stale-source removal even when both stores use the same section ID", async () => {
+  const f = fixture(false);
+  try {
+    await f.preferences.ensure();
+    f.install(groups);
+    await expect(f.preferences.removeSection("work")).rejects.toThrow(
+      /source changed/,
+    );
+    expect(f.removal).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});

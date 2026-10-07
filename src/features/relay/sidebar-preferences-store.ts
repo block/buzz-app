@@ -3,6 +3,7 @@ import { projectSidebarPreferences } from "./sidebar-preferences";
 import type {
   SidebarAssignmentMutator,
   SidebarAssignmentIntent,
+  SidebarSectionRemovalMutator,
   SidebarStarMutator,
   SidebarMuteMutator,
   SidebarPreferences,
@@ -44,6 +45,7 @@ export function createSidebarPreferencesStore(
   writeMute?: SidebarMuteMutator,
   writeSort?: SidebarSortMutator,
   persistence?: HeadPersistence,
+  removeSection?: SidebarSectionRemovalMutator,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -327,6 +329,57 @@ export function createSidebarPreferencesStore(
     project();
     return run;
   }
+  async function removeSectionMutation(
+    sectionId: string,
+    signal?: AbortSignal,
+  ) {
+    if (
+      closed ||
+      !confirmed ||
+      readFailure !== undefined ||
+      snapshot.cached ||
+      !removeSection
+    )
+      throw new Error("Sidebar section removal is unavailable");
+    const section = confirmed.sections.find(({ id }) => id === sectionId);
+    if (!section) throw new Error("Sidebar section no longer exists");
+    const source = confirmed.groupSource ?? "legacy";
+    const writeGeneration = generation;
+    const writeSignal = AbortSignal.any([
+      writeLifetime.signal,
+      ...(signal ? [signal] : []),
+    ]);
+    writeSignal.throwIfAborted();
+    mutation++;
+    const run = writeQueue
+      .catch(() => {})
+      .then(async () => {
+        if (closed || generation !== writeGeneration)
+          throw new Error("Sidebar section removal is unavailable");
+        writeSignal.throwIfAborted();
+        const next = await removeSection(sectionId, writeSignal, source);
+        if (closed || generation !== writeGeneration)
+          throw new Error("Sidebar section removal is unavailable");
+        writeSignal.throwIfAborted();
+        if (!confirmed || (confirmed.groupSource ?? "legacy") !== source)
+          throw new Error(
+            "The active group source changed; refresh your sidebar before removing this section",
+          );
+        mutation++;
+        confirmed = {
+          ...confirmed,
+          sections: next.sections,
+          assignments: next.assignments,
+        };
+        project();
+        return retained(confirmed);
+      });
+    writeQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
   const restoreGeneration = generation;
   const ready = persistence
     ?.readStartup?.()
@@ -518,6 +571,16 @@ export function createSidebarPreferencesStore(
         signal?: AbortSignal,
       ) {
         return move(channelId, { createSection: section }, signal);
+      },
+      removeSection: removeSectionMutation,
+      get removeSectionWritable() {
+        return (
+          !closed &&
+          !!confirmed &&
+          readFailure === undefined &&
+          !snapshot.cached &&
+          !!removeSection
+        );
       },
       get starWritable() {
         return writable();

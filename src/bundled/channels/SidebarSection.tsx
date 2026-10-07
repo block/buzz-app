@@ -1,5 +1,5 @@
 import { FadingLabel } from "./FadingLabel";
-import { useId, useState, type ReactNode, type Ref } from "react";
+import { useId, useRef, useState, type ReactNode, type Ref } from "react";
 import {
   MenuIcon,
   MenuItem,
@@ -7,6 +7,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuRoot,
+  MenuSeparator,
   MenuSubmenu,
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
@@ -20,8 +21,11 @@ import {
   PlusIcon,
   TextAaIcon,
   TimerIcon,
+  TrashIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import type { RelaySession } from "../../features/relay/session";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import styles from "./Channels.module.css";
@@ -39,6 +43,7 @@ export function SidebarSection({
   sort,
   dropRef,
   dropTarget = false,
+  onRemove,
   children,
 }: {
   sectionKey: string;
@@ -48,6 +53,7 @@ export function SidebarSection({
   session?: RelaySession | undefined;
   open: boolean;
   onToggle: (open: boolean) => void;
+  onRemove?: (() => unknown) | undefined;
   createChannel?:
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
@@ -63,7 +69,25 @@ export function SidebarSection({
   children: ReactNode;
 }) {
   const id = useId();
+  const cancelRemove = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  const canRemove = !!onRemove && sectionKey.startsWith("group:");
+  const remove = async () => {
+    if (!onRemove || removing) return;
+    setRemoving(true);
+    setRemoveError("");
+    try {
+      await onRemove();
+      setRemoveOpen(false);
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoving(false);
+    }
+  };
   if (hideTitle)
     return (
       <div className={`${styles.channelSection} ${styles.untitledSection}`}>
@@ -178,6 +202,24 @@ export function SidebarSection({
                 </MenuIcon>
                 {open ? "Collapse section" : "Expand section"}
               </MenuItem>
+              {canRemove && (
+                <>
+                  <MenuSeparator />
+                  <MenuItem
+                    tone="danger"
+                    onClick={() => {
+                      setRemoveError("");
+                      setMenuOpen(false);
+                      setRemoveOpen(true);
+                    }}
+                  >
+                    <MenuIcon>
+                      <TrashIcon size={14} />
+                    </MenuIcon>
+                    Remove section
+                  </MenuItem>
+                </>
+              )}
             </MenuPopup>
           </MenuRoot>
           {newMessage && (
@@ -188,6 +230,45 @@ export function SidebarSection({
               onClick={newMessage}
               icon={<PlusIcon strokeWidth={2.5} size={15} />}
             />
+          )}
+          {canRemove && (
+            <Dialog
+              open={removeOpen}
+              onOpenChange={setRemoveOpen}
+              dismissOnOutsideClick
+              preventClose={removing}
+              initialFocus={cancelRemove}
+              finalFocus={false}
+              title={`Remove ${title}?`}
+              description={`Assigned channels will move back to Channels. This does not delete any channels or saved templates.`}
+              actions={
+                <>
+                  <Button
+                    ref={cancelRemove}
+                    type="button"
+                    disabled={removing}
+                    onClick={() => setRemoveOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    loading={removing}
+                    onClick={() => void remove()}
+                  >
+                    Remove section
+                  </Button>
+                </>
+              }
+            >
+              {removeError && <p role="alert">{removeError}</p>}
+              {removing && (
+                <p role="status" className="sr-only">
+                  Removing section and waiting for confirmation…
+                </p>
+              )}
+            </Dialog>
           )}
           {createChannel && (
             <IconButton

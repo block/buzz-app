@@ -1184,6 +1184,12 @@ function ReadySidebar({
                     session={queries}
                     open={!sidebar.collapsed.includes(section.key)}
                     onToggle={(open) => sidebar.toggle(section.key, open)}
+                    onRemove={
+                      preferences.removeSectionWritable &&
+                      section.key.startsWith("group:")
+                        ? () => preferences.removeSection(section.key.slice(6))
+                        : undefined
+                    }
                     createChannel={
                       isChannelSectionKey(section.key)
                         ? {

@@ -62,6 +62,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import {
   activeSidebarAssignment,
+  activeSidebarSectionRemoval,
   readActiveSidebarGroups,
 } from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -1231,6 +1232,23 @@ export function createRelaySession(
         : undefined;
     })(),
     options.persistence,
+    (() => {
+      const write = transport?.removeSidebarSection;
+      return write
+        ? activeSidebarSectionRemoval(
+            channelKit.capability,
+            (sectionId, signal) =>
+              write(
+                sectionId,
+                AbortSignal.any([
+                  lifetime.signal,
+                  AbortSignal.timeout(20_000),
+                  signal,
+                ]),
+              ),
+          )
+        : undefined;
+    })(),
   );
   let groupHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {

@@ -28,6 +28,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarAssignmentMutator,
+  type SidebarSectionRemovalWriter,
   type SidebarStarMutator,
   type SidebarSortMutator,
   type SidebarDecoder,
@@ -133,6 +134,7 @@ export interface ReadTransport {
   readonly writeSidebarMute?: SidebarMuteMutator;
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  readonly removeSidebarSection?: SidebarSectionRemovalWriter;
   readonly writeSidebarStar?: SidebarStarMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
@@ -896,6 +898,21 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.sidebarPreferenceWrites
       ? {
+          async removeSidebarSection(sectionId, signal) {
+            const result = await fetch(`${endpoint}/sidebar-section-removal`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sectionId }),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(
+              { version: 1, ...(await result.json()) },
+              undefined,
+            );
+          },
           async writeSidebarAssignment(intent, signal) {
             const result = await fetch(`${endpoint}/sidebar-assignment`, {
               method: "POST",

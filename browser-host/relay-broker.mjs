@@ -75,6 +75,8 @@ import { builderlabResponseStatus, createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   assertSidebarAssignmentIntent,
+  assertSidebarSectionRemovalIntent,
+  mutateSidebarSectionRemoval,
   mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_HEAD_BYTES,
@@ -1092,6 +1094,7 @@ export function relayBrokerPlugin({
           if (
             [
               "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
               "/api/relay/sidebar-mute",
@@ -1103,6 +1106,11 @@ export function relayBrokerPlugin({
                 "channel-sections",
                 assertSidebarAssignmentIntent,
                 mutateSidebarAssignment,
+              ],
+              "/api/relay/sidebar-section-removal": [
+                "channel-sections",
+                assertSidebarSectionRemovalIntent,
+                mutateSidebarSectionRemoval,
               ],
               "/api/relay/sidebar-star": [
                 "channel-stars",

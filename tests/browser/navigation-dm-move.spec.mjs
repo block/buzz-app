@@ -65,6 +65,7 @@ test("Move conversation saves a DM in a section and restores it there after relo
   expect((await starSaved).ok()).toBe(true);
   expect((await assignmentSaved).ok()).toBe(true);
   await expect(work).toBeVisible();
+  await expect(work).toBeFocused();
   await expect(directMessages).toHaveCount(0);
   await page.screenshot({
     path: test.info().outputPath("dm-moved-to-work.png"),
@@ -76,7 +77,33 @@ test("Move conversation saves a DM in a section and restores it there after relo
     ).blob.assignments,
   ).toEqual({ beta: "work", "dm-move": "work" });
 
+  await work.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move conversation" }).focus();
+  await page.keyboard.press("ArrowRight");
+  const returnDestinations = page.getByRole("menu", {
+    name: "Move conversation",
+    exact: true,
+  });
+  await expect(returnDestinations).toBeVisible();
+  const returnStarSaved = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/sidebar-star"),
+  );
+  const returnAssignmentSaved = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/sidebar-assignment"),
+  );
+  await returnDestinations
+    .getByRole("menuitemradio", { name: "Direct messages", exact: true })
+    .click();
+  expect((await returnStarSaved).ok()).toBe(true);
+  expect((await returnAssignmentSaved).ok()).toBe(true);
+  await expect(directMessages).toBeFocused();
+  await expect(work).toHaveCount(0);
+  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(2);
+  expect(app.report.sidebarPublications.at(-1).blob.assignments).toEqual({
+    beta: "work",
+  });
+
   await page.reload();
-  await expect(work).toBeVisible();
-  await expect(directMessages).toHaveCount(0);
+  await expect(directMessages).toBeVisible();
+  await expect(work).toHaveCount(0);
 });

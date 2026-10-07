@@ -627,11 +627,14 @@ function ReadySidebar({
   const focusChannelPlacement = (channelId: string) => {
     const data = queries.sidebarPreferences.snapshot().data;
     const sectionId = data?.assignments[channelId];
+    const channel = sidebarChannels.find((row) => row.id === channelId);
     const sectionKey = data?.starred.includes(channelId)
       ? "starred"
       : sectionId
         ? `group:${sectionId}`
-        : "channels";
+        : channel?.channelType === "dm"
+          ? "dms"
+          : "channels";
     sidebar.toggle(sectionKey, true);
     setRowFocus(channelId);
   };

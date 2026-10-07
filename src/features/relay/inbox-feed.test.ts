@@ -5,6 +5,7 @@ import type { RelayEvent, ReadFilter } from "./events";
 import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
+import { threadBinding } from "./thread-window";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -22,7 +23,7 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function setup() {
+function setup(channelId = "room", scope?: string) {
   const viewer = keypair(),
     relay = keypair(),
     alice = keypair();
@@ -38,6 +39,7 @@ function setup() {
     return pending.promise;
   });
   const owner = createRelaySession({
+    ...(scope ? { scope } : {}),
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     query,
@@ -50,8 +52,8 @@ function setup() {
   owners.push(owner);
   const admit = (members: string[], at = 10) =>
     live.receive([
-      roster(relay, "room", members, at),
-      metadata(relay, "room", "Room", at),
+      roster(relay, channelId, members, at),
+      metadata(relay, channelId, "Room", at),
     ]);
   return { ...owner, viewer, alice, relay, admit, calls, live, query };
 }
@@ -127,6 +129,52 @@ it("checks the viewer's later reply before presenting an older mention as unresp
   await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
   expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
   expect(h.session.channels.window("room").rows).toEqual([]);
+});
+it("checks a cold nested reply with only an intermediate parent tag", async () => {
+  const channelId = "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd";
+  const origin = "https://relay.test";
+  const h = setup(channelId, origin);
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, channelId, "assignment", 10);
+  const mention = message(h.alice, channelId, "needs input", 20, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const response = message(h.viewer, channelId, "nested answer", 30, [
+    ["e", mention.id, "", "reply"],
+  ]);
+  const query = h.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  h.query.mockImplementation(async (filters) => {
+    const filter = filters[0];
+    if (filter?.thread_window)
+      return [
+        mention,
+        response,
+        signed(h.relay, {
+          kind: 39007,
+          created_at: 31,
+          tags: [
+            ["d", await threadBinding(filter, origin, h.viewer.pubkey)],
+            ["h", channelId],
+            ["e", root.id],
+          ],
+          content: JSON.stringify({
+            version: 1,
+            direction: "older",
+            has_more: false,
+            next_cursor: null,
+          }),
+        }),
+      ];
+    if (filter?.ids?.includes(root.id)) return [root];
+    if (filter?.kinds?.includes(9) && filter["#e"]?.includes(root.id))
+      return filter.until === undefined ? [mention] : [];
+    return query(filters);
+  });
+  h.live.receive([root, mention]);
+  await h.session.inboxFeed.ensureResponses(h.session.unread.inbox().items);
+  expect(h.session.unread.inbox().items[0]?.mention?.unresponded).toBe(false);
 });
 it.each(["thread", "dm"])(
   "checks cold later replies for ordinary %s activity",

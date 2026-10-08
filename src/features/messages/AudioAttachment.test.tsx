@@ -14,6 +14,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AudioAttachment } from "./AudioAttachment";
 
+// No media listener: `media_stream_base` reports none.
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
+
 const source = "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Faudio.mp3";
 let play: ReturnType<typeof vi.spyOn>;
 let pause: ReturnType<typeof vi.spyOn>;
@@ -515,6 +518,20 @@ it("renders an unavailable card on load errors", () => {
   if (!audio) throw new Error("Missing audio element");
   fireEvent.error(audio);
   expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
+});
+
+it("renders an unavailable card for native audio without the media listener", async () => {
+  const native = `buzz-media://localhost/${encodeURIComponent("https://relay.test/media/" + "b".repeat(64) + ".mp3")}`;
+  const { container } = render(
+    <AudioAttachment
+      attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
+      source={native}
+    />,
+  );
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Audio unavailable",
+  );
+  expect(container.querySelector("audio")).toBeNull();
 });
 
 it("resets load failure and playback display when the source changes", async () => {

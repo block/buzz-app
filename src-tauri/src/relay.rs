@@ -25,8 +25,11 @@ pub(crate) use channel_writes::{
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_preparation;
+mod media_spool;
 mod upload_spool;
 pub(crate) use upload_spool::Spools;
+mod media_stream;
+pub(crate) use media_stream::{media_stream_base, MediaStream};
 mod project_git;
 pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
 type Result<T> = std::result::Result<T, String>;
@@ -1168,9 +1171,16 @@ async fn upload_file(
     read_response(response, 8192).await
 }
 
-/// Largest whole-file media response: the relay's document limit, which also
-/// covers images. Only video can be larger; `<video>` fetches it by `Range`.
+/// Largest whole-file media response buffered in memory: the relay's document
+/// limit, which also covers images. Video is read by `Range`; an origin that
+/// ignores it is spooled to disk up to `WHOLE_VIDEO_MAX` instead.
 const MAX_MEDIA: usize = 100 * 1024 * 1024;
+/// Largest video an origin that ignores `Range` may send whole: 500 MiB, the
+/// development broker's video limit. A video of exactly this size plays; a
+/// larger `Content-Length` gets 413 before any download, and a response
+/// without one is stopped and rejected with 413 once it passes this size.
+/// Edit this value to change the limit; it is compiled into the binary.
+const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
@@ -1193,7 +1203,9 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     let host = ctx.app_handle().state::<IdentityHost>().inner().clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, Some((start, end)))) => media_blocks::read(&host, &url, start, end).await,
+            Ok((url, Some((start, end)))) => {
+                media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
+            }
             Ok((url, None)) => fetch_media(&host, url, None).await,
             Err(status) => Err(status),
         };
@@ -1632,6 +1644,15 @@ async fn fetch_media(
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    buffer_media(send_media(host, url, range.as_deref()).await?).await
+}
+
+/// One freshly signed upstream GET; only a 200 or 206 is returned.
+async fn send_media(
+    host: &IdentityHost,
+    url: Url,
+    range: Option<&str>,
+) -> std::result::Result<reqwest::Response, u16> {
     let auth = blossom_auth(host, &url, "get", "Get buzz-media", Vec::new())
         .await
         .map_err(|_| 401u16)?;
@@ -1641,14 +1662,45 @@ async fn fetch_media(
         // Match the broker's whole-media deadline; large documents may take minutes.
         .timeout(Duration::from_secs(600))
         .header("Authorization", auth);
-    if let Some(range) = &range {
+    if let Some(range) = range {
         request = request.header("Range", range);
     }
-    let mut upstream = request.send().await.map_err(|_| 502u16)?;
+    let upstream = request.send().await.map_err(|_| 502u16)?;
     let status = upstream.status().as_u16();
     if !matches!(status, 200 | 206) {
         return Err(status);
     }
+    Ok(upstream)
+}
+
+/// The response type of an upstream media response, as `media_type` decides it.
+fn upstream_type(upstream: &reqwest::Response) -> (String, bool) {
+    media_type(
+        upstream
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+    )
+}
+
+/// Headers every `buzz-media` response carries, for an upstream `Content-Type`.
+fn media_headers(kind: String, disposition: bool) -> tauri::http::response::Builder {
+    let response = tauri::http::Response::builder()
+        .header("Content-Type", kind)
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff");
+    if disposition {
+        response.header("Content-Disposition", "attachment")
+    } else {
+        response
+    }
+}
+
+async fn buffer_media(
+    mut upstream: reqwest::Response,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let status = upstream.status().as_u16();
     let limit = if status == 206 {
         MAX_MEDIA_RANGE
     } else {
@@ -1660,24 +1712,13 @@ async fn fetch_media(
     {
         return Err(413);
     }
-    let header = |name: &str| {
-        upstream
-            .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned)
-    };
-    let (kind, disposition) = media_type(header("content-type").as_deref());
-    let mut response = tauri::http::Response::builder()
-        .status(status)
-        .header("Content-Type", kind)
-        .header("Accept-Ranges", "bytes")
-        .header("Cache-Control", "private, max-age=3600")
-        .header("X-Content-Type-Options", "nosniff");
-    if disposition {
-        response = response.header("Content-Disposition", "attachment");
-    }
-    if let Some(value) = header("content-range") {
+    let (kind, disposition) = upstream_type(&upstream);
+    let mut response = media_headers(kind, disposition).status(status);
+    if let Some(value) = upstream
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+    {
         response = response.header("Content-Range", value);
     }
     let mut body = Vec::new();

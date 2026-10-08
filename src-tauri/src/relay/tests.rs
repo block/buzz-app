@@ -1974,7 +1974,7 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
 
 /// Serves `blob` by `Range`, failing the first `failures` requests with 503,
 /// and records every upstream `Range` header.
-fn ranged_media_server(
+pub(super) fn ranged_media_server(
     blob: Vec<u8>,
     failures: usize,
 ) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
@@ -2030,7 +2030,7 @@ fn ranged_media_server(
     (base, ranges)
 }
 
-fn media_blob(length: u64) -> Vec<u8> {
+pub(super) fn media_blob(length: u64) -> Vec<u8> {
     (0..length).map(|index| (index % 251) as u8).collect()
 }
 
@@ -2044,15 +2044,21 @@ async fn tiny_media_reads_share_one_signed_block_fetch() {
     let host = IdentityHost::fixture();
     // AVFoundation's opening reads, two of them racing from separate players.
     let (header, atom) = tokio::join!(
-        media_blocks::read(&host, &url, 0, 7),
-        media_blocks::read(&host, &url, 32, 39),
+        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX),
+        media_blocks::read(&host, &url, 32, 39, WHOLE_VIDEO_MAX),
     );
     let (header, atom) = (header.unwrap(), atom.unwrap());
     assert_eq!(header.body(), &blob[0..8]);
     assert_eq!(atom.body(), &blob[32..40]);
-    let tail = media_blocks::read(&host, &url, 2990, 2990 + 4 * 1024 * 1024 - 1)
-        .await
-        .unwrap();
+    let tail = media_blocks::read(
+        &host,
+        &url,
+        2990,
+        2990 + 4 * 1024 * 1024 - 1,
+        WHOLE_VIDEO_MAX,
+    )
+    .await
+    .unwrap();
     assert_eq!(tail.status(), 206);
     assert_eq!(tail.body(), &blob[2990..]);
     let header = |name| tail.headers().get(name).unwrap().to_str().unwrap();
@@ -2075,7 +2081,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         .join(&format!("/media/{}.mp4", "d".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let across = media_blocks::read(&host, &url, block - 4, block + 3)
+    let across = media_blocks::read(&host, &url, block - 4, block + 3, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(across.body(), &blob[block as usize - 4..block as usize + 4]);
@@ -2084,7 +2090,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         format!("bytes {}-{}/{}", block - 4, block + 3, block + 100)
     );
     assert_eq!(
-        media_blocks::read(&host, &url, block + 100, block + 200)
+        media_blocks::read(&host, &url, block + 100, block + 200, WHOLE_VIDEO_MAX)
             .await
             .unwrap_err(),
         416
@@ -2107,10 +2113,14 @@ async fn failed_media_blocks_are_fetched_again() {
         .unwrap();
     let host = IdentityHost::fixture();
     assert_eq!(
-        media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+            .await
+            .unwrap_err(),
         503
     );
-    let retried = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    let retried = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
     assert_eq!(retried.body(), &blob[..8]);
     assert_eq!(ranges.lock().unwrap().len(), 2);
 }
@@ -2141,7 +2151,7 @@ fn scripted_media_server(
     (base, served)
 }
 
-fn media_response(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+pub(super) fn media_response(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
     let mut response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\n{headers}Connection: close\r\n\r\n"
     )
@@ -2155,14 +2165,23 @@ async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
     let block = media_blocks::BLOCK;
     for (name, length) in [("f", 64), ("0", block + 64)] {
         let blob = media_blob(length);
-        let whole = media_response("200 OK", &format!("Content-Length: {length}\r\n"), &blob);
+        let whole = String::from_utf8_lossy(&media_response(
+            "200 OK",
+            &format!("Content-Length: {length}\r\n"),
+            &[],
+        ))
+        .replace("video/mp4", "audio/mpeg")
+        .into_bytes();
+        let whole = [whole, blob.clone()].concat();
         let (base, served) = scripted_media_server(vec![whole.clone(), whole]);
         let url = base
-            .join(&format!("/media/{}.mp4", name.repeat(64)))
+            .join(&format!("/media/{}.mp3", name.repeat(64)))
             .unwrap();
         let host = IdentityHost::fixture();
         for _ in 0..2 {
-            let response = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+            let response = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+                .await
+                .unwrap();
             assert_eq!(response.status(), 200);
             assert_eq!(response.body(), &blob);
             assert!(response.headers().get("content-range").is_none());
@@ -2170,6 +2189,447 @@ async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
         // A whole response is never cached as a block.
         assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
+}
+
+/// Spool tests share the process-wide spool list and open-file count.
+pub(super) static SPOOL_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Ignores `Range` and sends `blob` whole as a 200, with `length` as its
+/// `Content-Length`, in 64 KiB writes `pace` apart. Counts requests and
+/// connections the client hung up on.
+pub(super) fn whole_media_server(
+    blob: Vec<u8>,
+    length: Option<u64>,
+    pace: Duration,
+) -> (
+    Url,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use std::sync::{atomic::AtomicUsize, atomic::Ordering, Arc};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let (served, hung_up) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (count, hangups) = (served.clone(), hung_up.clone());
+    let blob = Arc::new(blob);
+    std::thread::spawn(move || {
+        for socket in listener.incoming() {
+            let mut socket = socket.unwrap();
+            let (blob, count, hangups) = (blob.clone(), count.clone(), hangups.clone());
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 4096];
+                while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                }
+                assert!(String::from_utf8_lossy(&bytes).contains("range: bytes="));
+                count.fetch_add(1, Ordering::SeqCst);
+                let length = length.map_or(String::new(), |length| {
+                    format!("Content-Length: {length}\r\n")
+                });
+                let head = media_response("200 OK", &length, &[]);
+                let sent = socket.write_all(&head).and_then(|()| {
+                    for chunk in blob.chunks(64 * 1024) {
+                        socket.write_all(chunk)?;
+                        socket.flush()?;
+                        std::thread::sleep(pace);
+                    }
+                    Ok(())
+                });
+                if sent.is_err() {
+                    hangups.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+        }
+    });
+    (base, served, hung_up)
+}
+
+/// Waits for every spool file to be deleted, as idle eviction must do.
+pub(super) async fn spool_files_deleted() {
+    for _ in 0..100 {
+        if media_spool::open_files() == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{} spool files remain", media_spool::open_files());
+}
+
+#[tokio::test]
+async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let block = media_blocks::BLOCK;
+    let length = 3 * block + 17;
+    let blob = media_blob(length);
+    let (base, served, _) = whole_media_server(blob.clone(), Some(length), Duration::ZERO);
+    let url = base
+        .join(&format!("/media/{}.mp4", "2".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let limit = WHOLE_VIDEO_MAX;
+    // Two players open the video at once; they share one spool.
+    let (header, tail) = tokio::join!(
+        media_blocks::read(&host, &url, 0, 7, limit),
+        media_blocks::read(&host, &url, length - 8, length + 100, limit),
+    );
+    let (header, tail) = (header.unwrap(), tail.unwrap());
+    assert_eq!(header.status(), 206);
+    assert_eq!(header.body(), &blob[..8]);
+    assert_eq!(
+        header.headers()["content-range"],
+        format!("bytes 0-7/{length}")
+    );
+    assert_eq!(header.headers()["content-type"], "video/mp4");
+    assert_eq!(header.headers()["accept-ranges"], "bytes");
+    assert_eq!(header.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(tail.body(), &blob[length as usize - 8..]);
+    assert_eq!(
+        tail.headers()["content-range"],
+        format!("bytes {}-{}/{length}", length - 8, length - 1)
+    );
+    // A seek across blocks reads the same file.
+    let seek = media_blocks::read(&host, &url, 2 * block - 4, 2 * block + 3, limit)
+        .await
+        .unwrap();
+    assert_eq!(
+        seek.body(),
+        &blob[2 * block as usize - 4..2 * block as usize + 4]
+    );
+    assert_eq!(
+        media_blocks::read(&host, &url, length, length + 8, limit)
+            .await
+            .unwrap_err(),
+        416
+    );
+    assert!(served.load(std::sync::atomic::Ordering::SeqCst) <= 2);
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
+async fn whole_videos_follow_the_configured_limit_boundary() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let host = IdentityHost::fixture();
+    // A configured limit other than the default.
+    let limit = 2 * media_blocks::BLOCK + 5;
+    for (name, length, sent_length, expected) in [
+        ("3", limit, true, Ok(())),
+        ("4", limit + 1, true, Err(413)),
+        ("5", limit, false, Ok(())),
+        ("6", limit + 1, false, Err(413)),
+    ] {
+        let blob = media_blob(length);
+        let (base, served, _) =
+            whole_media_server(blob.clone(), sent_length.then_some(length), Duration::ZERO);
+        let url = base
+            .join(&format!("/media/{}.mp4", name.repeat(64)))
+            .unwrap();
+        let read = media_blocks::read(&host, &url, length - 4, length - 1, limit).await;
+        match expected {
+            Ok(()) => {
+                let read = read.unwrap();
+                assert_eq!(read.body(), &blob[length as usize - 4..], "{name}");
+                assert_eq!(
+                    read.headers()["content-range"],
+                    format!("bytes {}-{}/{length}", length - 4, length - 1)
+                );
+            }
+            Err(status) => {
+                assert_eq!(read.unwrap_err(), status, "{name}");
+                // A rejected video is fetched again, never answered from a spool.
+                assert_eq!(
+                    media_blocks::read(&host, &url, 0, 7, limit)
+                        .await
+                        .unwrap_err(),
+                    status
+                );
+                assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+            }
+        }
+    }
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
+async fn truncated_whole_videos_fail_and_are_fetched_again() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(media_blocks::BLOCK + 9);
+    let length = blob.len() as u64 + 10;
+    let (base, served, _) = whole_media_server(blob, Some(length), Duration::ZERO);
+    let url = base
+        .join(&format!("/media/{}.mp4", "7".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    for _ in 0..2 {
+        assert_eq!(
+            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX)
+                .await
+                .unwrap_err(),
+            502
+        );
+    }
+    assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
+async fn abandoned_whole_video_downloads_stop_and_delete_their_file() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(16 * media_blocks::BLOCK);
+    let length = blob.len() as u64;
+    // 64 KiB per 20 ms: the whole video would take over five seconds.
+    let (base, _, hung_up) =
+        whole_media_server(blob.clone(), Some(length), Duration::from_millis(20));
+    let url = base
+        .join(&format!("/media/{}.mp4", "8".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
+    assert_eq!(first.body(), &blob[..8]);
+    assert_eq!(media_spool::open_files(), 1);
+    // The player closes: no further reads arrive.
+    spool_files_deleted().await;
+    for _ in 0..100 {
+        if hung_up.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the abandoned download kept its upstream connection");
+}
+
+/// Waits until the server has seen `count` hang-ups.
+pub(super) async fn hung_up(hung_up: &std::sync::atomic::AtomicUsize, count: usize) {
+    for _ in 0..100 {
+        if hung_up.load(std::sync::atomic::Ordering::SeqCst) >= count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("an abandoned download kept its upstream connection");
+}
+
+pub(super) async fn spool_files_reach(count: usize) {
+    for _ in 0..100 {
+        if media_spool::open_files() == count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "{} spool files, expected {count}",
+        media_spool::open_files()
+    );
+}
+
+#[tokio::test]
+async fn a_third_live_video_evicts_the_oldest_download_and_its_file() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(media_blocks::BLOCK);
+    let length = blob.len() as u64;
+    // Without a length every read waits for the whole copy, about 0.6 s here.
+    let (base, _, hangups) = whole_media_server(blob.clone(), None, Duration::from_millis(40));
+    let host = std::sync::Arc::new(IdentityHost::fixture());
+    let load = |name: &str| {
+        let url = base
+            .join(&format!("/media/{}.mp4", name.repeat(64)))
+            .unwrap();
+        let host = host.clone();
+        tokio::spawn(async move {
+            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await
+        })
+    };
+    let first = load("a");
+    spool_files_reach(1).await;
+    let second = load("b");
+    spool_files_reach(2).await;
+    let third = load("c");
+    // Admitting the third waits for the oldest file to be deleted.
+    let mut most = 0;
+    while !third.is_finished() {
+        most = most.max(media_spool::open_files());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(most <= 2, "{most} spool files");
+    assert_eq!(first.await.unwrap().unwrap_err(), 503);
+    for load in [second.await.unwrap(), third.await.unwrap()] {
+        assert_eq!(load.unwrap().body(), &blob[length as usize - 4..]);
+    }
+    hung_up(&hangups, 1).await;
+    spool_files_deleted().await;
+}
+
+/// Sends `blob` whole to the first two requests, but only once both have
+/// arrived, so their two 200 heads reach the client together.
+fn paired_whole_media_server(blob: Vec<u8>) -> Url {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    std::thread::spawn(move || {
+        let mut sockets: Vec<_> = listener
+            .incoming()
+            .take(2)
+            .map(|socket| socket.unwrap())
+            .collect();
+        for socket in &mut sockets {
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+        }
+        let length = format!("Content-Length: {}\r\n", blob.len());
+        for socket in &mut sockets {
+            socket
+                .write_all(&media_response("200 OK", &length, &[]))
+                .unwrap();
+        }
+        let blob = std::sync::Arc::new(blob);
+        for mut socket in sockets {
+            let blob = blob.clone();
+            std::thread::spawn(move || socket.write_all(&blob));
+        }
+    });
+    base
+}
+
+#[tokio::test]
+async fn concurrent_opens_of_one_new_video_evict_only_one_player() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(2 * media_blocks::BLOCK + 17);
+    let length = blob.len() as u64;
+    // Without a length every read of these waits for the whole copy (1.3 s).
+    let (old, _, _) = whole_media_server(blob.clone(), None, Duration::from_millis(40));
+    let new = paired_whole_media_server(blob.clone());
+    let url = |base: &Url, name: &str| {
+        base.join(&format!("/media/{}.mp4", name.repeat(64)))
+            .unwrap()
+    };
+    let urls = [url(&old, "d"), url(&old, "e"), url(&new, "f")];
+    let host = std::sync::Arc::new(IdentityHost::fixture());
+    let load = |url: &Url, start: u64, end: u64| {
+        let (host, url) = (host.clone(), url.clone());
+        tokio::spawn(
+            async move { media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await },
+        )
+    };
+    let first = load(&urls[0], length - 4, length - 1);
+    spool_files_reach(1).await;
+    let second = load(&urls[1], length - 4, length - 1);
+    spool_files_reach(2).await;
+    // Holding both spools keeps their files, so the first admission of the
+    // third video waits for a file while the second one arrives.
+    let pinned = [
+        media_spool::cached(&urls[0]).unwrap(),
+        media_spool::cached(&urls[1]).unwrap(),
+    ];
+    // As the players' connections would, past their reads.
+    let holds = [
+        media_spool::hold(&urls[0]).unwrap(),
+        media_spool::hold(&urls[1]).unwrap(),
+    ];
+    // Reads in two blocks of a third video fetch separately; both upstream
+    // 200s reach admission together while both files are taken.
+    let opening = load(&urls[2], 0, 7);
+    let seek = load(&urls[2], length - 4, length - 1);
+    while !first.is_finished() && !second.is_finished() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // Room for a second, unneeded eviction to show before the files free up.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !(first.is_finished() && second.is_finished()),
+        "one player's spool is enough to make room"
+    );
+    drop(pinned);
+    assert_eq!(opening.await.unwrap().unwrap().body(), &blob[..8]);
+    assert_eq!(
+        seek.await.unwrap().unwrap().body(),
+        &blob[length as usize - 4..]
+    );
+    // The new player's connection, while the old players' copies finish.
+    let new_hold = media_spool::hold(&urls[2]).unwrap();
+    let old_reads = [first.await.unwrap(), second.await.unwrap()];
+    let evicted = old_reads
+        .iter()
+        .filter(|read| read.as_ref().err() == Some(&503))
+        .count();
+    assert_eq!(evicted, 1);
+    for read in old_reads.into_iter().flatten() {
+        assert_eq!(read.body(), &blob[length as usize - 4..]);
+    }
+    assert_eq!(media_spool::open_files(), 2);
+    drop(new_hold);
+    drop(holds);
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
+async fn a_closed_player_waiting_for_an_unknown_length_stops_the_download() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(16 * media_blocks::BLOCK);
+    // Over five seconds to copy.
+    let (base, _, hangups) = whole_media_server(blob, None, Duration::from_millis(20));
+    let url = base
+        .join(&format!("/media/{}.mp4", "9".repeat(64)))
+        .unwrap();
+    let host = std::sync::Arc::new(IdentityHost::fixture());
+    let read = {
+        let (host, url) = (host.clone(), url.clone());
+        tokio::spawn(async move { media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX).await })
+    };
+    spool_files_reach(1).await;
+    // The player's connection closes, dropping the read it waits on.
+    read.abort();
+    assert!(read.await.unwrap_err().is_cancelled());
+    spool_files_deleted().await;
+    hung_up(&hangups, 1).await;
+}
+
+#[tokio::test]
+async fn a_closed_player_waiting_on_a_seek_stops_the_download() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(16 * media_blocks::BLOCK);
+    let length = blob.len() as u64;
+    let (base, _, hangups) =
+        whole_media_server(blob.clone(), Some(length), Duration::from_millis(20));
+    let url = base
+        .join(&format!("/media/{}.mp4", "a".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
+    assert_eq!(first.body(), &blob[..8]);
+    // A seek near the end waits for bytes; then the player closes.
+    let seek = media_blocks::read(&host, &url, length - 8, length - 1, WHOLE_VIDEO_MAX);
+    assert!(tokio::time::timeout(Duration::from_millis(500), seek)
+        .await
+        .is_err());
+    spool_files_deleted().await;
+    hung_up(&hangups, 1).await;
+}
+
+#[tokio::test]
+async fn a_waiting_read_keeps_a_slow_download_alive() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let blob = media_blob(8 * media_blocks::BLOCK);
+    let length = blob.len() as u64;
+    // About 2.6 s to copy, over twice the idle window.
+    let (base, _, hangups) = whole_media_server(blob.clone(), None, Duration::from_millis(20));
+    let url = base
+        .join(&format!("/media/{}.mp4", "b".repeat(64)))
+        .unwrap();
+    let host = IdentityHost::fixture();
+    let read = media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await;
+    assert_eq!(read.unwrap().body(), &blob[length as usize - 4..]);
+    assert_eq!(hangups.load(std::sync::atomic::Ordering::SeqCst), 0);
+    spool_files_deleted().await;
 }
 
 #[tokio::test]
@@ -2218,17 +2678,21 @@ async fn invalid_partial_media_blocks_are_rejected_and_retried() {
     let host = IdentityHost::fixture();
     for status in expected.iter() {
         assert_eq!(
-            media_blocks::read(&host, &url, 0, 7).await.unwrap_err(),
+            media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+                .await
+                .unwrap_err(),
             *status
         );
     }
-    let read = media_blocks::read(&host, &url, 0, 7).await.unwrap();
+    let read = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
     assert_eq!(read.status(), 206);
     assert_eq!(read.body(), &blob[..8]);
     assert_eq!(read.headers()["content-range"], "bytes 0-7/3000");
     // Rejections were never cached; the valid block now is.
     assert_eq!(
-        media_blocks::read(&host, &url, 2992, 2999)
+        media_blocks::read(&host, &url, 2992, 2999, WHOLE_VIDEO_MAX)
             .await
             .unwrap()
             .body(),

@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   ProbeDto,
   RelayStaffBackend,
@@ -29,6 +29,7 @@ type Handler = (
 ) => StaffOutcome<unknown> | Promise<StaffOutcome<unknown>>;
 let routes: Partial<Record<StaffRequest["route"], Handler>>;
 let calls: StaffRequest[];
+let saved: string[];
 
 const ok = (value: unknown): StaffOutcome<unknown> => ({ ok: true, value });
 function fail(patch: Partial<StaffFailure>): StaffOutcome<unknown> {
@@ -73,8 +74,13 @@ const backend: RelayStaffBackend = {
       ? handler(request)
       : fail({ message: `no ${request.route}` });
   }) as RelayStaffBackend["request"],
-  attachment: async () => fail({}) as never,
-  saveAttachment: async () => ({ state: "cancelled" }),
+  attachment: (async () => {
+    return ok(new Uint8Array([1, 2, 3]));
+  }) as RelayStaffBackend["attachment"],
+  saveAttachment: async (_context, ref) => {
+    saved.push(ref.sha256);
+    return { state: "saved" };
+  },
 };
 
 function mount() {
@@ -92,6 +98,7 @@ const sent = (route: StaffRequest["route"]) =>
 
 beforeEach(() => {
   calls = [];
+  saved = [];
   routes = {
     probe: () => probe(),
     listReports: () => ok([]),
@@ -318,4 +325,208 @@ it("refuses to review a staff target", async () => {
     await screen.findByText(/Relay staff can't be banned/),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
+});
+
+const report = {
+  id: "r1",
+  communityId: "c1",
+  communityHost: "team.example.com",
+  reportEventId: "e".repeat(64),
+  reporterPubkey: member,
+  targetKind: "pubkey",
+  target: member,
+  channelId: null,
+  reportType: "spam",
+  status: "open",
+  createdAt: "2026-10-08T00:00:00Z",
+};
+const failedAction = {
+  id: "act1",
+  requestId: "q1",
+  actorPubkey: signer,
+  actorRole: "moderator",
+  action: "ban",
+  status: "failed",
+  reason: null,
+  expiresAt: null,
+  errorMessage: "relay timeout",
+  createdAt: "2026-10-08T00:00:00Z",
+  updatedAt: "2026-10-08T00:00:00Z",
+};
+
+async function openReport() {
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+}
+
+it("an ambiguous resolve is retried with the same request id", async () => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  let first = true;
+  routes.resolveReport = () => {
+    if (!first) return ok({ status: "resolved", activeAction: null });
+    first = false;
+    return fail({
+      category: "ambiguous",
+      status: null,
+      bodyComplete: false,
+      message: "",
+    });
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
+  expect(
+    screen.getByText("Sent verbatim to the affected user."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Retry: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
+  const [a, b] = sent("resolveReport");
+  expect(a).toEqual(b);
+  expect(a).toMatchObject({ id: "r1", action: "ban" });
+});
+
+it("a definite rejection releases the frozen resolve", async () => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  routes.resolveReport = () => fail({ status: 422, code: "invalid" });
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+  expect(
+    screen.getByText("Sent verbatim to the reporter."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Dismiss/ }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /Confirm: Dismiss/ }),
+    ).toBeEnabled(),
+  );
+  expect(
+    screen.queryByRole("button", { name: /Retry/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("offers only the actions a target kind allows", async () => {
+  routes.listReports = () =>
+    ok([{ ...report, targetKind: "blob", target: "x" }]);
+  routes.getReport = () => ok({ ...report, targetKind: "blob", target: "x" });
+  await openReport();
+  await screen.findByRole("button", { name: "Dismiss" });
+  expect(screen.getByRole("button", { name: "Escalate" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Ban" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Delete" }),
+  ).not.toBeInTheDocument();
+});
+
+it("cancels a failed enforcement by its action id", async () => {
+  const failed = {
+    ...report,
+    status: "processing",
+    actionId: "act1",
+    activeAction: failedAction,
+  };
+  routes.listReports = () => ok([failed]);
+  routes.getReport = () => ok(failed);
+  routes.cancelReport = () => ok({ status: "open", activeAction: null });
+  await openReport();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Cancel and reopen" }),
+  );
+  await waitFor(() =>
+    expect(sent("cancelReport")).toEqual([
+      { route: "cancelReport", id: "r1", actionId: "act1" },
+    ]),
+  );
+  await waitFor(() => expect(sent("getReport").length).toBeGreaterThan(1));
+});
+
+it("changes feedback status and previews and saves attachments", async () => {
+  const sha = "f".repeat(64);
+  const revoke = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: () => "blob:x",
+      revokeObjectURL: revoke,
+    }),
+  );
+  routes.listFeedback = () =>
+    ok([
+      {
+        id: "f1",
+        communityId: "c1",
+        communityHost: "team.example.com",
+        submitterPubkey: member,
+        bodySummary: "Broken",
+        status: "new",
+        receivedAt: "2026-10-08T00:00:00Z",
+      },
+    ]);
+  routes.getFeedback = () =>
+    ok({
+      id: "f1",
+      communityId: "c1",
+      communityHost: "team.example.com",
+      eventId: "e".repeat(64),
+      submitterPubkey: member,
+      body: "Broken",
+      status: "new",
+      tags: [["imeta", `x ${sha}`, "m image/png", "size 3"]],
+      eventCreatedAt: "2026-10-08T00:00:00Z",
+      receivedAt: "2026-10-08T00:00:00Z",
+    });
+  routes.setFeedbackStatus = (request) =>
+    ok({ status: (request as { status: string }).status });
+  mount();
+  fireEvent.click(await screen.findByRole("tab", { name: "Feedback" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Broken/ }));
+  expect(await screen.findByAltText("Feedback attachment")).toHaveAttribute(
+    "src",
+    "blob:x",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "reviewed" }));
+  await waitFor(() =>
+    expect(sent("setFeedbackStatus")).toEqual([
+      { route: "setFeedbackStatus", id: "f1", status: "reviewed" },
+    ]),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saved).toEqual([sha]));
+  cleanup();
+  expect(revoke).toHaveBeenCalledWith("blob:x");
+});
+
+it("config-backed staff can't be removed, and removing yourself re-probes", async () => {
+  const fixedKey = "c".repeat(64);
+  routes.probe = () => probe({ role: "operator", canStaff: true });
+  routes.listOperators = () =>
+    ok([
+      { pubkey: fixedKey, effectiveRole: "operator", sources: ["config"] },
+      { pubkey: signer, effectiveRole: "operator", sources: ["db"] },
+    ]);
+  routes.deleteOperator = () => ok(null);
+  mount();
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2),
+  );
+  const [fixed, self] = screen.getAllByRole("button", {
+    name: "Remove",
+  }) as HTMLElement[];
+  expect(fixed).toBeDisabled();
+  fireEvent.click(self as HTMLElement);
+  expect(
+    await screen.findByText(/removing your own staff access/),
+  ).toBeInTheDocument();
+  const confirm = screen
+    .getAllByRole("button", { name: "Remove" })
+    .at(-1) as HTMLElement;
+  fireEvent.click(confirm);
+  await waitFor(() =>
+    expect(sent("deleteOperator")).toEqual([
+      { route: "deleteOperator", pubkey: signer },
+    ]),
+  );
+  await waitFor(() => expect(sent("probe")).toHaveLength(2));
 });

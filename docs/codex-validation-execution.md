@@ -1,0 +1,70 @@
+# Codex persistence and execution
+
+The October 8, 2026 simplification replaces the earlier mandatory connection
+validation contract. Create and Save follow the existing Claude lifecycle:
+persist the requested configuration, then report execution errors through Start
+or the existing restart controls. They send no inference prompt and require no
+single-use validation proof. Native structural validation, owner authorization,
+revision checks, and credential custody still apply.
+
+## Configuration and execution
+
+Default saves no model or effort override. The selected CLI reads its effective
+configuration at each Start. Advanced retains an explicit model and either a
+reported effort value or explicit absence of effort support. Model discovery
+uses ACP configuration metadata and sends no prompt. Saved choices survive an
+unavailable catalog. Runtime arguments carry the requested Advanced settings;
+Buzz retains the runtime's existing fallback behavior.
+
+Every existing agent keeps its saved adapter command. Start and model discovery
+resolve that command, its interpreter, the installed CLI, workspace, and allowed
+environment. Installing a different global adapter changes the choice for new
+agents and Settings checks, not existing agents. A missing saved adapter fails
+Start without switching adapters. Editing the harness is an explicit choice.
+An app-managed adapter continues to use managed Node, and CODEX_PATH continues
+to select the user's CLI rather than an adapter-bundled engine.
+
+Save uses the shared compare-and-swap persistence path. Saving a running agent
+uses the shared restart path; restart failure leaves the saved revision intact
+and visible through existing error/retry controls. A saved native Codex record
+cannot remove or change its integration marker to escape its configuration
+contract. Stopped agents stay stopped on Save.
+
+Start rechecks the saved binding, installed versions, CLI sign-in and ACP
+initialization. It does not send a test prompt. The runtime's normal conversation
+path owns inference. Its failures remain visible in existing status/log controls.
+
+## Create recovery
+
+The existing native Create recovery owner remains. Before writing a Codex key,
+the host persists a nonsecret journal binding the request ID, relay destination,
+owner, identity, and exact submitted edit. The journal stores a hash, not
+plaintext settings or authentication. Resume requires the original input and
+fresh signed owner authorization, verifies the durable key, and reuses the
+identity. Duplicate completed requests use the durable receipt. Changed input
+is rejected, and missing keys require explicit discard.
+
+Recovery no longer resolves the current installation or account: a configuration
+can be saved while tools are unavailable. The commitment format is version 2.
+Pending journals from the unreleased validation stack require explicit discard
+and a fresh Create. Existing saved agents remain readable. Old completed receipts
+are not silently accepted for a different input or used to create another identity.
+
+## Deliberately removed
+
+The inference validation service, single-use proof admission, validation UI and
+cancellation states, and inference-only ACP helpers are removed. PR #670's
+observed-settings feature is removed. Requested settings remain configuration;
+they are not presented as runtime observations. PR #724's adapter installer,
+Settings status, managed Node, release activation and install/quit ownership
+remain in place.
+
+## Acceptance boundaries
+
+Controlled tests exercise native IPC persistence, authorization, failed durable
+writes, fresh-host recovery, revision conflicts and configuration intent. The
+saved-adapter regression exercises real controller resolution after a global
+adapter appears and after the saved adapter is removed. Browser fixtures exercise
+Create/Edit wiring and keyboard model/effort selection. They do not establish
+real Keychain access, a successful Codex conversation or signed relay delivery.
+See [Create and Edit acceptance](codex-create-edit-ui.md) for the human workflow.

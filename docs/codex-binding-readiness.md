@@ -1,0 +1,140 @@
+# Codex binding readiness
+
+Codex is a native integration. New selection requires installed tools; Create
+and Save require no inference check. Settings verifies the globally selected
+tools and existing CLI login. Start verifies the saved agent binding.
+
+## Binding contract
+
+The native controller resolves one `CodexContext` for each check. It contains
+canonical paths for the selected `codex-acp` adapter, `codex` CLI, any script
+interpreters, the workspace, and the effective process environment. Adapter
+commands receive the selected CLI through `CODEX_PATH`; there is no fallback to
+an engine bundled with the adapter. Script interpreters are resolved explicitly,
+and both adapter and CLI interpreter directories are included in the isolated
+`PATH`. This readiness implementation currently runs on Unix platforms. Other
+platforms report unsupported and keep Codex creation disabled.
+
+The process environment starts empty. Buzz passes only the operating-system and
+Codex home/configuration roots needed by the selected tools, then adds
+`CODEX_PATH`, `INITIAL_AGENT_MODE=agent-full-access`, and the shared machine tool
+path behind the exact bound interpreter and runtime paths. Provider credentials are not projected by this layer. Any ambient or
+explicit `CODEX_CONFIG` value, including an empty value, is rejected until
+readiness can apply and validate those session overrides against the same
+configuration used by the adapter.
+
+## Adapter lookup and Install
+
+Settings readiness and new harness selection share the installer lookup, as
+Claude Code does. A user-installed
+`codex-acp` wins; Buzz searches `~/.local/bin`, the discovered login-shell
+PATH, the app's inherited PATH,
+`/opt/homebrew/bin`, then `/usr/local/bin`. Otherwise Buzz uses the app-owned
+adapter at `<app data>/codex-tools/bin/codex-acp`, but only when its pinned
+managed Node is also installed. An app-owned adapter always runs on that Node;
+the CLI keeps its own interpreter. Buzz never installs the Codex CLI. The CLI is
+resolved from the same user directories.
+
+When readiness reports **Adapter needed**, Settings offers **Install** on macOS
+and Linux. It reuses the checksum-verified managed Node and installs
+`@agentclientprotocol/codex-acp@2.1.1` into a new `codex-tools/releases`
+directory. As with Claude Code, npm also installs the adapter's bundled platform
+binaries, including about 330 MB for its own Codex CLI. Buzz never runs that CLI
+because it always sets `CODEX_PATH`. The launcher must pass `--version` before
+activation. A failed
+install keeps the previous release and shows the private install log. Success
+rechecks readiness, so no `PATH` change or symlink is needed. Install shares the
+native install/quit owner with Pi and Claude Code. If a user-installed adapter
+exists, Install refuses and the user updates it in their terminal. An
+incompatible user adapter therefore keeps the manual recovery message. Adding
+or removing a user adapter changes new selections. Existing agents keep their
+saved command for model discovery and Start, including its managed Node binding.
+A missing saved adapter is a Start error; it never triggers silent fallback.
+
+`HarnessIntegration::Codex` is the policy authority. An editable command basename
+does not grant Codex policy or full-access behavior. Default delegates model and effort to the CLI. Advanced stores the selected
+model and model-specific effort intent.
+
+Context equality fences values used within one operation. It does not prove that
+configuration files or authentication remained unchanged. Model discovery and execution resolve the saved context for each operation.
+
+## Readiness check
+
+Settings runs the check once when the page opens and again only when the user
+selects **Check again**. Ordinary agent snapshots and lifecycle polling remain
+passive. A check performs these bounded steps in order:
+
+1. Resolve the exact adapter, CLI, interpreters, workspace, and environment.
+2. Require an exact `@agentclientprotocol/codex-acp` version identity at 1.10.0
+   or later.
+3. Require an exact `codex-cli` version identity.
+4. Run `codex login status` before adapter initialization so logout and malformed
+   configuration keep their distinct meanings.
+5. Send ACP `initialize` and require protocol version 1 plus the same adapter
+   version reported by the version probe.
+
+Each subprocess has a five-second deadline and a 64 KiB output limit. Buzz uses
+the existing session or Job Object process owner, stops the complete process
+tree on timeout, cancellation, or excess output, joins capture workers, and
+reaps the process before returning. Output and transport details are not sent to
+the frontend. The UI receives fixed categories and recovery messages for missing
+tools, missing interpreters, incompatible tools, logout, configuration failures,
+timeout, excessive output, cleanup failure, cancellation, and unknown failures.
+
+Checks use one-shot tickets. A newer request cancels the previous request; late
+begin and completion results cannot replace the latest UI state. App shutdown
+cancels the owned request and waits for native cleanup before allowing exit.
+Failed stops retain their process owner; shutdown retries them and permits exit
+once cleanup succeeds. A panicked worker remains an unconfirmed cleanup error.
+During a retry, Settings shows **Checking…** instead of presenting the previous
+successful result as current.
+
+## Compatibility evidence
+
+The production readiness runner was exercised on macOS with:
+
+- `@agentclientprotocol/codex-acp` 1.10.0, installed in an isolated temporary
+  prefix;
+- `/opt/homebrew/bin/codex`, reporting `codex-cli 0.151.0`;
+- a minimal effective environment and `INITIAL_AGENT_MODE=agent-full-access`.
+
+The real bounded ACP initialize completed with protocol version 1 and exact
+adapter identity. The production test reported `binding-ready` with adapter
+1.10.0 and CLI 0.151.0. No session, inference, model selection, effort selection,
+or tool call was performed. This evidence establishes the PR 2 binding seam; it
+does not establish the later execution or model/effort contract.
+
+This acceptance was run from a macOS development checkout. Linux, Windows, a
+packaged app, and the visible Settings workflow launched from a GUI with minimal
+`PATH` were not exercised. Windows intentionally reports unsupported in this
+layer. Those platform and packaging results must not be inferred from the
+macOS command-line run.
+
+The globally installed `@zed-industries/codex-acp` 0.16.0 was also inspected. It
+embeds an older Codex engine and does not implement the required version
+identity, so readiness rejects it. The supported adapter's empty ACP MCP list
+does not disable MCP servers from Codex configuration, and the currently pinned
+Buzz pool may continue after model or effort rejection. The current
+[execution contract](codex-validation-execution.md) retains those behaviors.
+A successful live conversation still requires acceptance through Start.
+
+## Verification
+
+Focused automated coverage binds the production seams for canonical resolution,
+exact CLI launch through the adapter, isolated environment, failure categories,
+one-shot ticket ownership, stale-result fencing, cancellation, timeout, finite
+and continuous output overflow, process-tree retirement, shutdown cleanup, ACP
+identity, and Settings recovery. The installed-tool acceptance test is ignored
+by default and requires explicit paths:
+
+```sh
+BUZZ_TEST_CODEX_ADAPTER=/path/to/codex-acp \
+BUZZ_TEST_CODEX_CLI=/path/to/codex \
+cargo test --manifest-path src-tauri/Cargo.toml \
+  codex_readiness::tests::unix::selected_production_binding \
+  -- --ignored --nocapture
+```
+
+The check reads existing login and configuration state only. Tests for logout or
+malformed configuration must use an isolated `CODEX_HOME`; do not modify the
+user's ordinary Codex profile.

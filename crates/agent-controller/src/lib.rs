@@ -3,13 +3,14 @@
 mod agent_defaults;
 mod app_agent;
 mod bundle;
+pub mod codex;
 mod community;
 mod config;
 mod harness_policy;
 pub use community::CommunityResolution;
 pub use harness_policy::{
     AuthenticationPolicy, ConfigurationMode, EffortDiscovery, HarnessConfigurationPolicy,
-    ModelRequirement, ProviderPolicy, SelectorEnvironment,
+    HarnessIntegration, ModelRequirement, ProviderPolicy, SelectorEnvironment,
 };
 pub mod connection;
 mod create;
@@ -40,7 +41,10 @@ pub use supervisor::dispatch as dispatch_agent_supervisor;
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
 pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published};
 pub use bundle::RuntimeBundle;
-pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
+pub use config::{
+    AgentEdit, AgentView, AiConfiguration, ControlSnapshot, EffortSelection, HarnessEdit,
+    ProcessStatus,
+};
 pub use create::{CreationProfile, NewAgent};
 pub use credentials::{PlatformCredentials, BUSY as CREDENTIALS_BUSY};
 pub use defaults::{build_defaults, BuildDefaults};
@@ -48,13 +52,15 @@ pub use harness_presets::{harness_preset, harness_presets, HarnessPreset};
 pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
+pub use process::ContainedProcess;
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{
     check_owner, delete_local_agent_keys, installed, installed_npm_tool, managed_tool, Action,
-    Controller, GooseModelContext, ModelContext,
+    Controller, GooseModelContext, LaunchPreflights, ModelContext,
 };
 pub use secret::{validate_snapshot_memory_envelope, Credentials, Secret};
 pub use skills::ensure_buzz_cli_skill;
+pub use store::PendingCreateRecovery;
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

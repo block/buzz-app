@@ -17,6 +17,9 @@ use browser::{
 mod agent_models;
 mod agents;
 mod app_agents;
+mod codex_acp;
+mod codex_models;
+mod codex_readiness;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -58,6 +61,9 @@ mod terminal;
 #[cfg(test)]
 mod test_executable;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
+use codex_readiness::{
+    codex_readiness_begin, codex_readiness_cancel, codex_readiness_run, Host as CodexReadinessHost,
+};
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -66,7 +72,8 @@ mod pi_models;
 use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
-    agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
+    agent_control_create_authorize, agent_control_create_commit, agent_control_create_discard,
+    agent_control_create_prepare, agent_control_create_recovery, agent_control_create_resume,
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
@@ -81,7 +88,7 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{claude_install, pi_install, HarnessSetup};
+use harness_setup::{claude_install, codex_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_process::{
     plugin_host_process_kill, plugin_host_process_spawn, plugin_host_process_write, HostProcesses,
@@ -422,7 +429,8 @@ async fn plugin_recover(
 async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        handle.state::<ModelHost>().shutdown();
+        handle.state::<ModelHost>().shutdown()?;
+        handle.state::<Arc<CodexReadinessHost>>().shutdown()?;
         handle.state::<AgentHost>().shutdown()
     })
     .await
@@ -510,6 +518,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_publish_profile,
         agent_control_create_authorize,
         agent_control_create_commit,
+        agent_control_create_recovery,
+        agent_control_create_resume,
+        agent_control_create_discard,
         agent_control_creation_profile,
         agent_control_snapshot_memory_write,
         agent_control_team_preview,
@@ -521,6 +532,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_read_log,
         pi_install,
         claude_install,
+        codex_install,
         claude_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
@@ -537,6 +549,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_begin,
         agent_models_cancel,
         agent_models_run,
+        codex_readiness_begin,
+        codex_readiness_cancel,
+        codex_readiness_run,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -700,6 +715,7 @@ pub fn run() {
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
+        .manage(Arc::new(CodexReadinessHost::default()))
         .manage(HarnessSetup::default())
         .manage(Terminals::default())
         .manage(HostProcesses::default())
@@ -765,10 +781,14 @@ pub fn run() {
                 deep_links::focus_main(app);
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                app.state::<ModelHost>().shutdown();
-                if app.state::<AgentHost>().shutdown().is_err() {
+                let models = app.state::<ModelHost>().shutdown();
+                let codex = app.state::<Arc<CodexReadinessHost>>().shutdown();
+                if models.is_err()
+                    || codex.is_err()
+                    || app.state::<AgentHost>().shutdown().is_err()
+                {
                     api.prevent_exit();
-                    eprintln!("Agent shutdown incomplete; app exit was refused");
+                    eprintln!("Agent or Codex readiness shutdown incomplete; app exit was refused");
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
@@ -788,7 +808,12 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");
     }
-    app.state::<ModelHost>().shutdown();
+    if app.state::<ModelHost>().shutdown().is_err() {
+        eprintln!("Model discovery shutdown could not be confirmed");
+    }
+    if app.state::<Arc<CodexReadinessHost>>().shutdown().is_err() {
+        eprintln!("Codex readiness shutdown could not be confirmed");
+    }
     if app.state::<AgentHost>().shutdown().is_err() {
         eprintln!("Native agent shutdown could not be confirmed");
     }

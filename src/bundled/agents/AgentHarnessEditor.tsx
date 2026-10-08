@@ -33,11 +33,11 @@ export function AgentHarnessEditor({
   const kind = harnessKind(draft.command);
   const preset = harnessPreset(draft.command);
   const harness =
-    harnessOption(options, draft.command) ??
+    harnessOption(options, draft.command, draft.integration) ??
     (preset
       ? options.find((option) => harnessKind(option.command) === kind)
       : undefined);
-  const policy = harnessPolicy(options, draft.command);
+  const policy = harnessPolicy(options, draft.command, draft.integration);
   const isPreset = !!preset;
   // Missing policy preserves older hosts; native policy wins whenever supplied.
   const external = policy
@@ -51,6 +51,12 @@ export function AgentHarnessEditor({
     (option) =>
       harnessKind(option.command) === "pi" && option.available === false,
   );
+  const missingCodex = options.some(
+    (option) =>
+      option.id === "codex" &&
+      option.available === false &&
+      option.status !== "not-enabled",
+  );
   const missingPreset = preset && (!harness || harness.available === false);
   return (
     <div className="space-y-4">
@@ -61,9 +67,14 @@ export function AgentHarnessEditor({
         inputLabel="Executable"
         value={draft.command}
         options={[
-          ...options.map(({ command, label, available }) => ({
+          ...options.map(({ command, label, available, status }) => ({
             value: command,
-            label: available === false ? `${label} (install first)` : label,
+            label:
+              available === false && status === "not-enabled"
+                ? `${label} (coming in a later update)`
+                : available === false
+                  ? `${label} (install first)`
+                  : label,
             disabled: available === false,
           })),
           ...(isPreset &&
@@ -87,9 +98,12 @@ export function AgentHarnessEditor({
                 : ["goose", "pi"].includes(harnessKind(option.command) ?? "")));
           onChange({
             command,
-            ...(pickedOption &&
-            option &&
-            (enteringExternal || external || isPreset)
+            ...(pickedOption
+              ? {
+                  integration: option?.id === "codex" ? option.id : undefined,
+                }
+              : { integration: undefined, configuration: undefined }),
+            ...(pickedOption && (enteringExternal || external || isPreset)
               ? {
                   args: JSON.stringify(option?.defaultArgs ?? []),
                   provider: enteringExternal
@@ -98,6 +112,16 @@ export function AgentHarnessEditor({
                   model: "",
                 }
               : {}),
+            ...(pickedOption && option?.id === "codex"
+              ? {
+                  args: "[]",
+                  provider: "",
+                  model: "",
+                  configuration: { mode: "default" },
+                }
+              : pickedOption && draft.integration === "codex"
+                ? { configuration: undefined }
+                : {}),
           });
         }}
       />
@@ -106,13 +130,19 @@ export function AgentHarnessEditor({
           Pi needs its CLI, Node.js and buzz-pi-acp before you can select it.
         </p>
       )}
+      {missingCodex && (
+        <p className="text-body-sm text-secondary">
+          Codex needs its CLI and ACP adapter before you can select it. Set it
+          up under Settings → Agents → Harnesses.
+        </p>
+      )}
       {missingPreset && (
         <p className="text-body-sm text-secondary">
           {preset.label} needs its ACP launcher. Set it up under Settings →
           Agents → Harnesses.
         </p>
       )}
-      {(missingPi || missingPreset) && onOpenHarnesses && (
+      {(missingPi || missingPreset || missingCodex) && onOpenHarnesses && (
         <div className="space-y-1">
           <Button
             type="button"
@@ -129,7 +159,7 @@ export function AgentHarnessEditor({
           )}
         </div>
       )}
-      {!isPreset && (
+      {!isPreset && policy?.provider !== "external" && (
         <ConfigChoice
           disabled={disabled || piLoading}
           key={harness?.label ?? draft.command}

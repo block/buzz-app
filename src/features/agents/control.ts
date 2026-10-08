@@ -23,6 +23,18 @@ export interface RestartDiffEntry {
   field: string;
   change: RestartChange;
 }
+export type HarnessIntegration =
+  | "buzz-agent"
+  | "goose"
+  | "pi"
+  | "codex"
+  | "external";
+export type AiConfiguration =
+  | { mode: "default" }
+  | {
+      mode: "advanced";
+      effort: { kind: "value"; value: string } | { kind: "unsupported" };
+    };
 export interface AgentView {
   id: string;
   pubkey: string;
@@ -35,10 +47,14 @@ export interface AgentView {
   sessionPolicy: "channel" | "thread" | null;
   workspace: string;
   harness: {
+    /** Stable native owner; absent preserves legacy/custom harness behavior. */
+    integration?: HarnessIntegration;
     command: string;
     args: string[];
     model: string;
     provider: string;
+    /** Proof-backed managed selection; the current editor keeps this read-only. */
+    configuration?: AiConfiguration;
     environmentKeys: string[];
     databricks?: { host: string; filter: string } | null;
   };
@@ -98,11 +114,17 @@ export interface ControlSnapshot {
   /** Native executable presence and editing suggestions, not sign-in or execution evidence.
    * Optional so an older running native host retains editable custom values. */
   harnessOptions?: {
+    id?: HarnessIntegration;
     command: string;
     label: string;
     available?: boolean;
     /** Executable presence only; Pi also needs Node.js for its adapter. */
-    status?: "ready" | "cli-needed" | "adapter-needed";
+    status?:
+      | "ready"
+      | "cli-needed"
+      | "adapter-needed"
+      | "check-needed"
+      | "not-enabled";
     /** The native installer is available on macOS/Linux, not Windows. */
     installSupported?: boolean;
     /** The selected Pi install is app-owned and older than the pinned adapter. */
@@ -137,10 +159,10 @@ export interface ControlSnapshot {
 export interface HarnessConfigurationPolicy {
   authentication: "provider" | "harnessWithOverrides" | "external";
   provider: "selector" | "discovered" | "external";
-  /** Legacy inheritance is not managed Default. Current integrations admit neither mode yet. */
+  /** Legacy inheritance is distinct from managed Default. */
   supportedModes: ("default" | "advanced")[];
   model: "optional" | "withProvider";
-  effortDiscovery: "unknown";
+  effortDiscovery: "unknown" | "modelSpecific";
   selectorEnvironment: { model: string; provider: string } | null;
 }
 export interface AgentDefaultSettings {
@@ -197,6 +219,34 @@ export interface HarnessInstallReport {
   output: string;
   error: string | null;
 }
+export interface CodexReadiness {
+  status:
+    | "binding-ready"
+    | "cli-needed"
+    | "adapter-needed"
+    | "interpreter-needed"
+    | "adapter-incompatible"
+    | "cli-incompatible"
+    | "signed-out"
+    | "configuration-error"
+    | "timeout"
+    | "output-limit"
+    | "cleanup-failed"
+    | "check-failed"
+    | "unsupported"
+    | "cancelled";
+  message: string;
+  adapterVersion?: string;
+  cliVersion?: string;
+}
+
+export interface CodexCreateRecovery {
+  requestId: string;
+  agentId: string;
+  pubkey: string;
+  destination: string;
+  owner: string;
+}
 
 export type CommunityResolution = {
   pubkey: string;
@@ -225,15 +275,27 @@ export interface AgentControlHost {
   localCloneSettings?(id: string): Promise<CloneSettings>;
   cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
+  codexReadiness?: {
+    begin(): Promise<number>;
+    run(ticket: number): Promise<CodexReadiness>;
+    cancel(ticket: number): Promise<void>;
+  };
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
   prepareCreate?(
     requestId: string,
     destination: string,
     owner: string,
-  ): Promise<{ id: string; pubkey: string; saved?: boolean }>;
+    edit: AgentEdit,
+  ): Promise<{
+    id?: string;
+    pubkey?: string;
+    saved?: boolean;
+    completed?: boolean;
+  }>;
   commitCreate?(
     requestId: string,
     edit: AgentEdit,
@@ -259,6 +321,13 @@ export interface AgentControlHost {
     community: string,
   ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
+  createRecovery?(): Promise<CodexCreateRecovery | null>;
+  resumeCreate?(
+    requestId: string,
+    edit: AgentEdit,
+    auth: string,
+  ): Promise<ControlSnapshot>;
+  discardCreate?(requestId: string): Promise<void>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?(
     id: string,
@@ -302,6 +371,12 @@ export interface AgentControlState {
   /** App-lifetime install progress and last result, independent of agent writes. */
   piInstall?: HarnessInstallState;
   claudeInstall?: HarnessInstallState;
+  codexInstall?: HarnessInstallState;
+  codexReadiness?: {
+    status: "idle" | "checking" | "checked" | "error";
+    result: CodexReadiness | null;
+    error: string | null;
+  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   /** Accepted process actions, keyed by native ID across all control surfaces. */
@@ -320,14 +395,17 @@ export interface AgentControl {
   models?: AgentModels;
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
+  installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
+  checkCodex?(): Promise<void>;
   create?(
     requestId: string,
     destination: string,
     owner: string,
     edit: AgentEdit,
     bundle?: BundleMember,
+    signal?: AbortSignal,
   ): Promise<AgentView>;
   exportTeam?(
     snapshot: TeamSnapshot,
@@ -348,13 +426,24 @@ export interface AgentControl {
     community: string,
   ): Promise<TeamSnapshot>;
   previewTeam?(content: string): Promise<TeamSnapshot>;
+  createRecovery?(): Promise<CodexCreateRecovery | null>;
+  resumeCreate?(
+    recovery: CodexCreateRecovery,
+    edit: AgentEdit,
+    signal?: AbortSignal,
+  ): Promise<AgentView>;
+  discardCreate?(requestId: string): Promise<void>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
-  save: AgentControlHost["save"];
+  save(
+    id: string,
+    expectedRevision: number,
+    edit: AgentEdit,
+  ): Promise<ControlSnapshot>;
   delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   saveDefaults?(edit: AgentDefaultsEdit): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
@@ -396,6 +485,13 @@ export function agentFailureReason(problem: unknown): string {
     : "";
 }
 
+/** A rejected preflight is definitive and safe to correct without refreshing. */
+export function agentSafeFailure(problem: unknown): string {
+  return problem instanceof Error && problem.cause === safeOperation
+    ? problem.message
+    : "";
+}
+
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
   if (
@@ -417,6 +513,13 @@ export function canStopAgent(state: AgentControlState, id: string): boolean {
 export const agentControlUnavailable =
   "Local agent controls require the desktop app. This browser cannot run or manage agent processes.";
 
+const safeOperation = Symbol("safe agent operation failure");
+class SafeOperationError extends Error {
+  constructor(message: string) {
+    super(message, { cause: safeOperation });
+  }
+}
+
 /** Own once at app composition. Disposing this projection never stops native agents. */
 export function createAgentControl(
   host: AgentControlHost | null,
@@ -428,6 +531,8 @@ export function createAgentControl(
     busy: false,
     piInstall: { installing: false, report: null, error: null },
     claudeInstall: { installing: false, report: null, error: null },
+    codexInstall: { installing: false, report: null, error: null },
+    codexReadiness: { status: "idle", result: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -529,6 +634,7 @@ export function createAgentControl(
       apply(result);
       return result;
     } catch (error) {
+      if (error instanceof SafeOperationError) throw error;
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail =
         typeof error === "string"
@@ -578,12 +684,16 @@ export function createAgentControl(
     );
   };
   async function installHarness(
-    key: "piInstall" | "claudeInstall",
+    key: "piInstall" | "claudeInstall" | "codexInstall",
     label: string,
     execute: () => Promise<HarnessInstallReport>,
   ): Promise<HarnessInstallReport> {
     if (disposed) throw new Error(agentControlUnavailable);
-    if (state.piInstall?.installing || state.claudeInstall?.installing)
+    if (
+      state.piInstall?.installing ||
+      state.claudeInstall?.installing ||
+      state.codexInstall?.installing
+    )
       throw new Error("A Harness installation is already in progress.");
     if (state.status !== "ready" || state.busy)
       throw new Error(`Refresh local agents before installing ${label}.`);
@@ -608,8 +718,13 @@ export function createAgentControl(
   }
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
+  const installCodex = host?.installCodex;
   const checkClaudeAuth = host?.checkClaudeAuth;
   const writeSnapshotMemory = host?.writeSnapshotMemory;
+  const codexReadiness = host?.codexReadiness;
+  let codexTicket: number | null = null;
+  let codexGeneration = 0;
+
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
@@ -634,6 +749,63 @@ export function createAgentControl(
             installHarness("claudeInstall", "Claude Code", installClaude),
         }
       : {}),
+    ...(codexReadiness
+      ? {
+          checkCodex: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const request = ++codexGeneration;
+            if (codexTicket !== null)
+              await codexReadiness.cancel(codexTicket).catch(() => {});
+            let ticket: number | null = null;
+            try {
+              ticket = await codexReadiness.begin();
+              if (disposed || request !== codexGeneration) {
+                await codexReadiness.cancel(ticket).catch(() => {});
+                return;
+              }
+              codexTicket = ticket;
+              update({
+                codexReadiness: {
+                  status: "checking",
+                  result: state.codexReadiness?.result ?? null,
+                  error: null,
+                },
+              });
+              const result = await codexReadiness.run(ticket);
+              if (
+                disposed ||
+                request !== codexGeneration ||
+                codexTicket !== ticket
+              )
+                return;
+              update({
+                codexReadiness: { status: "checked", result, error: null },
+              });
+            } catch {
+              if (disposed || request !== codexGeneration) return;
+              update({
+                codexReadiness: {
+                  status: "error",
+                  result: state.codexReadiness?.result ?? null,
+                  error: "Couldn’t check Codex. Try Check again.",
+                },
+              });
+            } finally {
+              if (ticket !== null && codexTicket === ticket) codexTicket = null;
+            }
+          },
+        }
+      : {}),
+    ...(installCodex
+      ? {
+          installCodex: () =>
+            installHarness(
+              "codexInstall",
+              "the Codex ACP adapter",
+              installCodex,
+            ),
+        }
+      : {}),
     ...(host?.prepareCreate && host.commitCreate
       ? {
           create: async (
@@ -642,24 +814,41 @@ export function createAgentControl(
             owner: string,
             edit: AgentEdit,
             bundle?: BundleMember,
+            signal?: AbortSignal,
           ) => {
             let id = "";
             const data = await run(
               async (native) => {
                 if (!native.prepareCreate || !native.commitCreate)
                   throw new Error("Agent creation is unavailable.");
+                if (signal?.aborted)
+                  throw new SafeOperationError(
+                    "Agent creation was cancelled. No new identity was saved.",
+                  );
                 const prepared = await native.prepareCreate(
                   requestId,
                   destination,
                   owner,
+                  edit,
                 );
+                if (disposed || signal?.aborted)
+                  throw new SafeOperationError(
+                    "Agent creation was cancelled. No new identity was saved.",
+                  );
+                if (!prepared.id || !prepared.pubkey)
+                  throw new Error("Agent creation was not prepared.");
                 id = prepared.id;
-                if (prepared.saved) return native.snapshot();
+                if (prepared.saved || prepared.completed)
+                  return native.snapshot();
                 const result = await communityRequest<{ auth: string[] }>(
                   destination,
                   "authorize-agent",
                   { pubkey: prepared.pubkey, owner },
                 );
+                if (disposed || signal?.aborted)
+                  throw new SafeOperationError(
+                    "Agent creation was cancelled. The prepared identity was not committed.",
+                  );
                 return native.commitCreate(
                   requestId,
                   edit,
@@ -739,6 +928,77 @@ export function createAgentControl(
           },
         }
       : {}),
+    ...(host?.createRecovery
+      ? {
+          createRecovery: async () => {
+            if (disposed) throw new Error(agentControlUnavailable);
+            const recovery = host.createRecovery;
+            if (!recovery) return null;
+            return recovery();
+          },
+        }
+      : {}),
+    ...(host?.resumeCreate
+      ? {
+          resumeCreate: async (
+            recovery: CodexCreateRecovery,
+            edit: AgentEdit,
+            signal?: AbortSignal,
+          ) => {
+            const id = recovery.agentId;
+            const data = await run(
+              async (native) => {
+                if (!native.resumeCreate)
+                  throw new Error("Agent creation recovery is unavailable.");
+                if (signal?.aborted)
+                  throw new SafeOperationError(
+                    "Agent creation recovery was cancelled. The pending request is unchanged.",
+                  );
+                const result = await communityRequest<{ auth: string[] }>(
+                  recovery.destination,
+                  "authorize-agent",
+                  { pubkey: recovery.pubkey, owner: recovery.owner },
+                );
+                if (disposed || signal?.aborted)
+                  throw new SafeOperationError(
+                    "Agent creation recovery was cancelled. The pending request is unchanged.",
+                  );
+                return native.resumeCreate(
+                  recovery.requestId,
+                  edit,
+                  JSON.stringify(result.auth),
+                );
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            );
+            const agent = data.agents.find((candidate) => candidate.id === id);
+            if (!agent)
+              throw new Error(
+                "Creation recovery was not confirmed; refresh agents before trying again.",
+              );
+            return agent;
+          },
+        }
+      : {}),
+    ...(host?.discardCreate
+      ? {
+          discardCreate: (requestId: string) =>
+            run(
+              async (native) => {
+                if (!native.discardCreate)
+                  throw new Error("Agent creation recovery is unavailable.");
+                await native.discardCreate(requestId);
+              },
+              () => {},
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     ...(host?.publishProfile
       ? {
           publishProfile: (id: string) =>
@@ -791,9 +1051,8 @@ export function createAgentControl(
     },
     refresh,
     save: (id, revision, edit) =>
-      // Save may restart running agents and wait on their OS credential
-      // prompts; like other credential waits, recovery Stop stays available
-      // and a superseded result never replaces the newer Stop's evidence.
+      // Existing native Save owns revision checks and restart. Inference is
+      // performed only by the runtime, never as a prerequisite to persistence.
       run(
         (native) => native.save(id, revision, edit),
         ready,
@@ -965,6 +1224,9 @@ export function createAgentControl(
       ),
     dispose() {
       disposed = true;
+      codexGeneration++;
+      if (codexTicket !== null)
+        void codexReadiness?.cancel(codexTicket).catch(() => {});
       models.dispose();
       generation++;
       listeners.clear();

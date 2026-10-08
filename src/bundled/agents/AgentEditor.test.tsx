@@ -8,8 +8,17 @@ import { controlFixture } from "../../features/agents/control-testing";
 import { agentDraft } from "./agent-edit";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentEditor } from "./AgentEditor";
+import { useSyncExternalStore } from "react";
 
 afterEach(cleanup);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 it("reviews a requested model update before saving it", async () => {
   const fixture = controlFixture();
@@ -160,5 +169,48 @@ it("keeps the editor open when saved profile publication is unconfirmed", async 
   );
   expect(onClose).not.toHaveBeenCalled();
   expect(fixture.agent.profilePending).toBe(true);
+  control.dispose();
+});
+
+it("saves Codex execution edits directly through native Save", async () => {
+  const fixture = controlFixture();
+  fixture.agent.harness = {
+    integration: "codex",
+    command: "/tools/codex-acp",
+    args: [],
+    model: "",
+    provider: "",
+    configuration: { mode: "default" },
+    environmentKeys: [],
+  };
+  const pending = deferred<typeof fixture.data>();
+  fixture.host.save = vi.fn(() => pending.promise);
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  function Editor() {
+    const state = useSyncExternalStore(control.subscribe, control.snapshot);
+    return (
+      <AgentEditor
+        agent={fixture.agent}
+        control={control}
+        state={state}
+        onClose={() => {}}
+      />
+    );
+  }
+  render(<Editor />, { wrapper: ToastProvider });
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Agent instructions"), " Updated.");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+  expect(await screen.findByText("Saving changes…")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Cancel validation" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  pending.resolve(structuredClone(fixture.data));
+  await waitFor(() =>
+    expect(screen.queryByText("Saving changes…")).not.toBeInTheDocument(),
+  );
   control.dispose();
 });

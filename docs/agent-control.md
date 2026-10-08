@@ -191,6 +191,13 @@ If no workspace is configured, edit the agent and set **Databricks workspace (HT
 under **Advanced → Model**. App maintainers can instead supply the nonsecret
 `DATABRICKS_HOST` build default below and rebuild the app.
 
+The native model-request service also has a disabled Codex discovery path keyed
+by the stable integration ID. It verifies the selected installed tools, opens a
+headless ACP session, and reports known, unknown, or empty model metadata plus
+reported effort choices for only the selected model. It does not send a prompt,
+persist a selection, or enable Codex creation. See
+[Codex model and effort discovery](codex-model-discovery.md).
+
 ### Nonsecret build defaults
 
 Native builds read these inputs from the repository-root, ignored `.env.local`,
@@ -283,6 +290,7 @@ every provider requires an API key.
 | Buzz Agent | Selected provider | Scalar selector | Existing defaults and overrides |
 | Goose | Harness, with provider-specific overrides | Scalar selector | Existing defaults and overrides |
 | Pi | Harness, with provider-specific overrides | Discovered provider selector | A selected provider requires a model |
+| Codex | Codex CLI | External Codex configuration | Unavailable until the later Codex layers |
 | Custom executable | External executable | External configuration | Existing saved value |
 
 Policy does not migrate saved records or change validation timing. Pi selection
@@ -299,9 +307,21 @@ Default/Advanced modes belong to the later Codex persistence layer. Likewise,
 available; it does not mean effort is unsupported. The existing Agent defaults
 effort suggestions remain editable suggestions, not allowed-value validation.
 
-This is PR 1 of the [reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
-Codex registration, binding, discovery, connection validation, and mode controls
-are separate layers.
+Settings lists Codex with a stable native integration identity. New selection
+requires installed CLI and adapter presence. Its explicit readiness check binds the installed CLI and ACP
+adapter, verifies the existing CLI login, and reports fixed recovery categories;
+ordinary control snapshots do not launch these probes. A successful check is
+binding evidence only. Codex discovery and execution must
+revalidate their saved context because authentication and configuration files can change
+without changing their paths. **Adapter needed** offers an app-owned Install of
+the ACP adapter only, following Claude Code's setup. See
+[Codex binding readiness](codex-binding-readiness.md).
+
+The shared policy is PR 1 and binding readiness is PR 2 of the
+[reviewed Codex harness plan](https://github.com/block/buzz-app/blob/codex/codex-harness-plan/docs/codex-harness-plan.md).
+Create and Save use ordinary persistence without inference validation. Existing
+agents retain their saved adapter. Advanced model/effort selection remains; see
+[Codex persistence and execution](codex-validation-execution.md).
 
 For native acceptance, use the Buzz community in the ordinary development app.
 Open Create, Edit, and Agent defaults for Buzz Agent, Goose, and Pi. Check

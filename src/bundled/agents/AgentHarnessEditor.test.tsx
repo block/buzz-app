@@ -156,18 +156,21 @@ it("switching external harnesses and Buzz resets incompatible selections and use
         draft={draft}
         options={[
           {
+            id: "buzz-agent",
             command: "buzz-agent",
             label: "Buzz Agent",
             providers: [{ value: "databricks_v2", label: "Databricks v2" }],
             defaultArgs: [],
           },
           {
+            id: "goose",
             command: "goose",
             label: "Goose",
             providers: [],
             defaultArgs: [],
           },
           {
+            id: "pi",
             command: "/local/buzz-pi-acp",
             label: "Pi",
             providers: [{ value: "anthropic", label: "Anthropic" }],
@@ -195,6 +198,7 @@ it("switching external harnesses and Buzz resets incompatible selections and use
     provider: "",
     model: "",
   });
+  expect(current.integration).toBeUndefined();
   await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
   const extension = await screen.findByRole("option", { name: "extension" });
   // Signed-in providers come from the catalog; the static harness list is
@@ -231,6 +235,7 @@ it("switching external harnesses and Buzz resets incompatible selections and use
     provider: "",
     model: "",
   });
+  expect(current.integration).toBeUndefined();
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
   expect(current).toMatchObject({
@@ -239,6 +244,7 @@ it("switching external harnesses and Buzz resets incompatible selections and use
     provider: "databricks_v2",
     model: "",
   });
+  expect(current.integration).toBeUndefined();
 });
 
 it.each([
@@ -429,4 +435,42 @@ it("shows missing preset setup only for the selected harness", () => {
   expect(
     screen.queryByRole("button", { name: "Open Harnesses in Settings" }),
   ).not.toBeInTheDocument();
+});
+
+it("offers Settings for missing Codex tools without replacing a saved adapter", async () => {
+  const f = controlFixture();
+  const user = userEvent.setup();
+  const draft = {
+    ...agentDraft(f.agent),
+    integration: "codex" as const,
+    command: "/saved/codex-acp",
+    configuration: { mode: "default" as const },
+  };
+  render(
+    <AgentHarnessEditor
+      draft={draft}
+      options={[
+        {
+          id: "codex",
+          command: "codex-acp",
+          label: "Codex",
+          providers: [],
+          available: false,
+          status: "adapter-needed",
+        },
+      ]}
+      onChange={() => {}}
+      onOpenHarnesses={() => {}}
+    />,
+  );
+  expect(screen.getByRole("textbox", { name: "Executable" })).toHaveValue(
+    "/saved/codex-acp",
+  );
+  expect(
+    screen.getByRole("button", { name: "Open Harnesses in Settings" }),
+  ).toBeEnabled();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  expect(
+    await screen.findByRole("option", { name: "Codex (install first)" }),
+  ).toHaveAttribute("aria-disabled", "true");
 });

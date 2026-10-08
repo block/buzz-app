@@ -11,14 +11,33 @@ pub struct NewAgent {
     owner: String,
 }
 impl NewAgent {
-    pub fn prepare(destination: &str, owner: &str) -> Result<Self> {
+    /// Validate and canonicalize a Create destination/owner without generating
+    /// an identity. Codex validation binds this result before `prepare` runs.
+    pub fn validate_target(destination: &str, owner: &str) -> Result<String> {
         if !canonical_key(owner) {
             return Err("Choose a signed-in owner".into());
         }
-        let relay = canonical_relay(destination)?;
+        canonical_relay(destination)
+    }
+
+    pub fn prepare(destination: &str, owner: &str) -> Result<Self> {
+        let relay = Self::validate_target(destination, owner)?;
         let key = Secret::generate()?;
         Ok(Self {
             id: agent_id(key.pubkey(), &relay),
+            key,
+            relay,
+            owner: owner.into(),
+        })
+    }
+    /// Reconstruct a journaled identity from its exact verified stored key.
+    pub fn recover(destination: &str, owner: &str, id: &str, key: Secret) -> Result<Self> {
+        let relay = Self::validate_target(destination, owner)?;
+        if agent_id(key.pubkey(), &relay) != id {
+            return Err("Recovered key does not match the pending agent identity".into());
+        }
+        Ok(Self {
+            id: id.into(),
             key,
             relay,
             owner: owner.into(),
@@ -45,9 +64,11 @@ impl NewAgent {
             session_policy_inherit: false,
             workspace: String::new(),
             harness: HarnessEdit {
+                integration: None,
                 command: String::new(),
                 args: vec![],
                 model: String::new(),
+                configuration: None,
                 provider: String::new(),
                 databricks: None,
             },
@@ -77,7 +98,86 @@ impl NewAgent {
     }
 }
 impl Controller {
+    /// Find a completed request without generating a key. Receipts live with
+    /// their saved agent and never cross the ordinary inventory projection.
+    pub fn completed_create_request(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<crate::PendingCreateRecovery>> {
+        for agent in self.store.agents()? {
+            let Some(value) = agent.extra.get("createReceipt") else {
+                continue;
+            };
+            let receipt: crate::PendingCreateRecovery = serde_json::from_value(value.clone())
+                .map_err(|_| "Saved create receipt is malformed")?;
+            if receipt.request_id == request_id {
+                if receipt.agent_id != agent.id || receipt.pubkey != agent.pubkey {
+                    return Err("Saved create receipt does not match its agent".into());
+                }
+                return Ok(Some(receipt));
+            }
+        }
+        Ok(None)
+    }
+    /// Public recovery metadata; inspecting it never opens credential storage.
+    pub fn pending_create_recovery(&self) -> Result<Option<crate::PendingCreateRecovery>> {
+        self.store.pending_create()
+    }
+    /// Persist the exact public commitment before native credential I/O.
+    pub fn stage_create_recovery(&mut self, pending: crate::PendingCreateRecovery) -> Result<()> {
+        self.store.stage_pending_create(pending)
+    }
+    /// Atomically save the recovered agent and retire the matching journal.
+    pub fn finish_create_recovery(
+        &mut self,
+        prepared: &NewAgent,
+        edit: AgentEdit,
+        auth: &str,
+        pending: &crate::PendingCreateRecovery,
+    ) -> Result<()> {
+        let mut agent = prepared.agent(edit, auth)?;
+        agent
+            .extra
+            .insert("profilePending".into(), Value::Bool(true));
+        agent.extra.insert(
+            "createReceipt".into(),
+            serde_json::to_value(pending).map_err(|_| "Could not encode create receipt")?,
+        );
+        self.store.finish_pending_create(pending, agent)
+    }
+    /// Preserve legacy creation and retry behavior while atomically remembering
+    /// the completed request.
+    pub fn create_requested(
+        &mut self,
+        prepared: &NewAgent,
+        edit: AgentEdit,
+        auth: &str,
+        receipt: &crate::PendingCreateRecovery,
+    ) -> Result<()> {
+        let mut agent = prepared.agent(edit, auth)?;
+        if agent.id != receipt.agent_id || agent.pubkey != receipt.pubkey {
+            return Err("Create receipt does not match its agent".into());
+        }
+        agent
+            .extra
+            .insert("profilePending".into(), Value::Bool(true));
+        agent.extra.insert(
+            "createReceipt".into(),
+            serde_json::to_value(receipt).map_err(|_| "Could not encode create receipt")?,
+        );
+        self.store.insert(vec![agent])
+    }
+    /// Retire the exact journal after the caller confirms credential cleanup.
+    pub fn discard_create_recovery(
+        &mut self,
+        pending: &crate::PendingCreateRecovery,
+    ) -> Result<()> {
+        self.store.discard_pending_create(pending)
+    }
     pub fn create(&mut self, prepared: &NewAgent, edit: AgentEdit, auth: &str) -> Result<()> {
+        self.create_committed(prepared, edit, auth)
+    }
+    fn create_committed(&mut self, prepared: &NewAgent, edit: AgentEdit, auth: &str) -> Result<()> {
         let mut agent = prepared.agent(edit, auth)?;
         if self.store.agents()?.iter().any(|a| a.id == agent.id) {
             return Ok(());

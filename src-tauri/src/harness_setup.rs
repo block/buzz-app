@@ -367,3 +367,45 @@ pub(crate) async fn claude_install<R: tauri::Runtime>(
         Ok(report)
     }
 }
+
+#[tauri::command]
+pub(crate) async fn codex_install<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, HarnessSetup>,
+) -> Result<InstallReport, String> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (app, state);
+        Err("Codex ACP adapter installation is supported only on macOS and Linux".into())
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let _guard = state.claim()?;
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Could not resolve Codex ACP adapter install storage")?;
+        if buzz_agent_controller::installed("codex-acp").is_some() {
+            return Err("The Codex ACP adapter is installed user-globally; update it in your terminal, then click Check again".into());
+        }
+        let path = app_data.join("agent-controller/codex-install.log");
+        let mut report = run_install(&path, |log| {
+            crate::managed_npm::install(
+                state.inner(),
+                &app_data,
+                log,
+                crate::managed_npm::Harness::Codex,
+            )
+        })
+        .await?;
+        if report.ready
+            && buzz_agent_controller::codex::installed_adapter(Some(&app_data)).is_none()
+        {
+            report.ready = false;
+            report.error = Some(
+                "Codex ACP adapter install finished but it was not found. See the log.".into(),
+            );
+        }
+        Ok(report)
+    }
+}

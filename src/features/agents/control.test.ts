@@ -3,6 +3,7 @@ import {
   canStopAgent,
   createAgentControl,
   savedMessage,
+  type CodexReadiness,
   type HarnessInstallReport,
 } from "./control";
 import { controlFixture } from "./control-testing";
@@ -36,11 +37,184 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+function codexEdit() {
+  const draft = agentDraft(controlFixture().agent);
+  draft.integration = "codex";
+  draft.command = "/tools/codex-acp";
+  draft.args = "[]";
+  draft.provider = "";
+  draft.model = "";
+  draft.configuration = { mode: "default" };
+  return agentEdit(draft);
+}
+it("returns the completed native request without authorizing or committing another agent", async () => {
+  const fixture = controlFixture();
+  fixture.host.prepareCreate = vi.fn(async () => ({
+    ...fixture.agent,
+    completed: true,
+  }));
+  fixture.host.commitCreate = vi.fn();
+  const authorize = vi.spyOn(communityApi, "communityRequest");
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const created = await control.create?.(
+    "request",
+    fixture.agent.relayUrl,
+    "owner",
+    agentEdit(agentDraft(fixture.agent)),
+  );
+  expect(created?.id).toBe(fixture.agent.id);
+  expect(authorize).not.toHaveBeenCalled();
+  expect(fixture.host.commitCreate).not.toHaveBeenCalled();
+  control.dispose();
+});
+
+it.each(["default", "advanced"] as const)(
+  "creates and saves Codex %s using ordinary native controls without a validation service",
+  async (mode) => {
+    const fixture = controlFixture();
+    const edit = codexEdit();
+    if (mode === "advanced") {
+      edit.harness.model = "model-a";
+      edit.harness.configuration = {
+        mode,
+        effort: { kind: "value", value: "high" },
+      };
+    }
+    fixture.host.prepareCreate = vi.fn(async () => ({
+      id: fixture.agent.id,
+      pubkey: fixture.agent.pubkey,
+    }));
+    fixture.host.commitCreate = vi.fn(async () =>
+      structuredClone(fixture.data),
+    );
+    const save = vi.spyOn(fixture.host, "save");
+    vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    await control.create?.("request", fixture.agent.relayUrl, "owner", edit);
+    expect(fixture.host.prepareCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      fixture.agent.relayUrl,
+      "owner",
+      edit,
+    );
+    expect(fixture.host.commitCreate).toHaveBeenCalledExactlyOnceWith(
+      "request",
+      edit,
+      "[]",
+    );
+    await control.save(fixture.agent.id, fixture.agent.revision, edit);
+    expect(save).toHaveBeenCalledExactlyOnceWith(fixture.agent.id, 1, edit);
+    control.dispose();
+  },
+);
+
+it.each(["prepare", "authorize"] as const)(
+  "an abort during Codex %s prevents a late create commit",
+  async (held) => {
+    const fixture = controlFixture();
+    const prepared = deferred<{ id: string; pubkey: string }>();
+    const authorized = deferred<{ auth: string[] }>();
+    fixture.host.prepareCreate = vi.fn().mockImplementationOnce(() =>
+      held === "prepare"
+        ? prepared.promise
+        : Promise.resolve({
+            id: fixture.agent.id,
+            pubkey: fixture.agent.pubkey,
+          }),
+    );
+    fixture.host.commitCreate = vi.fn();
+    const authorize = vi
+      .spyOn(communityApi, "communityRequest")
+      .mockImplementation(() => authorized.promise);
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const abort = new AbortController();
+    const creating = control
+      .create?.(
+        "request",
+        fixture.agent.relayUrl,
+        "owner",
+        codexEdit(),
+        undefined,
+        abort.signal,
+      )
+      .catch(() => {});
+    if (held === "prepare") {
+      await vi.waitFor(() =>
+        expect(fixture.host.prepareCreate).toHaveBeenCalledTimes(1),
+      );
+    } else {
+      await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce());
+    }
+    abort.abort();
+    if (held === "prepare")
+      prepared.resolve({
+        id: fixture.agent.id,
+        pubkey: fixture.agent.pubkey,
+      });
+    else authorized.resolve({ auth: [] });
+    await creating;
+
+    expect(fixture.host.commitCreate).not.toHaveBeenCalled();
+    expect(control.snapshot().status).toBe("ready");
+    expect(control.snapshot().error).toBeNull();
+    control.dispose();
+  },
+);
+
 it("browser is unavailable without any host or runner", async () => {
   const control = createAgentControl(null);
   await control.refresh();
   expect(control.snapshot().status).toBe("unavailable");
   await expect(control.action("x", "start")).rejects.toThrow("desktop app");
+});
+it("a newer Codex check fences a late begin before it can run", async () => {
+  const fixture = controlFixture();
+  const late = deferred<number>();
+  const result: CodexReadiness = {
+    status: "binding-ready",
+    message: "Binding verified.",
+    adapterVersion: "1.10.0",
+    cliVersion: "0.151.0",
+  };
+  const begin = vi
+    .fn<() => Promise<number>>()
+    .mockReturnValueOnce(late.promise)
+    .mockResolvedValueOnce(2);
+  const run = vi.fn(async () => result);
+  const cancel = vi.fn(async () => {});
+  fixture.host.codexReadiness = { begin, run, cancel };
+  const control = createAgentControl(fixture.host);
+
+  const stale = control.checkCodex?.();
+  const newest = control.checkCodex?.();
+  await newest;
+  late.resolve(1);
+  await stale;
+
+  expect(run).toHaveBeenCalledExactlyOnceWith(2);
+  expect(cancel).toHaveBeenCalledWith(1);
+  expect(control.snapshot().codexReadiness?.result).toEqual(result);
+  control.dispose();
+});
+it("disposing during Codex begin retires the late ticket without running", async () => {
+  const fixture = controlFixture();
+  const late = deferred<number>();
+  const run = vi.fn();
+  const cancel = vi.fn(async () => {});
+  fixture.host.codexReadiness = { begin: () => late.promise, run, cancel };
+  const control = createAgentControl(fixture.host);
+
+  const pending = control.checkCodex?.();
+  control.dispose();
+  late.resolve(7);
+  await pending;
+
+  expect(cancel).toHaveBeenCalledExactlyOnceWith(7);
+  expect(run).not.toHaveBeenCalled();
 });
 it("coalesces reads and cannot replace post-action state with a stale read", async () => {
   const fixture = controlFixture();
@@ -1103,6 +1277,7 @@ for (const status of ["waiting", "starting"] as const) {
 it.each([
   ["Pi", "installPi", "piInstall", "installClaude"],
   ["Claude Code", "installClaude", "claudeInstall", "installPi"],
+  ["Codex ACP adapter", "installCodex", "codexInstall", "installClaude"],
 ] as const)(
   "runs %s installation outside agent writes, excludes other installs and preserves the report after Stop",
   async (_label, method, stateKey, other) => {

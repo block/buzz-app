@@ -27,6 +27,16 @@ impl RuntimeBundle {
         defaults: &crate::BuildDefaults,
         preflight: Option<&crate::pi::LaunchPreflight>,
     ) -> Result<Command> {
+        self.command_checked_with_codex(agent, key, defaults, preflight, None)
+    }
+    fn command_checked_with_codex(
+        &self,
+        agent: &Agent,
+        key: &crate::Secret,
+        defaults: &crate::BuildDefaults,
+        preflight: Option<&crate::pi::LaunchPreflight>,
+        codex_preflight: Option<&crate::codex::CodexLaunchPreflight>,
+    ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
         if let Some(preset) = crate::harness_preset(&harness.command) {
@@ -43,17 +53,35 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
-            self.executable("goose-acp")?
-        } else if harness.command == "buzz-agent" {
-            self.executable("buzz-agent")?
-        } else {
-            let path = PathBuf::from(&harness.command);
-            if !path.is_absolute() {
-                return Err("Choose the installed harness's absolute executable path".into());
+        let codex = match harness.integration {
+            Some(crate::HarnessIntegration::Codex) => Some(
+                codex_preflight
+                    .ok_or("Check the Codex binding before starting this agent")?
+                    .context(),
+            ),
+            _ if codex_preflight.is_some() => {
+                return Err("Codex readiness does not match this agent".into())
             }
-            executable(&path)?;
-            path
+            _ => None,
+        };
+        let (worker, codex_args) = if let Some(context) = codex {
+            context.verify_adapter(&harness.command)?;
+            let (worker, args) = context.adapter_launch(&harness.args)?;
+            (worker, Some(args))
+        } else {
+            let worker = if matches!(harness.command.as_str(), "goose" | "goose-acp") {
+                self.executable("goose-acp")?
+            } else if harness.command == "buzz-agent" {
+                self.executable("buzz-agent")?
+            } else {
+                let path = PathBuf::from(&harness.command);
+                if !path.is_absolute() {
+                    return Err("Choose the installed harness's absolute executable path".into());
+                }
+                executable(&path)?;
+                path
+            };
+            (worker, None)
         };
         let record = &agent.imported["record"];
         if record["backend"]["type"]
@@ -132,53 +160,63 @@ impl RuntimeBundle {
                 command.env(name, value);
             }
         }
-        let pi = (worker.file_name().and_then(|n| n.to_str()) == Some("buzz-pi-acp"))
-            .then(|| {
-                crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
-            })
-            .transpose()?;
+        let pi = (codex.is_none()
+            && worker.file_name().and_then(|n| n.to_str()) == Some("buzz-pi-acp"))
+        .then(|| crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment))
+        .transpose()?;
         let pi = crate::pi::verify_launch(pi, preflight)?;
-        let claude = (crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
-            .then(|| {
-                claude_tools(
-                    &worker,
-                    agent
-                        .environment
-                        .get("CLAUDE_CODE_EXECUTABLE")
-                        .map(String::as_str),
-                )
-            })
-            .transpose()?;
-        let (args, environment, tools_path) = if let Some(pi) = &pi {
+        let claude = (codex.is_none()
+            && crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
+        .then(|| {
+            claude_tools(
+                &worker,
+                agent
+                    .environment
+                    .get("CLAUDE_CODE_EXECUTABLE")
+                    .map(String::as_str),
+            )
+        })
+        .transpose()?;
+        let (args, environment, tools_path) = if let Some(args) = codex_args {
+            (args, None, None)
+        } else if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
-                &pi.environment,
-                pi.path.clone(),
+                Some(&pi.environment),
+                Some(pi.path.clone()),
             )
         } else {
             (
                 goose_args(&harness.command, &agent.harness.args),
-                &agent.environment,
-                if let Some((path, _)) = &claude {
+                Some(&agent.environment),
+                Some(if let Some((path, _)) = &claude {
                     path.clone()
                 } else {
                     tools_path()?
-                },
+                }),
             )
         };
-        let path = path::compose(
-            std::iter::once(self.directory.clone())
-                .chain(std::env::split_paths(&tools_path))
-                .chain(
-                    environment
-                        .get("PATH")
-                        .into_iter()
-                        .flat_map(std::env::split_paths),
-                ),
-        )?;
-        command.envs(environment).env("PATH", &path);
+        let path = tools_path
+            .map(|tools_path| {
+                path::compose(
+                    std::iter::once(self.directory.clone())
+                        .chain(std::env::split_paths(&tools_path))
+                        .chain(
+                            environment
+                                .and_then(|env| env.get("PATH"))
+                                .into_iter()
+                                .flat_map(std::env::split_paths),
+                        ),
+                )
+            })
+            .transpose()?;
+        if let Some(context) = codex {
+            context.apply_launch_environment(&mut command, &self.directory)?;
+        } else if let (Some(environment), Some(path)) = (environment, path.as_ref()) {
+            command.envs(environment).env("PATH", path);
+        }
         if let Some((_, Some(cli))) = &claude {
-            if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
+            if !agent.environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
                 // Do not depend on the SDK's optional native-binary download.
                 command.env("CLAUDE_CODE_EXECUTABLE", cli);
             }
@@ -220,24 +258,33 @@ impl RuntimeBundle {
         }
         let selected = crate::defaults::selectors(&harness, &agent.environment);
         let model = selected.model;
-        if let Some((model_key, provider_key)) = selected.keys {
+        if codex.is_some() {
+            if matches!(
+                harness.configuration,
+                Some(crate::AiConfiguration::Advanced { .. })
+            ) {
+                command.env("BUZZ_ACP_MODEL", &harness.model);
+            }
+        } else {
+            if let Some((model_key, provider_key)) = selected.keys {
+                if let Some(value) = model {
+                    command.env(model_key, value);
+                }
+                if let Some(value) = selected.provider {
+                    command.env(provider_key, value);
+                }
+            } else if pi.is_none() {
+                crate::HarnessConfigurationPolicy::for_command(&harness.command)
+                    .validate_selection(&harness.provider, &harness.model)?;
+            }
             if let Some(value) = model {
-                command.env(model_key, value);
+                let value = if pi.is_some() && !agent.harness.provider.is_empty() {
+                    format!("{}/{value}", agent.harness.provider)
+                } else {
+                    value.to_owned()
+                };
+                command.env("BUZZ_ACP_MODEL", value);
             }
-            if let Some(value) = selected.provider {
-                command.env(provider_key, value);
-            }
-        } else if pi.is_none() {
-            crate::HarnessConfigurationPolicy::for_command(&harness.command)
-                .validate_selection(&harness.provider, &harness.model)?;
-        }
-        if let Some(value) = model {
-            let value = if pi.is_some() && !agent.harness.provider.is_empty() {
-                format!("{}/{value}", agent.harness.provider)
-            } else {
-                value.to_owned()
-            };
-            command.env("BUZZ_ACP_MODEL", value);
         }
         if respond_to == "allowlist" {
             let values = record["respond_to_allowlist"]
@@ -272,14 +319,22 @@ impl RuntimeBundle {
         if let Some(effort) = crate::agent_defaults::effort(agent) {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
-        if matches!(
+        if codex.is_some() {
+            if let Some(workers) = agent.environment.get("BUZZ_ACP_AGENTS") {
+                command.env("BUZZ_ACP_AGENTS", workers);
+            }
+        } else if matches!(
             crate::agent_defaults::harness_kind(&harness.command),
             Some("pi" | "goose")
         ) {
             // Validated user behavior overrides win over saved/imported fields.
             // Tool discovery remains host-owned, including Pi's pinned Node.
-            command.envs(environment).env("PATH", path);
-        } else if let Some(workers) = environment.get("BUZZ_ACP_AGENTS") {
+            command
+                .envs(environment.ok_or("Missing harness environment")?)
+                .env("PATH", path.ok_or("Missing harness path")?);
+        } else if let Some(workers) =
+            environment.and_then(|environment| environment.get("BUZZ_ACP_AGENTS"))
+        {
             // The editable worker count wins over imported parallelism for every harness.
             command.env("BUZZ_ACP_AGENTS", workers);
         }
@@ -398,6 +453,7 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
         "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
+        "codex-acp" => app_data.join("codex-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -508,6 +564,13 @@ pub struct GooseModelContext {
     pub model_id: String,
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
+}
+/// Native readiness evidence applied together at the revision-checked Start seam.
+pub struct LaunchPreflights<'a> {
+    /// Existing Pi launch proof.
+    pub pi: &'a crate::pi::LaunchPreflight,
+    /// Native Codex binding proof when the selected agent requires it.
+    pub codex: Option<&'a crate::codex::CodexLaunchPreflight>,
 }
 pub struct Controller {
     pub(crate) store: Store,
@@ -637,6 +700,20 @@ impl Controller {
         let agent = self.edited_agent(id, revision, edit)?;
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment)
     }
+    /// Resolve a saved Codex draft only after its revision has been fenced.
+    pub fn codex_model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        edit: AgentEdit,
+    ) -> Result<crate::codex::CodexContext> {
+        let agent = self.edited_agent(id, revision, edit)?;
+        crate::codex::CodexContext::for_agent(
+            &agent.harness.command,
+            Path::new(&agent.workspace),
+            &agent.environment,
+        )
+    }
     pub fn pi_launch_context(
         &self,
         id: &str,
@@ -661,6 +738,34 @@ impl Controller {
         }
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment).map(Some)
     }
+    /// Resolve one exact saved Codex binding after fencing its revision.
+    pub fn codex_launch_context(
+        &self,
+        id: &str,
+        revision: u64,
+    ) -> Result<Option<crate::codex::CodexContext>> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Saved settings changed; retry Start".into());
+        }
+        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
+        if agent.harness.integration != Some(crate::HarnessIntegration::Codex) {
+            return Ok(None);
+        }
+        let context = crate::codex::CodexContext::for_agent(
+            &agent.harness.command,
+            Path::new(&agent.workspace),
+            &agent.environment,
+        )?;
+        context.verify_adapter(&agent.harness.command)?;
+        context.adapter_launch(&agent.harness.args)?;
+        Ok(Some(context))
+    }
     /// Resolve unsaved Create drafts against the same native defaults as a saved start.
     pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
         let mut environment = draft_environment(edit.environment);
@@ -679,6 +784,15 @@ impl Controller {
         crate::pi::PiContext::new(
             &edit.harness,
             &edit.workspace,
+            &draft_environment(edit.environment),
+        )
+    }
+    /// Resolve an unsaved Codex draft against the same effective defaults used
+    /// by a later save or launch.
+    pub fn draft_codex_model_context(&self, edit: AgentEdit) -> Result<crate::codex::CodexContext> {
+        crate::codex::CodexContext::for_agent(
+            &edit.harness.command,
+            Path::new(&edit.workspace),
             &draft_environment(edit.environment),
         )
     }
@@ -994,7 +1108,7 @@ impl Controller {
         key: &crate::Secret,
         replay_floor: Option<u64>,
     ) -> Result<()> {
-        self.action_checked(id, action, revision, key, replay_floor, None)
+        self.action_checked(id, action, revision, key, replay_floor, (None, None))
     }
     pub fn action_with_preflight(
         &mut self,
@@ -1005,7 +1119,32 @@ impl Controller {
         replay_floor: Option<u64>,
         preflight: &crate::pi::LaunchPreflight,
     ) -> Result<()> {
-        self.action_checked(id, action, revision, key, replay_floor, Some(preflight))
+        self.action_checked(
+            id,
+            action,
+            revision,
+            key,
+            replay_floor,
+            (Some(preflight), None),
+        )
+    }
+    pub fn action_with_preflights(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+        replay_floor: Option<u64>,
+        preflights: LaunchPreflights<'_>,
+    ) -> Result<()> {
+        self.action_checked(
+            id,
+            action,
+            revision,
+            key,
+            replay_floor,
+            (Some(preflights.pi), preflights.codex),
+        )
     }
     fn action_checked(
         &mut self,
@@ -1014,13 +1153,25 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-        preflight: Option<&crate::pi::LaunchPreflight>,
+        preflights: (
+            Option<&crate::pi::LaunchPreflight>,
+            Option<&crate::codex::CodexLaunchPreflight>,
+        ),
     ) -> Result<()> {
+        let (preflight, codex_preflight) = preflights;
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
         if let Some(preflight) = preflight {
             preflight.check(&self.pi_launch_context(id, revision)?)?;
+        }
+        let codex = self.codex_launch_context(id, revision)?;
+        match (codex.as_ref(), codex_preflight) {
+            (Some(_), None) => {
+                return Err("Check the Codex binding before starting this agent".into())
+            }
+            (_, Some(preflight)) => preflight.check(&codex)?,
+            (None, None) => {}
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
@@ -1029,7 +1180,7 @@ impl Controller {
                 return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor, preflight) {
+        match self.start_with_key(id, Some(key), replay_floor, preflight, codex_preflight) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -1052,7 +1203,7 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None, None)
+        self.start_with_key(id, None, None, None, None)
     }
     fn start_with_key(
         &mut self,
@@ -1060,6 +1211,7 @@ impl Controller {
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
         preflight: Option<&crate::pi::LaunchPreflight>,
+        codex_preflight: Option<&crate::codex::CodexLaunchPreflight>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -1104,8 +1256,14 @@ impl Controller {
             .map_err(|_| "Could not create private runtime directory")?;
         let scratch = temporary.path().join("tmp");
         crate::connection::private_directory(&scratch)?;
-        let mut command = if let Some(preflight) = preflight {
-            bundle.command_checked(&agent, key, &crate::build_defaults(), Some(preflight))?
+        let mut command = if preflight.is_some() || codex_preflight.is_some() {
+            bundle.command_checked_with_codex(
+                &agent,
+                key,
+                &crate::build_defaults(),
+                preflight,
+                codex_preflight,
+            )?
         } else {
             bundle.command(&agent, key)?
         };

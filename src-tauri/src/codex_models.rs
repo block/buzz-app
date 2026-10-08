@@ -1,32 +1,25 @@
 //! Headless Codex model catalog and selected-model effort discovery. No prompts.
-#[cfg(unix)]
-use crate::codex_acp::{self, Failure, Limits};
-#[cfg(unix)]
+#![cfg(unix)]
 use buzz_agent_controller::codex::CodexContext;
-#[cfg(unix)]
 use serde_json::{json, Value};
-#[cfg(unix)]
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, process::Stdio, time::Duration};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-#[cfg(unix)]
+const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 const MAX_MODELS: usize = 1_000;
-#[cfg(unix)]
 const MAX_EFFORTS: usize = 20;
-#[cfg(unix)]
 const MAX_CONFIG_OPTIONS: usize = 100;
-#[cfg(unix)]
 const MAX_ID: usize = 512;
-#[cfg(unix)]
 const MAX_NAME: usize = 1_024;
+const INCOMPATIBLE: &str = "Codex model discovery could not be completed with the selected tools";
+const TOO_LARGE: &str = "Codex model discovery exceeded its safe output limit";
 
-#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Entry {
     pub(crate) id: String,
     pub(crate) name: String,
 }
 
-#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Effort {
     pub(crate) model: String,
@@ -34,7 +27,6 @@ pub(crate) struct Effort {
     pub(crate) options: Vec<Entry>,
 }
 
-#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Discovery {
     /// `None` means the adapter did not publish model metadata. `Some([])` is
@@ -48,29 +40,135 @@ pub(crate) struct Discovery {
     pub(crate) effort: Option<Effort>,
 }
 
-#[cfg(unix)]
-pub(crate) fn discover(
-    context: &CodexContext,
-    adapter_version: &str,
-    selected_model: Option<&str>,
-    current: &impl Fn() -> bool,
-    retained: &mut Vec<buzz_agent_controller::ContainedProcess>,
-) -> Result<Discovery, Failure> {
-    if selected_model.is_some_and(|value| !valid(value, MAX_ID)) {
-        return Err(Failure::Incompatible);
+/// One bounded ACP session over the bound adapter, as for Goose catalogs. The
+/// process group is killed on drop, so cancellation and timeout leave no child.
+struct Session {
+    child: tokio::process::Child,
+    input: tokio::process::ChildStdin,
+    output: BufReader<tokio::io::Take<tokio::process::ChildStdout>>,
+    next: u64,
+}
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(pid) = self.child.id() {
+            unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        }
+        let _ = self.child.start_kill();
     }
-    codex_acp::run(context, Limits::discovery(), current, retained, |client| {
-        client.initialize(adapter_version, current)?;
-        let opened = client.request(
-            "session/new",
-            json!({"cwd": context.workspace, "mcpServers": []}),
-            current,
-        )?;
+}
+impl Session {
+    fn start(context: &CodexContext) -> Result<Self, String> {
+        let mut command = tokio::process::Command::from(context.adapter_command());
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .process_group(0);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Could not start Codex to list models: {error}"))?;
+        let input = child.stdin.take().ok_or(INCOMPATIBLE)?;
+        let output = child.stdout.take().ok_or(INCOMPATIBLE)?;
+        Ok(Self {
+            child,
+            input,
+            output: BufReader::new(output.take(MAX_RESPONSE_BYTES)),
+            next: 0,
+        })
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.next += 1;
+        let id = self.next;
+        let request = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
+        self.input
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .map_err(|_| INCOMPATIBLE)?;
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if self
+                .output
+                .read_until(b'\n', &mut line)
+                .await
+                .map_err(|_| INCOMPATIBLE)?
+                == 0
+            {
+                return Err(INCOMPATIBLE.into());
+            }
+            let value: Value = serde_json::from_slice(&line).map_err(|_| INCOMPATIBLE)?;
+            if value.get("method").is_some() {
+                // Discovery grants no file, terminal, or permission requests.
+                if value.get("id").is_some() {
+                    return Err(INCOMPATIBLE.into());
+                }
+                continue;
+            }
+            if value.get("id") != Some(&json!(id)) {
+                return Err(INCOMPATIBLE.into());
+            }
+            if let Some(error) = value.get("error") {
+                return Err(rejected(error));
+            }
+            return value
+                .get("result")
+                .cloned()
+                .ok_or_else(|| INCOMPATIBLE.into());
+        }
+    }
+}
+
+fn rejected(error: &Value) -> String {
+    let info = &error["data"]["codexErrorInfo"];
+    let unauthorized = info == "unauthorized"
+        || info.as_object().is_some_and(|info| {
+            info.values()
+                .any(|details| details["httpStatusCode"] == 401)
+        });
+    if unauthorized {
+        "Sign in with the selected Codex CLI, then retry".into()
+    } else {
+        "Codex rejected the model discovery request".into()
+    }
+}
+
+pub(crate) async fn discover(
+    context: &CodexContext,
+    selected_model: Option<&str>,
+) -> Result<Discovery, String> {
+    if selected_model.is_some_and(|value| !valid(value, MAX_ID)) {
+        return Err(INCOMPATIBLE.into());
+    }
+    let mut session = Session::start(context)?;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let initialized = session
+            .request(
+                "initialize",
+                json!({
+                    "protocolVersion": 1,
+                    "clientCapabilities": {},
+                    "clientInfo": {"name": "buzz-codex", "version": "0.0.0"}
+                }),
+            )
+            .await?;
+        if initialized["protocolVersion"] != 1
+            || initialized["agentInfo"]["name"] != "@agentclientprotocol/codex-acp"
+        {
+            return Err("The selected Codex ACP adapter is incompatible. Install @agentclientprotocol/codex-acp.".into());
+        }
+        let opened = session
+            .request(
+                "session/new",
+                json!({"cwd": context.workspace, "mcpServers": []}),
+            )
+            .await?;
         let session_id = opened
             .get("sessionId")
             .and_then(Value::as_str)
             .filter(|value| valid(value, MAX_ID))
-            .ok_or(Failure::Incompatible)?
+            .ok_or(INCOMPATIBLE)?
             .to_owned();
         let initial = parse_options(opened.get("configOptions"))?;
         let resolved_model = initial.current_model.clone();
@@ -85,47 +183,41 @@ pub(crate) fn discover(
                     .as_ref()
                     .is_some_and(|models| models.iter().any(|model| model.id == selected))
                 {
-                    return Err(Failure::Incompatible);
+                    return Err(INCOMPATIBLE.into());
                 }
-                let changed = client.request(
-                    "session/set_config_option",
-                    json!({
-                        "sessionId": session_id,
-                        "configId": "model",
-                        "value": selected,
-                    }),
-                    current,
-                )?;
+                let changed = session
+                    .request(
+                        "session/set_config_option",
+                        json!({"sessionId": session_id, "configId": "model", "value": selected}),
+                    )
+                    .await?;
                 let changed = parse_options(changed.get("configOptions"))?;
                 if changed.current_model.as_deref() != Some(selected) {
-                    return Err(Failure::Incompatible);
+                    return Err(INCOMPATIBLE.into());
                 }
                 changed
             }
             _ => initial,
         };
-        client.request("session/close", json!({"sessionId": session_id}), current)?;
+        session
+            .request("session/close", json!({"sessionId": session_id}))
+            .await?;
         let Options {
             models,
             current_model,
             effort,
         } = final_options;
-        let effort = current_model.map(|model| {
-            effort.map(|mut effort| {
-                effort.model = model;
-                effort
-            })
-        });
         Ok(Discovery {
             models,
             resolved_model,
             resolved_effort,
-            effort: effort.flatten(),
+            effort: current_model.zip(effort).map(|(model, effort)| Effort { model, ..effort }),
         })
     })
+    .await
+    .map_err(|_| "Codex model discovery timed out; retry explicitly".to_owned())?
 }
 
-#[cfg(unix)]
 #[derive(Debug)]
 struct Options {
     models: Option<Vec<Entry>>,
@@ -133,8 +225,7 @@ struct Options {
     effort: Option<Effort>,
 }
 
-#[cfg(unix)]
-fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
+fn parse_options(value: Option<&Value>) -> Result<Options, String> {
     let Some(value) = value else {
         return Ok(Options {
             models: None,
@@ -142,9 +233,9 @@ fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
             effort: None,
         });
     };
-    let options = value.as_array().ok_or(Failure::Incompatible)?;
+    let options = value.as_array().ok_or(INCOMPATIBLE)?;
     if options.len() > MAX_CONFIG_OPTIONS {
-        return Err(Failure::OutputLimit);
+        return Err(TOO_LARGE.into());
     }
     let mut model = None;
     let mut effort = None;
@@ -153,7 +244,7 @@ fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
         let category = option.get("category").and_then(Value::as_str);
         if id == Some("model") || category == Some("model") {
             if id != Some("model") || category != Some("model") || model.is_some() {
-                return Err(Failure::Incompatible);
+                return Err(INCOMPATIBLE.into());
             }
             model = Some(parse_select(option, MAX_MODELS)?);
         }
@@ -162,7 +253,7 @@ fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
                 || category != Some("thought_level")
                 || effort.is_some()
             {
-                return Err(Failure::Incompatible);
+                return Err(INCOMPATIBLE.into());
             }
             effort = Some(parse_select(option, MAX_EFFORTS)?);
         }
@@ -175,11 +266,11 @@ fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
         None => (None, None),
     };
     if models.is_none() && effort.is_some() {
-        return Err(Failure::Incompatible);
+        return Err(INCOMPATIBLE.into());
     }
     let effort = effort
         .map(|selection| {
-            Ok(Effort {
+            Ok::<_, String>(Effort {
                 model: String::new(),
                 current: current(&selection)?,
                 options: selection.options,
@@ -193,48 +284,46 @@ fn parse_options(value: Option<&Value>) -> Result<Options, Failure> {
     })
 }
 
-#[cfg(unix)]
 struct Selection {
     current: String,
     options: Vec<Entry>,
 }
 
-#[cfg(unix)]
-fn parse_select(value: &Value, limit: usize) -> Result<Selection, Failure> {
+fn parse_select(value: &Value, limit: usize) -> Result<Selection, String> {
     if value.get("type").and_then(Value::as_str) != Some("select") {
-        return Err(Failure::Incompatible);
+        return Err(INCOMPATIBLE.into());
     }
     let current = value
         .get("currentValue")
         .and_then(Value::as_str)
         .filter(|value| value.is_empty() || valid(value, MAX_ID))
-        .ok_or(Failure::Incompatible)?
+        .ok_or(INCOMPATIBLE)?
         .to_owned();
     let values = value
         .get("options")
         .and_then(Value::as_array)
-        .ok_or(Failure::Incompatible)?;
+        .ok_or(INCOMPATIBLE)?;
     if values.len() > limit {
-        return Err(Failure::OutputLimit);
+        return Err(TOO_LARGE.into());
     }
     let mut ids = BTreeSet::new();
     let mut options = Vec::with_capacity(values.len());
     for option in values {
         if option.get("group").is_some() {
-            return Err(Failure::Incompatible);
+            return Err(INCOMPATIBLE.into());
         }
         let id = option
             .get("value")
             .and_then(Value::as_str)
             .filter(|value| valid(value, MAX_ID))
-            .ok_or(Failure::Incompatible)?;
+            .ok_or(INCOMPATIBLE)?;
         let name = option
             .get("name")
             .and_then(Value::as_str)
             .filter(|value| valid(value, MAX_NAME))
-            .ok_or(Failure::Incompatible)?;
+            .ok_or(INCOMPATIBLE)?;
         if !ids.insert(id) {
-            return Err(Failure::Incompatible);
+            return Err(INCOMPATIBLE.into());
         }
         options.push(Entry {
             id: id.to_owned(),
@@ -244,8 +333,7 @@ fn parse_select(value: &Value, limit: usize) -> Result<Selection, Failure> {
     Ok(Selection { current, options })
 }
 
-#[cfg(unix)]
-fn current(selection: &Selection) -> Result<Option<String>, Failure> {
+fn current(selection: &Selection) -> Result<Option<String>, String> {
     if selection.current.is_empty() && selection.options.is_empty() {
         return Ok(None);
     }
@@ -254,13 +342,12 @@ fn current(selection: &Selection) -> Result<Option<String>, Failure> {
         .iter()
         .any(|option| option.id == selection.current)
         .then(|| Some(selection.current.clone()))
-        .ok_or(Failure::Incompatible)
+        .ok_or_else(|| INCOMPATIBLE.into())
 }
 
-#[cfg(unix)]
 fn valid(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

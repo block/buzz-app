@@ -61,7 +61,6 @@ fn app_at(
         .manage(host.clone())
         .manage(crate::harness_setup::HarnessSetup::default())
         .manage(crate::agent_models::ModelHost::new(Ok(root.join("store"))))
-        .manage(Arc::new(crate::codex_readiness::Host::default()))
         .manage(crate::identity::IdentityHost::fixture())
         .invoke_handler(crate::commands())
         .build(crate::app_context())

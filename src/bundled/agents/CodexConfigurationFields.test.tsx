@@ -35,14 +35,7 @@ const codexOption: NonNullable<ControlSnapshot["harnessOptions"]>[number] = {
 it("selects managed Codex Default or discovered Advanced settings without provider fields", async () => {
   const fixture = controlFixture();
   fixture.data.harnessOptions?.push(codexOption);
-  fixture.host.codexReadiness = {
-    begin: vi.fn(async () => 1),
-    cancel: vi.fn(async () => {}),
-    run: vi.fn(async () => ({
-      status: "binding-ready" as const,
-      message: "Codex CLI and adapter are ready.",
-    })),
-  };
+  fixture.host.checkCodexAuth = vi.fn(async () => true);
   let ticket = 0;
   fixture.host.models = {
     begin: vi.fn(async () => ++ticket),
@@ -96,7 +89,7 @@ it("selects managed Codex Default or discovered Advanced settings without provid
   try {
     await user.click(screen.getByRole("combobox", { name: "Harness" }));
     await user.click(await screen.findByRole("option", { name: "Codex" }));
-    expect(fixture.host.codexReadiness.begin).not.toHaveBeenCalled();
+    expect(fixture.host.checkCodexAuth).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
     expect(screen.queryByText(/Databricks workspace/)).not.toBeInTheDocument();
     expect(current).toMatchObject({

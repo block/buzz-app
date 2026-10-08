@@ -308,12 +308,12 @@ available; it does not mean effort is unsupported. The existing Agent defaults
 effort suggestions remain editable suggestions, not allowed-value validation.
 
 Settings lists Codex with a stable native integration identity. New selection
-requires installed CLI and adapter presence. Its explicit readiness check binds the installed CLI and ACP
-adapter, verifies the existing CLI login, and reports fixed recovery categories;
-ordinary control snapshots do not launch these probes. A successful check is
-binding evidence only. Codex discovery and execution must
-revalidate their saved context because authentication and configuration files can change
-without changing their paths. **Adapter needed** offers an app-owned Install of
+requires installed CLI and adapter presence. Once both are found, Settings reads
+the existing CLI login with a bounded `codex login status` on opening, Check
+again, and install completion, as it does for Claude Code; ordinary control
+snapshots do not launch it. Start launches the saved binding without a separate
+probe; adapter and login failures appear in the agent log, as for Claude Code.
+Codex discovery and execution resolve their saved context for each operation. **Adapter needed** offers an app-owned Install of
 the ACP adapter only, following Claude Code's setup. See
 [Codex binding readiness](codex-binding-readiness.md).
 

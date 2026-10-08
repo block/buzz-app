@@ -191,6 +191,28 @@ async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Opt
     }
 }
 
+/// Settings-only read of the selected Codex CLI's existing login. Codex prints
+/// its status on stderr, so only the exit code is read, as for Claude Code.
+#[tauri::command]
+pub(crate) async fn codex_auth_status() -> Option<bool> {
+    prepare_tools_path().await;
+    let cli = buzz_agent_controller::installed("codex")?;
+    let path = buzz_agent_controller::tools_path().ok()?;
+    let (_, status) = crate::host_command::run_output(
+        &cli,
+        &["login".into(), "status".into()],
+        std::time::Duration::from_secs(5),
+        &path,
+        4096,
+    )
+    .await?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderOption {
     value: &'static str,
@@ -424,7 +446,10 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
         // Match Claude's selection gate: executable presence, not sign-in or inference.
         available: codex_status == "ready",
         status: codex_status,
-        install_supported: None,
+        install_supported: Some(cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))),
         update_supported: None,
         default_args: vec![],
         providers: &[],
@@ -469,18 +494,10 @@ struct LogChallenge {
 
 struct PendingStart {
     ticket: u64,
-    current: Arc<AtomicBool>,
     workspace: Option<String>,
     status: ProcessStatus,
     revision: u64,
     replay_floor: Option<u64>,
-    codex: Option<PendingCodex>,
-}
-
-#[derive(Clone)]
-struct PendingCodex {
-    owner: Arc<crate::codex_readiness::Host>,
-    ticket: u64,
 }
 struct MentionReplay {
     revision: u64,
@@ -505,7 +522,6 @@ pub(crate) struct Host {
     closed: bool,
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, PendingStart>,
-    codex_retiring: BTreeMap<String, PendingCodex>,
     queued: BTreeMap<String, Option<MentionReplay>>,
     next_start: u64,
     /// Agents with an explicit Start/Stop since open; queued restore skips them.
@@ -513,15 +529,8 @@ pub(crate) struct Host {
     profiles: BTreeMap<String, Arc<tokio::sync::Mutex<()>>>,
     log_challenges: BTreeMap<String, LogChallenge>,
     creating: Option<PendingCreate>,
-    codex_cleanup_failed: bool,
-    #[cfg(test)]
-    codex_context: Option<Arc<CodexContextResolver>>,
     legacy_check: fn() -> Result<(), String>,
 }
-#[cfg(test)]
-type CodexContextResolver = dyn Fn(&str, u64) -> Result<Option<buzz_agent_controller::codex::CodexContext>, String>
-    + Send
-    + Sync;
 impl Host {
     fn open(
         root: PathBuf,
@@ -572,16 +581,12 @@ impl Host {
             closed: false,
             credentials,
             starts: BTreeMap::new(),
-            codex_retiring: BTreeMap::new(),
             queued,
             next_start: 0,
             acted: BTreeSet::new(),
             profiles: BTreeMap::new(),
             log_challenges: BTreeMap::new(),
             creating: None,
-            codex_cleanup_failed: false,
-            #[cfg(test)]
-            codex_context: None,
             legacy_check: refuse_legacy,
         })
     }
@@ -606,7 +611,7 @@ impl Host {
         Ok(snapshot)
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
-        self.cancel_start(id);
+        self.starts.remove(id);
         self.queued.remove(id);
         self.acted.insert(id.to_owned());
         self.controller.action(id, action)?;
@@ -616,49 +621,7 @@ impl Host {
         if self.starts.get(id).map(|pending| pending.ticket) != Some(ticket) {
             return Err(START_CANCELLED.into());
         }
-        let pending = self.starts.remove(id).ok_or(START_CANCELLED)?;
-        if let Some(codex) = &pending.codex {
-            if codex.owner.retirement() != Ok(true) {
-                self.codex_retiring.insert(id.to_owned(), codex.clone());
-            }
-        }
-        Ok(pending)
-    }
-    fn cancel_start(&mut self, id: &str) {
-        if let Some(pending) = self.starts.remove(id) {
-            pending.current.store(false, Ordering::SeqCst);
-            if let Some(codex) = pending.codex {
-                codex.owner.cancel_owned(codex.ticket);
-                self.codex_retiring.insert(id.to_owned(), codex);
-            }
-        }
-    }
-    fn check_codex_retirement(&mut self, id: &str) -> Result<(), String> {
-        let Some(pending) = self.codex_retiring.get(id) else {
-            return Ok(());
-        };
-        match pending.owner.retirement() {
-            Ok(true) => {
-                self.codex_retiring.remove(id);
-                Ok(())
-            }
-            Ok(false) => Err("Previous Codex readiness cleanup is still in progress".into()),
-            Err(error) => {
-                self.codex_cleanup_failed = true;
-                Err(error)
-            }
-        }
-    }
-    fn codex_launch_context(
-        &self,
-        id: &str,
-        revision: u64,
-    ) -> Result<Option<buzz_agent_controller::codex::CodexContext>, String> {
-        #[cfg(test)]
-        if let Some(resolve) = &self.codex_context {
-            return resolve(id, revision);
-        }
-        self.controller.codex_launch_context(id, revision)
+        self.starts.remove(id).ok_or_else(|| START_CANCELLED.into())
     }
     fn attach_mention(&mut self, id: &str, revision: u64, floor: u64) -> Result<(), String> {
         let current = self.controller.snapshot()?;
@@ -697,24 +660,7 @@ impl Host {
     }
     fn shutdown(&mut self) -> Result<(), String> {
         self.closed = true; // Fence queued commands before shutdown starts.
-        for (id, pending) in std::mem::take(&mut self.starts) {
-            pending.current.store(false, Ordering::SeqCst);
-            if let Some(codex) = pending.codex {
-                codex.owner.cancel_owned(codex.ticket);
-                self.codex_retiring.insert(id, codex);
-            }
-        }
-        let mut cleanup_error = None;
-        for pending in self.codex_retiring.values() {
-            if let Err(error) = pending.owner.shutdown() {
-                cleanup_error.get_or_insert(error);
-            }
-        }
-        let controller = self.controller.shutdown();
-        match (cleanup_error, controller) {
-            (Some(error), _) => Err(error),
-            (None, result) => result,
-        }
+        self.controller.shutdown()
     }
     fn log_challenge(
         &mut self,
@@ -913,14 +859,6 @@ impl AgentHost {
     pub(crate) async fn inherited_workspace(&self) -> Result<Option<String>, String> {
         run(self.clone(), |host| host.controller.inherited_workspace()).await
     }
-    /// Default workspace and app-owned tool storage, as the controller resolves Codex.
-    pub(crate) async fn codex_paths(&self) -> Result<(PathBuf, PathBuf), String> {
-        prepare_tools_path().await;
-        run(self.clone(), |host| {
-            Ok((host.workspace.clone(), host.app_data.clone()))
-        })
-        .await
-    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) async fn waiting_for_pi(&self) -> Result<Vec<String>, String> {
         self.waiting_for(crate::harness_setup::waiting_for_pi).await
@@ -955,7 +893,7 @@ impl AgentHost {
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in cancelled {
-                host.cancel_start(&id);
+                host.starts.remove(&id);
                 host.controller.record_error(
                     &id,
                     "Start cancelled by Disconnect; reconnect and retry Start".into(),
@@ -1237,7 +1175,7 @@ pub(crate) async fn agent_control_delete(
     expected_revision: u64,
 ) -> Result<Snapshot, String> {
     run(state.inner().clone(), move |host| {
-        host.cancel_start(&id);
+        host.starts.remove(&id);
         host.queued.remove(&id);
         host.acted.insert(id.clone());
         host.controller.delete(&id, expected_revision)?;
@@ -1311,68 +1249,6 @@ pub(crate) async fn start(
 }
 const START_CANCELLED: &str = "Start cancelled by a newer action";
 type StartGuard = (fn(&buzz_agent_controller::AgentView) -> bool, &'static str);
-
-struct StartAdmission {
-    owner: AgentHost,
-    id: String,
-    ticket: u64,
-    current: Arc<AtomicBool>,
-    retired: bool,
-}
-
-impl Drop for StartAdmission {
-    fn drop(&mut self) {
-        if self.retired {
-            return;
-        }
-        self.current.store(false, Ordering::SeqCst);
-        let _ = self.owner.with(|host| {
-            if host.starts.get(&self.id).map(|pending| pending.ticket) == Some(self.ticket) {
-                host.cancel_start(&self.id);
-            }
-            Ok(())
-        });
-    }
-}
-
-#[cfg(unix)]
-struct CodexStartCheck {
-    result: Result<Option<buzz_agent_controller::codex::CodexLaunchPreflight>, String>,
-    cleanup_failed: bool,
-}
-
-#[cfg(unix)]
-async fn check_codex_start(
-    pending: PendingCodex,
-    context: buzz_agent_controller::codex::CodexContext,
-    current: Arc<AtomicBool>,
-) -> CodexStartCheck {
-    let owner = pending.owner.clone();
-    let ticket = pending.ticket;
-    let checked = tauri::async_runtime::spawn_blocking(move || {
-        crate::codex_readiness::check_binding_owned(owner, ticket, &context, &|| {
-            current.load(Ordering::SeqCst)
-        })
-        .map(|_| buzz_agent_controller::codex::CodexLaunchPreflight::new(context))
-        .map(Some)
-    })
-    .await;
-    match checked {
-        Ok(Ok(preflight)) => CodexStartCheck {
-            result: Ok(preflight),
-            cleanup_failed: false,
-        },
-        Ok(Err(status)) => CodexStartCheck {
-            cleanup_failed: status.status == "cleanup-failed",
-            result: Err(codex_start_failure(status)),
-        },
-        Err(_) => CodexStartCheck {
-            result: Err("Codex readiness cleanup could not be confirmed".into()),
-            cleanup_failed: true,
-        },
-    }
-}
-
 fn check_guard(host: &mut Host, id: &str, guard: Option<StartGuard>) -> Result<(), String> {
     let Some((eligible, refusal)) = guard else {
         return Ok(());
@@ -1398,7 +1274,6 @@ async fn start_guarded(
     guard: Option<StartGuard>,
 ) -> Result<Snapshot, String> {
     let target = id.clone();
-    let admission_owner = owner.clone();
     let prepared = run(owner.clone(), move |host| {
         let id = target;
         let queued_replay = host.queued.remove(&id).flatten();
@@ -1408,7 +1283,6 @@ async fn start_guarded(
         // Re-check while holding the controller, not just when the caller
         // chose this agent: Stop or Edit may have changed it since.
         check_guard(host, &id, guard)?;
-        host.check_codex_retirement(&id)?;
         if host.starts.contains_key(&id) {
             return Err("Agent start already in progress; use Stop to cancel".into());
         }
@@ -1442,68 +1316,29 @@ async fn start_guarded(
             .checked_add(1)
             .ok_or("Start sequence exhausted")?;
         let ticket = host.next_start;
-        let current = Arc::new(AtomicBool::new(true));
         host.starts.insert(
             id.clone(),
             PendingStart {
                 ticket,
-                current: current.clone(),
                 workspace: request.3.clone(),
                 status: ProcessStatus::Waiting,
                 revision: request.2,
                 replay_floor,
-                codex: None,
             },
         );
         let attested = host.controller.attested_owner(&id)?;
-        let admission = StartAdmission {
-            owner: admission_owner,
-            id: id.clone(),
-            ticket,
-            current: current.clone(),
-            retired: false,
-        };
-        Ok((
-            request,
-            ticket,
-            host.credentials.clone(),
-            attested,
-            current,
-            admission,
-        ))
+        Ok((request, ticket, host.credentials.clone(), attested))
     })
     .await?;
-    let (
-        (credential, pubkey, revision, _workspace),
-        ticket,
-        credentials,
-        attested,
-        current,
-        mut admission,
-    ) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials, attested) = prepared;
     prepare_tools_path().await;
     let target = id.clone();
-    let (pi, codex, codex_pending) = run(owner.clone(), move |host| {
+    let pi = run(owner.clone(), move |host| {
         host.starts
             .get(&target)
             .filter(|pending| pending.ticket == ticket)
             .ok_or(START_CANCELLED)?;
-        let pi = host.controller.pi_launch_context(&target, revision);
-        let codex = host.codex_launch_context(&target, revision);
-        if codex.as_ref().is_ok_and(Option::is_some) && host.codex_cleanup_failed {
-            return Err("Codex readiness cleanup previously failed; restart the app".into());
-        }
-        let codex_pending = if codex.as_ref().is_ok_and(Option::is_some) {
-            let owner = Arc::new(crate::codex_readiness::Host::default());
-            let ticket = owner.begin_owned()?;
-            Some(PendingCodex { owner, ticket })
-        } else {
-            None
-        };
-        if let Some(pending) = host.starts.get_mut(&target) {
-            pending.codex = codex_pending.clone();
-        }
-        Ok((pi, codex, codex_pending))
+        Ok(host.controller.pi_launch_context(&target, revision))
     })
     .await?;
     let probed_pi = matches!(&pi, Ok(Some(_)));
@@ -1514,35 +1349,7 @@ async fn start_guarded(
         Ok(None) => Ok(buzz_agent_controller::pi::LaunchPreflight::new(None)),
         Err(error) => Err(error),
     };
-    let probed_codex = matches!(&codex, Ok(Some(_)));
-    #[cfg(unix)]
-    let codex_preflight = match codex {
-        Ok(Some(context)) => {
-            let pending = codex_pending.ok_or("Missing Codex readiness owner")?;
-            let checked = check_codex_start(pending, context, current.clone()).await;
-            if checked.cleanup_failed {
-                run(owner.clone(), |host| {
-                    host.codex_cleanup_failed = true;
-                    Ok(())
-                })
-                .await?;
-            }
-            checked.result
-        }
-        Ok(None) => Ok(None),
-        Err(error) => Err(error),
-    };
-    #[cfg(not(unix))]
-    let codex_preflight = match codex {
-        Ok(Some(_)) => {
-            let _ = codex_pending;
-            Err("Codex execution is not supported on this platform".into())
-        }
-        Ok(None) => Ok(None),
-        Err(error) => Err(error),
-    };
-    let preflights = preflight.and_then(|pi| codex_preflight.map(|codex| (pi, codex)));
-    if (probed_pi || probed_codex) && preflights.is_ok() {
+    if probed_pi && preflight.is_ok() {
         let target = id.clone();
         run(owner.clone(), move |host| {
             host.starts
@@ -1561,7 +1368,7 @@ async fn start_guarded(
         Ok(signed_in) => buzz_agent_controller::check_owner(attested.as_deref(), Some(&signed_in)),
         Err(error) => Err(error),
     }
-    .and(preflights.as_ref().map(|_| ()).map_err(Clone::clone));
+    .and(preflight.as_ref().map(|_| ()).map_err(Clone::clone));
     let target = id.clone();
     run(owner.clone(), move |host| {
         host.starts
@@ -1598,7 +1405,7 @@ async fn start_guarded(
         })
         .await?;
     }
-    let result = run(owner, move |host| {
+    run(owner, move |host| {
         let replay_floor = host.take_start(&id, ticket)?.replay_floor;
         let key = match acquired {
             Ok(key) => key,
@@ -1614,41 +1421,19 @@ async fn start_guarded(
         // The OS credential prompt can outlast the agent (e.g. its listener
         // exited); eligibility must still hold right before Restart enables it.
         check_guard(host, &id, guard)?;
-        let (pi, codex) = preflights?;
-        if let Err(error) = host.controller.action_with_preflights(
+        if let Err(error) = host.controller.action_with_preflight(
             &id,
             action,
             revision,
             &key,
             replay_floor,
-            buzz_agent_controller::LaunchPreflights {
-                pi: &pi,
-                codex: codex.as_ref(),
-            },
+            &preflight?,
         ) {
             host.controller.record_error(&id, error);
         }
         host.snapshot()
     })
-    .await;
-    admission.retired = true;
-    result
-}
-
-#[cfg(unix)]
-fn codex_start_failure(status: crate::codex_readiness::Readiness) -> String {
-    match status.status {
-        "cancelled" => START_CANCELLED,
-        "timeout" => "Codex tool verification timed out; retry Start",
-        "output-limit" => "Codex tool verification exceeded its output limit",
-        "signed-out" => "Sign in with the selected Codex CLI, then retry Start",
-        "configuration-error" => "Codex configuration or login could not be read",
-        "adapter-incompatible" => "The selected Codex ACP adapter is incompatible",
-        "cli-incompatible" => "The selected Codex CLI is incompatible",
-        "cleanup-failed" => "Codex readiness cleanup could not be confirmed",
-        _ => "Codex tools could not be verified",
-    }
-    .into()
+    .await
 }
 #[tauri::command]
 pub(crate) async fn agent_control_use_here(

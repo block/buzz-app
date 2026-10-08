@@ -27,16 +27,6 @@ impl RuntimeBundle {
         defaults: &crate::BuildDefaults,
         preflight: Option<&crate::pi::LaunchPreflight>,
     ) -> Result<Command> {
-        self.command_checked_with_codex(agent, key, defaults, preflight, None)
-    }
-    fn command_checked_with_codex(
-        &self,
-        agent: &Agent,
-        key: &crate::Secret,
-        defaults: &crate::BuildDefaults,
-        preflight: Option<&crate::pi::LaunchPreflight>,
-        codex_preflight: Option<&crate::codex::CodexLaunchPreflight>,
-    ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
         if let Some(preset) = crate::harness_preset(&harness.command) {
@@ -53,19 +43,19 @@ impl RuntimeBundle {
         if !Path::new(&agent.workspace).is_dir() {
             return Err("Agent workspace does not exist".into());
         }
-        let codex = match harness.integration {
-            Some(crate::HarnessIntegration::Codex) => Some(
-                codex_preflight
-                    .ok_or("Check the Codex binding before starting this agent")?
-                    .context(),
-            ),
-            _ if codex_preflight.is_some() => {
-                return Err("Codex readiness does not match this agent".into())
-            }
-            _ => None,
-        };
+        // Like Claude Code, Start resolves the saved binding and launches it;
+        // adapter and login failures surface in the agent log.
+        let codex = (harness.integration == Some(crate::HarnessIntegration::Codex))
+            .then(|| {
+                crate::codex::CodexContext::for_agent(
+                    &harness.command,
+                    Path::new(&agent.workspace),
+                    &agent.environment,
+                )
+            })
+            .transpose()?;
+        let codex = codex.as_ref();
         let (worker, codex_args) = if let Some(context) = codex {
-            context.verify_adapter(&harness.command)?;
             let (worker, args) = context.adapter_launch(&harness.args)?;
             (worker, Some(args))
         } else {
@@ -565,13 +555,6 @@ pub struct GooseModelContext {
     pub environment: BTreeMap<String, String>,
     pub model_overridden: bool,
 }
-/// Native readiness evidence applied together at the revision-checked Start seam.
-pub struct LaunchPreflights<'a> {
-    /// Existing Pi launch proof.
-    pub pi: &'a crate::pi::LaunchPreflight,
-    /// Native Codex binding proof when the selected agent requires it.
-    pub codex: Option<&'a crate::codex::CodexLaunchPreflight>,
-}
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
@@ -737,34 +720,6 @@ impl Controller {
             return Ok(None);
         }
         crate::pi::PiContext::new(&agent.harness, &agent.workspace, &agent.environment).map(Some)
-    }
-    /// Resolve one exact saved Codex binding after fencing its revision.
-    pub fn codex_launch_context(
-        &self,
-        id: &str,
-        revision: u64,
-    ) -> Result<Option<crate::codex::CodexContext>> {
-        let agent = self
-            .store
-            .agents()?
-            .into_iter()
-            .find(|agent| agent.id == id)
-            .ok_or("Agent no longer exists")?;
-        if agent.revision != revision {
-            return Err("Saved settings changed; retry Start".into());
-        }
-        let agent = crate::agent_defaults::effective(&agent, &self.store.defaults()?);
-        if agent.harness.integration != Some(crate::HarnessIntegration::Codex) {
-            return Ok(None);
-        }
-        let context = crate::codex::CodexContext::for_agent(
-            &agent.harness.command,
-            Path::new(&agent.workspace),
-            &agent.environment,
-        )?;
-        context.verify_adapter(&agent.harness.command)?;
-        context.adapter_launch(&agent.harness.args)?;
-        Ok(Some(context))
     }
     /// Resolve unsaved Create drafts against the same native defaults as a saved start.
     pub fn effective_draft(&self, mut edit: AgentEdit) -> Result<AgentEdit> {
@@ -1108,7 +1063,7 @@ impl Controller {
         key: &crate::Secret,
         replay_floor: Option<u64>,
     ) -> Result<()> {
-        self.action_checked(id, action, revision, key, replay_floor, (None, None))
+        self.action_checked(id, action, revision, key, replay_floor, None)
     }
     pub fn action_with_preflight(
         &mut self,
@@ -1119,32 +1074,7 @@ impl Controller {
         replay_floor: Option<u64>,
         preflight: &crate::pi::LaunchPreflight,
     ) -> Result<()> {
-        self.action_checked(
-            id,
-            action,
-            revision,
-            key,
-            replay_floor,
-            (Some(preflight), None),
-        )
-    }
-    pub fn action_with_preflights(
-        &mut self,
-        id: &str,
-        action: Action,
-        revision: u64,
-        key: &crate::Secret,
-        replay_floor: Option<u64>,
-        preflights: LaunchPreflights<'_>,
-    ) -> Result<()> {
-        self.action_checked(
-            id,
-            action,
-            revision,
-            key,
-            replay_floor,
-            (Some(preflights.pi), preflights.codex),
-        )
+        self.action_checked(id, action, revision, key, replay_floor, Some(preflight))
     }
     fn action_checked(
         &mut self,
@@ -1153,25 +1083,13 @@ impl Controller {
         revision: u64,
         key: &crate::Secret,
         replay_floor: Option<u64>,
-        preflights: (
-            Option<&crate::pi::LaunchPreflight>,
-            Option<&crate::codex::CodexLaunchPreflight>,
-        ),
+        preflight: Option<&crate::pi::LaunchPreflight>,
     ) -> Result<()> {
-        let (preflight, codex_preflight) = preflights;
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
         }
         if let Some(preflight) = preflight {
             preflight.check(&self.pi_launch_context(id, revision)?)?;
-        }
-        let codex = self.codex_launch_context(id, revision)?;
-        match (codex.as_ref(), codex_preflight) {
-            (Some(_), None) => {
-                return Err("Check the Codex binding before starting this agent".into())
-            }
-            (_, Some(preflight)) => preflight.check(&codex)?,
-            (None, None) => {}
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
@@ -1180,7 +1098,7 @@ impl Controller {
                 return Ok(());
             }
         }
-        match self.start_with_key(id, Some(key), replay_floor, preflight, codex_preflight) {
+        match self.start_with_key(id, Some(key), replay_floor, preflight) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -1203,7 +1121,7 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None, None, None, None)
+        self.start_with_key(id, None, None, None)
     }
     fn start_with_key(
         &mut self,
@@ -1211,7 +1129,6 @@ impl Controller {
         supplied: Option<&crate::Secret>,
         replay_floor: Option<u64>,
         preflight: Option<&crate::pi::LaunchPreflight>,
-        codex_preflight: Option<&crate::codex::CodexLaunchPreflight>,
     ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
@@ -1256,14 +1173,8 @@ impl Controller {
             .map_err(|_| "Could not create private runtime directory")?;
         let scratch = temporary.path().join("tmp");
         crate::connection::private_directory(&scratch)?;
-        let mut command = if preflight.is_some() || codex_preflight.is_some() {
-            bundle.command_checked_with_codex(
-                &agent,
-                key,
-                &crate::build_defaults(),
-                preflight,
-                codex_preflight,
-            )?
+        let mut command = if let Some(preflight) = preflight {
+            bundle.command_checked(&agent, key, &crate::build_defaults(), Some(preflight))?
         } else {
             bundle.command(&agent, key)?
         };

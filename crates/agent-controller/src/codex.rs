@@ -1,4 +1,4 @@
-//! Canonical Codex CLI/adapter binding shared by readiness and later execution.
+//! Canonical Codex CLI/adapter binding shared by discovery and launch.
 //! Resolution never authenticates, reads a model catalog, or mutates Codex state.
 use crate::{installed, Result};
 use std::{
@@ -32,9 +32,8 @@ struct BoundExecutable {
     script: Option<PathBuf>,
 }
 
-/// Native-only binding. Equality is useful for fencing one operation, but
-/// callers must re-run readiness because config files and authentication can
-/// change without any path or environment value changing.
+/// Native-only binding. Config files and authentication can change without any
+/// path or environment value changing, so equality never proves a working login.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CodexContext {
     /// Canonical selected ACP adapter path.
@@ -50,29 +49,6 @@ pub struct CodexContext {
     adapter_command: BoundExecutable,
     cli_command: BoundExecutable,
     environment: BTreeMap<OsString, OsString>,
-}
-
-/// Readiness evidence for one exact saved launch context.
-#[derive(Clone)]
-pub struct CodexLaunchPreflight {
-    context: CodexContext,
-}
-
-impl CodexLaunchPreflight {
-    /// Seal one exact context after native readiness has verified it.
-    pub fn new(context: CodexContext) -> Self {
-        Self { context }
-    }
-
-    pub(crate) fn check(&self, current: &Option<CodexContext>) -> Result<()> {
-        (current.as_ref() == Some(&self.context))
-            .then_some(())
-            .ok_or_else(|| "Codex binding changed during readiness; retry Start".into())
-    }
-
-    pub(crate) fn context(&self) -> &CodexContext {
-        &self.context
-    }
 }
 
 impl CodexContext {
@@ -160,7 +136,7 @@ impl CodexContext {
             .map(|_| cli_command.program.clone());
 
         if std::env::var_os("CODEX_CONFIG").is_some() || overrides.contains_key("CODEX_CONFIG") {
-            return Err("CODEX_CONFIG is not supported by Codex readiness yet".into());
+            return Err("CODEX_CONFIG is not supported by Codex agents yet".into());
         }
         let mut environment = BTreeMap::new();
         for key in PASSTHROUGH {
@@ -234,20 +210,8 @@ impl CodexContext {
         Ok((self.adapter_command.program.clone(), args))
     }
 
-    /// Confirm the saved selector still names the exact adapter bound by this
-    /// context. Launch must repeat this check even when a caller pre-resolved
-    /// readiness so a mismatched record cannot borrow unrelated evidence.
-    pub(crate) fn verify_adapter(&self, configured: &str) -> Result<()> {
-        let selected = Path::new(configured)
-            .canonicalize()
-            .map_err(|_| "Saved Codex ACP adapter is missing")?;
-        (selected == self.adapter)
-            .then_some(())
-            .ok_or_else(|| "Saved Codex ACP adapter no longer matches the selected binding".into())
-    }
-
-    /// Apply the same isolated CLI, interpreter, full-access, and path binding
-    /// used by readiness. Host-owned identity and relay values are added later.
+    /// Apply the isolated CLI, interpreter, full-access, and path binding.
+    /// Host-owned identity and relay values are added later.
     pub(crate) fn apply_launch_environment(
         &self,
         command: &mut Command,
@@ -303,7 +267,7 @@ pub(crate) fn validate_native_environment(effective: &BTreeMap<String, String>) 
     Ok(())
 }
 
-/// The one adapter lookup shared by readiness, discovery, validation, and launch.
+/// The one adapter lookup shared by Settings, discovery, and new selections.
 pub fn installed_adapter(app_data: Option<&Path>) -> Option<PathBuf> {
     adapter_choice(installed("codex-acp"), app_data)
 }

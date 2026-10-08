@@ -57,6 +57,8 @@ const harnessIcons: Record<string, ReactNode> = {
   hermes: <HermesLogoIcon size={32} className="shrink-0" />,
   pi: <PiLogoIcon size={32} className="shrink-0" />,
 };
+const codexAdapterCommand =
+  "npm install -g @agentclientprotocol/codex-acp@2.1.1";
 const commands = [
   ["Pi", "Install Pi", piCommand],
   ["Adapter", "Install the ACP adapter", adapterCommand],
@@ -87,9 +89,7 @@ export function AgentSettings({
     error: piError,
   } = state.piInstall ?? { installing: false, report: null, error: null };
   useEffect(() => {
-    if (active) {
-      void control.refresh().then(() => control.checkCodex?.());
-    }
+    if (active) void control.refresh();
   }, [active, control]);
   const options = state.data?.harnessOptions;
   const coreHarnesses = (["buzz-agent", "goose", "pi"] as const).map((id) =>
@@ -117,35 +117,48 @@ export function AgentSettings({
   ];
   const available = coreHarnesses.every((option) => !!option?.status);
   const pi = coreHarnesses[2];
-  const codex = state.codexReadiness;
   const codexInstall = state.codexInstall;
+  const codexToolsReady = codexOption?.status === "ready";
+  const [codexAuth, setCodexAuth] = useState<boolean | null | "checking">(
+    "checking",
+  );
+  // Like Claude Code: read the existing CLI login only once its tools are found.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Check again and install completion must trigger this read even when tool presence is unchanged.
+  useEffect(() => {
+    if (!active || !codexToolsReady || codexInstall?.installing) return;
+    let current = true;
+    setCodexAuth("checking");
+    void (control.checkCodexAuth?.() ?? Promise.resolve(null))
+      .catch(() => null)
+      .then((result) => {
+        if (current) setCodexAuth(result);
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    active,
+    codexToolsReady,
+    codexInstall?.installing,
+    codexInstall?.report,
+    authCheck,
+    control,
+  ]);
   const offerCodexInstall =
     !!control.installCodex &&
-    codex?.status === "checked" &&
-    codex.result?.status === "adapter-needed";
-  const codexStatus =
-    codex?.status === "checking"
-      ? "Checking…"
-      : codex?.status === "error"
-        ? "Check failed"
-        : codex?.result
-          ? {
-              "binding-ready": "Ready",
-              "cli-needed": "CLI needed",
-              "adapter-needed": "Adapter needed",
-              "interpreter-needed": "Node needed",
-              "adapter-incompatible": "Adapter incompatible",
-              "cli-incompatible": "CLI incompatible",
-              "signed-out": "Sign-in needed",
-              "configuration-error": "Configuration error",
-              timeout: "Check timed out",
-              "output-limit": "Check failed",
-              "cleanup-failed": "Cleanup failed",
-              "check-failed": "Check failed",
-              unsupported: "Unsupported",
-              cancelled: "Check cancelled",
-            }[codex.result.status]
-          : "Not checked";
+    !!codexOption?.installSupported &&
+    codexOption.status === "adapter-needed";
+  const codexStatus = !codexToolsReady
+    ? codexOption?.status
+      ? labels[codexOption.status]
+      : "Unknown"
+    : codexAuth === "checking"
+      ? "Checking sign-in…"
+      : codexAuth === true
+        ? "Ready"
+        : codexAuth === false
+          ? "Sign-in needed"
+          : "Sign-in unconfirmed";
   const checkDisabled =
     state.status === "unavailable" ||
     state.busy ||
@@ -154,10 +167,7 @@ export function AgentSettings({
     codexInstall?.installing;
   const checkAgain = () => {
     setChecking(true);
-    void Promise.allSettled([
-      control.refresh(),
-      control.checkCodex?.() ?? Promise.resolve(),
-    ]).finally(() => {
+    void control.refresh().finally(() => {
       setChecking(false);
       setAuthCheck((value) => value + 1);
     });
@@ -297,13 +307,7 @@ export function AgentSettings({
                               state.claudeInstall?.installing
                             }
                             onClick={() => {
-                              void control
-                                .installCodex?.()
-                                .then((report) => {
-                                  if (report.ready)
-                                    return control.checkCodex?.();
-                                })
-                                .catch(() => {});
+                              void control.installCodex?.().catch(() => {});
                             }}
                           >
                             Install
@@ -379,21 +383,22 @@ export function AgentSettings({
                           </p>
                           <details>
                             <summary>Manual Codex ACP adapter setup</summary>
-                            <p className="mt-3">{codex.result?.message}</p>
+                            <code
+                              className={`${styles.command} mt-3 block text-mono`}
+                            >
+                              {codexAdapterCommand}
+                            </code>
                           </details>
                         </div>
                       )}
                     {option?.id === "codex" &&
-                      !offerCodexInstall &&
-                      ((codex?.status === "checked" &&
-                        codex.result?.status !== "binding-ready" &&
-                        codex.result?.message) ||
-                        codex?.error) && (
-                        <p
-                          role={codex.error ? "alert" : "status"}
-                          className="m-0 mt-2 text-secondary"
-                        >
-                          {codex.error || codex.result?.message}
+                      (option.status === "cli-needed" ||
+                        (codexToolsReady &&
+                          (codexAuth === false || codexAuth === null))) && (
+                        <p role="status" className="m-0 mt-2 text-secondary">
+                          {option.status === "cli-needed"
+                            ? "Install the Codex CLI, then use Check again."
+                            : "Run codex login in your terminal, then use Check again."}
                         </p>
                       )}
                     {option &&

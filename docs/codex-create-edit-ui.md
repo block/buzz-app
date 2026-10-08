@@ -8,8 +8,8 @@ contract.
 
 Codex uses its native integration ID, not an executable basename. New selection
 requires installed CLI and adapter presence, as Claude Code does. Settings owns
-installation and the global setup check. Agent forms do not check global
-readiness because an existing agent can use a different saved adapter.
+installation and the global setup check. Agent forms do not repeat that check
+because an existing agent can use a different saved adapter.
 
 Default stores no model or effort override. Advanced keeps the advertised model
 and model-specific effort selectors, including explicit absence of effort support.

@@ -11,40 +11,35 @@ The frontend model request carries the stable native integration ID. Only
 `codex` selects this path; an editable command named `codex` or `codex-acp` is
 not authority. Native code resolves the effective draft or revision-fenced saved
 agent, including its workspace and permitted Codex environment, then uses one
-`CodexContext` for CLI probes, ACP initialize, session creation, selection, and
-cleanup. Environment defaults owned by Goose, Databricks, or another harness are
+`CodexContext` for ACP initialize, session creation, selection, and cleanup. Environment defaults owned by Goose, Databricks, or another harness are
 excluded instead of entering the Codex process.
 
-After discovery, native code resolves the saved/draft context again before it
-returns a catalog. A changed revision, workspace, tool path, or effective
-environment rejects the old result. Frontend generation fencing covers replaced
-draft requests. Equal context values do not prove that login or configuration
-file contents stayed unchanged; a later request must repeat readiness.
+Frontend generation fencing covers replaced draft requests. Equal context values
+do not prove that login or configuration file contents stayed unchanged, so
+each request resolves its context again.
 
-The existing model-request host owns the operation until the contained adapter
-process and its descendants retire. Cancellation flips the worker's current
-token, and shutdown waits only for the owned Codex process cleanup. A dropped IPC
-future cannot release admission early. Failed cleanup retains its process owner for a shutdown retry. A panicked
-worker remains unconfirmed: shutdown fails
-and later discovery is refused because process retirement was not confirmed.
-Existing Databricks, Goose, and Pi behavior is unchanged.
+Discovery runs through the existing model-request host ticket, as Pi and Goose
+do. The adapter runs in its own process group, which is killed when the request
+finishes, is cancelled, or exceeds its 15-second deadline or 1 MiB response
+limit. Existing Databricks, Goose, and Pi behavior is unchanged.
 
 This implementation is enabled on Unix builds. Other platforms return the
 existing unsupported result and keep Codex creation disabled.
 
 ## ACP projection
 
-Discovery uses the same bounded ACP transport as readiness:
+Discovery uses a short ACP session, following Goose discovery:
 
-1. Verify the exact CLI version, login status, adapter package identity, and
-   adapter version.
-2. Initialize ACP protocol version 1 with the exact reported adapter identity.
-3. Create one session in the resolved workspace with no prompt.
-4. Read the `model` select option from `configOptions`.
-5. If the request includes another listed model, send
+1. Initialize ACP protocol version 1 and require the
+   `@agentclientprotocol/codex-acp` adapter identity. Other adapters are
+   reported as incompatible; an unauthorized response asks the user to sign in
+   with the selected Codex CLI.
+2. Create one session in the resolved workspace with no prompt.
+3. Read the `model` select option from `configOptions`.
+4. If the request includes another listed model, send
    `session/set_config_option`, require the response to report that exact model,
    and only then project its effort option.
-6. Close the session and retire the entire adapter process tree.
+5. Close the session and kill the adapter's process group.
 
 The response distinguishes three outcomes. A present model option with no values
 is a known-empty catalog. Absent model metadata is explicit unknown metadata.
@@ -65,12 +60,10 @@ characters and grouped options are rejected.
 
 ## Resource bounds and protocol failures
 
-The discovery transport has one 15-second deadline across initialize, session
-creation, optional selection, and close. It accepts at most 1 MiB across stdout
-and stderr, 2,000 newline-delimited messages, and 16 KiB per request. The stdin
-writer is owned separately so a blocked adapter read cannot outlive the same
-deadline and process retirement. Read errors, write errors, output overflow,
-unexpected response IDs, adapter errors, and unsolicited client requests fail
+The discovery session has one 15-second deadline across initialize, session
+creation, optional selection, and close, and reads at most 1 MiB of stdout.
+Stderr is discarded. Read or write errors, malformed messages, unexpected
+response IDs, adapter errors, and client requests that expect a response fail
 the operation. Buzz never grants a client tool request and never sends raw
 adapter output or error text to the frontend.
 
@@ -101,10 +94,9 @@ recorded. No prompt or authentication flow ran.
 Controlled tests cover exact initialization, catalog and initial-selection
 projection, one selected model's effort, known-empty and unknown catalogs,
 missing effort metadata, duplicate/grouped/malformed/oversized data, rejected
-selection, timeout, cancellation, cumulative output overflow, unexpected client
-requests, adapter and descendant retirement, dropped IPC, current-thread
-shutdown, retained cleanup retries, panic fencing, and changed-context fencing. The live test is
-ignored by default and names explicit local tool paths.
+selection, sign-in errors, and that cancellation kills the adapter and its
+descendants. The live test is ignored by default and names explicit local tool
+paths.
 
 The controlled suite and live check were run from a macOS development checkout;
 the controlled tests are also intended for Linux CI. Windows, packaged-app

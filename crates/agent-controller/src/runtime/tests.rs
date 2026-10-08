@@ -892,6 +892,40 @@ fn codex_fixture(workspace: &Path) -> (Agent, crate::codex::CodexContext) {
     (saved, context)
 }
 
+/// Launch resolves the Codex CLI from the user's tools, so Codex launch tests
+/// rerun themselves with a private HOME whose `~/.local/bin/codex` is the
+/// fixture CLI. Returns true in that child.
+#[cfg(unix)]
+fn codex_launch_child(test: &str) -> bool {
+    const CHILD: &str = "BUZZ_TEST_CODEX_LAUNCH";
+    if std::env::var_os(CHILD).is_some() {
+        return true;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "/usr/bin:/bin")
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
+#[cfg(unix)]
+fn select_codex_cli(context: &crate::codex::CodexContext) {
+    let user = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin");
+    fs::create_dir_all(&user).unwrap();
+    std::os::unix::fs::symlink(&context.cli, user.join("codex")).unwrap();
+}
+
 fn command_environment(command: &Command) -> BTreeMap<String, String> {
     command
         .get_envs()
@@ -909,13 +943,18 @@ fn command_environment(command: &Command) -> BTreeMap<String, String> {
 #[test]
 #[cfg(unix)]
 fn codex_command_binds_exact_interpreters_and_default_selection() {
+    if !codex_launch_child(
+        "runtime::tests::codex_command_binds_exact_interpreters_and_default_selection",
+    ) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let runtime = bundle(dir.path());
     let (saved, context) = codex_fixture(dir.path());
     assert_ne!(context.interpreter, context.cli_interpreter);
-    let preflight = crate::codex::CodexLaunchPreflight::new(context.clone());
+    select_codex_cli(&context);
     let command = runtime
-        .command_checked_with_codex(
+        .command_checked(
             &saved,
             &Secret::parse(KEY, PUB).unwrap(),
             &crate::BuildDefaults {
@@ -924,7 +963,6 @@ fn codex_command_binds_exact_interpreters_and_default_selection() {
                 ..Default::default()
             },
             None,
-            Some(&preflight),
         )
         .unwrap();
     let environment = command_environment(&command);
@@ -970,46 +1008,45 @@ fn codex_command_binds_exact_interpreters_and_default_selection() {
 
 #[test]
 #[cfg(unix)]
-fn codex_command_rechecks_binding_and_applies_advanced_selection() {
+fn codex_command_applies_advanced_selection_and_never_falls_back() {
+    use std::os::unix::fs::PermissionsExt;
+    if !codex_launch_child(
+        "runtime::tests::codex_command_applies_advanced_selection_and_never_falls_back",
+    ) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let runtime = bundle(dir.path());
     let (mut saved, context) = codex_fixture(dir.path());
-    let preflight = crate::codex::CodexLaunchPreflight::new(context);
+    select_codex_cli(&context);
     saved.harness.configuration = Some(crate::AiConfiguration::Advanced {
         effort: crate::EffortSelection::Value {
             value: "xhigh".into(),
         },
     });
     saved.harness.model = "gpt-test".into();
-    let command = runtime
-        .command_checked_with_codex(
-            &saved,
+    let launch = |saved: &Agent| {
+        runtime.command_checked(
+            saved,
             &Secret::parse(KEY, PUB).unwrap(),
             &crate::BuildDefaults::default(),
             None,
-            Some(&preflight),
         )
-        .unwrap();
-    let environment = command_environment(&command);
+    };
+    let environment = command_environment(&launch(&saved).unwrap());
     assert_eq!(environment["BUZZ_ACP_MODEL"], "gpt-test");
     assert_eq!(environment["BUZZ_ACP_EFFORT_LEVEL"], "xhigh");
 
-    let mismatched = dir.path().join("other-codex-acp");
-    fs::write(&mismatched, "#!/bin/sh\nexit 0\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&mismatched, fs::Permissions::from_mode(0o700)).unwrap();
-    saved.harness.command = mismatched.to_string_lossy().into_owned();
+    // A removed saved adapter fails Start even when another adapter is
+    // installed; launch never substitutes a newly discovered one.
+    let global = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".local/bin/codex-acp");
+    fs::write(&global, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&global, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(crate::codex::installed_adapter(None), Some(global));
+    fs::remove_file(&saved.harness.command).unwrap();
     assert_eq!(
-        runtime
-            .command_checked_with_codex(
-                &saved,
-                &Secret::parse(KEY, PUB).unwrap(),
-                &crate::BuildDefaults::default(),
-                None,
-                Some(&preflight),
-            )
-            .unwrap_err(),
-        "Saved Codex ACP adapter no longer matches the selected binding"
+        launch(&saved).unwrap_err(),
+        "Codex ACP adapter is missing or not executable"
     );
 }
 /// Windows listener stand-in: `bundle` installs this test binary as
@@ -4100,9 +4137,13 @@ fn codex_saved_adapter_survives_global_install_without_silent_fallback() {
         Err("No runtime".into()),
         dir.path().join("ownership"),
     );
+    let edit: AgentEdit = serde_json::from_value(json!({
+        "name": saved.name, "systemPrompt": saved.system_prompt, "workspace": saved.workspace,
+        "harness": saved.harness, "environment": {}
+    }))
+    .unwrap();
     let before = controller
-        .codex_launch_context(&saved.id, saved.revision)
-        .unwrap()
+        .codex_model_context(&saved.id, saved.revision, edit.clone())
         .unwrap();
     assert_eq!(before.adapter, adapter.canonicalize().unwrap());
     assert_eq!(
@@ -4121,16 +4162,6 @@ fn codex_saved_adapter_survives_global_install_without_silent_fallback() {
         crate::codex::installed_adapter(Some(&app_data)),
         Some(global)
     );
-    let after = controller
-        .codex_launch_context(&saved.id, saved.revision)
-        .unwrap()
-        .unwrap();
-    assert!(after == before);
-    let edit: AgentEdit = serde_json::from_value(json!({
-        "name": saved.name, "systemPrompt": saved.system_prompt, "workspace": saved.workspace,
-        "harness": saved.harness, "environment": {}
-    }))
-    .unwrap();
     assert!(
         controller
             .codex_model_context(&saved.id, saved.revision, edit.clone())
@@ -4138,9 +4169,6 @@ fn codex_saved_adapter_survives_global_install_without_silent_fallback() {
             == before
     );
     fs::remove_file(&adapter).unwrap();
-    assert!(controller
-        .codex_launch_context(&saved.id, saved.revision)
-        .is_err());
     assert!(controller
         .codex_model_context(&saved.id, saved.revision, edit)
         .is_err());

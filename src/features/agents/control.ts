@@ -219,27 +219,6 @@ export interface HarnessInstallReport {
   output: string;
   error: string | null;
 }
-export interface CodexReadiness {
-  status:
-    | "binding-ready"
-    | "cli-needed"
-    | "adapter-needed"
-    | "interpreter-needed"
-    | "adapter-incompatible"
-    | "cli-incompatible"
-    | "signed-out"
-    | "configuration-error"
-    | "timeout"
-    | "output-limit"
-    | "cleanup-failed"
-    | "check-failed"
-    | "unsupported"
-    | "cancelled";
-  message: string;
-  adapterVersion?: string;
-  cliVersion?: string;
-}
-
 export interface CodexCreateRecovery {
   requestId: string;
   agentId: string;
@@ -275,16 +254,12 @@ export interface AgentControlHost {
   localCloneSettings?(id: string): Promise<CloneSettings>;
   cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
-  codexReadiness?: {
-    begin(): Promise<number>;
-    run(ticket: number): Promise<CodexReadiness>;
-    cancel(ticket: number): Promise<void>;
-  };
   installPi?(): Promise<HarnessInstallReport>;
   installClaude?(): Promise<HarnessInstallReport>;
   installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
+  checkCodexAuth?(): Promise<boolean | null>;
   prepareCreate?(
     requestId: string,
     destination: string,
@@ -372,11 +347,6 @@ export interface AgentControlState {
   piInstall?: HarnessInstallState;
   claudeInstall?: HarnessInstallState;
   codexInstall?: HarnessInstallState;
-  codexReadiness?: {
-    status: "idle" | "checking" | "checked" | "error";
-    result: CodexReadiness | null;
-    error: string | null;
-  };
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   /** Accepted process actions, keyed by native ID across all control surfaces. */
@@ -398,7 +368,7 @@ export interface AgentControl {
   installCodex?(): Promise<HarnessInstallReport>;
   /** Settings-only read; does not start an agent or change credentials. */
   checkClaudeAuth?(): Promise<boolean | null>;
-  checkCodex?(): Promise<void>;
+  checkCodexAuth?(): Promise<boolean | null>;
   create?(
     requestId: string,
     destination: string,
@@ -532,7 +502,6 @@ export function createAgentControl(
     piInstall: { installing: false, report: null, error: null },
     claudeInstall: { installing: false, report: null, error: null },
     codexInstall: { installing: false, report: null, error: null },
-    codexReadiness: { status: "idle", result: null, error: null },
     error: host ? null : agentControlUnavailable,
   };
   const listeners = new Set<() => void>();
@@ -721,13 +690,12 @@ export function createAgentControl(
   const installCodex = host?.installCodex;
   const checkClaudeAuth = host?.checkClaudeAuth;
   const writeSnapshotMemory = host?.writeSnapshotMemory;
-  const codexReadiness = host?.codexReadiness;
-  let codexTicket: number | null = null;
-  let codexGeneration = 0;
+  const checkCodexAuth = host?.checkCodexAuth;
 
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
+    ...(checkCodexAuth ? { checkCodexAuth } : {}),
     ...(host?.readLog
       ? {
           readLog: async (target: AgentLogTarget) => {
@@ -747,53 +715,6 @@ export function createAgentControl(
       ? {
           installClaude: () =>
             installHarness("claudeInstall", "Claude Code", installClaude),
-        }
-      : {}),
-    ...(codexReadiness
-      ? {
-          checkCodex: async () => {
-            if (disposed) throw new Error(agentControlUnavailable);
-            const request = ++codexGeneration;
-            if (codexTicket !== null)
-              await codexReadiness.cancel(codexTicket).catch(() => {});
-            let ticket: number | null = null;
-            try {
-              ticket = await codexReadiness.begin();
-              if (disposed || request !== codexGeneration) {
-                await codexReadiness.cancel(ticket).catch(() => {});
-                return;
-              }
-              codexTicket = ticket;
-              update({
-                codexReadiness: {
-                  status: "checking",
-                  result: state.codexReadiness?.result ?? null,
-                  error: null,
-                },
-              });
-              const result = await codexReadiness.run(ticket);
-              if (
-                disposed ||
-                request !== codexGeneration ||
-                codexTicket !== ticket
-              )
-                return;
-              update({
-                codexReadiness: { status: "checked", result, error: null },
-              });
-            } catch {
-              if (disposed || request !== codexGeneration) return;
-              update({
-                codexReadiness: {
-                  status: "error",
-                  result: state.codexReadiness?.result ?? null,
-                  error: "Couldn’t check Codex. Try Check again.",
-                },
-              });
-            } finally {
-              if (ticket !== null && codexTicket === ticket) codexTicket = null;
-            }
-          },
         }
       : {}),
     ...(installCodex
@@ -1224,9 +1145,6 @@ export function createAgentControl(
       ),
     dispose() {
       disposed = true;
-      codexGeneration++;
-      if (codexTicket !== null)
-        void codexReadiness?.cancel(codexTicket).catch(() => {});
       models.dispose();
       generation++;
       listeners.clear();

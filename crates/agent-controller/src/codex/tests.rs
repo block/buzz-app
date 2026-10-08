@@ -244,5 +244,4 @@ fn app_owned_adapter_is_a_fallback_bound_to_its_pinned_node() {
         context.cli_interpreter,
         Some(user.join("node").canonicalize().unwrap())
     );
-    context.verify_adapter(&shim.to_string_lossy()).unwrap();
 }

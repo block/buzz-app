@@ -143,6 +143,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "claude_install",
         "codex_install",
         "claude_auth_status",
+        "codex_auth_status",
         "agent_control_save",
         "agent_control_save_defaults",
         "agent_control_start_on_app_launch",
@@ -156,9 +157,6 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_models_begin",
         "agent_models_cancel",
         "agent_models_run",
-        "codex_readiness_begin",
-        "codex_readiness_cancel",
-        "codex_readiness_run",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]

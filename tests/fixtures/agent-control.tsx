@@ -170,16 +170,6 @@ if (codexPreviewMode) {
       selectorEnvironment: null,
     },
   });
-  fixture.host.codexReadiness = {
-    begin: async () => 1,
-    cancel: async () => {},
-    run: async () => ({
-      status: "binding-ready",
-      message: "Synthetic Codex CLI and adapter are ready.",
-      cliVersion: "0.151.0",
-      adapterVersion: "1.10.0",
-    }),
-  };
   fixture.host.prepareCreate = async () => ({
     id: "codex-created",
     pubkey: "cd".repeat(32),

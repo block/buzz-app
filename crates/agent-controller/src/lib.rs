@@ -52,12 +52,11 @@ pub use harness_presets::{harness_preset, harness_presets, HarnessPreset};
 pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
-pub use process::ContainedProcess;
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{
     check_owner, delete_local_agent_keys, installed, installed_npm_tool, managed_tool, Action,
-    Controller, GooseModelContext, LaunchPreflights, ModelContext,
+    Controller, GooseModelContext, ModelContext,
 };
 pub use secret::{validate_snapshot_memory_envelope, Credentials, Secret};
 pub use skills::ensure_buzz_cli_skill;

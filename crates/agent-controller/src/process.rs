@@ -6,7 +6,7 @@ use crate::Result;
 use std::process::ExitStatus;
 #[cfg(unix)]
 use std::process::Stdio;
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+use std::process::{Child, Command};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
@@ -17,46 +17,6 @@ pub(crate) struct Process {
     #[cfg(windows)]
     job: job::Job,
     stopped: bool,
-    exit_success: Option<bool>,
-}
-
-/// Fail-closed ownership of one process tree for bounded native integration work.
-pub struct ContainedProcess(Process);
-impl ContainedProcess {
-    /// Spawn with the same session/Job Object containment as managed listeners.
-    pub fn spawn(command: &mut Command) -> Result<Self> {
-        Process::spawn(command).map(Self)
-    }
-
-    /// Report whether the process leader remains alive.
-    pub fn alive(&mut self) -> Result<bool> {
-        self.0.alive()
-    }
-
-    /// Terminate and reap the owned process tree.
-    pub fn stop(&mut self) -> Result<()> {
-        self.0.stop()
-    }
-
-    /// Exit success after `alive` has observed termination.
-    pub fn exit_success(&self) -> Option<bool> {
-        self.0.exit_success
-    }
-
-    /// Take the configured stdin pipe.
-    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.0.child.stdin.take()
-    }
-
-    /// Take the configured stdout pipe.
-    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.0.child.stdout.take()
-    }
-
-    /// Take the configured stderr pipe.
-    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
-        self.0.child.stderr.take()
-    }
 }
 impl Process {
     pub fn spawn(command: &mut Command) -> Result<Self> {
@@ -81,7 +41,6 @@ impl Process {
                 child,
                 job,
                 stopped: false,
-                exit_success: None,
             })
         }
         #[cfg(unix)]
@@ -94,7 +53,6 @@ impl Process {
                 child,
                 session,
                 stopped: false,
-                exit_success: None,
             })
         }
     }
@@ -110,8 +68,7 @@ impl Process {
             .map_err(|_| "Could not inspect agent process")?
         {
             None => Ok(true),
-            Some(status) => {
-                self.exit_success = Some(status.success());
+            Some(_) => {
                 self.stop()?;
                 Ok(false)
             }
@@ -166,11 +123,9 @@ impl Process {
                     .map_err(|_| "Could not reap agent listener")?;
                 std::thread::sleep(Duration::from_millis(25));
             }
-            let status = self
-                .child
+            self.child
                 .wait()
                 .map_err(|_| "Could not reap agent listener")?;
-            self.exit_success.get_or_insert(status.success());
             let deadline = Instant::now() + Duration::from_secs(2);
             while !session_members(self.session)?.is_empty() {
                 if Instant::now() >= deadline {
@@ -185,11 +140,9 @@ impl Process {
         {
             // A windowless listener has no cooperative stop signal.
             self.job.stop()?;
-            let status = self
-                .child
+            self.child
                 .wait()
                 .map_err(|_| "Could not reap agent listener")?;
-            self.exit_success.get_or_insert(status.success());
             self.stopped = true;
             Ok(())
         }

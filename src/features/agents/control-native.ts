@@ -9,11 +9,6 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       run: (ticket, request) => invoke("agent_models_run", { ticket, request }),
       cancel: (ticket) => invoke("agent_models_cancel", { ticket }),
     },
-    codexReadiness: {
-      begin: () => invoke("codex_readiness_begin"),
-      run: (ticket) => invoke("codex_readiness_run", { ticket }),
-      cancel: (ticket) => invoke("codex_readiness_cancel", { ticket }),
-    },
     prepareCreate: (requestId, destination, owner, edit) =>
       invoke("agent_control_create_prepare", {
         requestId,
@@ -71,6 +66,7 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     installClaude: () => invoke("claude_install"),
     installCodex: () => invoke("codex_install"),
     checkClaudeAuth: () => invoke("claude_auth_status"),
+    checkCodexAuth: () => invoke("codex_auth_status"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", {
         id,

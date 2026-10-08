@@ -14,7 +14,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   createAgentControl,
   type AgentControlHost,
-  type CodexReadiness,
   type HarnessInstallReport,
 } from "../features/agents/control";
 import { controlFixture } from "../features/agents/control-testing";
@@ -320,87 +319,9 @@ it("recognizes harness commands independently of native display labels", async (
   );
 });
 
-it("checks Codex explicitly, hides stale status while checking, and recovers", async () => {
-  const user = userEvent.setup();
-  const fixture = controlFixture();
-  fixture.data.harnessOptions = [
-    {
-      command: "buzz-agent",
-      label: "Buzz Agent",
-      available: true,
-      status: "ready",
-      providers: [],
-    },
-    {
-      command: "goose",
-      label: "Goose",
-      available: true,
-      status: "ready",
-      providers: [],
-    },
-    {
-      command: "buzz-pi-acp",
-      label: "Pi",
-      available: true,
-      status: "ready",
-      providers: [],
-    },
-    {
-      id: "codex",
-      command: "/tools/codex-acp",
-      label: "Codex",
-      available: false,
-      status: "not-enabled",
-      providers: [],
-    },
-  ];
-  let ticket = 0;
-  let complete!: (value: {
-    status: "binding-ready";
-    message: string;
-    adapterVersion: string;
-    cliVersion: string;
-  }) => void;
-  fixture.host.codexReadiness = {
-    begin: async () => ++ticket,
-    cancel: vi.fn(async () => {}),
-    run: vi.fn(async (request): Promise<CodexReadiness> => {
-      if (request === 1)
-        return {
-          status: "signed-out" as const,
-          message: "Sign in with the selected Codex CLI, then check again.",
-        };
-      return new Promise((resolve) => {
-        complete = resolve;
-      });
-    }),
-  };
-  const control = createAgentControl(fixture.host);
-  disposals.push(() => control.dispose());
-  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
-  expect(await screen.findByText("Sign-in needed")).toBeVisible();
-  expect(screen.getByText(/Sign in with the selected Codex CLI/)).toBeVisible();
-
-  await user.click(screen.getByRole("button", { name: "Check again" }));
-  expect(await screen.findByText("Checking…")).toBeVisible();
-  expect(screen.queryByText(/Sign in with the selected Codex CLI/)).toBeNull();
-  complete({
-    status: "binding-ready",
-    message: "Codex is ready.",
-    adapterVersion: "1.10.0",
-    cliVersion: "0.151.0",
-  });
-  const row = screen.getByText("Codex").closest("li");
-  if (!row) throw new Error("Missing Codex row");
-  expect(await within(row).findByText("Ready")).toBeVisible();
-  // The status is the whole success state; no message or version suffix.
-  expect(row).toHaveTextContent(/^CodexReady$/);
-});
-
-it("offers the Codex ACP adapter Install only when the adapter is missing, then rechecks", async () => {
-  const user = userEvent.setup();
-  const fixture = controlFixture();
-  fixture.data.harnessOptions = [
+type CodexStatus = "ready" | "cli-needed" | "adapter-needed";
+function codexHarnessOptions(status: CodexStatus, installSupported = true) {
+  return [
     ...(["buzz-agent", "goose", "buzz-pi-acp"] as const).map((command) => ({
       command,
       label: command,
@@ -409,37 +330,85 @@ it("offers the Codex ACP adapter Install only when the adapter is missing, then 
       providers: [],
     })),
     {
-      id: "codex",
+      id: "codex" as const,
       command: "/tools/codex-acp",
       label: "Codex",
-      available: true,
-      status: "not-enabled",
+      available: status === "ready",
+      status,
+      installSupported,
       providers: [],
     },
   ];
-  const readiness: CodexReadiness[] = [
-    {
-      status: "adapter-incompatible",
-      message: "The Codex ACP adapter is incompatible with this binding.",
-    },
-    {
-      status: "adapter-needed",
-      message:
-        "Install @agentclientprotocol/codex-acp 1.10.0 or later, then check again.",
-    },
-    { status: "binding-ready", message: "Codex is ready." },
-  ];
-  let ticket = 0;
-  const run = vi.fn(async (): Promise<CodexReadiness> => {
-    const next = readiness.shift();
-    if (!next) throw new Error("Unexpected Codex readiness check");
-    return next;
+}
+function codexHarnesses(status: CodexStatus, installSupported = true) {
+  const fixture = controlFixture();
+  fixture.data.harnessOptions = codexHarnessOptions(status, installSupported);
+  return fixture;
+}
+const codexRow = () => {
+  const row = screen.getByText("Codex").closest("li");
+  if (!row) throw new Error("Missing Codex row");
+  return within(row);
+};
+
+it("reads Codex sign-in only once its tools are found, and rechecks on Check again", async () => {
+  const user = userEvent.setup();
+  const fixture = codexHarnesses("cli-needed");
+  const checkCodexAuth = vi
+    .fn<NonNullable<AgentControlHost["checkCodexAuth"]>>()
+    .mockResolvedValue(false);
+  fixture.host.checkCodexAuth = checkCodexAuth;
+  const control = createAgentControl(fixture.host);
+  disposals.push(() => control.dispose());
+  render(<AgentSettings control={control} />, { wrapper: ToastProvider });
+
+  await screen.findByText("Codex");
+  expect(await codexRow().findByText("CLI needed")).toBeVisible();
+  expect(codexRow().getByText(/Install the Codex CLI/)).toBeVisible();
+  expect(codexRow().queryByRole("button", { name: "Install" })).toBeNull();
+  expect(checkCodexAuth).not.toHaveBeenCalled();
+
+  fixture.data.harnessOptions = codexHarnessOptions("ready");
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  expect(await codexRow().findByText("Sign-in needed")).toBeVisible();
+  expect(codexRow().getByText(/Run codex login/)).toBeVisible();
+
+  let finish!: (signedIn: boolean) => void;
+  checkCodexAuth.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  try {
+    expect(await codexRow().findByText("Checking sign-in…")).toBeVisible();
+    expect(codexRow().queryByText(/Run codex login/)).toBeNull();
+  } finally {
+    await act(async () => finish(true));
+  }
+  expect(await codexRow().findByText("Ready")).toBeVisible();
+  // The status is the whole success state; no message or version suffix.
+  expect(screen.getByText("Codex").closest("li")).toHaveTextContent(
+    /^CodexReady$/,
+  );
+});
+
+it("offers the Codex ACP adapter Install only when the adapter is missing, then re-detects", async () => {
+  const user = userEvent.setup();
+  const unsupported = codexHarnesses("adapter-needed", false);
+  unsupported.host.installCodex = vi.fn();
+  const blocked = createAgentControl(unsupported.host);
+  disposals.push(() => blocked.dispose());
+  const first = render(<AgentSettings control={blocked} />, {
+    wrapper: ToastProvider,
   });
-  fixture.host.codexReadiness = {
-    begin: async () => ++ticket,
-    cancel: vi.fn(async () => {}),
-    run,
-  };
+  await screen.findByText("Codex");
+  expect(await codexRow().findByText("Adapter needed")).toBeVisible();
+  expect(codexRow().queryByRole("button", { name: "Install" })).toBeNull();
+  first.unmount();
+
+  const fixture = codexHarnesses("adapter-needed");
+  fixture.host.checkCodexAuth = vi.fn(async () => true);
   const failed: HarnessInstallReport = {
     ready: false,
     restarted: 0,
@@ -463,42 +432,37 @@ it("offers the Codex ACP adapter Install only when the adapter is missing, then 
   disposals.push(() => control.dispose());
   render(<AgentSettings control={control} />, { wrapper: ToastProvider });
 
-  expect(await screen.findByText("Adapter incompatible")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
-  expect(screen.getByText(/incompatible with this binding/)).toBeVisible();
-
-  await user.click(screen.getByRole("button", { name: "Check again" }));
-  expect(await screen.findByText("Adapter needed")).toBeVisible();
+  await screen.findByText("Codex");
+  expect(await codexRow().findByText("Adapter needed")).toBeVisible();
   expect(
-    screen.getByText(/Buzz installs Node.js and the Codex ACP adapter/),
+    codexRow().getByText(/Buzz installs Node.js and the Codex ACP adapter/),
   ).toBeVisible();
-  await user.click(screen.getByText("Manual Codex ACP adapter setup"));
+  await user.click(codexRow().getByText("Manual Codex ACP adapter setup"));
   expect(
-    screen.getByText(/Install @agentclientprotocol\/codex-acp/),
+    codexRow().getByText("npm install -g @agentclientprotocol/codex-acp@2.1.1"),
   ).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Install" }));
-  const alert = await screen.findByRole("alert");
+  await user.click(codexRow().getByRole("button", { name: "Install" }));
+  const alert = await codexRow().findByRole("alert");
   expect(alert).toHaveTextContent("Installing the Codex ACP adapter failed");
   await user.click(within(alert).getByText("Codex ACP adapter install log"));
   expect(within(alert).getByText("npm ERR! network")).toBeVisible();
-  expect(run).toHaveBeenCalledTimes(2);
 
-  await user.click(screen.getByRole("button", { name: "Install" }));
+  await user.click(codexRow().getByRole("button", { name: "Install" }));
   expect(
     await screen.findByText("Installing Node.js and the Codex ACP adapter…"),
   ).toBeVisible();
   // Loading stays focusable for keyboard users but cannot start another install.
-  const installing = screen.getByRole("button", { name: "Install" });
+  const installing = codexRow().getByRole("button", { name: "Install" });
   expect(installing).toHaveAttribute("aria-disabled", "true");
   await user.click(installing);
   expect(install).toHaveBeenCalledTimes(2);
-  complete({ ...failed, ready: true, error: null, output: "" });
-  const row = screen.getByText("Codex").closest("li");
-  if (!row) throw new Error("Missing Codex row");
-  expect(await within(row).findByText("Ready")).toBeVisible();
-  expect(run).toHaveBeenCalledTimes(3);
-  expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+  fixture.data.harnessOptions = codexHarnessOptions("ready");
+  await act(async () =>
+    complete({ ...failed, ready: true, error: null, output: "" }),
+  );
+  expect(await codexRow().findByText("Ready")).toBeVisible();
+  expect(codexRow().queryByRole("button", { name: "Install" })).toBeNull();
   expect(install).toHaveBeenCalledTimes(2);
 });
 

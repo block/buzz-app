@@ -978,7 +978,7 @@ fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values
 }
 
 #[test]
-fn native_export_carries_effective_pi_goose_effort_overrides() {
+fn native_export_refuses_and_hides_pi_goose_effort_overrides() {
     let mut agent = crate::store::tests::fixture();
     let mut defaults = crate::agent_defaults::AgentDefaults::default();
     for (harness, command) in [("pi", "buzz-pi-acp"), ("goose", "goose")] {
@@ -990,27 +990,24 @@ fn native_export_carries_effective_pi_goose_effort_overrides() {
         let exported = snapshot_member(&agent, &defaults).unwrap();
         assert_eq!(exported.definition.runtime.as_deref(), Some(harness));
 
-        agent.environment.insert(
-            "BUZZ_ACP_EFFORT_LEVEL".into(),
-            "private-agent-effort".into(),
-        );
-        let effort = |defaults: &crate::agent_defaults::AgentDefaults, agent: &Agent| {
-            snapshot_member(agent, defaults).unwrap().definition.effort
-        };
-        assert_eq!(
-            effort(&defaults, &agent).as_deref(),
-            Some("private-agent-effort")
-        );
-
-        agent.environment.clear();
-        defaults.environment.insert(
-            "BUZZ_ACP_EFFORT_LEVEL".into(),
-            "private-inherited-effort".into(),
-        );
-        assert_eq!(
-            effort(&defaults, &agent).as_deref(),
-            Some("private-inherited-effort")
-        );
+        for (own, inherited) in [(true, false), (false, true)] {
+            agent.environment.clear();
+            defaults.environment.clear();
+            if own {
+                agent
+                    .environment
+                    .insert("BUZZ_ACP_EFFORT_LEVEL".into(), "private-effort".into());
+            }
+            if inherited {
+                defaults
+                    .environment
+                    .insert("BUZZ_ACP_EFFORT_LEVEL".into(), "private-effort".into());
+            }
+            let error = snapshot_member(&agent, &defaults).err().unwrap();
+            assert!(error.contains("environment-selected effort"));
+            assert!(!error.contains("private-effort"));
+            assert_eq!(agent.view(&defaults).launch_effort, None);
+        }
     }
 }
 

@@ -210,15 +210,23 @@ pub(crate) fn effort(agent: &Agent) -> Option<&str> {
         .or_else(|| agent.extra.get(INHERITED_EFFORT)?.as_str())
 }
 
-/// Effort the next start applies on an effective clone: Pi and Goose
-/// behavior overrides win, as at launch.
-pub(crate) fn launch_effort(agent: &Agent) -> Option<&str> {
+/// Whether a Pi or Goose behavior override picks effort at launch. Its value
+/// never leaves native.
+pub(crate) fn effort_from_env(agent: &Agent) -> bool {
     matches!(harness_kind(&agent.harness.command), Some("pi" | "goose"))
-        .then(|| agent.environment.get("BUZZ_ACP_EFFORT_LEVEL"))
-        .flatten()
-        .map(String::as_str)
-        .filter(|effort| !effort.is_empty())
-        .or_else(|| effort(agent).filter(|effort| !effort.is_empty()))
+        && agent
+            .environment
+            .get("BUZZ_ACP_EFFORT_LEVEL")
+            .is_some_and(|effort| !effort.is_empty())
+}
+
+/// Effort the next start applies on an effective clone, unless an
+/// environment override decides it.
+pub(crate) fn launch_effort(agent: &Agent) -> Option<&str> {
+    if effort_from_env(agent) {
+        return None;
+    }
+    effort(agent).filter(|effort| !effort.is_empty())
 }
 
 #[cfg(test)]

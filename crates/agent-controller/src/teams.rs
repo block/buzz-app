@@ -347,6 +347,9 @@ fn snapshot_member(
     if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {
         return Err("Team member environment-selected model or provider is not portable".into());
     }
+    if crate::agent_defaults::effort_from_env(&effective) {
+        return Err("Team member environment-selected effort is not portable".into());
+    }
     let agent = &effective;
     let record = &agent.imported["record"];
     Ok(MemberSnapshot {
@@ -367,7 +370,7 @@ fn snapshot_member(
             parallelism: workers,
             idle_timeout_seconds: record["idle_timeout_seconds"].as_u64(),
             max_turn_duration_seconds: record["max_turn_duration_seconds"].as_u64(),
-            effort: crate::agent_defaults::launch_effort(agent).map(str::to_owned),
+            effort: crate::agent_defaults::launch_effort(&effective).map(str::to_owned),
         },
         profile: Profile {
             display_name: agent.name.clone(),

@@ -57,6 +57,7 @@ const companionLauncher = (page, name) =>
 // Sidebar rows are the primary pages; Messages remains available through search.
 const destinationTitles = [
   "Inbox",
+  "Reminders",
   "Bestie",
   "Projects",
   "Agents",
@@ -1044,6 +1045,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   const titles = [
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Projects",
     "Agents",
@@ -1125,6 +1127,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await expectPageOrder([
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Agents",
     "Sessions",

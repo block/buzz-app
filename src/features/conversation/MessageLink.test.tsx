@@ -17,6 +17,7 @@ import type { Contribution } from "../../plugins/contributions";
 import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
 import { ConversationPresentation } from "./ConversationPresentation";
+import styles from "./LinkPreview.module.css";
 
 afterEach(() => {
   cleanup();
@@ -42,13 +43,26 @@ it("keeps anchor destination and host semantics with and without presentation", 
   expect(html).toContain(`href="${url}"`);
   expect(html).toContain('target="_blank"');
   expect(html).toContain('rel="noopener noreferrer"');
-  expect(html).toContain('class="link-style"');
+  // The host's one-line chip, then the renderer's presentation.
+  expect(html).toContain(`class="${styles.chip} link-style"`);
   expect(html).toContain("Link face");
   const fallback = renderToStaticMarkup(
     <MessageLink url={url} registry={undefined} onOpenLink={() => true} />,
   );
   expect(fallback).toContain(`>${url}</a>`);
+  expect(fallback).toContain(`class="${styles.chip}"`);
   expect(fallback).not.toContain("data-link-renderer");
+  // A composer decoration (not interactive) is the user's draft: no chip.
+  const decoration = renderToStaticMarkup(
+    <MessageLink
+      url={url}
+      registry={registry}
+      onOpenLink={() => true}
+      interactive={false}
+    />,
+  );
+  expect(decoration).toContain('<span class="link-style"');
+  expect(decoration).not.toContain(styles.chip);
 });
 it("skips throwing and unmatched renderers, with first matching presentation winning", () => {
   const broken = {

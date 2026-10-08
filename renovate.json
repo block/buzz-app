@@ -21,6 +21,12 @@
       "allowedVersions": "0.51.0"
     },
     {
+      "description": "Upgrade Pretext only after its row-height exactness spec passes in both engines.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@chenglou/pretext"],
+      "allowedVersions": "0.0.9"
+    },
+    {
       "description": "Update packageManager together with the Hermit pnpm pin in bin/.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["pnpm"],

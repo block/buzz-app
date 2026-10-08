@@ -111,6 +111,16 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 0,
 };
+// `?chips`: one more delivered row with links where a chip meets other
+// layout: a heading, strikethrough and a table (link-chips.spec.mjs).
+const chips = new URLSearchParams(location.search).has("chips");
+const chipRow: ChannelMessage = {
+  ...row,
+  id: "chip-row",
+  mentions: [],
+  content:
+    "# Release [gjpqy Ågg notes](https://example.com/notes)\n\n~~Old docs at https://example.com/old-docs and [the old plan](https://example.com/plan)~~\n\n| PR | Link |\n|---|---|\n| [#619 Highlight the best search result](https://github.com/block/buzz/pull/619) | https://github.com/block/buzz/pull/622 |",
+};
 const profiles = new Map([
   ["a".repeat(64), { name: "Alex Chen" }],
   ["b".repeat(64), { name: "Build Bot" }],
@@ -264,6 +274,19 @@ function Preview() {
         day={false}
         retry={undefined}
       />
+      {chips && (
+        <conversation.ui.Message
+          row={chipRow}
+          session={previewSession}
+          scope={`https://preview.example:${"a".repeat(64)}`}
+          profile={{ name: "Preview" }}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />
+      )}
       <p role="status">{opened}</p>
       <h2>Try composing</h2>
       <conversation.ui.Composer

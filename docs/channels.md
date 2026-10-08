@@ -996,6 +996,11 @@ The port retains the prepared-store implementation and its behavior tests:
   membership evidence and earlier name batches.
 - Conventional top-down virtua timeline, prepend anchoring, near-bottom following,
   and three cached geometries keyed by session, channel, content, profiles, and width.
+  Prose message rows (paragraphs of text, line breaks, strong, emphasis,
+  strikethrough, mentions, links, channel references and custom emoji, with no
+  reactions, attachments, thread summary or delivery notice) are seeded with
+  predicted heights before
+  they mount, so their measurement is a no-op: [row heights](#predicted-row-heights).
 
 Connection generations and store epochs reject late results after disconnect,
 replacement, disposal, or access revocation. The data service outlives plugin
@@ -1123,6 +1128,199 @@ not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 
+## Inline content never grows a line
+
+Message text keeps every line at the body line height: inline content that would
+make a line taller is a bug, as in Slack. Each presentation owns its rule:
+
+- **Mentions.** A mention the reader can open is a button, an inline block whose
+  padding would add a pixel or two to its line. Negative block margins equal to
+  that padding (`src/shared/InlineReference.module.css`) keep it one line with the
+  same paint. A mention span (an agent the reader cannot open) is inline already.
+- **Links.** Every message link (Markdown and raw links, Buzz links, channel
+  references and the "Sent from" thread link; `MessageLink`) is one chip: it never
+  splits across lines, so a link that does not fit moves to the next line whole.
+  The chip is one line tall with no block padding (its hover background is the
+  line's height, a pixel shorter than a mention's pill), aligned to the line's
+  top, and its label is truncated with an ellipsis past `min(100%, 28em)`. 28em
+  keeps the bundled renderer's raw URL labels (44 characters, an ellipsis and an
+  icon: 22 to 27em in Inter) whole, so the cap mostly shortens long authored
+  labels, channel names and thread excerpts; the cap bounds the label, so a table
+  cell sized to a link shows it whole. A chip clips what overflows it, and a
+  heading's glyphs reach past its line (an `h1` line is shorter than its font), so
+  in headings it has room above and below its line (padding with equal negative
+  margins: the line keeps its height, the hover background is taller). An inline
+  block takes no decoration from its ancestors, so a struck-through link draws its
+  own line. The destination, accessible name, context menu and message preview are
+  unchanged. Composer decorations are the user's own draft and stay inline.
+- **Custom emoji.** In message text a custom emoji is a fixed box taller than a
+  line; margins of minus half its height keep it out of the line's height without
+  moving it (`Messages.module.css`). Large emoji set their own line height. Media
+  that is unavailable or fails renders an outlined placeholder of the same size
+  instead of the `:shortcode:`, which stays in its alt text, tooltip and copied
+  text. The bundled emoji renderer draws it wherever it renders a custom emoji:
+  also composer decorations, reaction labels and the emoji settings.
+
+Exceptions that grow a line or a chip and are never predicted: a mention in a
+heading (the heading's own font); a name wider than the line, which wraps inside
+its button; a mention button whose name needs a system fallback font (emoji, or a
+script Inter lacks), whose taller font box grows the button's line (`mention-font`);
+and a link label with a line break, which makes its chip two lines (`link`).
+A chip's label has no room above or below its line in body text, so the topmost
+of stacked marks (Vietnamese capitals, Thai) can lose a pixel row there.
+
+## Predicted row heights
+
+`src/features/messages/row-height/` predicts the height of a prose message row
+exactly and seeds it into Virtua's size cache through the patched
+`estimateSize` prop (see [patches/README.md](../patches/README.md)), so the row's
+measurement on mount changes nothing. A row is prose when its body is
+paragraphs of text and line breaks with strong, emphasis, strikethrough,
+mentions, links, channel references and custom emoji; anything else (code,
+lists, quotes, headings, tables, spoilers, large emoji, attachments, reactions,
+threads, workflow messages, nested strong, other plugins' renderers) is
+`undefined` and keeps measured sizing. Mentions, links and emoji are atomic
+boxes on body lines (see
+above): a mention button is its label beside its icon, an emoji its box; each
+is decided as `MessageMarkdown` decides (bound mentions and protected content
+come from its own exported helpers, the reader's profile access from
+`canOpenLink`, labels from the channel's names, channel references from the
+timeline's reference directory). A mention span is left to measurement
+(`mentions`): WebKit narrows a line that breaks inside one by its cloned
+padding. So are a button whose label needs a system fallback font
+(`mention-font`) and a chip whose label holds anything but text, strong,
+emphasis and strikethrough (`link`).
+A link chip's width is the link renderer's (no contract states it), so a row
+with chips is predicted only when its line breaks are the same with every chip
+at no width and at its cap (`link-width` otherwise): line counts only grow with a
+box's width. Only the shipped bundled renderers are known, by contribution key and
+revision `bundled`: the links renderer (any other link renderer is
+`link-renderer`) and the custom emoji renderer (any other inline renderer is
+`inline-renderer`). Content with no Markdown-significant character or line shape
+skips the parse; anything the conservative check cannot rule out is parsed with
+the renderer's own GFM and line-break plugins, and rows with bound mentions or
+custom emoji with its protected content. Seeds are written:
+
+- at Virtualizer creation, around the row it lands on (bottom, restore anchor or
+  reveal target): always a viewport on each side (at most 100 rows), then out to
+  the 1600px buffer while an 8 ms budget lasts. Rows past that get cached
+  predictions only. Defined predictions replace saved geometry entries, in the
+  creating render only (Virtua reads `cache` only then);
+- for the rows a length change inserts, in the render that inserts them: an
+  older page (20 rows) and, under Virtua's shift, the former first row, which
+  Virtua asks about first, are always predicted (21 rows), then more within
+  8 ms, so a page's only scroll write is the shift's jump. Live appends follow
+  the same rule. With the syntax fast path and no letter spacing a page costs
+  about 1 ms of model work at full speed (about 6 ms at a 4x CPU slowdown);
+- after a new Virtualizer is positioned and before any reader input, in 8 ms
+  idle slices starting with the one that mounts its buffer: rows of the window
+  Virtua still has unmeasured and that are not mounted, nearest the viewport
+  first, set through the handle's `resize` at most twice, before the buffer
+  mounts (the rows predicted so far, which then mount at their size) and once
+  every row has been tried (the rest, at their index and placement then). Rows
+  above the viewport are compensated while unmounted, out of sight, so the
+  reader's first scroll mounts them at their size instead of correcting them
+  under a wheel. On Mac WebKit each compensation stops wheel input for about a
+  frame, hence two writes rather than one per slice. The first input stops it;
+  rows not reached keep measured sizing;
+- after the timeline settles and at each Virtua scroll end, mounted rows the model
+  has not prepared are prepared within 8 ms. They are measured already, so this
+  only lets a later Virtualizer (a switch back, possibly at another width) seed
+  them. Rows that mount and unmount within one continuous gesture are not
+  prepared until a later scroll end finds them mounted, so a later Virtualizer
+  can still correct them when they first mount.
+
+Only a Virtualizer whose creating render has a ready model is seeded, for its
+lifetime. Rows left unknown, those the model leaves to measurement (membership
+changes, replies, reactions, attachments, lists, code, quotes) and every row of
+an older page inserted without seeds (one whose former first row is unknown),
+start at `itemSize`: a median over the window's rows of rough estimates (lines
+wrapped by length, gaps between Markdown blocks, quote and code padding,
+reaction, thread and attachment strips), so it does not depend on how many rows
+the creating render had time to predict; one line in an empty window. With a
+geometry snapshot, Virtua starts from the snapshot's own default instead. Once
+measurements of unknown rows exceed a viewport, Virtua's own estimate replaces
+that default with their median, as it does without predictions
+([patches/README.md](../patches/README.md#sizes-known-before-measurement)): the
+rough estimate cannot know membership or reply chrome, and on a channel of
+mostly membership changes an 80px default missed every 52px membership row.
+Seeded rows and the idle fill above are not part of that sample. One created
+earlier, for example while Pretext or the fonts load at launch, keeps stock
+Virtua and is never seeded: its buffer waits for that estimate, which only
+measurements that change cached sizes complete and seeded rows never do, so a
+short or empty window would never buffer. The next Virtualizer (a switch back)
+is seeded.
+A new Virtualizer's first commit mounts only the viewport; the buffer follows
+once the timeline is positioned (settled, or a target revealed), after the first
+slice of the fill above, in the first idle period after the next frame (where
+there is no `requestIdleCallback`, as in WebKit, once the timeline has had no new
+rows, size or scroll for 100 ms after that frame: a task right after it would
+land in the frame after a switch's first visible one), or at the reader's first
+input (wheel, touch, key or pointer), and stays on for that Virtualizer. Input
+that arrives before the buffer has rendered can show blank space beside the
+viewport for a frame. A hidden timeline (a retained pane, an updating
+Inbox preview) unmounts its Virtualizer, and showing it resets the
+scroller's offset; that reset is not reader movement, so a reader at the bottom
+stays there even though exact sizes no longer make the re-created list shorter.
+
+There is no post-commit reconciliation yet: after a width, text-scale or font
+change, or an edit, rows already in Virtua's cache keep their size until they
+mount and are measured, as without predictions. Removing rows above the reading
+position still moves it as before.
+
+Heights come from live measurements, never CSS arithmetic: a transient probe
+after the list, mounted only until the current font epoch (text scale) is
+calibrated, measures line pitch, row chrome, the day divider and paragraph gap,
+and reads computed fonts for body text, strong, emphasis and both. It also lays
+one line of every box out (a person's and an agent's mention button, a link
+chip, and the registered custom emoji renderer's output for
+unavailable media) and reads the icons' advances, the emoji box and the chip's
+cap; unless that line is exactly one body line and the buttons use the
+paragraph's font, rows with boxes are `boxes` for the epoch. An emoji renderer
+registered after calibration waits for the next epoch. Message-row
+text has no letter spacing. The canvas font size is the computed one or a
+hundredth of a pixel smaller, whichever measures a sample as the DOM lays it out
+(Chromium lays 18.2px out as 18.19px). A probe hidden at the epoch change (a
+retained pane) calibrates when it gains size. Text is laid out with stock Pretext
+(`@chenglou/pretext` and its rich-inline layout, pinned, a lazy chunk requested
+with the timeline's module), greedily as the message CSS wraps; a text waits for
+the Inter subsets it needs. Line breaks must hold across a layout unit and a
+half either side of the width (Chromium fits a line up to a layout unit wide),
+plus a layout unit per text node in a segment with strong, emphasis or
+strikethrough (Chromium rounds each), and 2px for characters in system fallback
+fonts. Only characters that width sweeps verified in Chromium and WebKit are
+predicted (`characters` otherwise): ASCII; the letters, marks and digits of
+Latin (Latin-1, Extended-A, Vietnamese, Romanian), monotonic and polytonic
+Greek, Cyrillic, Hebrew (with common niqqud), Arabic (Persian, Urdu),
+Devanagari, Thai, kana, Han and Hangul; curly quotes, guillemets, inverted
+marks, the em dash, ellipsis, no-break space, joiners and a few symbols
+(`° × ÷ ± © ® ™ € £ • → ≤ ≥`…); the CJK marks `、。，！？：；・`; Arabic and Devanagari
+sentence punctuation; and emoji outside the BMP with default emoji presentation
+(skin tones only after a base, flags in pairs). Other dashes, Unicode spaces,
+fractions, BMP pictographs (`✅ ❤️`), CJK brackets and letters in other fallback
+fonts break or measure differently. Within those, a row is left to measurement
+where the engines break or shape text unlike Pretext: a word wider than the
+line (broken by its own kerning or joining), two pieces Pretext measures apart
+that the font shapes together (Inter's `->` ligature, Chromium's kerning across
+a hyphen), a word whose punctuation is not one opener, a number or letters
+joined by single hyphens or apostrophes (Latin, Greek, Cyrillic) or digits
+joined by `- . , : /`, then closers, or a lone dash or ellipsis
+(`punctuation`), a word opening with punctuation in text with more than one
+script (`scripts`: Chromium shapes it in the previous word's script and loses
+its kerning), a number with punctuation in Hebrew or Arabic text (`bidi`), an
+emoji touching a letter or digit (`emoji`: the engines break beside some emoji
+and not others), CJK punctuation beside anything but Han or kana, or other
+punctuation in CJK text (`cjk-punctuation`), a word split across text nodes
+of one font (`glue`), small kana (`kana`: Pretext breaks before them, the
+engines do not), and other kana in an engine that kerns it (Chromium, found by
+measuring a kana sample once per font epoch). A byline must fit on one line
+beside the widest time label with a pixel to spare. Prepared text is kept for about 300,000 characters;
+older rows keep their last height and prepare again for another width. The model
+is off without canvas (jsdom, Node), while conversation presentation is inactive,
+without hover and a fine pointer, and below a 200px text column. DEV builds record
+coverage and exactness by row kind, observing only
+([client metrics](client-metrics.md)).
+
 ## Validation and limits
 
 `just scan` runs frontend checks/build, runtime/CLI tests, relay behavior tests,
@@ -1236,7 +1434,10 @@ emoji available resolves the shortcode through its existing composer catalog.
 In the composer, Shift+Left/Right selects each rendered custom emoji as one unit,
 preserving its full shortcode for copying, replacement and deletion. Reversing
 direction shrinks the selection by one emoji. Visible shortcode text and emoji
-that cannot be rendered retain ordinary text selection.
+that cannot be rendered retain ordinary text selection. In messages, a custom
+emoji whose media is unavailable or fails keeps its box as an outlined placeholder,
+still copied as its `:shortcode:` (see
+[inline content](#inline-content-never-grows-a-line)).
 Custom emoji autocomplete adds no trailing space. The native caret uses the
 regular composer text size while the emoji preview remains large.
 

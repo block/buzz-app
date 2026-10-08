@@ -71,8 +71,9 @@ type ProtectedContent = {
   parts: InlinePart[];
 };
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
- * divides emphasis. Reference labels must also survive unchanged for resolution. */
-function protectInlineContent(
+ * divides emphasis. Reference labels must also survive unchanged for resolution.
+ * Row heights (row-height/prose.ts) describe the same tree. */
+export function protectInlineContent(
   row: Pick<
     ChannelMessage,
     | "content"
@@ -236,7 +237,7 @@ function inlineProtectionKey(
 }
 
 /** Offer only Markdown prose to profile controls and inline plugins. */
-function remarkInlineContent(protectedContent: ProtectedContent) {
+export function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
     value.replace(
       placeholderPattern(protectedContent),
@@ -305,7 +306,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
 }
 
-const transformUrl: UrlTransform = (value) =>
+export const transformUrl: UrlTransform = (value) =>
   parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)

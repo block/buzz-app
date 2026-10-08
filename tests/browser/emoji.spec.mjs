@@ -46,12 +46,17 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       name: "Insert emoji",
       exact: true,
     });
-    await expect(
-      page.getByText("Broken :missing:", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByText("Unloadable :broken:", { exact: true }),
-    ).toBeVisible();
+    // Unavailable (unsafe URL) and failed media keep the emoji's box.
+    for (const [text, alt] of [
+      ["Broken", ":missing:"],
+      ["Unloadable", ":broken:"],
+    ]) {
+      const placeholder = page
+        .locator("p", { hasText: text })
+        .locator(`img[alt="${alt}"][data-unavailable]`);
+      await expect(placeholder).toHaveCSS("width", "22px");
+      await expect(placeholder).toHaveCSS("height", "22px");
+    }
     const sentSingleEmoji = page.locator("p[data-single-emoji]");
     await expect(sentSingleEmoji).toHaveCSS("font-size", "42px");
     await expect(sentSingleEmoji).toHaveCSS("margin-top", "4px");
@@ -217,7 +222,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     // Across rows, the handler must omit the same user-select: none row chrome
     // engines do: the hovered action bars and the hidden full dates.
-    const brokenBody = page.getByText("Broken :missing:", { exact: true });
+    // Its unavailable emoji is a placeholder that copies as its shortcode.
+    const brokenBody = page.locator("p", {
+      has: page.locator('img[alt=":missing:"][data-unavailable]'),
+    });
     await historic.hover();
     await brokenBody.hover();
     await historic.evaluate(
@@ -901,10 +909,15 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(search).toHaveAttribute("data-buzz-search-ready", "true");
     await search.fill("party");
     await expect(insert).toBeVisible();
+    // An emoji whose media fails keeps its box: a placeholder named by its
+    // shortcode. One without media stays text.
+    const failed = draft().locator('img[alt=":broken:"][data-unavailable]');
     await draft().fill(":broken: readable");
-    await expect(draft()).toContainText(":broken: readable");
+    await expect(draft()).toContainText("readable");
+    await expect(failed).toHaveCount(1);
     await draft().fill(":broken: :nosource:");
-    await expect(draft()).toContainText(":broken: :nosource:");
+    await expect(draft()).toContainText(":nosource:");
+    await expect(failed).toHaveCount(1);
     await expect(draft()).not.toHaveCSS("color", "rgba(0, 0, 0, 0)");
     const longDraft = `:party: ${"long text ".repeat(160)}`;
     await draft().fill(longDraft);

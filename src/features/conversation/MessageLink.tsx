@@ -170,6 +170,11 @@ export function MessageLink({
     ) : (
       (children ?? display ?? url)
     );
+    // Every message link is a host-owned chip (docs/channels.md); a
+    // composer decoration is the user's own text and stays inline.
+    const className = entry?.className
+      ? `${styles.chip} ${entry.className}`
+      : styles.chip;
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
@@ -178,7 +183,7 @@ export function MessageLink({
         aria-label={display}
         data-link-label={label ?? ""}
         title={!preview ? url : undefined}
-        className={entry?.className}
+        className={className}
         data-link-renderer={entry?.key}
         {...navigation}
       >

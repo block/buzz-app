@@ -364,12 +364,126 @@ Reading positions intentionally survive restarts. These startup controls do not
 justify resetting legacy reading state or establish the cause of a reported
 position without examining that state.
 
+## Predicted row heights
+
+`row-heights.spec.mjs` mounts the real `ChannelTimeline` with the app's fonts and
+the bundled links and emoji plugins (revision `bundled`, registered before it
+mounts) in a source fixture (`tests/fixtures/row-heights.tsx`, DEV, so client
+metrics record). Layout, fonts and 1/64px layout units are the behavior, so only a
+browser can check it, in both engines:
+
+- **Exactness.** Three corpora, each mounted taller than itself so every row is
+  sampled, at widths 480, 588.33, 613.37, 768 and 1100px and text scales 0.9, 1,
+  1.1 and 1.3 (plus the 320px and 464px cells below), in both engines and in
+  WebKit with a WKWebView user agent that has no `Safari/` token. Every row kind
+  must report zero mismatches, and the fixture also asks the model for every
+  row's outcome with the timeline's inputs: each predicted height must equal the
+  row's height (per-row evidence; it must agree with the counters). The attached
+  JSON reports per-cell counts, reasons and, for the inline and complex corpora,
+  coverage by kind of row.
+  - *Inline boxes*: mentions (a person's and an agent's button, bold, beside
+    punctuation), link chips (short, long, Markdown, Buzz), channel references
+    and custom emoji (served, failing, refused by the media policy). Every
+    predicted row must be the size Virtua was seeded with; only `link-width`,
+    knife edges, words wider than a line and bylines may be left to measurement;
+    from 768px every row without a chip must be predicted, and at 1100px ×1 some
+    chip rows. Rows of kind `declined:<reason>` lay out unlike the model, and each
+    must report exactly its reason: buttons whose names need fallback fonts
+    (emoji, Devanagari, Thai, Arabic: `mention-font`), link labels with a soft or
+    hard line break (`link`) and agent spans, one with a name a line can break
+    inside (`mentions`).
+  - *Complex*: 300 rows from `tests/fixtures/complex-corpus.mjs`, the row kinds
+    and shares measured read-only on a live community (membership rows, day
+    dividers, thread summaries, reactions, links, person and agent mentions,
+    images and video with dimensions, files, audio, inline code, lists, code
+    blocks, quotes, long agent reports, tables, custom emoji, large emoji, sent
+    from thread, emphasis, several paragraphs, a few rows in other scripts).
+    Nothing predicted may differ and some rows must be predicted in every cell
+    but 320px. The performance harnesses can use the same generator.
+  - *Static*: a prose corpus (1 to 28 lines, three authors in runs, day
+    boundaries, line breaks and paragraphs, strong, emphasis, strikethrough and
+    their combinations, unbroken tokens, Cyrillic, Greek, Vietnamese, accented
+    Latin, Arabic, Hebrew, Thai, Devanagari, Chinese, Korean, Japanese, mixed
+    direction, emoji with joiners and flags, curly quotes, a link). Every predicted
+    row must be the size Virtua was seeded with.
+    The rows left to measurement must be exactly one reaction, and twice
+    each CJK punctuation beside Latin text and curly quotes beside Han
+    (`cjk-punctuation`), kerning across Pretext's pieces (`shaping`), a word split
+    across two text nodes of one font (`glue`), nested strong, code, an en dash
+    (`characters`), unverified punctuation in a word (`punctuation`), opening
+    quotes after a word in another script (`scripts`), a punctuated number in
+    Hebrew (`bidi`), an emoji glued to a word (`emoji`) and small kana (`kana`);
+    with macOS fonts in Chromium, which kerns kana, also the two other kana rows
+    twice. The link row may report `link-width`. Knife edges (`edge`), words wider
+    than the line (`wrap`) and bylines are allowed for at most ten rows per cell
+    (twenty in the 464px cell, where Chromium's integer column puts several rows on
+    a layout-unit edge). A 1/64px pitch error fails at the first cell. At 320px ×1 no byline fits beside
+    the widest time label, so every other timeline row must report `byline`;
+    without the fit check they mismatch. The diagnostics behind the character
+    allowlist and word rules (adversarial corpora for every admitted character
+    and context, a random-word fuzzer reporting where the DOM and Pretext break
+    differently, 200-800 widths, both engines and the Tauri UA, four scales) and
+    behind atomic boxes (mentions, chips and emoji beside punctuation, in styles,
+    in runs and in other scripts at 101-201 widths, four scales) are recorded in
+    the R36 and R39 notes, not run here.
+- **Font subsets.** With the Inter Cyrillic file held by `page.route`, the
+  Russian rows report `font` and nothing mismatches; once it loads, a remount
+  predicts them exactly.
+- **Dynamics.** Runs with client metrics off (the module is rewritten in flight),
+  as in production, so DEV sampling cannot prepare rows. Two older pages, held by
+  the fixture's store, are released once wheel input reaches the older-history
+  threshold: each may cost only the shift's own scroll write and no `ol` height
+  change without a row-count change. In Chromium the first page is predicted and
+  inserted under 6x CDP CPU throttling (its insert always predicts the page and
+  the former first row). A remount at another width (no geometry
+  snapshot applies), then a wheel traversal up and down across every row, must
+  write nothing and change no `ol` height. Steps toward a page end at Virtua's
+  scroll end, traversal steps at native `scrollend` and a settle; every read
+  waits for Virtua's idle, two frames and a settle. Instrumentation is a page
+  init script. Stock Virtua sizing (no estimator), a Virtua build that does not
+  re-predict the former first row, and disabling the scroll-end preparation of
+  measured rows each fail it. Rows passed
+  within one continuous gesture are not covered: they are prepared only at a
+  scroll end that finds them mounted.
+- **Lifecycle.** A new timeline mounts only its viewport until an idle period
+  (run by the test) or, for a second Virtualizer, the reader's first wheel; each
+  then mounts rows beyond the viewport. Turning the buffer on from the first
+  commit, or removing either trigger, fails it. Without `requestIdleCallback` (as
+  in WebKit; every engine runs the case), a held quiet period leaves only the
+  viewport until the first wheel, and the real one mounts the buffer without
+  input; a task right after the next frame fails it (the quiet period's clock and
+  restarts are unit-tested). An inline target reveal mounts
+  rows beyond the viewport on both sides, and so does a timeline opened empty, or
+  with three rows while the Pretext chunk is held, once 60 messages arrive in
+  pages of 20 (fails if a seeded Virtualizer's buffer waits for Virtua's own
+  estimate or an early Virtualizer is seeded later). A Virtualizer created
+  without hover, or while the Pretext chunk is held, matches stock Virtua's list
+  height, offset and mounted rows. A text-scale change while the pane is hidden
+  recalibrates when it shows, keeps the reader at the bottom, seeds the new
+  Virtualizer exactly (every mounted row sampled after a scroll end), and reports
+  no ResizeObserver loop.
+
+`scroll.spec.mjs` cursor paging additionally requires each released page to cost
+exactly one scroller write (the jump); it fails on the parent commit. Assertions
+read aggregate counters only; the attached JSON reports per-cell counts and
+unpredicted reasons. The fast-path syntax check, the character allowlist and
+word rules, and the creation-only cache prop have Node/jsdom tests
+(`row-height/prose.test.ts`, `environment.test.ts`, `use-row-heights.test.tsx`).
+Not covered yet: size changes of rows already in Virtua's cache (width, text
+scale, fonts, edits), which wait for reconciliation; the fallback fonts of
+Linux CI images (CJK, emoji, symbols), which differ from macOS: the kana count is
+asserted on macOS only; and Chromium at a 1.2 text scale, where the Latin sample
+matches no candidate canvas size, so calibration fails and rows are measured.
+
 ## History loading and live status
 
 The history-loading journeys retain the production broker's HTTP admission. They
 check that ordinary wheel paging begins before the top, and that a saved top
 anchor can resume paging from a boundary gesture even when the DOM cannot scroll
-farther. Restoration alone does not fetch history. One blocked near-top gesture made on cached
+farther. With tall messages, each wheel must land; in WebKit that also guards the
+idle fill of predicted heights (docs/channels.md): creation predicts only a
+few tall rows within its budget, and without the fill the rest correct as they
+mount under the reader's wheels, which WebKit then drops (8 of 8 runs fail). Restoration alone does not fetch history. One blocked near-top gesture made on cached
 rows waits for successful revalidation, including the live catch-up handoff;
 errors, paging, moving away from the threshold, or unmounting retire that intent. A quota-failed page retains a
 manual retry without repeated wheel gestures resubmitting it. These are workflow

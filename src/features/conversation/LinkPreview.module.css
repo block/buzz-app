@@ -1,3 +1,25 @@
+/* A message link is one chip (docs/channels.md): it never splits across lines
+   and never grows one. It keeps a renderer's inline padding but no block
+   padding, so its box is exactly one line, and its label is truncated past
+   28em, which fits the bundled renderer's 45-character URL labels. The cap
+   bounds the label, so a table cell sized to the chip shows it whole. */
+:is(a, span).chip {
+  display: inline-block;
+  box-sizing: content-box;
+  max-width: min(100%, 28em);
+  overflow: hidden;
+  padding-block: 0;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+/* A heading's glyphs reach past its line (h1's line is shorter than its
+   font; stacked marks reach higher): room outside the line, where the chip
+   clips, keeps them whole. The line keeps its height. */
+:where(h1, h2, h3, h4, h5, h6) :is(a, span).chip {
+  padding-block: var(--space-2);
+  margin-block: calc(-1 * var(--space-2));
+}
 .popup {
   /* Content layout; the shared PreviewCard owns surface, border and elevation. */
   width: min(21.25rem, calc(100vw - 1.5rem));

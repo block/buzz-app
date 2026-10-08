@@ -1,5 +1,5 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc276456f8452ab 100644
+index a183cc7b1669aab25467840540ce3bd1c025fb47..16c11a713240dfba7adcf10311040b558ad97f73 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
@@ -15,7 +15,17 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
  var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v = e => [ ...e ].sort((e, t) => e - t), p = setTimeout, S = clearTimeout, m = "function" == typeof queueMicrotask ? queueMicrotask : e => {
      Promise.resolve().then(e);
  }, $ = () => {
-@@ -21,6 +25,14 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -16,11 +20,22 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+ }, w = "undefined" != typeof window, _ = e => e.ownerDocument, z = e => e.defaultView, b = /*#__PURE__*/ (e => {
+     let t;
+     return () => (e && (t = e(), e = void 0), t);
+-})(() => !!/iP(hone|od|ad)/.test(navigator.userAgent) || "MacIntel" === navigator.platform && navigator.maxTouchPoints > 0), I = e => u(e.t(), e.o()), y = ({i: e, l: t, u: n, h: o, v: r, p: i, t: s, S: l, m: c, $: f}, h = 0) => {
+-    let g = !!f, v = !!h, p = 1, S = 0, m = 0, $ = 0, w = 0, _ = 0, z = 0, I = 0, y = 0, x = null, k = [ 0, v ? u(h - 1, 0) : -1 ], R = 0, C = !1;
++})(() => !!/iP(hone|od|ad)/.test(navigator.userAgent) || "MacIntel" === navigator.platform && navigator.maxTouchPoints > 0), I = e => u(e.t(), e.o()), y = ({i: e, l: t, u: n, h: o, v: r, p: i, t: s, S: l, m: c, $: f, seeded}, h = 0) => {
++    // With an estimator, automatic estimation samples only measurements of
++    // items that had no size: a seeded item never reaches it with an equal
++    // measurement, and the default size is for the items without a seed.
++    let g = !!f, sample = [], v = !!h, p = 1, S = 0, m = 0, $ = 0, w = 0, _ = 0, z = 0, I = 0, y = 0, x = null, k = [ 0, v ? u(h - 1, 0) : -1 ], R = 0, C = !1;
      const T = /* @__PURE__ */ new Set, M = () => $ - m, O = () => M() + _ + w, E = e => n(e) - _, L = e => {
          e && (b() && 0 !== I || x && 1 === y ? _ += e : w += e);
      };
@@ -30,18 +40,29 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
      return {
          _: () => {
              T.clear();
-@@ -31,7 +43,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -31,7 +46,11 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              let n, o;
              if (z) [n, o] = k; else {
                  let r = u(0, O()), i = r + S;
 -                g || (t = u(0, t), 1 !== I && (r -= t), 2 !== I && (i += t)), [n, o] = k = e(u(0, r), u(0, i)), 
 +                // Direction is frozen outside native scrolling, such as after a
 +                // shift until inferred idle; it cannot choose one buffered side.
-+                g || (t = u(0, t), (1 !== I || y) && (r -= t), (2 !== I || y) && (i += t)), [n, o] = k = e(u(0, r), u(0, i)), 
++                // Exact sizes may never complete automatic estimation, so with an
++                // estimator the buffer does not wait for it.
++                g && !seeded || (t = u(0, t), (1 !== I || y) && (r -= t), (2 !== I || y) && (i += t)), [n, o] = k = e(u(0, r), u(0, i)), 
                  x && (n = a(n, x[0]), o = u(o, x[1]));
              }
              return [ u(n, 0), a(o, l() - 1) ];
-@@ -69,7 +83,10 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -53,7 +72,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+                 T.delete(n);
+             };
+         },
+-        W: (n, l) => {
++        W: (n, l, imperative) => {
+             let a, u, h = 0;
+             switch (n) {
+               case 1:
+@@ -69,7 +88,10 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  }
 -
 +
@@ -55,7 +76,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 -
 +
                case 3:
-@@ -78,7 +95,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -78,7 +100,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                      if (!e.length) break;
                      L(e.reduce((e, [t, n]) => {
                          let r;
@@ -66,10 +87,15 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                              const e = M(), n = E(t), i = o(t);
                              r = 1 !== I && 0 === y ? n + i <= e : n < e && n + i < e + S;
                          }
-@@ -89,6 +108,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
-                         g && (R += i ? n : n - e);
+@@ -86,9 +110,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+                     }, 0));
+                     for (const [t, n] of e) {
+                         const e = o(t), i = r(t, n);
+-                        g && (R += i ? n : n - e);
++                        g && !imperative && (R += i ? n : n - e, seeded && i && n && sample.push(n));
                      }
-                     g && S && R > S && (L(f(t(O()))), g = !1), h = 3, u = !0;
+-                    g && S && R > S && (L(f(t(O()))), g = !1), h = 3, u = !0;
++                    g && S && R > S && (L(f(t(O()), sample)), g = !1), h = 3, u = !0;
 +                    // A scroll-end deferred above lands once the shift's
 +                    // measurements are in.
 +                    shiftIdle && 2 === y && !shiftPending() && (y = 0, shiftEnd = 0, shiftIdle = !1);
@@ -77,7 +103,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                  }
 -
 +
-@@ -97,7 +119,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -97,7 +124,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  break;
 -
 +
@@ -87,13 +113,74 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                    // Rows a shift prepends measure after its jump; remember
 +                    // how many so scroll-end can tell whether it awaits them.
 +                    shiftEnd = (2 === y ? shiftEnd : 0) + Math.max(l[0] - itemCount(), 0), shiftIdle = !1;
-+                    L(c(l[0], !0)), y = 2, h = 1;
-+                } else c(l[0]), h = 1;
++                    L(c(l[0], !0, l[2])), y = 2, h = 1;
++                } else c(l[0], !1, l[2]), h = 1;
                  break;
 -
 +
                case 6:
-@@ -173,15 +200,44 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -127,7 +159,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+     const o = n ? "unshift" : "push";
+     for (let n = 0; n < t; n++) e[o](-1);
+     return e;
+-}, R = (e, t, n) => {
++}, R = (e, t, n, estimateSize) => {
+     let o = n && n[1] || t || 40, r = -1, i = 0;
+     const s = n && n[0], l = s ? k(s.slice(0, a(e, s.length)), u(0, e - s.length)) : k([], e), c = k([], e + 1), f = e => {
+         const t = l[e];
+@@ -140,6 +172,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         for (;n < t; ) o += f(n), c[++n] = o;
+         return r = t, o;
+     };
++    // A size known before measurement is cached like a measured one, so an
++    // equal measurement is ignored; snapshot measurements take precedence.
++    if (estimateSize) for (let index = 0; index < e; index++) if (-1 === l[index]) {
++        const size = estimateSize(index);
++        null != size && (l[index] = size);
++    }
+     return {
+         i: (t, n) => {
+             let o, r;
+@@ -156,32 +194,82 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         p: (e, t = -1) => l[e] === t,
+         t: () => d(e),
+         S: () => e,
+-        m: (t, n) => {
+-            const i = t - e;
+-            return r = n ? -1 : a(t - 1, r), e = t, i > 0 ? (k(c, i), k(l, i, n), o * i) : (c.splice(i), 
+-            (n ? l.splice(0, -i) : l.splice(i)).reduce((e, t) => e - (-1 === t ? o : t), 0));
++        m: (t, n, estimateSize) => {
++            const i = t - e, previous = e;
++            let jump = (r = n ? -1 : a(t - 1, r), e = t, i > 0 ? (k(c, i), k(l, i, n), o * i) : (c.splice(i), 
++            (n ? l.splice(0, -i) : l.splice(i)).reduce((e, t) => e - (-1 === t ? o : t), 0)));
++            // Seed the inserted items. A shift also changes the predecessor of the
++            // item that was first (after a removal, the item now first), so predict
++            // it first, inside the same end-anchored jump. If it is unknown, seed
++            // none: the inserted rows stay unmeasured, and the shift waits for
++            // their measurement, which arrives with its own. An append has no such
++            // item, so `boundary` is past the end.
++            if (estimateSize) {
++                const boundary = n ? u(i, 0) : t, known = boundary < t ? estimateSize(boundary) : 0;
++                if (null != known) for (let index = n ? 0 : previous; index <= a(boundary, t - 1); index++) {
++                    const size = index === boundary ? known : estimateSize(index);
++                    null == size || size === l[index] || (n && (jump += size - f(index)), l[index] = size);
++                }
++            }
++            return jump;
+         },
+-        $: t ? void 0 : e => {
++        seeded: !!estimateSize,
++        // With an estimator, `itemSize` is only the initial default size.
++        $: t && !estimateSize ? void 0 : (e, sample) => {
+             let t = 0;
+             const n = [];
+             l.forEach((o, r) => {
+                 -1 !== o && (o && n.push(o), r < e && t++);
+             }), r = -1;
+-            const i = v(n), s = i.length, c = s / 2 | 0, f = s % 2 == 0 ? (i[c - 1] + i[c]) / 2 : i[c], a = o;
++            const i = v(sample.length ? sample : n), s = i.length, c = s / 2 | 0, f = s % 2 == 0 ? (i[c - 1] + i[c]) / 2 : i[c], a = o;
+             return ((o = f) - a) * u(e - t, 0);
+         },
          q: () => [ l.slice(), o ]
      };
  }, C = e => {
@@ -125,6 +212,11 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                });
 +            }
 +            t.observe(n);
++        },
++        remeasure(e) {
++            // A deferred entry predates the size just set; the fresh
++            // observation reports the current box.
++            t && observed.has(e) && (pending.delete(e), t.unobserve(e), t.observe(e));
          },
          B(e) {
 +            observed.delete(e);
@@ -141,7 +233,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
              t && t.disconnect();
          }
      };
-@@ -249,32 +305,64 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -249,32 +337,64 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          o && o();
      } ];
  }, E = (e, t) => {
@@ -171,7 +263,8 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +            [l]: T(edgeOffset(e), i),
              behavior: t ? "smooth" : "instant"
          });
-     }), u = t ? "width" : "height", d = /* @__PURE__ */ new WeakMap, h = C(t => {
+-    }), u = t ? "width" : "height", d = /* @__PURE__ */ new WeakMap, h = C(t => {
++    }), u = t ? "width" : "height", d = new Map, h = C(t => {
          const o = [];
 -        for (const {target: r, contentRect: i} of t) if (r.offsetParent) if (r === n) e.W(4, i[u]); else {
 +        for (const {target: r, contentRect: box} of t) if (r.offsetParent) if (r === n) {
@@ -215,7 +308,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,7 +371,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,7 +403,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -226,9 +319,91 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +887,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -292,7 +414,20 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         J() {
+             o && o.Y();
+         },
+-        j: e.O
++        j: e.O,
++        // Like the viewport path, read the native offset first: a jump or
++        // correction earlier in this frame can precede its scroll event.
++        // Imperative sizes are not measurements: re-measure mounted targets so
++        // a real size confirms (no-op) or corrects them.
++        resize(items) {
++            if (n) {
++                const offset = T(n[s], i);
++                offset !== e.T() && e.W(1, offset);
++            }
++            e.W(3, items, !0);
++            const indexes = new Set(items.map(([index]) => index));
++            for (const [element, index] of d) indexes.has(index) && h.remeasure(element);
++        }
+     };
+ }, L = (e, t) => {
+     let n, o, r, i, s, l = $(), c = !1;
+@@ -491,12 +626,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         return X(e, t), t;
+     })(e);
+     return [ e => n[e], n.length ];
+-}, [ e, t ]), j = /*#__PURE__*/ e(({children: e, data: t, bufferSize: n, itemSize: r, shift: i, horizontal: a, keepMounted: u, cache: d, startMargin: h = 0, ssrCount: g, as: p = "div", item: S = "div", scrollRef: $, onScroll: w, onScrollEnd: _}, z) => {
++}, [ e, t ]), j = /*#__PURE__*/ e(({children: e, data: t, bufferSize: n, itemSize: r, shift: i, horizontal: a, keepMounted: u, cache: d, startMargin: h = 0, ssrCount: g, as: p = "div", item: S = "div", scrollRef: $, onScroll: w, onScrollEnd: _, estimateSize}, z) => {
+     const [b, x] = J(e, t), k = l(null), C = l(!!g), T = P(w), M = P(_), [O, L, H, X] = D(() => {
+-        const e = !!a, t = R(x, r, d), n = y(t, g);
++        const e = !!a, t = R(x, r, d, estimateSize), n = y(t, g);
+         return [ n, t, E(n, e), e ];
+     });
+-    x !== O.C() && O.W(5, [ x, i ]), h !== O.O() && O.W(6, h);
++    x !== O.C() && O.W(5, [ x, i, estimateSize ]), h !== O.O() && O.W(6, h);
+     const [j, G] = s(O.I, void 0, O.I), U = O.M(), F = O.t(), K = [], N = e => {
+         const t = b(e);
+         /* @__PURE__ */
+@@ -547,7 +682,8 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         scrollTo: e => W(H, e),
+         scrollBy: e => ((e, t, n) => {
+             W(e, n + t.T());
+-        })(H, O, e)
++        })(H, O, e),
++        resize: e => H.resize(e)
+     }), []), u) {
+         const e = new Set(u);
+         for (let [t, o] = O.i(n); t <= o; t++) e.add(t);
+@@ -797,4 +933,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
 -
 +
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
 -//# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/lib/react/Virtualizer.d.ts b/lib/react/Virtualizer.d.ts
+index 766ff2a7c7408c6ee6cb12f2ea377938c1f87505..fa12b0fbc29e19576700e677d3f9cc94aac4ecb5 100644
+--- a/lib/react/Virtualizer.d.ts
++++ b/lib/react/Virtualizer.d.ts
+@@ -52,6 +52,13 @@ export interface VirtualizerHandle {
+      * @param offset offset from current position
+      */
+     scrollBy(offset: number): void;
++    /**
++     * Set sizes known before measurement, such as after a width or font change, with the same scroll compensation as measured resizes. Mounted items among them are measured again, so their real size confirms or corrects the value.
++     *
++     * Renders synchronously: call it outside React render and effects. Indexes refer to the committed items.
++     * @param sizes pairs of item index and size
++     */
++    resize(sizes: readonly (readonly [index: number, size: number])[]): void;
+ }
+ /**
+  * Props of {@link Virtualizer}.
+@@ -79,6 +86,14 @@ export interface VirtualizerProps<T = unknown> {
+      * - If set, you can opt out estimation and use the value as initial item size.
+      */
+     itemSize?: number;
++    /**
++     * The size an item will measure, or undefined if unknown. Consulted on mount for items without a cached size, and on a length change for inserted items. A returned size is cached as if measured: an equal measurement does nothing.
++     *
++     * While {@link VirtualizerProps.shift} is true, a length change first consults the item whose predecessor changes: the former first item after a prepend, the new first item after a removal. If that returns undefined, no inserted item is seeded, so all of them wait for measurement as without an estimator.
++     *
++     * If set when the virtualizer is created, automatic estimation stays on: {@link VirtualizerProps.itemSize} is only the initial size of items without one, until their measurements exceed the viewport and their median replaces it. Seeded items and {@link VirtualizerHandle.resize} sizes are not sampled, and {@link VirtualizerProps.bufferSize} does not wait for the estimate.
++     */
++    estimateSize?: (index: number) => number | undefined;
+     /**
+      * While true is set, scroll position will be maintained from the end not usual start when items are added to/removed from start. It's recommended to set false if you add to/remove from mid/end of the list because it can cause unexpected behavior. This prop is useful for reverse infinite scrolling.
+      */

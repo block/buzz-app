@@ -11,6 +11,7 @@ const approved = new Set(["@tabler/icons-react", "@tabler/icons"]);
 const nonIconDependencies = new Set([
   "@base-ui/react",
   "@biomejs/biome",
+  "@chenglou/pretext", // Text line layout for timeline row heights.
   "@buzz/author",
   "@deepseek-ai/cordis",
   "@dnd-kit/core", // Pointer drag and drop for sidebar channel moves.

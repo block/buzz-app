@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@base-ui/react@1.8.0': 7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f
-  virtua@0.51.0: a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b
+  virtua@0.51.0: 4fbdf690b6c16fb9102075b27da566dd24b5feb1d5f5abd170b52539982ea2d7
 
 importers:
 
@@ -15,6 +15,9 @@ importers:
       '@base-ui/react':
         specifier: 1.8.0
         version: 1.8.0(patch_hash=7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f)(@date-fns/tz@1.5.0)(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@chenglou/pretext':
+        specifier: 0.0.9
+        version: 0.0.9
       '@deepseek-ai/cordis':
         specifier: 4.0.2
         version: 4.0.2
@@ -137,7 +140,7 @@ importers:
         version: 4.0.1
       virtua:
         specifier: 0.51.0
-        version: 0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 0.51.0(patch_hash=4fbdf690b6c16fb9102075b27da566dd24b5feb1d5f5abd170b52539982ea2d7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -318,6 +321,9 @@ packages:
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
+
+  '@chenglou/pretext@0.0.9':
+    resolution: {integrity: sha512-vInlpC//3vjRfWTs78k2BBIq/0bUdpjIp8TIn9fXe0NvnChhTQZfjioVzERQQbkQvCVpPpw7PDOrTWMHpq27VA==}
 
   '@csstools/color-helpers@6.1.1':
     resolution: {integrity: sha512-gLNsunvwf3mCi5u5o46/Z/JcJMnhbHSaZ69rkgPzNM3J4s8hWwpPUQB6/tt0EDFyCiWzxANlx+2LJwpYj4zS1w==}
@@ -2164,6 +2170,8 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
+  '@chenglou/pretext@0.0.9': {}
+
   '@csstools/color-helpers@6.1.1': {}
 
   '@csstools/css-calc@3.3.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)':
@@ -3774,7 +3782,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  virtua@0.51.0(patch_hash=a484a9280f82301968645f0e81dec58e297e4e4f0741ef1753d2fb469e82543b)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  virtua@0.51.0(patch_hash=4fbdf690b6c16fb9102075b27da566dd24b5feb1d5f5abd170b52539982ea2d7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

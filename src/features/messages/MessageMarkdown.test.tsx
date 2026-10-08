@@ -713,7 +713,7 @@ describe("Markdown inline extensions", () => {
     },
   );
 
-  it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
+  it("keeps emoji-only sizing, a same-size placeholder without media and readable text without extensions", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };
     const html = render(":party_parrot:", {
       ...options,
@@ -723,9 +723,10 @@ describe("Markdown inline extensions", () => {
       `class="${styles.text}" data-single-emoji="true"><img`,
     );
     expect(html).not.toContain("<div");
-    expect(render(":party_parrot:", options)).toContain(
-      'data-single-emoji="true">:party_parrot:</p>',
-    );
+    const placeholder = render(":party_parrot:", options);
+    expect(placeholder).toContain('data-single-emoji="true"><img');
+    expect(placeholder).toContain('data-unavailable=""');
+    expect(placeholder).toContain('alt=":party_parrot:"');
     expect(
       render(":party_parrot:", { ...options, extensions: undefined }),
     ).toContain('data-single-emoji="true">:party_parrot:</p>');

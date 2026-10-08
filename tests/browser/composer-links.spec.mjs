@@ -65,16 +65,23 @@ test("editable composer renders links and mentions while preserving source and n
               color: style.color,
               paddingBlock: [style.paddingTop, style.paddingBottom],
               height: element.getBoundingClientRect().height,
+              lineHeight: Number.parseFloat(style.lineHeight),
             };
           }),
       ),
     );
+    // A delivered link is a chip exactly one line tall, without block
+    // padding; a mention keeps its pill around the label's font box, at most
+    // a pixel taller. Neither grows the line (docs/channels.md, inline
+    // content never grows a line); both are the link color.
+    expect(inlineStyles[0].paddingBlock).toEqual(["0px", "0px"]);
+    expect(inlineStyles[0].height).toBe(inlineStyles[0].lineHeight);
     for (const mentionStyle of inlineStyles.slice(1)) {
       expect(mentionStyle.color).toBe(inlineStyles[0].color);
-      expect(mentionStyle.paddingBlock).toEqual(inlineStyles[0].paddingBlock);
-      expect(
-        Math.abs(mentionStyle.height - inlineStyles[0].height),
-      ).toBeLessThan(1);
+      expect(mentionStyle.paddingBlock).toEqual(["2px", "2px"]);
+      const taller = mentionStyle.height - inlineStyles[0].height;
+      expect(taller).toBeGreaterThanOrEqual(0);
+      expect(taller).toBeLessThanOrEqual(1);
     }
     await expect(preview.getByRole("link")).toHaveCount(0);
     await expect(preview.getByRole("button")).toHaveCount(0);

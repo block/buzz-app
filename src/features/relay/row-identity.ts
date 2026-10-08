@@ -52,6 +52,8 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
         a.size === b.size &&
         a.name === b.name &&
         a.duration === b.duration &&
+        a.voiceNote === b.voiceNote &&
+        sameArray(a.waveform, b.waveform) &&
         a.dimensions?.width === b.dimensions?.width &&
         a.dimensions?.height === b.dimensions?.height &&
         a.blurhash === b.blurhash &&

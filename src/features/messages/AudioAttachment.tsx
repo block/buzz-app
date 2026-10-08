@@ -1,3 +1,4 @@
+import { claimAudio, releaseAudio } from "../../shared/audio-playback";
 import {
   useCallback,
   useLayoutEffect,
@@ -16,7 +17,6 @@ import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 
-let playing: HTMLAudioElement | null = null;
 const ENDED_DURATION_CORRECTION_MIN_SECONDS = 0.05;
 // Old Buzz voice notes include a 1 fps 16x16 video track, so container
 // duration can overshoot the real audio by about one frame; allow headroom.
@@ -68,8 +68,8 @@ export function AudioAttachment({
   const seekProgress = duration ? (seekValue / duration) * 100 : 0;
 
   const setAudio = useCallback((element: HTMLAudioElement | null) => {
-    // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot clear the module playback singleton.
-    if (playing === audio.current) playing = null;
+    // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot release playback ownership.
+    releaseAudio(audio.current);
     audio.current = element;
   }, []);
 
@@ -118,14 +118,12 @@ export function AudioAttachment({
           setCurrentTime(event.currentTarget.currentTime)
         }
         onPlay={(event) => {
-          // Set the singleton after pausing the previous element so exclusivity is correct for both synchronous jsdom and asynchronous browser pause events.
-          if (playing && playing !== event.currentTarget) playing.pause();
-          playing = event.currentTarget;
+          claimAudio(event.currentTarget);
           setCurrentTime(event.currentTarget.currentTime);
           setIsPlaying(true);
         }}
         onPause={(event) => {
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setIsPlaying(false);
         }}
         onEnded={(event) => {
@@ -148,11 +146,11 @@ export function AudioAttachment({
             setDuration(measured);
           }
           if (nextDuration !== undefined) setCurrentTime(nextDuration);
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setIsPlaying(false);
         }}
         onError={(event) => {
-          if (playing === event.currentTarget) playing = null;
+          releaseAudio(event.currentTarget);
           setFailedSource(source);
         }}
       />

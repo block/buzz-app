@@ -19,6 +19,8 @@ import {
   type StaffFailure,
   type StaffRequest,
 } from "../../features/relay-staff/contract";
+import { npubEncode } from "nostr-tools/nip19";
+import { Person, PersonName } from "./people";
 import { reasonAudience, SECRET_REASON } from "./Reports";
 import { describe, useRead, useSession, useWrite, type Read } from "./session";
 import {
@@ -205,9 +207,7 @@ function MemberState({ member }: { member: MemberDetailDto }) {
 function EventPreview({ event }: { event: EventPreviewDto }) {
   return (
     <div className="flex flex-col gap-1 rounded-md border px-3 py-2 text-caption">
-      <span className="break-all font-mono text-secondary">
-        {event.authorPubkey}
-      </span>
+      <Person pubkey={event.authorPubkey} />
       <p className="whitespace-pre-wrap break-words">{event.content}</p>
       {event.deletedAt && (
         <p className="text-secondary">
@@ -412,16 +412,18 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
           <code className="break-all">{intent.target}</code>
         ) : (
           <span>
-            {name
-              ? `${name} (${shortKey(intent.target)})`
-              : shortKey(intent.target)}
+            {name ? (
+              `${name} (${shortKey(intent.target)})`
+            ) : (
+              <PersonName pubkey={intent.target} />
+            )}
           </span>
         )}
         {intent.expirationSecs ? ` for ${intent.expirationSecs}s` : ""}?
       </p>
       {intent.action !== "delete" && (
         <code className="break-all font-mono text-caption text-secondary">
-          {intent.target}
+          {npubEncode(intent.target)}
         </code>
       )}
       {member && <MemberState member={member} />}
@@ -488,13 +490,14 @@ export function MemberPicker({
   if (member)
     return (
       <div className="flex items-center gap-2 text-body-sm">
-        {member.name && <span>{member.name}</span>}
-        <span
-          className="font-mono text-caption text-secondary"
-          title={member.pubkey}
-        >
-          {shortKey(member.pubkey)}
-        </span>
+        {member.name ? (
+          <span title={npubEncode(member.pubkey)}>
+            {member.name}{" "}
+            <span className="text-secondary">({shortKey(member.pubkey)})</span>
+          </span>
+        ) : (
+          <PersonName pubkey={member.pubkey} />
+        )}
         <Button
           size="sm"
           variant="link"
@@ -543,10 +546,16 @@ export function MemberPicker({
                 }}
               >
                 <span className="flex-1 truncate">
-                  {candidate.name ?? "Unnamed"}
-                </span>
-                <span className="font-mono text-caption text-secondary">
-                  {shortKey(candidate.pubkey)}
+                  {candidate.name ? (
+                    <>
+                      {candidate.name}{" "}
+                      <span className="text-secondary">
+                        ({shortKey(candidate.pubkey)})
+                      </span>
+                    </>
+                  ) : (
+                    <PersonName pubkey={candidate.pubkey} />
+                  )}
                 </span>
               </button>
             </li>

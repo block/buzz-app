@@ -10,7 +10,9 @@ import type {
   StaffRoleSource,
 } from "../../features/relay-staff/contract";
 import { describe, useRead, useSession, useWrite } from "./session";
-import { containsSecretKey, Loaded, publicKeyInput, shortKey } from "./ui";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { Person, useNames } from "./people";
+import { containsSecretKey, Loaded, publicKeyInput } from "./ui";
 
 type OperatorWrite = Extract<
   StaffRequest,
@@ -53,6 +55,9 @@ export function Operators() {
   const [removing, setRemoving] = useState<OperatorDto | null>(null);
   const pubkey = publicKeyInput(input);
   const secret = containsSecretKey(input);
+  const keys = list.state === "ok" ? list.value.map((o) => o.pubkey) : [];
+  const names = useNames(keys);
+  const labels = publicKeyLabels(keys);
 
   const after = (change: OperatorWrite) => {
     setError("");
@@ -118,18 +123,20 @@ export function Operators() {
             <ul className="flex flex-col gap-1">
               {operators.map((operator) => {
                 const fixed = configBacked(operator);
-                const name = shortKey(operator.pubkey);
+                const name = names.text(operator.pubkey);
                 return (
                   <li
                     key={operator.pubkey}
                     className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
                   >
-                    <span
-                      className="flex-1 truncate font-mono"
-                      title={operator.pubkey}
-                    >
-                      {name}
-                      {operator.pubkey === context.signer && " (you)"}
+                    <span className="min-w-0 flex-1">
+                      <Person
+                        pubkey={operator.pubkey}
+                        keyLabel={labels.get(operator.pubkey)}
+                        detail={
+                          operator.pubkey === context.signer ? "you" : undefined
+                        }
+                      />
                     </span>
                     <span className="text-caption text-secondary">
                       {operator.sources
@@ -183,7 +190,7 @@ export function Operators() {
               description={
                 removing.pubkey === context.signer
                   ? "You are removing your own staff access. You may not be able to undo this."
-                  : `${shortKey(removing.pubkey)} (${removing.effectiveRole}) loses relay staff access.`
+                  : `${names.text(removing.pubkey)} (${removing.effectiveRole}) loses relay staff access.`
               }
               onClose={() => setRemoving(null)}
               actions={

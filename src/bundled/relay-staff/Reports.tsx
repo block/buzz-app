@@ -15,6 +15,7 @@ import type {
   ReportResolution,
   StaffRequest,
 } from "../../features/relay-staff/contract";
+import { Person, PersonName } from "./people";
 import { describe, useWrite, useRead, useSession } from "./session";
 import {
   CommunityBadge,
@@ -24,7 +25,6 @@ import {
   Loaded,
   NotConnected,
   Row,
-  shortKey,
   time,
 } from "./ui";
 
@@ -70,14 +70,25 @@ function resolutionLabel(resolution: ReportResolution) {
   return resolution.status;
 }
 
-function target(report: ReportDto) {
+function Target({ report }: { report: ReportDto }) {
   const kind = report.targetKind.toLowerCase();
   if (kind === "event")
-    return report.targetAuthorPubkey
-      ? `message by ${shortKey(report.targetAuthorPubkey)}`
-      : `message ${report.target.slice(0, 12)}…`;
-  return kind === "pubkey" ? shortKey(report.target) : report.target;
+    return report.targetAuthorPubkey ? (
+      <>
+        message by <PersonName pubkey={report.targetAuthorPubkey} />
+      </>
+    ) : (
+      <>message {report.target.slice(0, 12)}…</>
+    );
+  return kind === "pubkey" ? (
+    <PersonName pubkey={report.target} />
+  ) : (
+    <>{report.target}</>
+  );
 }
+
+/** The relay's maximum page; it returns no total and the list isn't paged. */
+export const REPORT_LIMIT = 200;
 
 const STATUSES = ["open", "processing", "resolved", "dismissed", "escalated"];
 
@@ -91,6 +102,7 @@ export function Reports({ communityId }: { communityId?: string }) {
       // The relay's default is escalated-only; the console works the whole queue.
       query: {
         scope: "all",
+        limit: REPORT_LIMIT,
         ...(communityId ? { communityId } : {}),
         ...(status ? { status: status as ReportDto["status"] } : {}),
       },
@@ -134,6 +146,7 @@ export function Reports({ communityId }: { communityId?: string }) {
           ) : (
             <GroupedList
               items={reports}
+              limit={REPORT_LIMIT}
               headings={!communityId}
               render={(report) => (
                 <li key={report.id}>
@@ -146,14 +159,17 @@ export function Reports({ communityId }: { communityId?: string }) {
                       {report.reportType || "Report"}
                     </span>
                     <span className="block truncate text-caption text-secondary">
-                      reporter: {shortKey(report.reporterPubkey)} · target:{" "}
-                      {target(report)}
+                      reporter: <PersonName pubkey={report.reporterPubkey} /> ·
+                      target: <Target report={report} />
                     </span>
                     <span className="flex items-center gap-1.5 text-caption text-secondary">
                       {report.status}
                       {report.status === "processing" && (
                         <CircleNotchIcon className="animate-spin" />
                       )}
+                    </span>
+                    <span className="block text-caption text-secondary">
+                      {time(report.createdAt)}
                     </span>
                   </button>
                 </li>
@@ -255,19 +271,25 @@ function ReportFields({ report }: { report: ReportDetailDto }) {
       <Row label="Event ID" mono>
         {report.reportEventId}
       </Row>
-      <Row label="Reporter" mono>
-        {report.reporterPubkey}
+      <Row label="Reporter">
+        <Person pubkey={report.reporterPubkey} />
       </Row>
       <Row label="Target kind">{report.targetKind}</Row>
-      <Row label="Target" mono>
-        {report.target}
-      </Row>
+      {report.targetKind.toLowerCase() === "pubkey" ? (
+        <Row label="Target">
+          <Person pubkey={report.target} />
+        </Row>
+      ) : (
+        <Row label="Target" mono>
+          {report.target}
+        </Row>
+      )}
       <Row label="Channel" mono>
         {report.channelId}
       </Row>
       <Row label="Note">{report.note}</Row>
-      <Row label="Resolved by" mono>
-        {report.resolvedBy}
+      <Row label="Resolved by">
+        {report.resolvedBy && <Person pubkey={report.resolvedBy} />}
       </Row>
       <Row label="Resolved at">{time(report.resolvedAt)}</Row>
       <Row label="Action ID" mono>
@@ -282,8 +304,8 @@ function ReportFields({ report }: { report: ReportDetailDto }) {
               <span className="ml-1.5 text-danger">(deleted)</span>
             )}
           </p>
-          <Row label="Author" mono>
-            {report.message.authorPubkey}
+          <Row label="Author">
+            <Person pubkey={report.message.authorPubkey} />
           </Row>
           <Row label="Content">{report.message.content}</Row>
           <Row label="Sent">{time(report.message.createdAt)}</Row>

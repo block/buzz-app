@@ -20,6 +20,9 @@ import type {
 } from "../../features/relay-staff/contract";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { RelayStaff } from "./RelayStaff";
+import { ProfilesContext } from "./people";
+import type { ProfileQueries } from "../../features/relay/profile-directory";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { StrictMode } from "react";
 import { createSession, SessionProvider, useWrite } from "./session";
 import { createStaff, type StaffTarget } from "./staff";
@@ -1690,4 +1693,111 @@ it("a cancel finished while closed is announced on the reopened detail, once", a
   expect(
     screen.queryByText("Enforcement cancelled. The report is open again."),
   ).toBeNull();
+});
+
+it("people show their profile name with the short key, never the raw key", async () => {
+  const author = "c".repeat(64);
+  const ensured: string[] = [];
+  const known = new Map([[member, { name: "Bob" }]]);
+  const profiles: ProfileQueries = {
+    snapshot: () => known,
+    subscribe: () => () => {},
+    ensure: async (ids) => {
+      ensured.push(...ids);
+    },
+  };
+  const detail = {
+    ...report,
+    message: {
+      authorPubkey: author,
+      content: "hi",
+      createdAt: report.createdAt,
+      deletedAt: null,
+    },
+  };
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(detail);
+  const staff = createStaff(backend, () => ({ relay, signer }));
+  staff.ensure();
+  render(
+    <ToastProvider>
+      <ProfilesContext.Provider value={profiles}>
+        <RelayStaff staff={staff} active={() => true} />
+      </ProfilesContext.Provider>
+    </ToastProvider>,
+  );
+  const card = await screen.findByRole("button", { name: /spam/ });
+  expect(card).toHaveTextContent(`reporter: Bob (${formatPublicKey(member)})`);
+  fireEvent.click(card);
+  // Reporter and target: the name, with the full npub behind a preview.
+  expect(
+    await screen.findAllByRole("button", { name: "Preview Bob identity" }),
+  ).toHaveLength(2);
+  // No name for the message author: the short key stands in.
+  expect(
+    screen.getByRole("button", {
+      name: `Preview ${formatPublicKey(author)} identity`,
+    }),
+  ).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain(member);
+  expect(document.body.textContent).not.toContain(author);
+  expect(ensured).toContain(author);
+});
+
+it("each community's count is a lower bound when the relay's limit is hit", async () => {
+  const other = {
+    ...report,
+    communityId: "c2",
+    communityHost: "other.example.com",
+  };
+  const rows = Array.from({ length: 200 }, (_, i) => ({
+    ...(i < 3 ? other : report),
+    id: `r${i}`,
+  }));
+  routes.listReports = () => ok(rows);
+  mount();
+  const heading = (host: string) =>
+    screen.getByRole("button", { name: host }).closest("h4");
+  await screen.findByRole("button", { name: "other.example.com" });
+  expect(heading("other.example.com")).toHaveTextContent("3+");
+  expect(heading("team.example.com")).toHaveTextContent("197+");
+  expect(sent("listReports")[0]).toMatchObject({ query: { limit: 200 } });
+
+  cleanup();
+  routes.listReports = () => ok(rows.slice(0, 5));
+  routes.listFeedback = () =>
+    ok([
+      {
+        id: "f1",
+        communityId: "c1",
+        communityHost: "team.example.com",
+        status: "new",
+        receivedAt: report.createdAt,
+        bodySummary: "Hello",
+      },
+    ]);
+  mount();
+  expect(
+    (await screen.findByRole("button", { name: "other.example.com" })).closest(
+      "h4",
+    ),
+  ).toHaveTextContent(/^other\.example\.com3$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Feedback" }));
+  await screen.findByRole("button", { name: /Hello/ });
+  expect(heading("team.example.com")).toHaveTextContent(
+    /^team\.example\.com1$/,
+  );
+});
+
+it("report cards show when the report was made", async () => {
+  vi.setSystemTime(new Date("2026-10-08T00:05:00Z"));
+  try {
+    routes.listReports = () => ok([report]);
+    mount();
+    expect(
+      await screen.findByRole("button", { name: /spam/ }),
+    ).toHaveTextContent(/5 minutes ago \(.*2026/);
+  } finally {
+    vi.useRealTimers();
+  }
 });

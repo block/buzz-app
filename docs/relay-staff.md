@@ -40,7 +40,8 @@ connection" section of [identity.md](identity.md) for the address rules.
   (event: delete, kick when it has a channel, ban, timeout, dismiss, escalate;
   pubkey: ban, timeout, dismiss, escalate; blob: dismiss, escalate). Each action
   says who receives the reason. A failed enforcement can be cancelled, which
-  reopens the report.
+  reopens the report. The console asks for the relay's maximum of 200 reports;
+  each card shows when the report was made.
 - **Feedback**: list, detail and status (new, reviewed, archived). At most five
   attachments and 50 MiB are shown. Images preview inline and open in the
   shared media viewer on click; every attachment can
@@ -57,6 +58,17 @@ A relay that answers a route with a complete, empty 404 or 405 lacks it. The
 console says so in place ("This relay doesn't support community browsing yet.",
 "This relay doesn't support direct actions yet.") and keeps the feature
 available.
+
+Reports and Feedback show a count per community. The relay returns no total and
+these lists aren't paged, so when a list comes back full (200 reports, or the
+relay's fixed 100 feedback items) every count reads as a lower bound, like
+"12+".
+
+People are shown by display name with their short key (`npub…` plus a suffix,
+lengthened until keys in a list are distinct), and the full npub can be copied
+from the identity preview. Names come from the connected community's profiles;
+someone with no profile there, often the case for other communities, is shown
+by short key only.
 
 ## Writes
 

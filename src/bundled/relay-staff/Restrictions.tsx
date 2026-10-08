@@ -6,7 +6,9 @@ import type {
   StaffRequest,
 } from "../../features/relay-staff/contract";
 import { describe, usePages, useSession, useWrite } from "./session";
-import { Failure, Loading, shortKey, UNSUPPORTED_BROWSING } from "./ui";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { Person, useNames } from "./people";
+import { Failure, Loading, UNSUPPORTED_BROWSING } from "./ui";
 
 type Lift = { pubkey: string; kind: "ban" | "timeout" };
 type LiftRequest = Extract<StaffRequest, { route: "liftRestriction" }>;
@@ -31,6 +33,9 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
     [context, communityHost],
   );
   const [lifting, setLifting] = useState<Lift | null>(null);
+  const keys = pages.items.map((row) => row.pubkey);
+  const names = useNames(keys);
+  const labels = publicKeyLabels(keys);
   const [error, setError] = useState("");
   const write = useWrite<LiftRequest>(`lift ${communityHost}`, (outcome) => {
     // A conflict means someone else already changed it: show the current list.
@@ -74,8 +79,8 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
               key={row.pubkey}
               className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
             >
-              <span className="flex-1 truncate font-mono" title={row.pubkey}>
-                {shortKey(row.pubkey)}
+              <span className="min-w-0 flex-1">
+                <Person pubkey={row.pubkey} keyLabel={labels.get(row.pubkey)} />
               </span>
               {banned && (
                 <span className="text-caption text-danger">banned</span>
@@ -120,7 +125,7 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
       {lifting && (
         <AlertDialog
           title={lifting.kind === "ban" ? "Lift ban?" : "Clear timeout?"}
-          description={`${shortKey(lifting.pubkey)} will be able to post in ${communityHost} again.`}
+          description={`${names.text(lifting.pubkey)} will be able to post in ${communityHost} again.`}
           onClose={() => setLifting(null)}
           actions={
             <>

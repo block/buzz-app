@@ -189,10 +189,12 @@ fn export_uses_effective_workers_for_native_and_edited_imported_agents() {
     let mut native = crate::store::tests::fixture();
     native.harness.model.clear();
     native.harness.provider.clear();
-    let mut defaults = crate::agent_defaults::AgentDefaults::default();
-    defaults.model = "inherited-model".into();
-    defaults.provider = "inherited-provider".into();
-    defaults.session_policy = SessionPolicy::Channel;
+    let defaults = crate::agent_defaults::AgentDefaults {
+        model: "inherited-model".into(),
+        provider: "inherited-provider".into(),
+        session_policy: SessionPolicy::Channel,
+        ..Default::default()
+    };
     control.store.save_defaults(&defaults).unwrap();
     let mut imported = native.clone();
     imported.pubkey = "cd".repeat(32);

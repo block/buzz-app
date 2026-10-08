@@ -496,6 +496,43 @@ limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
 
+A plugin that needs a long-lived program, such as an agent CLI that speaks a
+JSON protocol on stdin and stdout, declares it under `host.processes`:
+
+```json
+{
+  "host": {
+    "processes": [
+      { "id": "agent", "program": "example-agent" },
+      { "id": "install", "program": "bash", "args": ["-c", "curl -fsSL https://example.com/install.sh | bash"] }
+    ]
+  }
+}
+```
+
+`ctx.host.spawn(id, { args, cwd, env, agent, onStdout, onStderr })` starts it
+with the caller's `args` after the declared ones, so the declaration names the
+program but not every argument. It returns `{ write, end, kill, exited }`.
+stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
+`cwd` is absolute or `~/…` and is created if missing. `env` adds to the app's
+environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
+are never inherited. The program is found on the same search path as commands,
+which on macOS also includes `~/.local/bin`.
+
+`agent` names an Agents2 agent whose type the calling plugin registered. The
+process then runs as that agent, as harness agents do: native puts its key in
+`BUZZ_PRIVATE_KEY` (and `NOSTR_PRIVATE_KEY`), its community in `BUZZ_RELAY_URL`
+and its owner attestation in `BUZZ_AUTH_TAG`, and puts the bundled agent tools,
+including the `buzz` CLI, first on its PATH. The key never enters the WebView,
+but the process can sign any event as the agent; the kind allowlist on
+`publish` does not bound it.
+
+A process lives until it exits, the plugin kills it, the plugin unloads, the
+page reloads or the app exits. `kill` sends SIGTERM to its process group and
+SIGKILL three seconds later; the group is always killed once the process exits,
+so descendants do not outlive it. At most 64 processes run at once. Processes
+run with the user's full access and no sandbox; the import preview says so.
+
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external

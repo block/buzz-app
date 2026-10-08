@@ -1148,7 +1148,9 @@ saves as usual and the text still renders as code once sent.
 Typing the space after a list or quote marker that starts a line (`- `, `* ` or `+ `, a number
 with a dot or parenthesis such as `1. ` or `3) `, or `> `) turns that line into a bullet, a
 numbered item starting at that number, or a quoted paragraph at once, the same block the
-formatting toolbar creates, and one undo restores the typed marker and its space. Inside a
+formatting toolbar creates, and one undo restores the typed marker and its space. Enter
+continues a list and exits an empty item; use the Send button to send while the caret is
+in a list (or Save changes when editing). Enter in ordinary prose still sends or saves. Inside a
 quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
 marker of the item's own list kind, typed as the only text of an item after the first,
 converts, nesting that item as Tab does. A marker typed after prose on the same line, inside

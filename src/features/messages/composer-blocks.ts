@@ -507,8 +507,8 @@ export function composerBlockPrefix(
   return marks.length ? tr.setStoredMarks(marks) : tr;
 }
 
-/** Shift+Enter continues the block; an empty last line exits it. Plain Enter
- * remains the host's existing send/completion policy. */
+/** A line break continues the block; an empty last line exits it. The host
+ * owns when Enter sends or requests a line break. */
 export function composerBlockLineBreak(
   state: EditorState,
 ): Transaction | undefined {

@@ -377,7 +377,7 @@ async fn decode_team_members(
     if events.len() >= 500 {
         return Err("Team catalog reached its read limit".into());
     }
-    let mut heads: std::collections::BTreeMap<String, (u64, String, Vec<String>)> =
+    let mut heads: std::collections::BTreeMap<String, (bool, u64, String, Vec<String>)> =
         std::collections::BTreeMap::new();
     for event in events {
         let signed: nostr::event::Event =
@@ -426,10 +426,14 @@ async fn decode_team_members(
             serde_json::from_value(raw["value"]["agents"].clone())
                 .map_err(|_| "Invalid team catalog")?
         };
-        if heads.get(&id).map_or(true, |(time, old, _)| {
-            timestamp > *time || (timestamp == *time && event_id < *old)
+        // A portable record supersedes the ordinary record it replaced, even
+        // though retiring the ordinary record is the later write.
+        let portable = coordinate.starts_with(&format!("{MANIFEST_TAG}:"));
+        if heads.get(&id).map_or(true, |(old_portable, time, old, _)| {
+            (portable, timestamp) > (*old_portable, *time)
+                || (portable == *old_portable && timestamp == *time && event_id < *old)
         }) {
-            heads.insert(id, (timestamp, event_id, members));
+            heads.insert(id, (portable, timestamp, event_id, members));
         }
     }
     if host.viewer().await? != owner {
@@ -437,7 +441,7 @@ async fn decode_team_members(
     }
     Ok(heads
         .into_iter()
-        .map(|(id, (created_at, event_id, members))| {
+        .map(|(id, (_, created_at, event_id, members))| {
             (
                 id,
                 buzz_agent_controller::TeamCatalogEntry {
@@ -619,5 +623,29 @@ mod binding_catalog_tests {
                 .await
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn portable_record_outranks_the_later_retired_ordinary_record() {
+        let host = IdentityHost::fixture();
+        let owner = host.viewer().await.unwrap();
+        let community = "https://relay.test";
+        let member = "ab".repeat(32);
+        let ordinary = serde_json::json!({"version":1,"community":community,"deleted":false,
+            "value":{"type":"team","id":"team-a","name":"Team","agents":[member]}});
+        let portable = serde_json::json!({"version":2,"community":community,"deleted":false,
+            "value":{"type":"team","id":"team-a","name":"Team","agents":[member],
+            "portable":{"version":1,"owner":owner,"revision":"11111111-1111-4111-8111-111111111111",
+            "digest":"cd".repeat(32),"bytes":4,"chunks":1}}});
+        let mut retired = ordinary.clone();
+        retired["deleted"] = serde_json::json!(true);
+        let events = vec![
+            signed(&host, ordinary, 1).await,
+            signed(&host, portable, 2).await,
+            signed(&host, retired, 3).await,
+        ];
+        let teams = decode_team_members(&host, community, &owner, events)
+            .await
+            .unwrap();
+        assert_eq!(teams["team-a"].members, vec![member]);
     }
 }

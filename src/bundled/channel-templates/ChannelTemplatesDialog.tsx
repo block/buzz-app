@@ -1,6 +1,10 @@
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
 import type { TeamSnapshot } from "../../features/agents/team-bundles";
+import {
+  readTeamTexts,
+  teamTextConflict,
+} from "../../features/agents/team-instructions";
 import { relayOrigin } from "../../features/communities/destination";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import type { RelaySession } from "../../features/relay/session";
@@ -152,7 +156,6 @@ export function ChannelTemplatesDialog({
   );
   const canCapture =
     draft.type === "team" &&
-    !expected &&
     !!control?.captureTeam &&
     draft.agents.length > 0 &&
     draft.agents.every((key) =>
@@ -168,10 +171,20 @@ export function ChannelTemplatesDialog({
     try {
       if (
         draft.type === "team" &&
-        ((initial.type === "team" && initial.portable) || canCapture)
+        ((initial.type === "team" && initial.portable) ||
+          (canCapture && hasPortableFields))
       ) {
         if (!session?.viewer)
           throw new Error("Choose a community before saving a team");
+        const text = portable?.team.instructions ?? "";
+        if (text.trim() && control) {
+          const conflict = teamTextConflict(
+            await readTeamTexts(kit, control),
+            draft,
+            text,
+          );
+          if (conflict) throw new Error(conflict);
+        }
         const community = relayOrigin(
           session.scope.slice(0, -(session.viewer.length + 1)),
         );
@@ -454,7 +467,7 @@ export function ChannelTemplatesDialog({
                     </Field>
                     <Field label="Team Instructions">
                       <Textarea
-                        placeholder="Optional instructions applied to every deployed team member."
+                        placeholder="Optional instructions every member gets after its own."
                         value={portable?.team.instructions ?? ""}
                         onChange={(event) => {
                           revision.current = crypto.randomUUID();

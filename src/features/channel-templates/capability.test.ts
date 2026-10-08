@@ -865,3 +865,46 @@ it("keeps private catalog refresh and saves independent of native bindings", asy
     ),
   ).resolves.toBeTypeOf("string");
 });
+
+it("converts an ordinary team to a portable one and retires the ordinary record", async () => {
+  const f = fixture();
+  const team = {
+    type: "team" as const,
+    id: "team",
+    name: "Team",
+    agents: [keypair().pubkey],
+  };
+  const ordinary = await f.capability.save(team, undefined);
+  const snapshot = {
+    format: "buzz-team-snapshot" as const,
+    version: 1 as const,
+    team: { name: team.name, instructions: "SHARED" },
+    members: [
+      {
+        format: "buzz-agent-snapshot" as const,
+        version: 1 as const,
+        definition: { name: "Agent", systemPrompt: "INDIVIDUAL" },
+        profile: { displayName: "Agent" },
+        memory: { level: "none" as const, entries: [] },
+      },
+    ],
+  };
+  const id = await f.capability.savePortable(
+    team,
+    snapshot,
+    ordinary,
+    crypto.randomUUID(),
+  );
+  const retired = f.events.at(-1);
+  expect(retired?.id).not.toBe(id);
+  expect(JSON.parse(retired?.content ?? "{}")).toMatchObject({
+    version: 1,
+    deleted: true,
+    value: { id: "team" },
+  });
+  await f.capability.refresh();
+  const entries = f.capability.snapshot().entries;
+  expect(entries).toHaveLength(1);
+  expect(entries[0]?.eventId).toBe(id);
+  expect(entries[0]?.record.version).toBe(2);
+});

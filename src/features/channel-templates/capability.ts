@@ -154,7 +154,19 @@ export function createChannelKit({
             });
           }
         }
-        if (generation === epoch) update({ status: "ready", entries });
+        // A portable record supersedes an ordinary record for the same team.
+        const portable = new Set(
+          entries.flatMap((entry) =>
+            entry.record.version === 2 ? [entry.record.value.id] : [],
+          ),
+        );
+        const current = entries.filter(
+          (entry) =>
+            entry.record.version === 2 ||
+            entry.record.value.type !== "team" ||
+            !portable.has(entry.record.value.id),
+        );
+        if (generation === epoch) update({ status: "ready", entries: current });
       } catch (error) {
         if (!signal.aborted && generation === epoch)
           update({ ...state, status: "error", error: String(error) });
@@ -347,7 +359,22 @@ export function createChannelKit({
       const value: Team = { ...team, portable: manifest };
       // Confirm complete payload availability/integrity before replacing the manifest.
       await capability.loadTeam(value);
-      return capability.save(value, expected, false, preparing);
+      // An ordinary team gains text by moving to the portable record format,
+      // which lives at another coordinate. Write it first, then retire the old one.
+      const legacy = state.entries.find(
+        (entry) =>
+          entry.eventId === expected &&
+          entry.record.version === 1 &&
+          entry.record.value.type === "team",
+      );
+      if (!legacy) return capability.save(value, expected, false, preparing);
+      const current = state.entries.find(
+        (entry) =>
+          entry.record.version === 2 && entry.record.value.id === team.id,
+      )?.eventId;
+      const id = await capability.save(value, current, false, preparing);
+      await capability.save(legacy.record.value, legacy.eventId, true);
+      return id;
     },
     async save(
       value: KitValue,

@@ -17,7 +17,7 @@ it("grants the widget read-only access to compute status", () => {
 
 it("keeps four designs tied to fresh native usage and resets totals on replacement", async () => {
   const html = readFileSync(
-    new URL("../public/compute-widget.html", import.meta.url),
+    new URL("../compute-widget.html", import.meta.url),
     "utf8",
   );
   const script = readFileSync(
@@ -245,10 +245,7 @@ it("keeps four designs tied to fresh native usage and resets totals on replaceme
 
 it("embedded activity consumes only its parent feed and never invokes native window controls", () => {
   const dom = new JSDOM(
-    readFileSync(
-      new URL("../public/compute-widget.html", import.meta.url),
-      "utf8",
-    ),
+    readFileSync(new URL("../compute-widget.html", import.meta.url), "utf8"),
     {
       runScripts: "outside-only",
       url: "http://localhost/compute-widget.html?embedded=true",
@@ -309,6 +306,61 @@ it("embedded activity consumes only its parent feed and never invokes native win
     expect(run("model.phase")).toBe("offline");
     expect(calls).toEqual([]);
     expect(win.document.getElementById("close").hidden).toBe(true);
+  } finally {
+    dom.window.close();
+  }
+});
+
+it("repaints the widget with the current theme surface and ink", () => {
+  const dom = new JSDOM(
+    readFileSync(new URL("../compute-widget.html", import.meta.url), "utf8"),
+    {
+      runScripts: "outside-only",
+      url: "http://localhost/compute-widget.html?embedded=true",
+    },
+  );
+  try {
+    const win = dom.window;
+    win.requestAnimationFrame = () => 0;
+    win.matchMedia = () => ({ matches: true });
+    const paints = [];
+    const drawing = new Proxy(
+      {},
+      {
+        get: (target, key) => (key in target ? target[key] : () => {}),
+        set: (target, key, value) => {
+          target[key] = value;
+          if (key === "fillStyle") paints.push(value);
+          return true;
+        },
+      },
+    );
+    win.HTMLCanvasElement.prototype.getContext = () => drawing;
+    const root = win.document.documentElement;
+    root.style.setProperty("--surface-inset", "rgb(245, 245, 245)");
+    root.style.setProperty("--text-standard", "rgb(20, 20, 20)");
+    root.style.setProperty("--text-danger", "rgb(180, 0, 0)");
+    const run = (code) => vm.runInContext(code, dom.getInternalVMContext());
+    run(
+      readFileSync(
+        new URL("../public/compute-widget.js", import.meta.url),
+        "utf8",
+      ),
+    );
+    run("render(100, false)");
+    expect(paints[0]).toBe("rgb(245, 245, 245)");
+    expect(paints.some((color) => color.includes("rgb(20, 20, 20)"))).toBe(
+      true,
+    );
+    paints.length = 0;
+    root.style.setProperty("--surface-inset", "rgb(16, 16, 16)");
+    root.style.setProperty("--text-standard", "rgb(240, 240, 240)");
+    run("render(200, false)");
+    expect(paints[0]).toBe("rgb(16, 16, 16)");
+    expect(paints.some((color) => color.includes("rgb(240, 240, 240)"))).toBe(
+      true,
+    );
+    expect(drawing.globalAlpha).toBe(1);
   } finally {
     dom.window.close();
   }

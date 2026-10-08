@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -149,7 +150,7 @@ it("preserves the running lease through reconnect and revokes on identity change
   dispose();
 });
 
-it("renders Running without a Disconnect control and separates refresh errors", async () => {
+it("renders Running without a reload control and offers recovery after polling errors", async () => {
   native.invoke.mockImplementation((command) => {
     if (command === "mesh_compute_select") return Promise.resolve("lease");
     return Promise.resolve({ available: true, lifecycle: { state: "ready" } });
@@ -172,28 +173,43 @@ it("renders Running without a Disconnect control and separates refresh errors", 
       },
     },
   } as unknown as Parameters<PluginModule["apply"]>[0]);
-  render(<Component />);
-  await screen.findByText("Sharing is off. Connected to community compute.");
-  expect(screen.queryByText("Connected")).not.toBeInTheDocument();
-  // Legacy Buzz and the donor design have one control: Share compute.
-  expect(
-    screen.queryByRole("button", {
-      name: /Disconnect|Connect|Cancel connection/,
-    }),
-  ).not.toBeInTheDocument();
-  native.invoke.mockRejectedValueOnce(new Error("Status unavailable"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Status unavailable",
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Connected to community compute.",
-  );
-  expect(native.invoke).not.toHaveBeenCalledWith(
-    "mesh_compute_release",
-    expect.anything(),
-  );
-  dispose();
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      render(<Component />);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Sharing is off. Connected to community compute.",
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: /Disconnect|Connect|Cancel connection|Refresh/,
+      }),
+    ).not.toBeInTheDocument();
+    native.invoke.mockRejectedValueOnce(new Error("Status unavailable"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Status unavailable");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connected to community compute.",
+    );
+    expect(native.invoke).not.toHaveBeenCalledWith(
+      "mesh_compute_release",
+      expect.anything(),
+    );
+  } finally {
+    cleanup();
+    dispose();
+    vi.useRealTimers();
+  }
 });
 
 it("polls transient states serially, refreshes Running activity, and cancels on unmount", async () => {
@@ -251,7 +267,7 @@ it("polls transient states serially, refreshes Running activity, and cancels on 
     expect(native.invoke).toHaveBeenCalledTimes(count + 1);
     state = "stopping";
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await vi.advanceTimersByTimeAsync(5000);
     });
     expect(screen.getByRole("status")).toHaveTextContent("Stopping…");
     state = "stopped";
@@ -259,10 +275,6 @@ it("polls transient states serially, refreshes Running activity, and cancels on 
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(screen.getByRole("status")).toHaveTextContent("Sharing is off.");
-    state = "starting";
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    });
     cleanup();
     const finalCount = native.invoke.mock.calls.length;
     await act(async () => {
@@ -302,10 +314,15 @@ it("starts sharing the selected model through the existing community lease", asy
   apply(ctx);
   render(<Component />);
   await screen.findByRole("switch", { name: "Share compute" });
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
     screen.getByRole("switch", { name: "Share compute" }),
   ).not.toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(
+    screen.getByRole("combobox", { name: "Model to share" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "Custom model or local GGUF" }),
+  );
   fireEvent.change(
     screen.getByLabelText("Model reference or local GGUF path"),
     { target: { value: "/models/local.gguf" } },
@@ -363,10 +380,18 @@ it.each([
     expect(
       await screen.findByText((text) => text.startsWith(label)),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    expect(
-      screen.getByLabelText("Model reference or local GGUF path"),
-    ).toBeDisabled();
+    const picker = screen.getByRole("combobox", { name: "Model to share" });
+    if (picker.hasAttribute("disabled")) {
+      expect(picker).toBeDisabled();
+    } else {
+      await userEvent.click(picker);
+      expect(
+        await screen.findByRole("option", {
+          name: "Custom model or local GGUF",
+        }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await userEvent.keyboard("{Escape}");
+    }
     const stop = screen.getByRole("switch", { name: "Share compute" });
     if (disabled) {
       expect(stop).toHaveAttribute("aria-disabled", "true");
@@ -429,10 +454,9 @@ it("refreshes cleared intent even when stopping a failed worker reports an error
   render(<Component />);
   fireEvent.click(await screen.findByRole("switch", { name: "Share compute" }));
   await screen.findByText("Shutdown not confirmed");
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await waitFor(() =>
     expect(
-      screen.getByLabelText("Model reference or local GGUF path"),
+      screen.getByRole("combobox", { name: "Model to share" }),
     ).toBeEnabled(),
   );
   expect(screen.getByRole("switch", { name: "Share compute" })).toHaveAttribute(
@@ -474,10 +498,9 @@ it("restores a disarmed model hint and sends sharing only on explicit resume", a
   const resume = await screen.findByRole("switch", {
     name: "Share compute",
   });
-  fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   expect(
-    screen.getByLabelText("Model reference or local GGUF path"),
-  ).toHaveValue("/models/local.gguf");
+    screen.getByRole("combobox", { name: "Model to share" }),
+  ).toHaveTextContent("/models/local.gguf");
   expect(
     native.invoke.mock.calls.some(
       ([command]) =>
@@ -612,8 +635,19 @@ it("persists Reset to Auto without restarting an active share, then starts Auto 
   } as unknown as Parameters<PluginModule["apply"]>[0];
   apply(ctx);
   render(<Component />);
-  fireEvent.click(await screen.findByRole("button", { name: "Reset to Auto" }));
-  await screen.findByText("Chooses on start");
+  fireEvent.click(
+    await screen.findByRole("combobox", { name: "Model to share" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "Auto" }));
+  await waitFor(() =>
+    expect(native.invoke).toHaveBeenCalledWith("mesh_compute_share", {
+      lease: "lease",
+      model: null,
+      maxVramGb: null,
+      auto: true,
+      resetOnly: true,
+    }),
+  );
   expect(sharing).toBe("/running.gguf");
   expect(
     native.invoke.mock.calls.filter(
@@ -1322,10 +1356,11 @@ it("refreshes shared-compute activity and stops polling when unmounted", async (
     expect(
       screen.getByText("Other sharing nodes").nextElementSibling,
     ).toHaveTextContent("1");
-    expect(screen.getByText(/Includes your requests/)).not.toBeVisible();
+    expect(
+      screen.queryByText(/Includes your requests/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Retries")).not.toBeVisible();
     fireEvent.click(screen.getByText("Details", { selector: "summary" }));
-    expect(screen.getByText(/Includes your requests/)).toBeVisible();
     expect(screen.getByText("Retries")).toBeVisible();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4999);

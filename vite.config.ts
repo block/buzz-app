@@ -74,6 +74,11 @@ export default defineConfig(async ({ command, mode }) => {
         openRelay ? defaultOrigin : "",
       ),
     },
+    build: {
+      rollupOptions: {
+        input: { main: "index.html", compute: "compute-widget.html" },
+      },
+    },
     clearScreen: false,
     server: {
       // Derived from this checkout's path, exactly as `just desktop` does, so

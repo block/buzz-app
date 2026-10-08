@@ -1,3 +1,4 @@
+import { CaretRightIcon } from "../../shared/design-system/icons";
 import styles from "./Compute.module.css";
 
 export type ComputeActivityData = {
@@ -77,7 +78,14 @@ export function ComputeActivity({
         </p>
       )}
       <details className={styles.details}>
-        <summary className="text-body-sm text-secondary">Details</summary>
+        <summary className="text-body-sm text-secondary">
+          <CaretRightIcon
+            className={styles.detailsArrow}
+            size={16}
+            aria-hidden="true"
+          />
+          Details
+        </summary>
         {data && (
           <dl className={styles.secondaryMetrics}>
             {(
@@ -88,20 +96,15 @@ export function ComputeActivity({
                 ["Retries", data.retries],
               ] as const
             ).map(([label, value]) => (
-              <div key={label}>
+              <div key={label} className={styles.metric}>
                 <dt className="text-caption text-secondary">{label}</dt>
-                <dd className="m-0 text-body">{format(value)}</dd>
+                <dd className={`${styles.readout} m-0 text-body`}>
+                  {format(value)}
+                </dd>
               </div>
             ))}
           </dl>
         )}
-        <p className="text-body-sm text-secondary">
-          Includes your requests and work routed to other devices. Resets when
-          compute restarts. Not a personal contribution total.
-        </p>
-        <p className="text-body-sm text-secondary">
-          Nodes this app can see. Sharing counts ready providers only.
-        </p>
       </details>
     </section>
   );

@@ -1540,7 +1540,12 @@ function render(now, schedule = true) {
       (height - scale * 512) / 2,
     );
   else context.setTransform(width / 512, 0, 0, height / 512, 0, 0);
-  context.fillStyle = "#000";
+  const palette = getComputedStyle(document.documentElement);
+  const foreground =
+    palette.getPropertyValue("--text-standard").trim() || "white";
+  const accent = palette.getPropertyValue("--text-danger").trim() || "red";
+  context.fillStyle =
+    palette.getPropertyValue("--surface-inset").trim() || "black";
   context.fillRect(0, 0, 512, 512);
   for (let address = 0; address < 4096; address++) {
     const white = frame.white[address],
@@ -1548,7 +1553,8 @@ function render(now, schedule = true) {
       intensity = Math.max(white, red);
     if (intensity < 0.01) continue;
     const redWeight = red / (white + red || 1);
-    context.fillStyle = `rgba(${255 - 40 * redWeight},${255 - 140 * redWeight},${255 - 149 * redWeight},${intensity})`;
+    context.globalAlpha = intensity;
+    context.fillStyle = `color-mix(in srgb, ${accent} ${redWeight * 100}%, ${foreground})`;
     context.beginPath();
     context.arc(
       (address % 64) * 8 + 4,
@@ -1560,13 +1566,15 @@ function render(now, schedule = true) {
     context.fill();
   }
   for (const [horizontal, vertical, ink, radius = 2.8] of frame.sprite) {
-    context.fillStyle = `rgba(255,255,255,${ink})`;
+    context.globalAlpha = ink;
+    context.fillStyle = foreground;
     context.beginPath();
     context.arc(horizontal * 8 + 4, vertical * 8 + 4, radius, 0, Math.PI * 2);
     context.fill();
   }
   for (const [startX, startY, endX, endY, ink] of frame.streaks) {
-    context.strokeStyle = `rgba(255,255,255,${ink})`;
+    context.globalAlpha = ink;
+    context.strokeStyle = foreground;
     context.lineWidth = 2.8;
     context.lineCap = "round";
     context.beginPath();
@@ -1574,6 +1582,7 @@ function render(now, schedule = true) {
     context.lineTo(endX * 8 + 4, endY * 8 + 4);
     context.stroke();
   }
+  context.globalAlpha = 1;
   canvas.dataset.phase = model.phase;
   canvas.dataset.total = String(model.total ?? "");
   canvas.dataset.batch = String(model.batch ?? "");

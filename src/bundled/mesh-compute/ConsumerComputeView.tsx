@@ -9,6 +9,7 @@ export function ConsumerComputeView({
   headerControl,
   children,
   status,
+  attention = false,
   error,
   refreshDisabled,
   refresh,
@@ -16,6 +17,7 @@ export function ConsumerComputeView({
   headerControl?: ReactNode;
   children?: ReactNode;
   status?: string | undefined;
+  attention?: boolean;
   error: string | undefined | null;
   refreshDisabled: boolean;
   refresh: () => void;
@@ -27,25 +29,26 @@ export function ConsumerComputeView({
     >
       <Header title="Shared compute" actions={headerControl} />
       {children}
-      <details className={styles.options}>
-        <summary className="text-body-sm">
-          Connection · <span role="status">{status}</span>
-        </summary>
-        <div className={styles.toolbar}>
+      <p
+        role="status"
+        className={attention ? "m-0 text-body-sm text-warning" : "sr-only"}
+      >
+        {status}
+      </p>
+      {error && (
+        <div>
+          <p role="alert" className="text-body-sm text-danger">
+            {error}
+          </p>
           <Button
             variant="subtle"
             size="sm"
             onClick={refresh}
             disabled={refreshDisabled}
           >
-            Refresh
+            Retry
           </Button>
         </div>
-      </details>
-      {error && (
-        <p role="alert" className="text-body-sm text-danger">
-          {error}
-        </p>
       )}
     </section>
   );

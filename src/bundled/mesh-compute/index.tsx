@@ -10,7 +10,6 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { CpuIcon } from "../../shared/design-system/icons";
 import { ShareModelPicker } from "./ShareModelPicker";
 import { CommunityAgent } from "./CommunityAgent";
-import { CommunityMesh } from "./CommunityMesh";
 import { ConsumerComputeView } from "./ConsumerComputeView";
 import styles from "./Compute.module.css";
 
@@ -192,8 +191,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [snapshot]);
     const [busy, setBusy] = useState(false);
-    // One page Refresh also rereads the community list (no second Refresh).
-    const [refreshCount, setRefreshCount] = useState(0);
     // Controls wait for this community's selection instead of rejecting clicks.
     const [leaseReady, setLeaseReady] = useState(false);
     // biome-ignore lint/correctness/useExhaustiveDependencies: lease follows the relay snapshot.
@@ -357,7 +354,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     };
     const refresh = async () => {
-      setRefreshCount((value) => value + 1);
       setBusy(true);
       setError(null);
       try {
@@ -443,6 +439,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   : "Checking shared compute…"
         }
         error={error ?? status?.settingsError ?? status?.reason}
+        attention={
+          !isTauri() ||
+          phase === "failed" ||
+          status?.available === false ||
+          Boolean(
+            status?.savedSharing?.enabled &&
+              !status.sharing &&
+              phase !== "starting",
+          )
+        }
         refreshDisabled={busy || !isTauri()}
         refresh={() => void refresh()}
       >
@@ -553,17 +559,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
               owner={snapshot.viewer}
             />
           )}
-        {community && (
-          <details className={styles.options}>
-            <summary className="text-body-sm">Community devices</summary>
-            <CommunityMesh
-              key={community.id}
-              community={community.id}
-              relay={ctx.relay}
-              refreshKey={refreshCount}
-            />
-          </details>
-        )}
       </ConsumerComputeView>
     );
   }

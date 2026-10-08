@@ -100,25 +100,23 @@
 }
 
 .details summary {
-  cursor: pointer;
-}
-
-.toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: calc(var(--space-2) + var(--space-half));
-  margin-block: var(--space-3);
-}
-
-.options {
-  border-top: 1px solid var(--border-standard);
+  gap: var(--space-2);
   padding-block: var(--space-3);
-}
-
-.options > summary {
+  list-style: none;
   cursor: pointer;
-  color: var(--text-subtle);
+}
+.details summary::-webkit-details-marker {
+  display: none;
+}
+.detailsArrow {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex-shrink: 0;
+}
+.details[open] .detailsArrow {
+  transform: rotate(90deg);
 }
 
 .deviceTiles {
@@ -153,12 +151,19 @@
 .modelTile {
   grid-column: 1 / -1;
 }
-.modeBadge {
-  margin-left: auto;
-  padding: calc(var(--space-half) + var(--space-half) / 2) var(--space-2);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-chip);
+.modelChoice [role="combobox"] {
+  width: 100%;
+  min-height: var(--text-body--line-height);
+  padding: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
   font-family: var(--font-mono);
+  text-align: left;
+}
+.modelChoice [role="combobox"] > span {
+  justify-content: space-between;
 }
 
 .statusRow {
@@ -183,16 +188,11 @@
 .statusBadge[data-positive="true"] {
   color: var(--status-online);
 }
-.advancedPanel {
-  display: grid;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-row);
-  background: var(--surface-inset);
+.memoryValue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
-
 .deviceOverview {
   display: grid;
   grid-template-columns: 164px minmax(0, 1fr);
@@ -211,7 +211,7 @@
   overflow: hidden;
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-panel);
-  background: var(--media-canvas-fill);
+  background: var(--surface-inset);
 }
 .embeddedWidget {
   position: absolute;
@@ -248,12 +248,7 @@
   gap: calc(var(--space-2) + var(--space-half));
   font-size: var(--text-caption);
 }
-.headerStatus .modeBadge {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  font-family: inherit;
-}
+
 .widgetOverview {
   width: min(164px, 100%);
   align-self: start;

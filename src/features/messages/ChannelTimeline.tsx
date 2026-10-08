@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
@@ -785,43 +786,48 @@ function Timeline({
                     (rows[index - 1]?.createdAt ?? 0) * 1000,
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
-            return row.membership ? (
-              <MembershipRow
-                resolveName={resolveName}
-                names={queries.names}
-                key={row.id}
-                row={row}
-                profiles={profiles}
-                viewer={viewer}
-                media={queries.media}
-                agentPubkeys={agentPubkeys}
-                day={day}
-              />
-            ) : (
-              <MessageRow
-                layout={
-                  continuesMessageGroup(rows[index - 1], row)
-                    ? "continuation"
-                    : "timeline"
-                }
-                session={queries}
-                scope={scope}
-                key={row.id}
-                row={row}
-                unread={queries.unread}
-                extensions={extensions}
-                profile={profiles.get(row.authorId)}
-                participantProfiles={profiles}
-                agentPubkeys={agentPubkeys}
-                media={queries.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                onOpenThread={onOpenThread}
-                {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                retry={queries.outbox?.retry}
-                keepMounted={keepRowMounted}
-                day={day}
-              />
+            return (
+              <Fragment key={row.id}>
+                {row.membership ? (
+                  <MembershipRow
+                    resolveName={resolveName}
+                    names={queries.names}
+                    row={row}
+                    profiles={profiles}
+                    viewer={viewer}
+                    media={queries.media}
+                    agentPubkeys={agentPubkeys}
+                    day={day}
+                  />
+                ) : (
+                  <MessageRow
+                    layout={
+                      continuesMessageGroup(rows[index - 1], row)
+                        ? "continuation"
+                        : "timeline"
+                    }
+                    session={queries}
+                    scope={scope}
+                    row={row}
+                    unread={queries.unread}
+                    extensions={extensions}
+                    profile={profiles.get(row.authorId)}
+                    participantProfiles={profiles}
+                    agentPubkeys={agentPubkeys}
+                    media={queries.media}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
+                    onOpenThread={onOpenThread}
+                    {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                    retry={queries.outbox?.retry}
+                    keepMounted={keepRowMounted}
+                    day={day}
+                  />
+                )}
+                {index === rows.length - 1 && (
+                  <div className={styles.timelineEnd} aria-hidden="true" />
+                )}
+              </Fragment>
             );
           })}
         </Virtualizer>

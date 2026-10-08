@@ -34,6 +34,8 @@ import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import meManifest from "./me/manifest.json";
+import * as me from "./me";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -56,6 +58,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...meManifest, apiVersion: 1 },
+    module: me,
     enabledByDefault: true,
   },
   {

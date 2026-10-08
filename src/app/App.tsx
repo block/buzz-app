@@ -1,5 +1,6 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { IdentitySetup } from "../features/identity/IdentitySetup";
+import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -175,6 +176,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   });
                 }}
               />
+            ) : route.selected === "buzz.me/me" ? (
+              <MeSidebar relay={services.relay} />
             ) : (
               <ChannelSidebar
                 relay={services.relay}

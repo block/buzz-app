@@ -43,6 +43,7 @@ pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
 pub use restart::{RestartChange, RestartDiffEntry};
+pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{
     installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,
     ModelContext,

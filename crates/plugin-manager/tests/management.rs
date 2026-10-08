@@ -665,6 +665,10 @@ fn channels_is_required_even_with_saved_disabled_settings() {
 fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
     let (_root, manager, _source) = fixture();
     let catalog = manager.catalog().unwrap();
+    assert!(catalog
+        .plugins
+        .iter()
+        .any(|plugin| plugin.manifest.id == "buzz.me"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(id, "buzz.bestie" | "buzz.todos" | "buzz.channel-templates");

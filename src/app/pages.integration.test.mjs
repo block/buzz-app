@@ -46,7 +46,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
-    assert.equal(services.pages.snapshot().length, 7);
+    assert.equal(services.pages.snapshot().length, 8);
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
@@ -72,6 +72,32 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       services.panels.snapshot().some((p) => p.pluginId === "buzz.bestie"),
       false,
     );
+    const me = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.me/me");
+    assert.equal(me.primary, true);
+    assert.equal(me.placement, "topbar");
+    assert.equal(
+      renderToStaticMarkup(createElement(me.component)),
+      "<h1>Me</h1>",
+    );
+    const messages = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.channels/channels");
+    assert.equal(messages.primary, true);
+    assert.equal(messages.placement, "topbar");
+    await services.plugins.change("disable", "buzz.me");
+    assert.equal(
+      services.pages.snapshot().some((page) => page.key === "buzz.me/me"),
+      false,
+    );
+    await services.plugins.change("enable", "buzz.me");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages.snapshot().some((page) => page.key === "buzz.me/me"),
+      ),
+    );
+    await services.plugins.change("disable", "buzz.me");
     const inbox = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.inbox");

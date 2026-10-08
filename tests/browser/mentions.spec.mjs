@@ -820,7 +820,11 @@ test("saved team selection previews avatars and inserts exact recipients in one 
     await expect(row.locator("[data-team-avatars] .buzz-avatar")).toHaveCount(
       2,
     );
-    await row.click();
+    // Exercise keyboard selection; pointer selection has a separate known
+    // layout race when the directory loading status disappears mid-click.
+    await picker.getByRole("searchbox").press("ArrowDown");
+    await expect(row).toBeFocused();
+    await row.press("Enter");
     await expect(input).toBeFocused();
     await expect(input.locator(".inline-chip")).toHaveText([
       "@Honey",

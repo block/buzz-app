@@ -243,6 +243,27 @@ and `DATABRICKS_TOKEN` still conflicts with app-isolated persistent OAuth.
 See [configuration parity](configuration.md) for development routing, release
 flag exclusions and the supported deployment boundary.
 
+## Installed machine tools
+
+Local agents retain access to installed tools without inheriting the desktop's
+identity or provider-credential environment. On Unix the controller warms the
+user's interactive login-shell PATH in the background with a cleared environment
+and a fifteen-second bound. Discovery and Start wait outside the native operation
+queue; Stop remains available during shell startup. Only successful probes are
+cached for the app process; **Check again** can retry a failed probe. Restart the
+app after changing an already-discovered shell PATH. An unavailable or failed
+probe falls back to inherited machine directories, `~/.local/bin`, Homebrew, and
+system directories. Startup helpers are retired with the probe's owned session,
+including separate job-control groups. Windows retains its native tool PATH.
+
+Bundled Buzz tools and harness-owned pinned runtimes remain first. Explicit
+agent PATH directories are also included, but cannot displace those tools.
+Empty, relative, and duplicate Unix directories are omitted. Only PATH comes
+back from the shell: other variables exported by startup files are not copied
+into the agent. Agent launches use the environment allowlist, explicit saved
+provider settings, and managed identity overrides. This is tool discovery, not
+an OS sandbox or a restriction on access to files on the machine.
+
 ## Harnesses and agent defaults
 
 Individual-agent configuration stays on the Agents page; Settings → Agents owns
@@ -297,10 +318,27 @@ The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
 installed. **Add harness** opens the Tier 2 Hermes chooser and setup details.
 Hermes also appears in the main list once its executable is detected.
 
-Buzz supplies `buzz-dev-mcp` only to **Buzz Agent**, including an explicitly
-selected absolute path to its executable. Goose, Pi, Claude Code, Codex, and
-other harnesses use their own tools and receive no additional developer MCP
-server from Buzz. Runtime snapshots report an MCP command only for Buzz Agent.
+Buzz supplies `buzz-dev-mcp` to **Buzz Agent** for developer tools and **Hermes
+Agent** for its authenticated shell path: Hermes's native terminal can strip the
+Buzz signing key. Launch and runtime snapshots use the same native harness
+policy's `include_buzz_dev_mcp` flag. Every supported harness declares its choice
+explicitly. The shared preset definition requires `includeBuzzDevMcp`; omission
+is invalid. Unknown custom harnesses fall back to false. Available tools depend
+on the harness and its configuration.
+
+| Harness | `include_buzz_dev_mcp` |
+| --- | --- |
+| Buzz Agent | `true` |
+| Hermes Agent | `true` |
+| Goose | `false` |
+| Pi | `false` |
+| Claude Code | `false` |
+| Codex | `false` |
+| Unknown custom harness | `false` (fallback) |
+
+Saved absolute paths follow the same policy when the executable retains its
+recognized basename (`buzz-agent` or `hermes-acp`, including supported suffixes).
+A differently named wrapper or symlink is treated as a custom harness.
 
 - **Buzz Agent** is bundled and shows **Ready**.
 - **Goose** is bundled and always shows **Ready**. Buzz launches `goose-acp`
@@ -577,8 +615,8 @@ until work arrives. Status reads project configured ACP/MCP paths without readin
 or hashing executables. These paths and `runtimeAvailable` describe the bundle
 accepted at initialization, not a fresh integrity check or relay readiness. Every
 actual launch still verifies its worker and ACP executables, plus the MCP
-executable for Buzz Agent, before spawn and exposes verification failure on the
-agent. Native Start projects one
+executable for Buzz Agent and Hermes Agent, before spawn and exposes verification
+failure on the agent. Native Start projects one
 final snapshot after recording its outcome. This adds no incoming wake service
 for fully stopped listeners and no durable interrupted-turn recovery.
 

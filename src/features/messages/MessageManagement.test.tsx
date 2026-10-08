@@ -22,6 +22,7 @@ import {
   MessageManagement,
   MessageManagementItems,
   MessageManagementStatus,
+  MessageReadStateItem,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
 import { sidebarFixture, sidebarRow } from "../relay/sidebar-testing";
@@ -216,6 +217,7 @@ async function fixture(
             <MenuRoot>
               <MenuTrigger>Message actions</MenuTrigger>
               <MenuPopup>
+                <MessageReadStateItem row={row} session={presentationSession} />
                 <MessageManagementItems
                   row={row}
                   session={presentationSession}
@@ -535,6 +537,14 @@ it("toggles relay unread after acknowledgement without a dialog", async () => {
   expect(h.publications).toHaveLength(0);
 });
 
+it("does not offer unsupported local thread follow choices", async () => {
+  await fixture(false);
+  expect(
+    await screen.findByRole("menuitem", { name: "Mark read through here" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: /follow thread/i })).toBeNull();
+});
+
 it("keeps deletion recovery outside the optimistically removed row", async () => {
   const h = await fixture();
   fireEvent.click(
@@ -617,7 +627,7 @@ async function heldUnreadAction(action: "read" | "unread") {
       <MenuRoot>
         <MenuTrigger>Read actions</MenuTrigger>
         <MenuPopup>
-          <MessageManagementItems row={row} session={current} />
+          <MessageReadStateItem row={row} session={current} />
         </MenuPopup>
       </MenuRoot>
     </MessageManagement>
@@ -745,6 +755,7 @@ it("releases the old message lease once when the same menu switches session owne
         <MenuRoot defaultOpen>
           <MenuTrigger>Retargeted actions</MenuTrigger>
           <MenuPopup>
+            <MessageReadStateItem row={row} session={h.session} />
             <MessageManagementItems row={row} session={h.session} />
           </MenuPopup>
         </MenuRoot>

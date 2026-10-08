@@ -163,6 +163,12 @@ The relay resolves thread ancestry for counts; the client resolves a dwelled
 message's context with the same canonical marked-reference parser as thread
 opening. References alone do not grant access or trigger a read.
 
+Workflow ownership is verified presentation metadata only: Inbox and thread activity
+keep the signed author and relay-provided classification. Follow/Unfollow controls
+are not offered with this relay contract; device-local follow choices do not
+change authoritative counts. Workflow-owner mention classification remains the
+relay's existing policy, not a client override.
+
 ## Relevant replies
 
 An eligible peer reply counts only when it is in the viewer's conversation,

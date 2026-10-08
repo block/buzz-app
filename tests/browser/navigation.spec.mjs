@@ -24,7 +24,7 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   });
   if (!(await templatesEnabled.isChecked())) await templatesEnabled.click();
   const templates = sections.getByRole("button", {
-    name: "Templates & teams",
+    name: "Templates",
     exact: true,
   });
   await expect(templates).toBeVisible();

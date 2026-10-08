@@ -2,6 +2,7 @@ import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import type { InboxItem, InboxSnapshot } from "./inbox";
+import { workflowOwner } from "./workflow-attribution";
 import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
 import { createSidebarState, contextKey } from "./sidebar-state";
@@ -43,6 +44,8 @@ export type MessageAttention = Readonly<{
   rootId?: string;
   forced: boolean;
   unread: boolean;
+  /** Exact relay verdict; does not confer notification relevance. */
+  relayRead?: boolean;
   viewing: boolean;
 }>;
 export type ThreadActivityItem = Readonly<{
@@ -50,6 +53,7 @@ export type ThreadActivityItem = Readonly<{
   rootId: string;
   latestMessageId: string;
   authorId: string;
+  workflowOwnerId?: string | undefined;
   createdAt: number;
   preview: string;
   unread: ReadCount;
@@ -128,6 +132,7 @@ export function createUnread({
   channels,
   reader,
   viewer,
+  workflowAuthority,
   find,
   evidence = () => [],
   notify = (listener) => listener(),
@@ -138,6 +143,7 @@ export function createUnread({
   channels: ChannelQueries;
   reader: RelayReader;
   viewer: string;
+  workflowAuthority?: string | undefined;
   find: (id: string) => RelayEvent | undefined;
   evidence?: () => readonly RelayEvent[];
   notify?: (listener: () => void) => void;
@@ -376,6 +382,7 @@ export function createUnread({
           messageIds: Object.freeze(group.map(({ message }) => message.id)),
           ...(first.target?.root_id ? { rootId: first.target.root_id } : {}),
           authorId: first.message.pubkey,
+          workflowOwnerId: workflowOwner(first.message, workflowAuthority),
           preview: first.preview,
           createdAt: latest.message.created_at,
           mentioned: group.some(({ message }) =>
@@ -628,6 +635,7 @@ export function createUnread({
         message.pubkey !== viewer &&
         (forced ||
           (status?.status === "unread" && !state.covered(target, messageId))),
+      relayRead: status?.status === "read",
       viewing,
     };
   }
@@ -650,6 +658,9 @@ export function createUnread({
                 rootId: t.root_id,
                 latestMessageId: t.latest_reply_id,
                 authorId: preview?.pubkey ?? "",
+                workflowOwnerId: preview
+                  ? workflowOwner(preview, workflowAuthority)
+                  : undefined,
                 createdAt: t.latest_reply_at,
                 preview: preview
                   ? (previews.get(preview.id)?.content ?? present(preview))

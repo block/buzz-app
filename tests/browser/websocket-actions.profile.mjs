@@ -464,7 +464,7 @@ test("profiles primary actions through production broker and built app", async (
           "tests/browser/policy-relay.mjs",
           "tests/browser/build.mjs",
           "pnpm-lock.yaml",
-          "dev/relay-broker.mjs",
+          "browser-host/relay-broker.mjs",
           "src/features/relay/transport.ts",
           "src/features/relay/live.ts",
           "src/features/relay/broker-live.ts",

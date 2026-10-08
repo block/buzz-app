@@ -835,8 +835,6 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(search).toBeFocused();
   await search.pressSequentially("Messages");
-  await search.press("ArrowDown");
-  await search.press("ArrowDown");
   await expect(
     dialog.getByRole("option", { name: "Messages", exact: true }),
   ).toHaveAttribute("aria-selected", "true");

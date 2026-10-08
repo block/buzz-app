@@ -17,7 +17,7 @@ function hostGrants(manifest: PluginManifest): string[] {
   return [
     ...(manifest.host?.commands ?? []).map(
       (command) =>
-        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])}`,
+        `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
     ),
     ...(manifest.host?.networkOrigins ?? []).map(
       (origin) => `HTTPS origin: ${origin}`,
@@ -29,10 +29,15 @@ export function PluginImport({
   plugins,
   catalog,
   busy,
+  authorizeGit,
 }: {
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
+  /** Signs in to the selected community's Buzz git; null for other repositories. */
+  authorizeGit?: (
+    repository: string,
+  ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
   const [gitForm, setGitForm] = useState(false);
@@ -96,6 +101,15 @@ export function PluginImport({
   const existing = catalog.plugins.find(
     (p) => p.manifest.id === candidate?.manifest.id,
   );
+  const rollbackNotice =
+    candidate?.publisher && existing && !existing.hasSignature
+      ? "You cannot roll back to the unsigned revision after this update."
+      : candidate?.revision === existing?.revision &&
+          existing?.rollbackBlockedReason
+        ? `${existing.rollbackBlockedReason}.`
+        : existing?.previous || existing?.revision !== candidate?.revision
+          ? "You can still roll back."
+          : "There is no earlier revision to roll back to.";
   const declaredGrants = candidate ? hostGrants(candidate.manifest) : [];
   const previousGrants = existing ? hostGrants(existing.manifest) : [];
   return (
@@ -132,7 +146,12 @@ export function PluginImport({
           onSubmit={(event) => {
             event.preventDefault();
             if (repository.trim())
-              void load(() => imports.git(repository, reference));
+              void load(async () => {
+                const signed = await authorizeGit?.(repository);
+                return signed
+                  ? imports.git(signed.repository, reference, signed.token)
+                  : imports.git(repository, reference);
+              });
           }}
         >
           <SettingsGroup layout="form">
@@ -156,7 +175,8 @@ export function PluginImport({
             <p className="m-0 text-caption text-muted">
               HTTPS or SSH; GitHub owner/repository also works. SSH uses your
               agent and known hosts. Password prompts and credential helpers are
-              not used.
+              not used. Buzz git repositories in this community sign in with
+              your account.
             </p>
             <div className="justify-self-start">
               <Button
@@ -270,7 +290,7 @@ export function PluginImport({
             {candidate && (
               <p className="m-0 text-body-sm">
                 {existing
-                  ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} You can still roll back.`
+                  ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`
                   : "This plugin starts off. Turn it on in the list when you’re ready."}
               </p>
             )}

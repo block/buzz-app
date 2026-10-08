@@ -44,6 +44,7 @@ export type TemplateProvider = {
   editor: ComponentType<TemplateEditorProps>;
   groupDefault: ComponentType<GroupDefaultProps>;
   saveAs: ComponentType<SaveTemplateProps>;
+  teams?: ComponentType<{ session: RelaySession; active(): boolean }>;
 };
 export type TemplateProviders = {
   snapshot(): readonly Contribution<TemplateProvider>[];

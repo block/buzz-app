@@ -1,0 +1,15 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Buzz Foundation",
+        "dragDropEnabled": false,
+        "width": 1200,
+        "height": 800,
+        "decorations": false,
+        "minWidth": 480,
+        "minHeight": 400
+      }
+    ]
+  }
+}

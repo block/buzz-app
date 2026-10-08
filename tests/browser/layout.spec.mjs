@@ -54,12 +54,13 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
-// Sidebar rows are the primary pages; Messages and Sessions stay in search only.
+// Sidebar rows are the primary pages; Messages remains available through search.
 const destinationTitles = [
   "Inbox",
   "Bestie",
   "Projects",
   "Agents",
+  "Sessions",
   "Workflows",
 ];
 const sidebarDestinations = (page, options = {}) =>
@@ -1297,7 +1298,10 @@ for (const [control, key] of [
       );
       await expect(focused).toBeFocused();
       const before = await history.evaluate((element) => element.scrollTop);
-      await page.keyboard.press(key);
+      // Linux WebKit can pause a native keyboard scroll and resume it after the
+      // anchor is captured; only the history scrollend completes that gesture.
+      if (nativeScroll) await keyScroll(page, key);
+      else await page.keyboard.press(key);
       if (!nativeScroll) {
         await settle(page);
         expect(await history.evaluate((element) => element.scrollTop)).toBe(

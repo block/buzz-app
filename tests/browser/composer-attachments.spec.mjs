@@ -16,6 +16,11 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
         name: "attachment-download-fixture",
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
+            if (req.url === "/api/relay/upload" && req.method === "POST") {
+              res.writeHead(204, { "X-Content-Type-Options": "nosniff" });
+              res.end();
+              return;
+            }
             if (!req.url?.startsWith("/api/relay/media?")) return next();
             res.writeHead(200, {
               "Content-Type": "application/octet-stream",
@@ -32,8 +37,13 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
   });
   await server.listen();
   try {
+    const uploadRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/relay/upload")
+        uploadRequests.push(request);
+    });
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests`,
     );
     const form = page.getByRole("form", {
       name: "Send a message to General",
@@ -69,7 +79,8 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
       mimeType: "text/plain",
       buffer: Buffer.from("picked"),
     });
-    await expect(form.getByText(/Ready$/)).toHaveCount(1);
+    await expect(form.getByText(/Queued$/)).toHaveCount(1);
+    expect(uploadRequests).toHaveLength(0);
     await expect(form.locator("video")).toHaveCount(0);
     const remove = form.getByRole("button", {
       name: "Remove picked.txt",
@@ -90,7 +101,7 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
       await zone.dispatchEvent("dragenter", { dataTransfer: transfer });
       await expect(form).toHaveAttribute("data-file-drag", "true");
       await zone.dispatchEvent("drop", { dataTransfer: transfer });
-      await expect(form.getByText(/Ready$/)).toHaveCount(2);
+      await expect(form.getByText(/Queued$/)).toHaveCount(2);
       await expect(form).not.toHaveAttribute("data-file-drag", "true");
     } finally {
       await transfer.dispose();
@@ -108,7 +119,11 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
         }),
       );
     });
-    await expect(form.getByText(/Ready$/)).toHaveCount(3);
+    await expect(form.getByText(/Queued$/)).toHaveCount(3);
+    expect(uploadRequests).toHaveLength(0);
+    // Files waiting for Send show their remove control, not a busy spinner.
+    await expect(form.locator("[data-uploading]")).toHaveCount(0);
+    await expect(remove.locator("svg")).toHaveCount(1);
     // Real layout proves attachment cards stay in one horizontal lane.
     const cards = form
       .getByRole("region", { name: "Attachments", exact: true })
@@ -126,8 +141,10 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     });
 
     await form.getByRole("button", { name: "Remove dropped.txt" }).click();
-    await expect(form.getByText(/Ready$/)).toHaveCount(2);
+    await expect(form.getByText(/Queued$/)).toHaveCount(2);
+    expect(uploadRequests).toHaveLength(0);
     await form.getByRole("textbox").press("Enter");
+    await expect.poll(() => uploadRequests.length).toBe(2);
     await expect(
       form.getByRole("button", { name: "Remove picked.txt" }),
     ).toHaveCount(0);
@@ -144,6 +161,200 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
     );
   } finally {
     await server.close();
+  }
+});
+
+// Browser-only boundary: a held upload outlives its composer across real navigation.
+test("a sent attachment keeps uploading after navigation and publishes to its original channel", async ({
+  page,
+}) => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    plugins: [
+      react(),
+      {
+        name: "held-upload-fixture",
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url !== "/api/relay/upload" || req.method !== "POST")
+              return next();
+            req.resume();
+            void held.then(() => {
+              res.writeHead(204, { "X-Content-Type-Options": "nosniff" });
+              res.end();
+            });
+          });
+        },
+      },
+    ],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    const uploadRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/relay/upload")
+        uploadRequests.push(request);
+    });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests&random`,
+    );
+    const general = page.getByRole("form", {
+      name: "Send a message to General",
+      exact: true,
+    });
+    await expect(
+      general.getByRole("button", { name: "Attach files", exact: true }),
+    ).toBeEnabled();
+    await general.getByLabel("Choose attachments").setInputFiles({
+      name: "held.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("held"),
+    });
+    await general.getByRole("textbox").fill("background caption");
+    await general.getByRole("textbox").press("Enter");
+    await expect.poll(() => uploadRequests.length).toBe(1);
+    await expect(
+      page.getByRole("status").filter({ hasText: /^Uploading$/ }),
+    ).toBeVisible();
+    // The broker reports no bytes: an indeterminate bar, never a number.
+    await expect(
+      page.getByRole("progressbar", { name: "Uploading", exact: true }),
+    ).not.toHaveAttribute("aria-valuenow");
+    await expect(general.getByRole("textbox")).toHaveText("");
+    await expect(general.getByText("held.txt")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Random", exact: true }).click();
+    const random = page.getByRole("form", {
+      name: "Send a message to Random",
+      exact: true,
+    });
+    await expect(general).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: /^Uploading$/ }),
+    ).toBeVisible();
+    await random.getByRole("textbox").fill("still composing");
+    expect(
+      await page.evaluate(() => window.composerFixture.published()),
+    ).toEqual([]);
+    await page.screenshot({
+      path: test.info().outputPath("background-upload-navigated.png"),
+    });
+
+    release();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Uploading" }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.composerFixture.published()))
+      .toEqual([
+        {
+          content: expect.stringContaining("background caption"),
+          channel: "general",
+        },
+      ]);
+    await expect(random.getByRole("textbox")).toHaveText("still composing");
+    await expect(page.getByText("background caption")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "General", exact: true }).click();
+    await expect(page.getByText("background caption")).toBeVisible();
+    await expect(page.getByRole("link", { name: /held.txt/ })).toBeVisible();
+    expect(uploadRequests).toHaveLength(1);
+  } finally {
+    release();
+    await server.close();
+  }
+});
+
+// Browser-only boundary: removing the focused Cancel button must hand focus to
+// the mounted editor in both engines; DOM emulators cannot model native focus loss.
+test.describe("background Cancel focus handoff", () => {
+  for (const outcome of ["cancel", "failure", "success", "typing elsewhere"]) {
+    test(`focus after ${outcome}`, async ({ page }) => {
+      let release;
+      const held = new Promise((resolve) => {
+        release = resolve;
+      });
+      const server = await createServer({
+        configFile: false,
+        envFile: false,
+        plugins: [
+          react(),
+          {
+            name: "held-focus-upload",
+            configureServer(server) {
+              server.middlewares.use((req, res, next) => {
+                if (req.url !== "/api/relay/upload" || req.method !== "POST")
+                  return next();
+                req.resume();
+                void held.then(() => {
+                  res.writeHead(outcome === "failure" ? 503 : 204, {
+                    "X-Content-Type-Options": "nosniff",
+                  });
+                  res.end();
+                });
+              });
+            },
+          },
+        ],
+        logLevel: "error",
+        server: { host: "127.0.0.1", port: 0 },
+      });
+      await server.listen();
+      try {
+        await page.goto(
+          `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests`,
+        );
+        const form = page.getByRole("form", {
+          name: "Send a message to General",
+          exact: true,
+        });
+        await form.getByLabel("Choose attachments").setInputFiles({
+          name: "focus.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("focus"),
+        });
+        await form.getByRole("textbox").fill("focused send");
+        await form.getByRole("textbox").press("Enter");
+        const cancel = form.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await expect(cancel).toBeVisible();
+        await cancel.focus();
+        await expect(cancel).toBeFocused();
+        if (outcome === "typing elsewhere") {
+          await page.evaluate(() => {
+            const input = document.createElement("input");
+            input.setAttribute("aria-label", "Other work");
+            document.body.append(input);
+          });
+          const elsewhere = page.getByRole("textbox", { name: "Other work" });
+          await elsewhere.fill("later typing");
+          await expect(elsewhere).toBeFocused();
+        }
+        if (outcome === "cancel") await cancel.click();
+        else release();
+        await expect(cancel).toHaveCount(0);
+        if (outcome === "typing elsewhere") {
+          await expect(
+            page.getByRole("textbox", { name: "Other work" }),
+          ).toBeFocused();
+          await expect(
+            page.getByRole("textbox", { name: "Other work" }),
+          ).toHaveValue("later typing");
+        } else await expect(form.getByRole("textbox")).toBeFocused();
+      } finally {
+        release();
+        await server.close();
+      }
+    });
   }
 });
 

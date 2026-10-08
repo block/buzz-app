@@ -14,6 +14,16 @@ let contentReady = false;
 let bypassPending = false;
 let revision = 0;
 const fallbackStartedAt = performance.now();
+const listeners = new Set<() => void>();
+
+// Native window chrome must remain usable while app content is still inert.
+export const launchVisible = () => !!document.getElementById("buzz-launch");
+export function subscribeLaunch(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 function revealRoot() {
   for (const id of ["root", "buzz-toast-root"]) {
@@ -79,6 +89,7 @@ function fade(launch: HTMLElement) {
   window.setTimeout(() => {
     launch.remove();
     revealRoot();
+    for (const listener of listeners) listener();
   }, FADE_MS + 20);
 }
 

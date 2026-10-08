@@ -21,7 +21,7 @@ export function UnreadIndicatorSettings({
         <p className="text-body-sm text-subtle">
           {state.permission === "unavailable"
             ? "Dock badges require a bundled macOS app and aren’t available from the development server."
-            : "Shows a dot for unread activity in the selected community. It doesn’t show a message count. macOS controls this separately from desktop alerts."}
+            : "Shows a dot for unread activity in the selected community. It doesn’t show a message count."}
         </p>
         {state.permission !== "unavailable" && (
           <p role="status" className="text-body-sm text-muted">

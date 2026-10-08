@@ -168,12 +168,9 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
   for (const [code, shown] of [
     [
       "invite_exhausted",
-      "This invite has no uses left. Ask a community admin for a new one.",
+      "This invite has reached its use limit. Ask for a new invite.",
     ],
-    [
-      "invite_expired",
-      "This invite has expired. Ask a community admin for a new one.",
-    ],
+    ["invite_expired", "This invite code has expired — ask for a new one."],
     ["invite_invalid", "This invite code is not valid for this community."],
     ["Relay request failed (403)", "Relay request failed (403)"],
   ] as const) {
@@ -396,3 +393,124 @@ it.each([
     expect(screen.queryByRole("alert")).toBeNull();
   },
 );
+
+it("prefills an invite but requires explicit discovery and claim before membership", async () => {
+  const user = userEvent.setup();
+  const requests = vi.fn(async (url: string, init?: RequestInit) => {
+    const route = String(url).split("/").at(-1);
+    if (route === "register") return Response.json({ id: "x" });
+    if (route === "info") return Response.json({ name: "Fixture" });
+    if (route === "claim") {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        code: "v2.abc",
+      });
+      return Response.json({ error: "invite_expired" }, { status: 403 });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", requests);
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
+    joined: vi.fn(),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog
+      communities={communities}
+      mode="join"
+      close={() => {}}
+      invite={{
+        community: "https://relay.example",
+        code: "v2.abc",
+      }}
+    />,
+  );
+  expect(screen.getByLabelText("Relay URL")).toHaveValue(
+    "https://relay.example",
+  );
+  expect(requests).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
+    "v2.abc",
+  );
+  expect(
+    requests.mock.calls.some(([url]) => String(url).endsWith("/claim")),
+  ).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This invite code has expired — ask for a new one.",
+  );
+  expect(communities.joined).not.toHaveBeenCalled();
+});
+
+it("renews policy acceptance after an expired receipt instead of replaying it", async () => {
+  const user = userEvent.setup();
+  let version = "v1";
+  let acceptance = 0;
+  const receipts: string[] = [];
+  const requests = vi.fn(async (url: string, init?: RequestInit) => {
+    const route = String(url).split("/").at(-1);
+    if (route === "register") return Response.json({ id: "x" });
+    if (route === "info")
+      return Response.json({
+        name: "Fixture",
+        policy: {
+          version,
+          terms_markdown: "Terms",
+          age_attestation_required: false,
+        },
+      });
+    if (route === "accept-policy") {
+      expect(JSON.parse(String(init?.body)).policy_version).toBe(version);
+      return Response.json({ receipt: `fresh-${++acceptance}` });
+    }
+    if (route === "claim") {
+      const body = JSON.parse(String(init?.body));
+      expect(body.code).toBe("v2.abc");
+      receipts.push(body.policy_receipt);
+      return acceptance === 1
+        ? Response.json({ error: "join_policy_required" }, { status: 403 })
+        : Response.json({ status: "joined" });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", requests);
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog
+      communities={communities}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByLabelText("Invite code (if required)");
+  await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "current policy acceptance",
+  );
+  version = "v2";
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByLabelText("Invite code (if required)");
+  await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(receipts).toEqual(["fresh-1", "fresh-2"]));
+  expect(
+    requests.mock.calls.filter(([url]) =>
+      String(url).endsWith("/accept-policy"),
+    ),
+  ).toHaveLength(2);
+  expect(screen.queryByText(/current policy acceptance/)).toBeNull();
+});

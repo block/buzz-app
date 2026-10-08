@@ -29,6 +29,14 @@ impl RuntimeBundle {
     ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
+        if let Some(preset) = crate::harness_preset(&harness.command) {
+            if !harness.model.is_empty() || !harness.provider.is_empty() {
+                return Err(format!(
+                    "Use {} defaults in the agent editor before starting this agent",
+                    preset.label
+                ));
+            }
+        }
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
@@ -130,6 +138,17 @@ impl RuntimeBundle {
             })
             .transpose()?;
         let pi = crate::pi::verify_launch(pi, preflight)?;
+        let claude = (crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
+            .then(|| {
+                claude_tools(
+                    &worker,
+                    agent
+                        .environment
+                        .get("CLAUDE_CODE_EXECUTABLE")
+                        .map(String::as_str),
+                )
+            })
+            .transpose()?;
         let (args, environment, tools_path) = if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
@@ -140,7 +159,11 @@ impl RuntimeBundle {
             (
                 goose_args(&harness.command, &agent.harness.args),
                 &agent.environment,
-                tools_path()?,
+                if let Some((path, _)) = &claude {
+                    path.clone()
+                } else {
+                    tools_path()?
+                },
             )
         };
         let path = std::env::join_paths(
@@ -148,6 +171,12 @@ impl RuntimeBundle {
         )
         .map_err(|_| "Invalid runtime tools path")?;
         command.envs(environment).env("PATH", &path);
+        if let Some((_, Some(cli))) = &claude {
+            if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
+                // Do not depend on the SDK's optional native-binary download.
+                command.env("CLAUDE_CODE_EXECUTABLE", cli);
+            }
+        }
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -170,7 +199,7 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
             .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
-            .env("BUZZ_ACP_RELAY_OBSERVER", "false");
+            .env("BUZZ_ACP_RELAY_OBSERVER", "true");
         if defaults.owner_only {
             command
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
@@ -185,8 +214,9 @@ impl RuntimeBundle {
             if let Some(value) = selected.provider {
                 command.env(provider_key, value);
             }
-        } else if pi.is_none() && !harness.provider.is_empty() {
-            return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into());
+        } else if pi.is_none() {
+            crate::HarnessConfigurationPolicy::for_command(&harness.command)
+                .validate_selection(&harness.provider, &harness.model)?;
         }
         if let Some(value) = model {
             let value = if pi.is_some() && !agent.harness.provider.is_empty() {
@@ -310,11 +340,67 @@ fn tools_path() -> Result<std::ffi::OsString> {
     dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
     std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
 }
+/// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
+/// An app-owned adapter keeps using its pinned Node, independently of global tools.
+fn claude_tools(
+    adapter: &Path,
+    cli_override: Option<&str>,
+) -> Result<(std::ffi::OsString, Option<PathBuf>)> {
+    let bin = adapter.parent().ok_or("Invalid Claude ACP adapter path")?;
+    let managed_data = bin
+        .file_name()
+        .filter(|name| *name == "bin")
+        .and_then(|_| bin.parent())
+        .filter(|prefix| {
+            prefix
+                .file_name()
+                .is_some_and(|name| name == "claude-tools")
+        })
+        .and_then(Path::parent);
+    let node = if let Some(app_data) = managed_data {
+        managed_tool(app_data, "node")
+    } else {
+        let sibling = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+        if executable(&sibling).is_ok() {
+            Some(sibling)
+        } else {
+            installed_npm_tool("node")
+        }
+    }
+    .ok_or("Install Node.js for Claude Code in Settings → Agents → Harnesses")?;
+    let cli = if cli_override.is_some() {
+        // Advanced owns this value; do not require an unrelated discoverable CLI.
+        None
+    } else {
+        let cli = if let Some(app_data) = managed_data {
+            managed_tool(app_data, "claude").or_else(|| installed_npm_tool("claude"))
+        } else {
+            installed_npm_tool("claude")
+        }
+        .ok_or("Install Claude Code in Settings → Agents → Harnesses")?;
+        // Rust can run Windows batch launchers; the adapter's JavaScript SDK cannot.
+        // In that case leave native binary resolution to the SDK itself.
+        let batch = cfg!(windows)
+            && cli.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+            });
+        (!batch).then_some(cli)
+    };
+    let path = std::env::join_paths(
+        [node.parent().ok_or("Invalid Node.js path")?, bin]
+            .into_iter()
+            .map(Path::to_path_buf)
+            .chain(std::env::split_paths(&tools_path()?)),
+    )
+    .map_err(|_| "Invalid Claude tools path")?;
+    Ok((path, cli))
+}
 /// App-owned npm shims and the pinned Node binary are separate from user-global tools.
 /// `app_data` is Tauri's resolved app-data directory, never browser input.
 pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -331,6 +417,28 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn installed(name: &str) -> Option<PathBuf> {
+    installed_names(&[name.to_owned()])
+}
+
+/// Claude's setup supports Windows npm launchers; other harnesses retain their
+/// existing discovery until their launch contracts support those paths too.
+pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
+    // npm also writes an extensionless POSIX shim on Windows. Prefer launchers
+    // that Rust and the displayed PowerShell sign-in command can actually run.
+    #[cfg(windows)]
+    let names = if Path::new(name).extension().is_some() {
+        vec![name.to_owned()]
+    } else {
+        ["exe", "cmd", "bat"]
+            .map(|extension| format!("{name}.{extension}"))
+            .to_vec()
+    };
+    #[cfg(not(windows))]
+    let names = [name.to_owned()];
+    installed_names(&names)
+}
+
+fn installed_names(names: &[String]) -> Option<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/bin"));
@@ -344,7 +452,7 @@ pub fn installed(name: &str) -> Option<PathBuf> {
     ]);
     dirs.into_iter()
         .filter(|p| p.is_absolute())
-        .map(|p| p.join(name))
+        .flat_map(|p| names.iter().map(move |name| p.join(name)))
         .find(|p| executable(p).is_ok())
 }
 

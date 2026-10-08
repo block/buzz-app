@@ -175,14 +175,19 @@ export function bindMessageNotifications(
                 )
                   return "wait";
               }
+              // Only an already-admitted category survives a relay read while
+              // still viewed. Read verdicts never admit new candidates.
+              const keepViewed =
+                notifications.snapshot().preferences.notifyWhileViewing &&
+                attention.viewing;
               if (
-                attention.status === "ineligible" ||
-                (attention.status !== "unknown" &&
-                  attention.category !== category) ||
-                (!notifications.snapshot().preferences.notifyWhileViewing &&
-                  attention.viewing)
+                (!keepViewed || !attention.relayRead) &&
+                (attention.status === "ineligible" ||
+                  (attention.status !== "unknown" &&
+                    attention.category !== category))
               )
                 return false;
+              if (attention.viewing && !keepViewed) return false;
               if (
                 sync.status === "loading" ||
                 sync.status === "error" ||
@@ -191,7 +196,8 @@ export function bindMessageNotifications(
                 attention.status === "unknown"
               )
                 return "wait";
-              return attention.unread;
+              // A completed read must not cancel an opted-in alert while viewed.
+              return attention.unread || keepViewed;
             },
             () =>
               messageNotificationText(
@@ -200,9 +206,11 @@ export function bindMessageNotifications(
                 owned.channels
                   .list()
                   .channels.find((item) => item.id === message.channelId),
-                owned.profiles.snapshot().get(message.authorId),
+                owned.profiles
+                  .snapshot()
+                  .get(message.workflowOwnerId ?? message.authorId),
                 owned.names.resolve(
-                  message.authorId,
+                  message.workflowOwnerId ?? message.authorId,
                   undefined,
                   owned.channels
                     .list()

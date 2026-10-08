@@ -42,6 +42,7 @@ import { createAgentLibrary } from "../agents/library";
 import { archiveHides, createIdentityArchives } from "./identity-archives";
 import type { SidebarStorage } from "./sidebar-journal";
 import { createTyping } from "./typing";
+import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
 import { createInboxFeed } from "./inbox-feed";
 import type { IncomingListener, IncomingMessage } from "./incoming";
@@ -59,7 +60,11 @@ import { EMOJI_SET_KIND } from "./emoji";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
 import { MessageClock } from "./message-order";
-import { UploadError, type UploadedAttachment } from "./attachments";
+import {
+  UploadError,
+  type UploadedAttachment,
+  type UploadProgress,
+} from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
@@ -79,6 +84,7 @@ import {
   type OutgoingEvent,
   type OutboxStorage,
 } from "./outbox";
+import { relayPartition, transportPartition } from "./partition";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -253,9 +259,7 @@ export function createRelaySession(
             },
           },
           options.outboxStorage ??
-            browserOutboxStorage(
-              `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
-            ),
+            browserOutboxStorage(transportPartition(transport)),
           {
             ...(options.deliveryTimeoutMs
               ? { timeoutMs: options.deliveryTimeoutMs }
@@ -367,7 +371,7 @@ export function createRelaySession(
       profiles.clear();
       emoji.clear();
       statuses.clear();
-      activity.clear();
+      activity.accessChanged();
       memories.clear();
       presence.clear();
       archives.clear();
@@ -435,7 +439,10 @@ export function createRelaySession(
       channelTraffic &&
       filters.every(
         (filter) =>
-          filter.search !== undefined &&
+          (filter.search !== undefined ||
+            !!filter.authors?.length ||
+            filter.since !== undefined ||
+            filter.until !== undefined) &&
           !filter["#h"]?.length &&
           !!filter.kinds?.length &&
           filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
@@ -628,7 +635,8 @@ export function createRelaySession(
     { writer: transport?.identityArchive, viewer: transport?.viewer },
   );
   const agentChoices = createAgentChoices({
-    scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
+    // Offline sessions keep their historical, never-matching agent scope.
+    scope: transport ? transportPartition(transport) : "undefined:undefined",
     library: agentLibrary.queries,
     native: options.agentChoices,
     archives: archives.queries,
@@ -648,6 +656,12 @@ export function createRelaySession(
     (channel) => canAccess(channel),
     notify,
     (channel) => resolveChannelAccess(channel),
+    transport?.activityArchive
+      ? {
+          host: transport.activityArchive,
+          canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
+        }
+      : undefined,
   );
   const channels = createChannelStore(
     transport
@@ -655,6 +669,7 @@ export function createRelaySession(
           read: (filters, settings) => readVerified(filters, settings, false),
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
+          archiveAuthority: transport.archiveAuthority,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
@@ -726,7 +741,9 @@ export function createRelaySession(
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
-  const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
+  const readScope = transport
+    ? transportPartition(transport)
+    : relayPartition("offline", "");
   const unread = createUnread({
     api: options.cachedOnly ? undefined : transport?.sidebarApi,
     storage: options.sidebarStorage,
@@ -736,6 +753,7 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     find: (id) => recent.peek(id)?.event ?? retainedEvent(id),
     evidence: () => recent.entries().map(([, item]) => item.event),
+    workflowAuthority: transport?.archiveAuthority,
     notify,
   });
   const activityStatus = (): NonNullable<ChannelList["activityStatus"]> => {
@@ -1212,7 +1230,7 @@ export function createRelaySession(
   const channelSetup =
     transport && writes && transport.channelKit
       ? createChannelSetup({
-          scope: `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+          scope: transportPartition(transport),
           outbox: writes.outbox,
           local: writes.local,
           signal: lifetime.signal,
@@ -1501,7 +1519,9 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
+    authorizeGit: transport?.authorizeGit,
     scope: readScope,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
     subscribeIncoming(listener: IncomingListener) {
@@ -1565,7 +1585,12 @@ export function createRelaySession(
     attachments:
       uploadAttachment && writes?.outbox.supports(9)
         ? Object.freeze({
-            async upload(file: File, channelId: string, signal: AbortSignal) {
+            async upload(
+              file: File,
+              channelId: string,
+              signal: AbortSignal,
+              progress?: UploadProgress,
+            ) {
               const combined = AbortSignal.any([
                 signal,
                 lifetime.signal,
@@ -1574,7 +1599,7 @@ export function createRelaySession(
               combined.throwIfAborted();
               if (!channelId || closed || !channels.canParticipate(channelId))
                 throw new UploadError("denied");
-              const result = await uploadAttachment(file, combined);
+              const result = await uploadAttachment(file, combined, progress);
               combined.throwIfAborted();
               if (!channels.canParticipate(channelId))
                 throw new UploadError("denied");
@@ -1636,6 +1661,7 @@ export function createRelaySession(
             await Promise.race([writer.publish(signed, signal), aborted]);
           }
         : undefined,
+      transport?.archiveAuthority,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -1651,6 +1677,7 @@ export function createRelaySession(
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
+        signingAuthority: transport?.archiveAuthority,
         reader: options?.exact
           ? {
               async read(filters, settings) {
@@ -2177,6 +2204,7 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
+    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       const candidates = new Set(
@@ -2277,6 +2305,7 @@ export function createRelaySession(
               messageId: event.id,
               createdAt: event.created_at,
               authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
               previewContent: content.slice(0, 4096),
             }),
           ];
@@ -2393,6 +2422,9 @@ export function createRelaySession(
       if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
+  const stopActivityRoster = channels.queries.subscribeList(() => {
+    activity.restoreHistory();
+  });
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
 
@@ -2409,7 +2441,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        activity.clear();
+        const activityCleared = activity.queries.clearHistory();
         memories.clear();
         presence.clear();
         typing.clear();
@@ -2432,8 +2464,13 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        await channels.clearCache();
+        const results = await Promise.allSettled([
+          channels.clearCache(),
+          activityCleared,
+        ]);
         updateInterests();
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
       } finally {
         cacheClearing--;
       }
@@ -2451,6 +2488,7 @@ export function createRelaySession(
       details.dispose();
       memberAdministration.dispose();
       stopInterests();
+      stopActivityRoster();
       stopHintGuard();
       stopWarmPreferences();
       traffic?.dispose();

@@ -9,15 +9,33 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelKit } from "../../features/channel-templates/capability";
-import {
-  emptyLineup,
-  type KitEntry,
+import type {
+  KitEntry,
+  Team,
+  Template,
 } from "../../features/channel-templates/model";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
+import { TemplateLibrary } from "./TemplateLibrary";
 
-afterEach(cleanup);
+beforeEach(() => {
+  // jsdom does not read focus options; Base UI detects this browser capability.
+  const focus = HTMLElement.prototype.focus;
+  vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+    this: HTMLElement,
+    options?: FocusOptions,
+  ) {
+    void options?.preventScroll;
+    focus.call(this, options);
+  });
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+const team: Team = { type: "team", id: "team", name: "Saved team", agents: [] };
 const entry: KitEntry = {
   eventId: "head",
   createdAt: 1,
@@ -25,11 +43,17 @@ const entry: KitEntry = {
     version: 1,
     community: "https://relay.example.test",
     deleted: false,
-    value: { type: "team", id: "team", name: "Saved team", agents: [] },
+    value: team,
   },
 };
-function fixture(entries: KitEntry[] = [entry]) {
-  const state = { status: "ready" as const, entries };
+function fixture(
+  editor = false,
+  entries: KitEntry[] = [entry],
+  status: "ready" | "loading" = "ready",
+  agentsReady = true,
+  section: "template" | "team" = "template",
+) {
+  const state = { status, entries };
   const save = vi.fn<ChannelKit["save"]>();
   const kit: ChannelKit = {
     available: true,
@@ -40,24 +64,85 @@ function fixture(entries: KitEntry[] = [entry]) {
     save,
   };
   const close = vi.fn();
-  render(
-    <ChannelTemplatesDialog
-      open
-      onOpenChange={close}
-      kit={kit}
-      agents={[]}
-      active={() => true}
-    />,
-  );
-  return { save, close };
+  const tree = () =>
+    editor ? (
+      <ChannelTemplatesDialog
+        open
+        onOpenChange={close}
+        kit={kit}
+        agents={[]}
+        initial={team}
+        expected="head"
+        active={() => true}
+      />
+    ) : (
+      <TemplateLibrary
+        section={section}
+        kit={kit}
+        active={() => true}
+        catalog={{
+          kit: state,
+          agents: [
+            {
+              pubkey: "a".repeat(64),
+              name: "Carl",
+              managed: false,
+              avatar: undefined,
+            },
+          ],
+          agentsReady,
+          agentsComplete: true,
+          agentsPending: false,
+          error: undefined,
+          refresh: vi.fn(),
+        }}
+      />
+    );
+  const view = render(tree(), { wrapper: ToastProvider });
+  return {
+    save,
+    close,
+    setEntries(next: KitEntry[]) {
+      state.entries = next;
+      view.rerender(tree());
+    },
+  };
 }
-it("delete cancellation closes only the nested layer without deleting or closing the library", async () => {
+it("shows the library on the page and returns from editing without a library dialog", async () => {
   const user = userEvent.setup();
-  const { save, close } = fixture();
-  await user.click(screen.getByRole("tab", { name: "Teams" }));
-  const trigger = screen.getByRole("button", { name: "Delete" });
+  fixture(false, [entry], "ready", true, "team");
+  expect(
+    screen.getByRole("article", { name: "Saved team" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  const trigger = screen.getByRole("button", {
+    name: "Actions for Saved team",
+  });
+  expect(
+    screen.getByRole("button", { name: "Edit team Saved team" }),
+  ).toBeVisible();
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "Edit team" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Saved team",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+it("delete cancellation leaves the page and saved data intact", async () => {
+  const user = userEvent.setup();
+  const { save } = fixture(false, [entry], "ready", true, "team");
+  const trigger = screen.getByRole("button", {
+    name: "Actions for Saved team",
+  });
   for (const dismissal of ["backdrop", "escape", "close", "cancel"]) {
     await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Delete team…" }),
+    );
     const confirmation = screen.getByRole("dialog", {
       name: "Delete “Saved team”?",
     });
@@ -66,13 +151,14 @@ it("delete cancellation closes only the nested layer without deleting or closing
         within(confirmation).getByRole("button", { name: "Cancel" }),
       ).toHaveFocus(),
     );
-    await user.click(within(confirmation).getByRole("heading"));
+    expect(confirmation).toHaveAccessibleDescription(
+      /Its agents and their channel memberships stay unchanged/,
+    );
+    await user.click(confirmation);
     expect(confirmation).toBeInTheDocument();
     if (dismissal === "backdrop")
       await user.click(
-        confirmation.parentElement?.querySelector(
-          ".buzz-dialog-backdrop",
-        ) as Element,
+        document.querySelector(".buzz-dialog-backdrop") as Element,
       );
     else if (dismissal === "escape") await user.keyboard("{Escape}");
     else
@@ -82,28 +168,29 @@ it("delete cancellation closes only the nested layer without deleting or closing
         }),
       );
     await waitFor(() => expect(confirmation).not.toBeInTheDocument());
-    // jsdom lacks focus({ preventScroll }) detection; browser coverage checks pointer return.
-    if (dismissal !== "backdrop")
-      await waitFor(() => expect(trigger).toHaveFocus());
     expect(
-      screen.getByRole("dialog", { name: "Templates & teams" }),
+      screen.getByRole("article", { name: "Saved team" }),
     ).toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(trigger, `dismissal: ${dismissal}`).toHaveFocus(),
+    );
   }
-  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
-  expect(close).toHaveBeenCalledExactlyOnceWith(false);
 });
-it("confirmed deletion preserves the expected revision and locks dismissal until failure", async () => {
+it("deletion preserves its revision, locks dismissal while pending and retains errors for retry", async () => {
   const user = userEvent.setup();
-  const { save, close } = fixture();
+  const { save } = fixture(false, [entry], "ready", true, "team");
   let reject!: (error: Error) => void;
   const pending = new Promise<never>((_, no) => {
     reject = no;
   });
   save.mockReturnValueOnce(pending);
-  await user.click(screen.getByRole("tab", { name: "Teams" }));
-  await user.click(screen.getByRole("button", { name: "Delete" }));
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Saved team" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete team…" }),
+  );
   const confirmation = screen.getByRole("dialog", {
     name: "Delete “Saved team”?",
   });
@@ -111,20 +198,18 @@ it("confirmed deletion preserves the expected revision and locks dismissal until
     within(confirmation).getByRole("button", { name: "Delete" }),
   );
   try {
-    expect(save).toHaveBeenCalledExactlyOnceWith(
-      entry.record.value,
-      "head",
-      true,
-    );
-    await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+    expect(save).toHaveBeenCalledExactlyOnceWith(team, "head", true);
     expect(
-      screen.getByRole("button", { name: "Close templates" }),
+      within(confirmation).getByRole("button", { name: "Cancel" }),
+    ).toBeDisabled();
+    expect(
+      within(confirmation).getByRole("button", { name: "Close" }),
     ).toBeDisabled();
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,
     );
     await user.keyboard("{Escape}");
-    expect(close).not.toHaveBeenCalled();
+    expect(confirmation).toBeInTheDocument();
   } finally {
     await act(async () => {
       reject(new Error("Delete rejected"));
@@ -132,30 +217,218 @@ it("confirmed deletion preserves the expected revision and locks dismissal until
     });
   }
   expect(await screen.findByRole("alert")).toHaveTextContent("Delete rejected");
-  expect(screen.getByRole("button", { name: "Close templates" })).toBeEnabled();
-  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
-  expect(close).toHaveBeenCalledExactlyOnceWith(false);
+  expect(
+    within(confirmation).getByRole("button", { name: "Delete" }),
+  ).toBeEnabled();
   expect(save).toHaveBeenCalledOnce();
 });
+it("editing saves against the original revision and closes back to its caller", async () => {
+  const user = userEvent.setup();
+  const { save, close } = fixture(true);
+  await user.clear(screen.getByRole("textbox", { name: "Name" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Name" }),
+    "Renamed team",
+  );
+  await user.click(screen.getByRole("button", { name: "Save team" }));
+  expect(save).toHaveBeenCalledExactlyOnceWith(
+    { ...team, name: "Renamed team" },
+    "head",
+  );
+  expect(close).toHaveBeenCalledExactlyOnceWith(false);
+});
 
-it("shows a contextual library action and discloses optional template fields without losing edits", async () => {
+const template: Template = {
+  type: "template",
+  id: "original",
+  name: "Saved template",
+  description: "Description",
+  agents: ["a".repeat(64)],
+  teamIds: ["team"],
+  canvas: "# Goals",
+};
+const templateEntry: KitEntry = {
+  ...entry,
+  eventId: "template-head",
+  record: { ...entry.record, value: template },
+};
+it.each(["Saved template", "x".repeat(120)])(
+  "duplicates %s as an unsaved independent draft",
+  async (name) => {
+    const user = userEvent.setup();
+    const source = { ...template, name };
+    const { save } = fixture(false, [
+      entry,
+      { ...templateEntry, record: { ...templateEntry.record, value: source } },
+    ]);
+    const duplicate = async () => {
+      await user.click(
+        screen.getByRole("button", { name: `Actions for ${name}` }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Duplicate template" }),
+      );
+    };
+    await duplicate();
+    const copyName = `${name.slice(0, 113)} (copy)`;
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(copyName);
+    expect(copyName.length).toBeLessThanOrEqual(120);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(save).not.toHaveBeenCalled();
+    await duplicate();
+    await user.click(screen.getByRole("button", { name: "Save template" }));
+    expect(save).toHaveBeenCalledOnce();
+    const call = save.mock.calls[0];
+    if (!call) throw new Error("Save not called");
+    const [value, expected] = call;
+    expect(value).toEqual({
+      ...source,
+      name: copyName,
+      id: expect.any(String),
+    });
+    expect(value.id).not.toBe(source.id);
+    expect(expected).toBeUndefined();
+    expect(source.name).toBe(name);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  },
+);
+it.each(["template", "team"] as const)(
+  "creates a new %s with no existing revision",
+  async (type) => {
+    const user = userEvent.setup();
+    const { save } = fixture(false, [entry], "ready", true, type);
+    const trigger = screen.getByRole("button", {
+      name: type === "team" ? "Create team" : "New template",
+    });
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: `Save ${type}` })).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      `New saved ${type}`,
+    );
+    await user.click(screen.getByRole("button", { name: `Save ${type}` }));
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type,
+        id: expect.any(String),
+        name: `New saved ${type}`,
+      }),
+      undefined,
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+  },
+);
+it.each(["template", "team"] as const)(
+  "successful %s deletion removes its row and focuses its New action",
+  async (type) => {
+    const user = userEvent.setup();
+    const item = type === "team" ? entry : templateEntry;
+    const { save, setEntries } = fixture(false, [item], "ready", true, type);
+    save.mockImplementation(async () => {
+      setEntries([]);
+      return "deleted-head";
+    });
+    await user.click(
+      screen.getByRole("button", {
+        name: `Actions for ${type === "team" ? team.name : template.name}`,
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: `Delete ${type}…` }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("article")).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: type === "team" ? "Create team" : "New template",
+        }),
+      ).toHaveFocus(),
+    );
+  },
+);
+it("names avatars without repeating the full public key in their accessible label", () => {
+  fixture(false, [templateEntry]);
+  expect(
+    within(screen.getByRole("article")).getByRole("button", {
+      name: "Carl",
+    }),
+  ).toBeInTheDocument();
+});
+it("shows empty sections and disables creation while catalog or agents are loading", () => {
+  const empty = fixture(false, []);
+  expect(screen.getByText("Your next channel starts here")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Create team" }),
+  ).not.toBeInTheDocument();
+  expect(empty.save).not.toHaveBeenCalled();
+  cleanup();
+  fixture(false, [], "ready", true, "team");
+  expect(screen.getByText("Bring your agents together")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "New template" }),
+  ).not.toBeInTheDocument();
+  cleanup();
+  fixture(false, [], "loading", true, "team");
+  expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
+  cleanup();
+  fixture(false, [], "loading");
+  expect(screen.getByRole("button", { name: "New template" })).toBeDisabled();
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading your templates",
+  );
+  cleanup();
+  fixture(false, [], "ready", false);
+  expect(screen.getByRole("button", { name: "New template" })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading available agents",
+  );
+});
+it("closes the save-as-template editor after successful creation", async () => {
+  const save = vi.fn();
+  const close = vi.fn();
+  const kit: ChannelKit = {
+    available: true,
+    snapshot: () => state,
+    subscribe: () => () => {},
+    ensure() {},
+    async refresh() {},
+    save,
+  };
+  const state = { status: "ready" as const, entries: [] };
+  render(
+    <ChannelTemplatesDialog
+      open
+      kit={kit}
+      agents={[]}
+      initial={template}
+      active={() => true}
+      onOpenChange={close}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Save template" }));
+  expect(save).toHaveBeenCalledExactlyOnceWith(template, undefined);
+  expect(close).toHaveBeenCalledExactlyOnceWith(false);
+});
+
+it("discloses optional setup without losing edits and retains failed saves for retry", async () => {
   const user = userEvent.setup();
   const { save } = fixture();
-  expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
-    /Private to you in this community/,
-  );
-  expect(screen.getByText("No templates yet")).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "New team" }),
-  ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "New template" }));
+  const trigger = screen.getByRole("button", { name: "New template" });
+  await user.click(trigger);
   expect(
     screen.getByRole("dialog", { name: "New template" }),
   ).toHaveAccessibleDescription(/existing channels stay unchanged/);
   const name = screen.getByRole("textbox", { name: "Name" });
-  expect(name).toHaveFocus();
-  const submit = screen.getByRole("button", { name: "Save template" });
-  expect(submit).toBeDisabled();
+  await waitFor(() => expect(name).toHaveFocus());
   expect(
     screen.queryByRole("textbox", { name: "Starting Canvas (Markdown)" }),
   ).not.toBeInTheDocument();
@@ -191,6 +464,7 @@ it("shows a contextual library action and discloses optional template fields wit
     reject = no;
   });
   save.mockReturnValueOnce(pending);
+  const submit = screen.getByRole("button", { name: "Save template" });
   await user.click(submit);
   try {
     expect(save).toHaveBeenCalledWith(
@@ -200,12 +474,13 @@ it("shows a contextual library action and discloses optional template fields wit
         canvas: "# Plan",
       }),
       undefined,
-      false,
     );
     expect(submit).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
     expect(
-      screen.getByRole("button", { name: "Back to library" }),
-    ).toBeDisabled();
+      screen.getByRole("dialog", { name: "New template" }),
+    ).toBeInTheDocument();
   } finally {
     await act(async () => {
       reject(new Error("Save rejected"));
@@ -216,59 +491,49 @@ it("shows a contextual library action and discloses optional template fields wit
   expect(name).toHaveValue("Project kickoff");
   save.mockResolvedValueOnce("saved");
   await user.click(submit);
-  expect(await screen.findByRole("tab", { name: "Templates" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("button", { name: "New template" })).toHaveFocus();
-  await user.click(screen.getByRole("tab", { name: "Teams" }));
-  await user.click(screen.getByRole("button", { name: "New team" }));
-  expect(
-    screen.getByRole("dialog", { name: "New team" }),
-  ).toHaveAccessibleDescription(/Choose agents/);
-  expect(
-    screen.queryByRole("textbox", { name: "Description" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("textbox", { name: "Find individual agents" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByText(/No agents from the Agents page/)).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Back to library" }));
-  expect(screen.getByRole("tab", { name: "Teams" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("button", { name: "New team" })).toHaveFocus();
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
-
 it("opens saved optional sections and keeps missing-member errors visible when collapsed", async () => {
   const user = userEvent.setup();
   const saved = {
-    ...entry,
+    ...templateEntry,
     record: {
-      ...entry.record,
-      value: {
-        ...emptyLineup(),
-        type: "template" as const,
-        id: "saved",
-        name: "Saved template",
-        description: "Kickoff",
-        teamIds: ["missing"],
-        canvas: "# Goal",
-      },
+      ...templateEntry.record,
+      value: { ...template, teamIds: ["missing"] },
     },
   };
-  const { save } = fixture([saved]);
-  await user.click(screen.getByRole("button", { name: "Saved template" }));
+  const { save } = fixture(false, [saved]);
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Saved template" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Edit template" }),
+  );
   expect(screen.getByRole("dialog", { name: "Edit template" })).toBeVisible();
   expect(
     screen.getByRole("textbox", { name: "Starting Canvas (Markdown)" }),
-  ).toHaveValue("# Goal");
+  ).toHaveValue("# Goals");
   expect(
     screen.getByRole("checkbox", { name: "Unavailable team (0)" }),
   ).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Teams & agents (1)" }));
+  await user.click(screen.getByRole("button", { name: "Teams & agents (2)" }));
   expect(screen.getByRole("alert")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Back to library" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(save).not.toHaveBeenCalled();
+});
+
+it("keeps a team editor free of template-only or empty-search fields", async () => {
+  fixture(true);
+  const editor = screen.getByRole("dialog", { name: "Edit team" });
+  expect(editor).toHaveAccessibleDescription(/Choose agents/);
+  expect(
+    within(editor).queryByRole("textbox", { name: "Description" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(editor).queryByRole("textbox", { name: "Find individual agents" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(editor).getByText(/No agents from the Agents page/),
+  ).toBeVisible();
 });

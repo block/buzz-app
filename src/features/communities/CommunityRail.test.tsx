@@ -1088,3 +1088,31 @@ it("removes the Invite shortcut with its Settings contribution and restores it o
     await root.fiber.dispose();
   }
 });
+
+it("opens a deep-link invite on Personal space without claiming until the user continues", async () => {
+  const t = harness();
+  t.update({ selected: null });
+  const onInviteClose = vi.fn();
+  render(
+    <CommunityRail
+      communities={t.communities}
+      invite={{
+        community: "https://invited.example",
+        code: "v2.invite",
+        requestId: 1,
+      }}
+      onInviteClose={onInviteClose}
+      onSelect={t.onSelect}
+    />,
+  );
+  expect(screen.getByLabelText("Relay URL")).toHaveValue(
+    "https://invited.example",
+  );
+  expect(
+    t.fetch.mock.calls.some(([url]) => String(url).includes("/claim")),
+  ).toBe(false);
+  expect(t.select).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(onInviteClose).toHaveBeenCalledWith(1);
+  expect(t.select).not.toHaveBeenCalled();
+});

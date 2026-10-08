@@ -1,13 +1,21 @@
 import { useImageGalleryMotion } from "./use-image-gallery-motion";
-import { useImageViewport } from "./use-image-viewport";
+import { MIN_ZOOM, useImageViewport } from "./use-image-viewport";
 import { useMediaControls } from "./use-media-controls";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowSquareOutIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CopyIcon,
   DownloadIcon,
   MinusIcon,
   PlusIcon,
@@ -20,13 +28,15 @@ import {
 } from "./attachment-source";
 import styles from "./Messages.module.css";
 import { downloadNativeMedia } from "./native-download";
+import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
+import { copyNativeImage } from "./native-image-copy";
 
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
 const ZOOM_PRESETS = [0.5, 1, 1.5, 2];
 
 type Point = Readonly<{ x: number; y: number }>;
+// Pointer travel beyond this is a pan, not a click.
+const CLICK_SLOP = 4;
 
 type ImageReviewStageProps = {
   attachments: readonly Attachment[];
@@ -47,9 +57,19 @@ export function ImageReviewStage({
   const image = useRef<HTMLImageElement>(null);
   const previousButton = useRef<HTMLButtonElement>(null);
   const nextButton = useRef<HTMLButtonElement>(null);
-  const drag = useRef<
-    { pointer: number; origin: Point; offset: Point } | undefined
+  const press = useRef<
+    | {
+        pointer: number;
+        origin: Point;
+        offset: Point;
+        panning: boolean;
+        // Cleared by pointer travel, a second contact, pressing off the image, or a
+        // source change during the press.
+        click: boolean;
+      }
+    | undefined
   >(undefined);
+  const zoomHint = useId();
   const [dragging, setDragging] = useState(false);
   const selectedIndex = Math.max(
     0,
@@ -57,18 +77,34 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  // A press that outlives its image must not zoom any later one, even when
+  // navigation returns to the same source.
+  useLayoutEffect(() => {
+    void source;
+    if (press.current) press.current.click = false;
+  }, [source]);
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const [downloadErrorSource, setDownloadErrorSource] = useState<string>();
+  const [copying, setCopying] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<"success" | "error">();
+  const copyBusy = useRef(false);
+  const copyNoticeTimer = useRef<number | undefined>(undefined);
+  const selectedUrlRef = useRef(selectedUrl);
+  selectedUrlRef.current = selectedUrl;
   const externalSource = source ? safeOpenUrl(source) && !proxySource : false;
+  const canCopyImage = proxySource && (nativeSource || supportsImageCopy());
   const {
     zoom,
     offset,
+    maxZoom,
     zoomTo: setBoundedZoom,
+    toggleZoomAt,
     panTo,
     constrain,
   } = useImageViewport(stage, image, source);
-  const idle = useMediaControls(stage, source);
+  const copyFeedbackVisible = copying || copyNotice !== undefined;
+  const idle = useMediaControls(stage, source, copyFeedbackVisible);
   const pannable = zoom > 1;
   const nextZoom = ZOOM_PRESETS.find((preset) => preset > zoom) ?? MIN_ZOOM;
   const { departing, prepare } = useImageGalleryMotion(
@@ -78,12 +114,56 @@ export function ImageReviewStage({
     source,
   );
 
+  const clearCopyNoticeTimer = useCallback(() => {
+    if (copyNoticeTimer.current === undefined) return;
+    window.clearTimeout(copyNoticeTimer.current);
+    copyNoticeTimer.current = undefined;
+  }, []);
+  const clearCopyNotice = useCallback(() => {
+    clearCopyNoticeTimer();
+    setCopyNotice(undefined);
+  }, [clearCopyNoticeTimer]);
+  const showCopyNotice = useCallback(
+    (notice: "success" | "error") => {
+      clearCopyNoticeTimer();
+      setCopyNotice(notice);
+      copyNoticeTimer.current = window.setTimeout(
+        () => {
+          copyNoticeTimer.current = undefined;
+          setCopyNotice(undefined);
+        },
+        notice === "success" ? 4000 : 6000,
+      );
+    },
+    [clearCopyNoticeTimer],
+  );
+  const copyImage = useCallback(async () => {
+    if (copyBusy.current || !image.current) return;
+    const copiedUrl = selectedUrl;
+    copyBusy.current = true;
+    setCopying(true);
+    clearCopyNotice();
+    try {
+      // The broker path must invoke clipboard.write synchronously in the gesture.
+      // Native media instead stays in the authenticated host boundary.
+      if (nativeSource && source) await copyNativeImage(source);
+      else await copyImageToClipboard(image.current);
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("success");
+    } catch {
+      if (selectedUrlRef.current === copiedUrl) showCopyNotice("error");
+    } finally {
+      copyBusy.current = false;
+      setCopying(false);
+    }
+  }, [clearCopyNotice, nativeSource, source, selectedUrl, showCopyNotice]);
+
   const choose = useCallback(
     (index: number) => {
       const item = attachments[index];
       if (!item || item.url === selected?.url) return;
       prepare(index > selectedIndex ? 1 : -1);
       setBoundedZoom(1);
+      clearCopyNotice();
       const active = document.activeElement;
       const keepsNavigationFocus =
         (active === previousButton.current && index > 0) ||
@@ -98,6 +178,7 @@ export function ImageReviewStage({
       selected?.url,
       selectedIndex,
       prepare,
+      clearCopyNotice,
     ],
   );
   useEffect(() => {
@@ -137,6 +218,8 @@ export function ImageReviewStage({
     return () => document.removeEventListener("keydown", keydown);
   }, [attachments.length, selectedIndex, choose]);
 
+  useEffect(() => clearCopyNoticeTimer, [clearCopyNoticeTimer]);
+
   if (!selected)
     return (
       <p className={styles.mediaReviewUnavailable} role="status">
@@ -151,38 +234,52 @@ export function ImageReviewStage({
       aria-label="Image gallery"
       tabIndex={-1}
       data-controls-idle={idle || undefined}
+      data-controls-revealed={copyFeedbackVisible || undefined}
       data-review-zoomed={zoom !== 1 || undefined}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
-        if (!pannable || event.button !== 0) return;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = {
+        if (event.button !== 0) return;
+        if (press.current) {
+          // Multi-touch is not a click; the first contact keeps the pan.
+          press.current.click = false;
+          return;
+        }
+        press.current = {
           pointer: event.pointerId,
           origin: { x: event.clientX, y: event.clientY },
           offset,
+          panning: pannable,
+          click: event.isPrimary && event.target === image.current,
         };
-        setDragging(true);
+        // Capture so the release always ends this press, even off the stage.
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDragging(pannable);
       }}
       onPointerMove={(event) => {
-        const active = drag.current;
+        const active = press.current;
         if (!active || active.pointer !== event.pointerId) return;
-        panTo({
-          x: active.offset.x + event.clientX - active.origin.x,
-          y: active.offset.y + event.clientY - active.origin.y,
-        });
+        const dx = event.clientX - active.origin.x;
+        const dy = event.clientY - active.origin.y;
+        if (Math.hypot(dx, dy) > CLICK_SLOP) active.click = false;
+        if (active.panning)
+          panTo({ x: active.offset.x + dx, y: active.offset.y + dy });
       }}
       onPointerUp={(event) => {
-        if (drag.current?.pointer !== event.pointerId) return;
-        drag.current = undefined;
+        const active = press.current;
+        if (active?.pointer !== event.pointerId) return;
+        press.current = undefined;
         setDragging(false);
         event.currentTarget.releasePointerCapture(event.pointerId);
+        if (active.click) toggleZoomAt(event.clientX, event.clientY);
       }}
-      onLostPointerCapture={() => {
-        drag.current = undefined;
+      onLostPointerCapture={(event) => {
+        if (press.current?.pointer !== event.pointerId) return;
+        press.current = undefined;
         setDragging(false);
       }}
-      onPointerCancel={() => {
-        drag.current = undefined;
+      onPointerCancel={(event) => {
+        if (press.current?.pointer !== event.pointerId) return;
+        press.current = undefined;
         setDragging(false);
       }}
     >
@@ -207,6 +304,7 @@ export function ImageReviewStage({
             data-review-chrome={!current ? "" : undefined}
             src={item.source}
             alt={current ? "Attachment preview" : ""}
+            aria-describedby={current ? zoomHint : undefined}
             aria-hidden={!current || undefined}
             draggable={false}
             onLoad={current ? constrain : undefined}
@@ -222,6 +320,9 @@ export function ImageReviewStage({
           </p>
         );
       })}
+      <p id={zoomHint} className="sr-only">
+        Click the image to zoom.
+      </p>
       <div
         className={styles.imageReviewToolbar}
         data-image-controls=""
@@ -275,11 +376,28 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label="Zoom in"
-            disabled={zoom >= MAX_ZOOM}
+            disabled={zoom >= maxZoom}
             onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
             icon={<PlusIcon size={16} aria-hidden="true" />}
           />
         </div>
+        {canCopyImage && (
+          <IconButton
+            size="sm"
+            type="button"
+            aria-label="Copy image"
+            title="Copy image"
+            disabled={!canCopyImage}
+            loading={copying}
+            onClick={() => void copyImage()}
+            icon={<CopyIcon size={17} aria-hidden="true" />}
+          />
+        )}
+        {copyNotice && (
+          <span role={copyNotice === "error" ? "alert" : "status"}>
+            {copyNotice === "success" ? "Image copied" : "Couldn't copy image"}
+          </span>
+        )}
         {nativeSource && source && (
           <IconButton
             size="sm"

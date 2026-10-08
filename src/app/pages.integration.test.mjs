@@ -99,13 +99,33 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
-      services.settingsCards.snapshot().map((card) => card.pluginId),
+      services.settingsCards
+        .snapshot()
+        .map((card) => card.pluginId)
+        .sort(),
       [
         "block.builderlab",
-        "buzz.channels",
         "block.hosted-communities",
+        "buzz.channels",
         "buzz.emoji",
+        "buzz.pairing",
       ],
+    );
+    const pairingCard = services.settingsCards
+      .snapshot()
+      .find((card) => card.key === "buzz.pairing/mobile");
+    assert.ok(pairingCard);
+    await services.plugins.change("disable", "buzz.pairing");
+    assert.equal(services.settingsCards.has("buzz.pairing/mobile"), false);
+    await services.plugins.change("enable", "buzz.pairing");
+    await vi.waitFor(() =>
+      assert.ok(services.settingsCards.has("buzz.pairing/mobile")),
+    );
+    assert.notEqual(
+      services.settingsCards
+        .snapshot()
+        .find((card) => card.key === "buzz.pairing/mobile"),
+      pairingCard,
     );
     assert.equal(
       services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
@@ -152,12 +172,16 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("disable", "buzz.channel-templates");
     assert.deepEqual(services.channelTemplates.snapshot(), []);
     assert.deepEqual(
-      services.settingsCards.snapshot().map((card) => card.pluginId),
+      services.settingsCards
+        .snapshot()
+        .map((card) => card.pluginId)
+        .sort(),
       [
         "block.builderlab",
-        "buzz.channels",
         "block.hosted-communities",
+        "buzz.channels",
         "buzz.emoji",
+        "buzz.pairing",
       ],
     );
     await services.plugins.change("enable", "buzz.channel-templates");
@@ -217,6 +241,30 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         services.panels.resolve(profileTarget)?.pluginId,
         "buzz.profiles",
+      ),
+    );
+
+    const usage = services.panels
+      .snapshot()
+      .find((panel) => panel.pluginId === "buzz.channel-usage");
+    assert.equal(usage.channelMenu.label, "View channel usage");
+    assert.equal(usage.matches("channel"), false);
+    await services.plugins.change("disable", "buzz.channel-usage");
+    assert.equal(services.panels.snapshot().includes(usage), false);
+    assert.ok(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.channels"),
+    );
+    await services.plugins.change("enable", "buzz.channel-usage");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.panels
+          .snapshot()
+          .some(
+            (panel) =>
+              panel.pluginId === "buzz.channel-usage" && panel !== usage,
+          ),
       ),
     );
 
@@ -327,6 +375,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((page) => page.pluginId === "buzz.sessions");
     assert.equal(sessionsPage.title, "Sessions");
+    assert.equal(sessionsPage.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(sessionsPage.component)),
       /Connect to a community/,

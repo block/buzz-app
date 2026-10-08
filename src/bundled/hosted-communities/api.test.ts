@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
-  admitDeletion,
+  brokerApi,
   type ApiFailure,
   clearPendingDeletion,
   DELETION_PENDING_KEY,
@@ -12,6 +12,7 @@ import {
   type PendingDeletion,
 } from "./api";
 
+const { admitDeletion } = brokerApi;
 const request: DeletionRequest = {
   community_id: "11111111-1111-4111-8111-111111111111",
   host: "North.communities.buzz.xyz",

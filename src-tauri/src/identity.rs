@@ -1,6 +1,7 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
+use buzz_credential_store as credentials;
 use nostr::{
     event::Event,
     key::{Keys, SecretKey as NostrSecretKey},
@@ -15,13 +16,6 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, String>;
 const INVALID: &str = "Enter a valid nsec private key";
 const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
-// Debug identities must never occupy the create-only release item.
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
-const SERVICE: &str = if cfg!(debug_assertions) {
-    "dev.local.buzz.foundation.identity.debug"
-} else {
-    "dev.local.buzz.foundation.identity"
-};
 
 // Batch-local conversation keys avoid repeating ECDH for every self-encrypted slot.
 // Callers enforce their encoded-payload budget before reaching this helper.
@@ -159,11 +153,21 @@ trait Store: Send + Sync {
     fn add(&self, value: &[u8]) -> Result<()>;
 }
 struct OsStore;
+#[cfg(not(test))]
+fn read_saved() -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match credentials::read_human() {
+        Ok(value) => Ok(Some(value)),
+        Err(credentials::Error::Absent) => Ok(None),
+        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; no identity was created.".into()),
+        Err(credentials::Error::Busy) => Err("Another Buzz app is accessing secure storage. Retry shortly.".into()),
+        Err(credentials::Error::Corrupt) => Err(MALFORMED.into()),
+        Err(_) => Err("Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.".into()),
+    }
+}
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
     use super::*;
     use security_framework::os::macos::keychain::SecKeychain;
-    const ACCOUNT: &str = "human";
     fn error(error: security_framework::base::Error) -> String {
         match error.code() {
             -25299 => {
@@ -178,17 +182,16 @@ mod platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            let keychain = SecKeychain::default().map_err(error)?;
-            match keychain.find_generic_password(SERVICE, ACCOUNT) {
-                Ok((password, _)) => Ok(Some(Zeroizing::new(password.to_vec()))),
-                Err(e) if e.code() == -25300 => Ok(None),
-                Err(e) => Err(error(e)),
-            }
+            read_saved()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
             SecKeychain::default()
                 .map_err(error)?
-                .add_generic_password(SERVICE, ACCOUNT, value)
+                .add_generic_password(
+                    credentials::HUMAN_SERVICE,
+                    credentials::HUMAN_ACCOUNT,
+                    value,
+                )
                 .map_err(error)
         }
     }
@@ -196,8 +199,7 @@ mod platform {
 #[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
 mod keyring_platform {
     use super::*;
-    use buzz_credential_store::{self as credentials, Error};
-    const ACCOUNT: &str = "human";
+    use buzz_credential_store::Error;
     fn error(error: Error) -> String {
         match error {
             Error::Occupied => "An identity is already saved; nothing was overwritten. Restart to restore it.",
@@ -209,14 +211,15 @@ mod keyring_platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            match credentials::read(SERVICE, ACCOUNT) {
-                Ok(value) => Ok(Some(value)),
-                Err(Error::Absent) => Ok(None),
-                Err(e) => Err(error(e)),
-            }
+            read_saved()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
-            credentials::add(SERVICE, ACCOUNT, value).map_err(error)
+            credentials::add(
+                credentials::HUMAN_SERVICE,
+                credentials::HUMAN_ACCOUNT,
+                value,
+            )
+            .map_err(error)
         }
     }
 }
@@ -741,6 +744,72 @@ pub async fn identity_prepare_remote_agent_authorization(
     agent_pubkey: String,
 ) -> Result<Vec<String>> {
     host.authorize_agent(owner, agent_pubkey).await
+}
+
+/// Builderlab's identity-binding origin; this signer never binds the key elsewhere.
+const BUILDERLAB_ORIGIN: &str = "https://app.builderlab.xyz";
+
+/// The challenge fields Builderlab returns for binding this identity.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuilderlabChallenge {
+    challenge_id: String,
+    nonce: String,
+    verification_code: String,
+    origin: String,
+    expires_at: String,
+}
+impl BuilderlabChallenge {
+    /// block/buzz's `nostr_bind` checks and kind 24243 tags, pinned to Builderlab.
+    fn template(self, now: u64) -> Result<EventTemplate> {
+        let nonce_ok = self.nonce.len() == 43
+            && self
+                .nonce
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        let expires = chrono::DateTime::parse_from_rfc3339(&self.expires_at)
+            .map(|at| at.timestamp())
+            .unwrap_or(i64::MIN);
+        if self.challenge_id.len() != 36
+            || uuid::Uuid::parse_str(&self.challenge_id).is_err()
+            || !nonce_ok
+            || self.verification_code.len() != 6
+            || !self.verification_code.bytes().all(|b| b.is_ascii_digit())
+            || self.origin != BUILDERLAB_ORIGIN
+            || expires <= i64::try_from(now).unwrap_or(i64::MAX)
+        {
+            return Err("Invalid Nostr identity challenge".into());
+        }
+        let tag = |name: &str, value: String| vec![name.to_owned(), value];
+        Ok(EventTemplate {
+            created_at: now,
+            kind: 24243,
+            content: String::new(),
+            tags: vec![
+                tag("challenge_id", self.challenge_id),
+                tag("nonce", self.nonce),
+                tag("verification_code", self.verification_code),
+                tag("audience", "buzz:nostr-identity".into()),
+                tag("action", "bind_nostr_identity".into()),
+                tag("protocol", "buzz-nostr-identity".into()),
+                tag("version", "1".into()),
+                tag("origin", self.origin),
+                tag("expires_at", self.expires_at),
+            ],
+        })
+    }
+}
+/// Signs only a valid Builderlab binding challenge; never a general event signer.
+#[tauri::command]
+pub async fn identity_sign_builderlab_binding(
+    host: tauri::State<'_, IdentityHost>,
+    challenge: BuilderlabChallenge,
+) -> Result<serde_json::Value> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "System clock is before 1970")?
+        .as_secs();
+    host.sign(challenge.template(now)?).await
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {

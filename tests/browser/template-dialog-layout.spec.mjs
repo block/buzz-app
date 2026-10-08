@@ -1,11 +1,15 @@
 import { test, expect } from "./fixture.mjs";
 import {
   chooseColorMode,
+  openPage,
   selectSettingsSection,
   settleShellToggle,
 } from "./navigation.mjs";
 
 test.use({
+  // Keep the real startup barrier: this layout journey does not hold startup
+  // requests and must not open the account menu before initial composer focus.
+  launchAnimation: true,
   productionBroker: true,
   channelLifecycle: true,
   historyCounts: { alpha: 0, beta: 0 },
@@ -38,33 +42,22 @@ test("template dialogs keep headers and optional setup contained across layouts"
       if (await showNavigation.isVisible()) await showNavigation.click();
       await page
         .getByRole("complementary", { name: "Settings sidebar" })
-        .getByRole("button", { name: "Templates & teams", exact: true })
+        .getByRole("button", { name: "Templates", exact: true })
         .click();
       await expect(
-        page.getByRole("region", { name: "Templates and teams settings" }),
+        page.getByRole("region", { name: "Templates settings" }),
       ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "No templates or teams yet" }),
-      ).toBeVisible();
-      await page
-        .getByRole("button", { name: "Manage templates & teams", exact: true })
-        .click();
-      const library = page.getByRole("dialog", {
-        name: "Templates & teams",
-        exact: true,
+      const library = page.getByRole("region", {
+        name: "Templates settings",
       });
-      await expect(library).toHaveAccessibleDescription(
-        /Private to you in this community/,
-      );
       await expect(
-        library.getByText("No templates yet", { exact: true }),
+        library.getByText("Your next channel starts here", { exact: true }),
       ).toBeVisible();
+      await expect(
+        library.getByText("Bring your agents together", { exact: true }),
+      ).toHaveCount(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await contained(library);
-      await expect(library).toHaveCSS("backdrop-filter", "blur(8px)");
-      await expect(library).toHaveCSS(
-        "background-color",
-        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
-      );
       if (width === 1440)
         await library.screenshot({
           path: info.outputPath(`library-${mode}.png`),
@@ -82,6 +75,14 @@ test("template dialogs keep headers and optional setup contained across layouts"
         editor.getByRole("textbox", { name: "Starting Canvas (Markdown)" }),
       ).toHaveCount(0);
       await contained(editor);
+      await expect(editor).toHaveAccessibleDescription(
+        /existing channels stay unchanged/,
+      );
+      await expect(editor).toHaveCSS("backdrop-filter", "blur(8px)");
+      await expect(editor).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgba(255, 255, 255, 0.9)" : "rgba(40, 40, 40, 0.9)",
+      );
       if (width === 1440)
         await editor.screenshot({
           path: info.outputPath(`new-template-${mode}.png`),
@@ -109,18 +110,17 @@ test("template dialogs keep headers and optional setup contained across layouts"
         await editor.screenshot({
           path: info.outputPath(`expanded-template-${mode}-narrow.png`),
         });
-      await editor
-        .getByRole("button", { name: "Back to library", exact: true })
-        .click();
+      await editor.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(
         library.getByRole("button", { name: "New template", exact: true }),
       ).toBeFocused();
-      await library.getByRole("tab", { name: "Teams", exact: true }).click();
+      await openPage(page, "Agents");
+      const teams = page.getByRole("region", { name: "Agents", exact: true });
       await expect(
-        library.getByRole("heading", { name: "No teams yet" }),
+        teams.getByText("Bring your agents together", { exact: true }),
       ).toBeVisible();
-      await library
-        .getByRole("button", { name: "New team", exact: true })
+      await teams
+        .getByRole("button", { name: "Create team", exact: true })
         .click();
       const team = page.getByRole("dialog", { name: "New team", exact: true });
       await expect(team).toHaveAccessibleDescription(/Choose agents/);
@@ -132,6 +132,15 @@ test("template dialogs keep headers and optional setup contained across layouts"
         .getByRole("button", { name: "Close templates", exact: true })
         .click();
       await expect(team).toHaveCount(0);
+      await expect(
+        teams.getByRole("button", { name: "Create team", exact: true }),
+      ).toBeFocused();
+      await page
+        .getByRole("button", { name: "Your profile", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Settings", exact: true })
+        .click();
     }
   }
 });

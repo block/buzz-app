@@ -1,3 +1,5 @@
+import { archiveClient } from "../archive/client";
+import type { ArchiveHost } from "../archive/types";
 import {
   createSidebarApi,
   sidebarResponse,
@@ -16,7 +18,11 @@ import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
 import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
-import { projectGitHost, type ProjectGit } from "../projects/git";
+import {
+  communityGitRepository,
+  projectGitHost,
+  type ProjectGit,
+} from "../projects/git";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import type { AgentLibraryReader } from "../agents/library";
@@ -76,6 +82,11 @@ export interface ReadTransport {
     target: { id: string; pubkey: string; relayUrl: string },
     nonce: string,
   ) => Promise<string>;
+  /** One-repository Git authorization for this community's Buzz git; null for any other URL.
+   * The token is the NIP-98 value after `Authorization: Nostr `. */
+  readonly authorizeGit?: (
+    repository: string,
+  ) => Promise<{ repository: string; token: string } | null>;
   readonly uploadAttachment?: AttachmentUpload;
   /** Host-owned idempotent DM opening. The session verifies membership before use. */
   readonly openDirectMessage?: (
@@ -92,6 +103,7 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
+  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
@@ -340,7 +352,7 @@ export async function registerBrokerCommunity(
   }
 }
 
-/** Dev-only: a same-origin broker (see dev/relay-broker.mjs) holds the key and signs reads. */
+/** Dev-only: a same-origin broker (see browser-host/relay-broker.mjs) holds the key and signs reads. */
 export async function connectBrokerTransport(
   base = "",
   signal?: AbortSignal,
@@ -381,6 +393,7 @@ export async function connectBrokerTransport(
     agentLibrary?: boolean;
     agentMemories?: boolean;
     agentLogProof?: boolean;
+    gitAuthorization?: boolean;
     agentActivity?: boolean;
     buzz_v1?: unknown;
   };
@@ -505,6 +518,26 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
+    ...(session.agentActivity === true && session.live === true
+      ? {
+          activityArchive: archiveClient("broker", async (input, signal) => {
+            const response = await fetch(`${endpoint}/archive`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ viewer: session.viewer, ...input }),
+              signal: signal
+                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+                : AbortSignal.timeout(10000),
+            });
+            if (!response.ok)
+              throw new Error(
+                "Archive operation failed; retry without deleting stored data",
+              );
+            return response.json();
+          }).host,
+        }
+      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
@@ -608,6 +641,32 @@ export async function connectBrokerTransport(
             )
               throw new Error("Log authorization unavailable");
             return value.signature;
+          },
+        }
+      : {}),
+    ...(session.gitAuthorization === true && community && session.relayUrl
+      ? {
+          authorizeGit: async (input: string) => {
+            const repository = communityGitRepository(
+              relayOrigin(session.relayUrl ?? ""),
+              input,
+            );
+            if (!repository) return null;
+            const response = await fetch(`${endpoint}/git-authorization`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repository }),
+            });
+            const value: unknown = response.ok ? await response.json() : null;
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !("token" in value) ||
+              typeof value.token !== "string"
+            )
+              throw new Error("Repository sign-in unavailable");
+            return { repository, token: value.token };
           },
         }
       : {}),

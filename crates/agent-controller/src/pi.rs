@@ -314,12 +314,8 @@ fn version_output(mut probe: Command) -> Result<String> {
 /// Selection constraints shared by catalog discovery and ACP launch.
 /// Empty selectors retain Pi defaults; model IDs may contain namespace slashes.
 pub fn validate_selection(provider: &str, model: &str) -> Result<()> {
-    if !provider.is_empty() && model.is_empty() {
-        return Err(
-            "Choose a Pi model for the selected provider, or clear both fields to use Pi defaults"
-                .into(),
-        );
-    }
+    crate::HarnessConfigurationPolicy::for_command("buzz-pi-acp")
+        .validate_selection(provider, model)?;
     if provider.contains('/') {
         return Err("Invalid Pi provider or model ID".into());
     }

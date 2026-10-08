@@ -123,16 +123,9 @@ pub(crate) fn selectors<'a>(
     resolved: &'a HarnessEdit,
     env: &'a BTreeMap<String, String>,
 ) -> Selectors<'a> {
-    let keys = match Path::new(&resolved.command)
-        .file_name()
-        .and_then(|s| s.to_str())
-    {
-        Some("buzz-agent") => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
-        Some("goose" | "goose.exe" | "goose-acp" | "goose-acp.exe") => {
-            Some(("GOOSE_MODEL", "GOOSE_PROVIDER"))
-        }
-        _ => None,
-    };
+    let keys = crate::HarnessConfigurationPolicy::for_command(&resolved.command)
+        .selector_environment
+        .map(|keys| (keys.model, keys.provider));
     let saved = |value: &'a String| (!value.is_empty()).then_some(value.as_str());
     let mut model = saved(&resolved.model);
     let mut provider = None;

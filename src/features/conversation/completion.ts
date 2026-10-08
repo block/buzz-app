@@ -1,3 +1,4 @@
+import type { MentionRecipient } from "../messages/mention-draft";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -82,7 +83,22 @@ export function completionResult(result: CompletionResult): CompletionResult {
     )
       continue;
     const edit = item.edit;
-    if ("mention" in edit) {
+    if ("mentions" in edit) {
+      if (
+        !Array.isArray(edit.mentions) ||
+        !edit.mentions.length ||
+        edit.mentions.length > 32 ||
+        edit.mentions.some(
+          (person: MentionRecipient) =>
+            !person ||
+            typeof person.pubkey !== "string" ||
+            !/^[0-9a-f]{64}$/.test(person.pubkey) ||
+            typeof person.name !== "string" ||
+            !person.name.trim(),
+        )
+      )
+        continue;
+    } else if ("mention" in edit) {
       if (
         !edit.mention ||
         typeof edit.mention.pubkey !== "string" ||
@@ -106,9 +122,17 @@ export function completionResult(result: CompletionResult): CompletionResult {
           ? { canSelect: item.canSelect }
           : {}),
         edit: Object.freeze(
-          "mention" in edit
-            ? { mention: Object.freeze({ ...edit.mention }) }
-            : { text: edit.text },
+          "mentions" in edit && edit.mentions
+            ? {
+                mentions: Object.freeze(
+                  edit.mentions.map((person: MentionRecipient) =>
+                    Object.freeze({ pubkey: person.pubkey, name: person.name }),
+                  ),
+                ),
+              }
+            : "mention" in edit
+              ? { mention: Object.freeze({ ...edit.mention }) }
+              : { text: edit.text },
         ),
       }),
     );

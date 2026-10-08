@@ -12,7 +12,7 @@ import type { InboxSnapshot } from "./inbox";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { LiveCallbacks, LiveSnapshot } from "./live";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 const channel = "01234567-89ab-cdef-0123-456789abcdef";
 const other = "11234567-89ab-cdef-0123-456789abcdef";
 const third = "21234567-89ab-cdef-0123-456789abcdef";
@@ -22,7 +22,7 @@ afterEach(() => {
   for (const f of cleanups.splice(0)) f();
   vi.useRealTimers();
 });
-function setup(initialGrant = true) {
+function setup(initialGrant = true, workflowAuthority = false) {
   const bff = sidebarFixture(),
     viewer = keypair(),
     peer = keypair(),
@@ -35,6 +35,7 @@ function setup(initialGrant = true) {
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      ...(workflowAuthority ? { archiveAuthority: relay.pubkey } : {}),
       sidebarApi: bff.api,
       query,
       media: () => undefined,
@@ -2686,3 +2687,63 @@ it("a prepared channel read needs an opaque relay anchor, not a display timestam
     ]),
   );
 });
+
+it.each(["trusted", "no authority", "forged"] as const)(
+  "workflow display attribution keeps signed author and relay reason (%s)",
+  async (mode) => {
+    const authority = mode !== "no authority";
+    const h = setup(true, authority);
+    const root = message(h.peer, channel, "root", 10);
+    const signer = mode === "forged" ? h.peer : h.relay;
+    const reply = eventDto(
+      message(signer, channel, "workflow result", 11, [
+        ["e", root.id, "", "root"],
+        ["e", root.id, "", "reply"],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", h.viewer.pubkey],
+        ["p", h.viewer.pubkey],
+      ]),
+    );
+    h.emit([root, reply]);
+    h.bff.rows.set(
+      channel,
+      sidebarRow(channel, {
+        threads: {
+          complete: true,
+          items: [
+            {
+              root_id: root.id,
+              latest_reply_id: reply.id,
+              latest_reply_at: 11,
+              unread: { status: "exact", value: 1 },
+            },
+          ],
+        },
+      }),
+    );
+    h.bff.messages.set(reply.id, {
+      message_id: reply.id,
+      status: "unread",
+      reason: "mention",
+    });
+    const snapshot = await inbox(h);
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]).toMatchObject({
+      authorId: signer.pubkey,
+      workflowOwnerId: mode === "trusted" ? h.viewer.pubkey : undefined,
+      mentioned: true,
+    });
+    expect(h.unread.activity(channel).items).toEqual([
+      expect.objectContaining({
+        authorId: signer.pubkey,
+        workflowOwnerId: mode === "trusted" ? h.viewer.pubkey : undefined,
+        unread: { status: "exact", value: 1 },
+      }),
+    ]);
+    // Attribution never overrides the authority's classification (known #622 gap).
+    expect(h.unread.attention(channel, reply.id)).toMatchObject({
+      category: "mention",
+      unread: true,
+    });
+  },
+);

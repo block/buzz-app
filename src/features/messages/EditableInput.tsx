@@ -61,6 +61,12 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
+  buzzCopyMarkdown,
+  composerClipboard,
+  identityLink,
+} from "./composer-clipboard";
+import {
+  mentionBoundary,
   mentionDraft,
   type MentionDraft,
   type MentionRecipient,
@@ -74,6 +80,7 @@ import {
   type ComposerInputElement,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
+import { macWebKit } from "./mac-webkit";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -154,6 +161,9 @@ export type EditableInputProps = Omit<
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
+  /** Vet a pasted identity link as a notification recipient: the recipient under
+   * its current name, or null to keep the display-only chip. */
+  acceptRecipient?(pubkey: string): MentionRecipient | null;
 };
 
 /** ProseMirror owns native editing, composition, selection and a single history.
@@ -169,6 +179,7 @@ export function EditableInput({
   onDraftChange,
   onFormatsChange,
   onEditLink,
+  acceptRecipient,
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -183,6 +194,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onEditLink,
+    acceptRecipient,
     disabled,
     placeholder,
   });
@@ -193,6 +205,7 @@ export function EditableInput({
     onDraftChange,
     onFormatsChange,
     onEditLink,
+    acceptRecipient,
     disabled,
     placeholder,
   };
@@ -450,31 +463,73 @@ export function EditableInput({
     };
     const insert = (
       text: string,
-      recipient?: MentionRecipient,
+      recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
+      terminator?: ":",
     ) => {
-      if (!editable() || composing.current) return false;
-      if (range) setRange(range.start, range.end);
-      const { from, to, $from } = editor.state.selection;
+      if (!editable() || composing.current || editor.composing) return false;
+      if (terminator) {
+        const source = projection();
+        if (
+          !range ||
+          recipient ||
+          !editor.state.selection.empty ||
+          source.source(editor.state.selection.from) !== range.end
+        )
+          return false;
+        // Like inline input rules, keep the typed source as the undo target.
+        const typed = editor.state.tr.insertText(terminator);
+        if (
+          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
+          current.current.maxLength
+        )
+          return false;
+        const previous = editor.state;
+        editor.dispatch(typed);
+        if (editor.state === previous) return false;
+        range = { start: range.start, end: range.end + terminator.length };
+        openTokens(range.start, range.end);
+      } else if (range) setRange(range.start, range.end);
+      const source = projection();
+      // Do not select the shortcode in a separate transaction: undo must retain
+      // the collapsed caret following the colon, not the replacement range.
+      const from = range
+        ? source.position(range.start)
+        : editor.state.selection.from;
+      const to = range
+        ? source.position(range.end, -1)
+        : editor.state.selection.to;
+      const $from = editor.state.doc.resolve(from);
       const marks = $from.parent.type
         .allowedMarks(editor.state.storedMarks ?? $from.marks())
         .filter((mark) => mark.type !== composerSchema.marks.recipient);
       text = text.replace(/\r\n?/g, "\n");
       const tr = closeHistory(editor.state.tr);
       if (recipient) {
-        const token = $from.parent.type.spec.code
-          ? composerSchema.text(`@${recipient.name}`, [
-              composerSchema.marks.recipient.create(recipient),
-            ])
-          : composerSchema.nodes.token.create(
-              { source: `@${recipient.name}`, recipient, editAsText: false },
-              null,
-              marks,
-            );
+        const recipients: readonly MentionRecipient[] = Array.isArray(recipient)
+          ? recipient
+          : [recipient as MentionRecipient];
         tr.replaceWith(
           from,
           to,
-          Fragment.fromArray([token, composerSchema.text(" ", marks)]),
+          Fragment.fromArray(
+            recipients.flatMap((person) => [
+              $from.parent.type.spec.code
+                ? composerSchema.text(`@${person.name}`, [
+                    composerSchema.marks.recipient.create(person),
+                  ])
+                : composerSchema.nodes.token.create(
+                    {
+                      source: `@${person.name}`,
+                      recipient: person,
+                      editAsText: false,
+                    },
+                    null,
+                    marks,
+                  ),
+              composerSchema.text(" ", marks),
+            ]),
+          ),
         );
       } else if (text)
         tr.replaceWith(from, to, composerSchema.text(text, marks));
@@ -482,6 +537,11 @@ export function EditableInput({
       tr.setSelection(
         Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
       );
+      if (
+        Array.isArray(recipient) &&
+        projectComposerDocument(tr.doc).draft.recipients.length > 32
+      )
+        return false;
       if (
         text &&
         composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
@@ -491,8 +551,10 @@ export function EditableInput({
         composerMarkdown(projectComposerDocument(tr.doc).draft).length >
         current.current.maxLength
       )
-        return false;
+        return !!terminator; // The typed colon landed even if conversion cannot.
+      const unconverted = editor.state;
       editor.dispatch(tr.scrollIntoView());
+      if (terminator && editor.state !== unconverted) separateHistory = true;
       editor.focus();
       return true;
     };
@@ -820,7 +882,8 @@ export function EditableInput({
         remove: () => commit(text),
       };
     };
-    const copySelection = (from: number, to: number) => {
+    const copySelection = (event: ClipboardEvent) => {
+      const { from, to } = editor.state.selection;
       const content = editor.state.doc.slice(from, to, true).content;
       const doc = composerSchema.nodes.doc.create(
         null,
@@ -828,7 +891,53 @@ export function EditableInput({
           ? content
           : composerSchema.nodes.paragraph.create(null, content),
       );
-      return composerMarkdown(projectComposerDocument(doc).draft);
+      const { text, html } = composerClipboard(doc, editor.dom.ownerDocument);
+      event.clipboardData?.setData("text/plain", text);
+      event.clipboardData?.setData("text/html", html);
+      event.preventDefault();
+    };
+    /** Pasted identity links become recipients when the host accepts them; the
+     * rest stay display chips. One transaction, so undo removes the paste whole. */
+    const promoteRecipients = (start: number, end: number) => {
+      const accept = current.current.acceptRecipient;
+      if (!accept) return;
+      const { tokens, draft } = projection();
+      const tr = editor.state.tr;
+      let count = draft.recipients.length;
+      // Later tokens first: earlier positions stay valid, and each boundary
+      // check sees the text that now follows the token.
+      for (const token of [...tokens].reverse()) {
+        if (
+          token.start < start ||
+          token.end > end ||
+          !token.editAsText ||
+          token.node.attrs.recipient
+        )
+          continue;
+        const identity = identityLink(token.node.attrs.source);
+        if (
+          !identity ||
+          count >= 32 ||
+          !mentionBoundary(
+            projectComposerDocument(tr.doc).draft.text,
+            token.end,
+          )
+        )
+          continue;
+        const recipient = accept(identity.pubkey);
+        if (!recipient) continue;
+        tr.replaceWith(
+          token.from,
+          token.to,
+          composerSchema.nodes.token.create(
+            { source: `@${recipient.name}`, recipient, editAsText: false },
+            null,
+            token.node.marks,
+          ),
+        );
+        count++;
+      }
+      if (tr.docChanged) editor.dispatch(tr);
     };
     const historyCommand = (forward: boolean) => {
       if (!editable() || composing.current || editor.composing) return;
@@ -1326,15 +1435,11 @@ export function EditableInput({
             return false;
           },
           copy(_view, event) {
-            const { from, to } = editor.state.selection;
-            event.clipboardData?.setData("text/plain", copySelection(from, to));
-            event.preventDefault();
+            copySelection(event);
             return true;
           },
           cut(_view, event) {
-            const { from, to } = editor.state.selection;
-            event.clipboardData?.setData("text/plain", copySelection(from, to));
-            event.preventDefault();
+            copySelection(event);
             if (editable())
               editor.dispatch(closeHistory(editor.state.tr.deleteSelection()));
             return true;
@@ -1348,26 +1453,36 @@ export function EditableInput({
               )
             )
               return true;
-            let text = event.clipboardData?.getData("text/plain") ?? "";
+            const code = editor.state.selection.$from.parent.type.spec.code;
+            // Code takes visible text verbatim. Outside code, only this app's
+            // own payload is read as HTML; other apps paste as text.
+            let text =
+              (!code &&
+                buzzCopyMarkdown(
+                  event.clipboardData?.getData("text/html") ?? "",
+                )) ||
+              event.clipboardData?.getData("text/plain") ||
+              "";
             if (!text) return true;
             let link = false;
-            if (!editor.state.selection.$from.parent.type.spec.code)
+            if (!code)
               messageLinkParts(text, undefined, (start, end) => {
                 if (start === 0 && end === text.length) link = true;
               });
             const source = projection(),
+              start = source.source(editor.state.selection.from),
               end = source.source(editor.state.selection.to);
             const reuse = link && source.draft.text[end] === " ";
             if (
               link &&
               !reuse &&
-              source.draft.text.length -
-                (end - source.source(editor.state.selection.from)) +
-                text.length <
+              source.draft.text.length - (end - start) + text.length <
                 current.current.maxLength
             )
               text += " ";
-            if (insert(text) && reuse) {
+            if (!insert(text)) return true;
+            const inserted = projection().source(editor.state.selection.to);
+            if (reuse) {
               const pos = editor.state.selection.to + 1;
               editor.dispatch(
                 editor.state.tr.setSelection(
@@ -1375,6 +1490,7 @@ export function EditableInput({
                 ),
               );
             }
+            promoteRecipients(start, inserted);
             return true;
           },
           drop(_view, event) {
@@ -1468,11 +1584,19 @@ export function EditableInput({
         value: () => {
           if (!editable() || composing.current || editor.composing)
             return false;
+          // Mac WebKit can keep painting a stale caret after a line break:
+          // https://discuss.prosemirror.net/t/ghost-cursor-on-safari/9074
+          // Clear the focused editor's native caret so ProseMirror re-adds it
+          // while rendering the line break (or on focus below if the edit is
+          // rejected), as prosemirror-view itself did on Safari before 5daf445
+          // (1.41.0). Remove once upstream repaints it.
+          if (editor.state.selection.empty && editor.hasFocus() && macWebKit())
+            editor.dom.ownerDocument.getSelection()?.removeAllRanges();
           const tr = composerBlockLineBreak(editor.state);
-          if (!tr) return insert("\n");
-          editor.dispatch(closeHistory(tr).scrollIntoView());
+          if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
+          const inserted = !!tr || insert("\n");
           editor.focus();
-          return true;
+          return inserted;
         },
       },
       editLink: { configurable: true, value: editLink },

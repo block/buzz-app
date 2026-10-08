@@ -18,7 +18,8 @@ export default defineConfig({
     maxWorkers,
     include: [
       "src/**/*.test.{ts,tsx,mjs}",
-      "dev/**/*.test.mjs",
+      "browser-host/**/*.test.mjs",
+      "scripts/**/*.test.{ts,mjs}",
       "tests/fixtures/design-system/**/*.test.{ts,tsx}",
     ],
   },

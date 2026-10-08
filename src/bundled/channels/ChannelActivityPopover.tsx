@@ -1,3 +1,5 @@
+import { workflowLabel } from "../../features/relay/workflow-attribution";
+import { LightningIcon } from "../../shared/design-system/icons";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -24,6 +26,7 @@ import type { Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ThreadActivityItem } from "../../features/relay/unread";
 import { Avatar } from "../../shared/Avatar";
+import { Avatar as WorkflowAvatar } from "../../shared/design-system/ui/Avatar";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Channels.module.css";
 import { workingAgentDetails } from "./working-agents";
@@ -58,17 +61,23 @@ function ActivityRow({
   retain(item: ThreadActivityItem): () => void;
 }) {
   const selection = useMemo(
-    () => selectProfiles(session.profiles, [item.authorId]),
-    [session.profiles, item.authorId],
+    () =>
+      selectProfiles(session.profiles, [item.workflowOwnerId ?? item.authorId]),
+    [session.profiles, item.authorId, item.workflowOwnerId],
   );
   const profiles = useSyncExternalStore(
     selection.subscribe,
     selection.snapshot,
     selection.snapshot,
   );
-  const profile = profiles.get(item.authorId);
+  const displayId = item.workflowOwnerId ?? item.authorId;
+  const profile = profiles.get(displayId);
   const resolveName = useChannelIdentityNames(session, item.channelId);
-  const name = resolveName(item.authorId, profile?.name ?? "Someone");
+  const resolved = resolveName(
+    displayId,
+    profile?.name ?? displayId.slice(0, 10),
+  );
+  const name = item.workflowOwnerId ? workflowLabel(resolved) : resolved;
   const isAgent =
     agents.includes(item.authorId) ||
     !!profile?.isAgent ||
@@ -101,12 +110,23 @@ function ActivityRow({
         aria-label={`Open unread thread from ${name}: ${item.preview}`}
         onClick={() => onOpen(item)}
         icon={
-          <Avatar
-            name={name}
-            src={profile?.picture ? session.media(profile.picture) : undefined}
-            shape={isAgent ? "squircle" : "circle"}
-            className={styles.activityAvatar ?? ""}
-          />
+          item.workflowOwnerId ? (
+            <WorkflowAvatar
+              alt="Workflow"
+              fallback="Workflow"
+              fallbackContent={<LightningIcon size={20} />}
+              shape="squircle"
+            />
+          ) : (
+            <Avatar
+              name={name}
+              src={
+                profile?.picture ? session.media(profile.picture) : undefined
+              }
+              shape={isAgent ? "squircle" : "circle"}
+              className={styles.activityAvatar ?? ""}
+            />
+          )
         }
         label={
           <span className={styles.activityItemBody}>
@@ -256,7 +276,14 @@ export function ChannelActivityPopover({
         if (next && items.length)
           void session.profiles
             .ensure(
-              [...new Set(items.map(({ authorId }) => authorId))],
+              [
+                ...new Set(
+                  items.map(
+                    ({ authorId, workflowOwnerId }) =>
+                      workflowOwnerId ?? authorId,
+                  ),
+                ),
+              ],
               "background",
             )
             .catch(() => {});

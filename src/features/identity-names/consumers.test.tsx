@@ -22,6 +22,7 @@ const stops: (() => void)[] = [];
 afterEach(() => {
   cleanup();
   for (const stop of stops.splice(0)) stop();
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 function fixture() {
   const listeners = new Set<() => void>();
@@ -163,6 +164,9 @@ it("uses channel scope in link previews and activity, and participant scope in s
       />
     </>,
   );
+  await userEvent
+    .setup()
+    .click(screen.getByText("Channel-wide activity · 1 agent"));
   expect(view.container.querySelector("strong")).toHaveTextContent("Larry");
   expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Larry$/);
   expect(
@@ -190,6 +194,11 @@ it("uses channel scope in link previews and activity, and participant scope in s
   ).toBeVisible();
 });
 it("scopes search DM labels and message authors to their own conversation", async () => {
+  // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   const f = fixture();
   render(
     <SearchResults

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -20,6 +21,7 @@ import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
@@ -456,7 +458,7 @@ it.each([9, 40002])(
       "@M![x](https://example.test/a.png)ic",
       "@M![x](http://example.test/a.png)ic",
       "@![x](https://example.test/a.png)Mic",
-      "Hello @Mic ![x](https://example.test/a.png)",
+      "Hello @M![x](https://example.test/a.png)ic ![y](https://example.test/b.png)",
     ]) {
       const event = signed(author, {
         kind,
@@ -469,7 +471,7 @@ it.each([9, 40002])(
       const [folded] = foldMessages("channel", relay.pubkey, [event]);
       if (!folded) throw new Error("missing message");
       expect(folded.content).toContain("@Mic");
-      expect(folded.attachmentContentRemoved).toBe(true);
+      expect(folded.attachmentSeams?.length).toBeGreaterThan(0);
       expect(folded.mentions).toEqual([recipient.pubkey]);
       const html = renderToStaticMarkup(
         <MessageRow
@@ -489,9 +491,72 @@ it.each([9, 40002])(
     const [unchanged] = foldMessages("channel", relay.pubkey, [
       message(author, "channel", "@Mic  \n", 1),
     ]);
-    expect(unchanged?.attachmentContentRemoved).toBeUndefined();
+    expect(unchanged?.attachmentSeams).toBeUndefined();
   },
 );
+
+it("binds signed names beside removed attachments that cannot join them", () => {
+  const author = keypair(),
+    person = keypair(),
+    agent = keypair(),
+    namesake = keypair(),
+    relay = keypair();
+  const media = "https://relay.test/media/shot.png";
+  const profiles = new Map([
+    [person.pubkey, { name: "kalvin" }],
+    [agent.pubkey, { name: "am", isAgent: true as const }],
+    [namesake.pubkey, { name: "kalvin chau" }],
+  ]);
+  const render = (
+    content: string,
+    mentions: string[],
+    tags: string[][] = [],
+  ) => {
+    const [folded] = foldMessages("channel", relay.pubkey, [
+      message(author, "channel", content, 1, [
+        ...mentions.map((pubkey) => ["p", pubkey]),
+        ...tags,
+      ]),
+    ]);
+    if (!folded) throw new Error("missing message");
+    return renderToStaticMarkup(
+      <MessageRow
+        row={folded}
+        profile={undefined}
+        participantProfiles={profiles}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  };
+  const chip = (kind: string, name: string) =>
+    new RegExp(
+      `data-mention-kind="${kind}"[^>]*aria-label="View ${name} profile"`,
+    );
+  expect(
+    render(
+      "@kalvin <https://github.com/block/buzz/pull/7904> :pray-for-stamp:\n![image](https://static.example/stamp.gif)",
+      [person.pubkey],
+    ),
+  ).toMatch(chip("person", "kalvin"));
+  expect(
+    render(
+      `@am i like the \`:ls\` feature\n\n![image.png](<${media}>)`,
+      [agent.pubkey],
+      [["imeta", `url ${media}`, "m image/png"]],
+    ),
+  ).toMatch(chip("agent", "am"));
+  // Removal may end a name, but a longer name must not cross the seam.
+  const joined = render("@kalvin![x](https://example.test/a.png) chau", [
+    person.pubkey,
+    namesake.pubkey,
+  ]);
+  expect(joined).toMatch(chip("person", "kalvin"));
+  expect(joined).not.toContain("View kalvin chau profile");
+});
 
 it.each([9, 40002])(
   "preserves signed kind %s code indentation through fold and render",
@@ -1091,6 +1156,65 @@ it("retires the fullscreen image viewer when its retained row is suspended", () 
   }
 });
 
+it.each(["peer", "own"] as const)(
+  "lists Mark unread above Copy message for a managed %s message",
+  async (author) => {
+    const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
+    const operations: never[] = [];
+    const session = {
+      viewer: author === "own" ? row.authorId : "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: { report: vi.fn(async () => {}) },
+      outbox: {
+        supports: () => true,
+        subscribe: () => () => {},
+        snapshot: () => operations,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        attention: () => ({ unread: false, forced: false, viewing: true }),
+      },
+    } as unknown as RelaySession;
+    renderDom(
+      <MessageManagement session={session} channelId={row.channelId}>
+        <MessageRow
+          row={{ ...row, threadRootId: "a".repeat(64) }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </MessageManagement>,
+    );
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(
+        author === "own"
+          ? [
+              "Mark unread",
+              "Copy message",
+              "Send to channel",
+              "Edit message",
+              "Delete message",
+              "Report",
+            ]
+          : ["Mark unread", "Copy message", "Report"],
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",
   async (delivery) => {
@@ -1099,7 +1223,11 @@ it.each(["sending", "failed"] as const)(
       viewer: row.authorId,
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: {},
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+      },
     } as unknown as RelaySession;
     renderDom(
       <MessageRow
@@ -1550,7 +1678,11 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { sendToChannel: send },
       outbox: { supports: () => true },
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+      },
     } as unknown as RelaySession;
     const reply: ChannelMessage = {
       ...row,
@@ -1595,7 +1727,11 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
   const session = {
     messages: { report },
     channels: {},
-    unread: { subscribe: () => () => {}, snapshot: () => undefined },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+    },
   } as unknown as RelaySession;
   const tree = (active: boolean) => (
     <ToastProvider>
@@ -1631,6 +1767,48 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
     view.rerender(tree(true));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(report).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+  }
+});
+
+it("presents automation, links the owner and discloses the separate relay signer", async () => {
+  const ownerId = "ab".repeat(32),
+    signer = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: {
+        ...row,
+        authorId: ownerId,
+        signerId: signer,
+        workflowOwnerId: ownerId,
+      },
+      profile: { name: "Wes" },
+      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    expect(screen.getByText("Workflow")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View workflow owner Wes profile" }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Workflow message details" }),
+    );
+    expect(
+      await screen.findByText(/the owner did not sign this message/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Signed by the relay").nextElementSibling,
+    ).toHaveTextContent(npubEncode(signer));
+    expect(
+      screen.getByText("Owner public key").nextElementSibling,
+    ).toHaveTextContent(npubEncode(ownerId));
+    expect(
+      screen.queryByRole("button", { name: "View Relay profile" }),
+    ).toBeNull();
   } finally {
     cleanup();
   }

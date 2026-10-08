@@ -50,6 +50,10 @@ checks, not that an OS banner was displayed or read.
   unread/visibility facts. Structured kind-40002 bodies use the same decoded text
   as message rows. No new socket, unread engine or background-community
   subscription is added.
+- Workflow-owner attribution is not a mention. The shared
+  [workflow mention classifier](unread.md#workflow-mentions) preserves explicit
+  template mentions and other recipients; DM and relevant-reply policies still
+  apply. This does not change notification settings or suppress all workflows.
 - History, initial/reconnect replay and own messages stay quiet. Candidates older
   than two minutes (or over 30 seconds in the future) are ignored. Unknown read
   readiness waits; off/access loss cancels pending candidates. A reply whose
@@ -78,9 +82,10 @@ checks, not that an OS banner was displayed or read.
 - Running-session dedup is bounded to 2,048 source identities/two minutes; pending
   candidates are capped at 128. Browser presentation retains at most 128 active
   alerts, closing the oldest before retiring its callback. Desktop retains at most
-  128 active callbacks/waits and rejects new presentations at capacity rather than
-  evicting an existing target or queuing unbounded workers. These are not durable
-  exactly-once or cross-window guarantees.
+  128 active callbacks/waits. On macOS the oldest registered card is withdrawn
+  and closed before admitting the next request at capacity; on other desktop
+  backends admission rejects at capacity. These are not durable exactly-once or
+  cross-window guarantees.
 - Browser and desktop clicks use the existing typed, account/community-scoped navigation path. It owns
   membership/provider checks and exact opening. Changing account invalidates old
   callbacks; changing community does not turn an old alert into a dead click.
@@ -105,28 +110,24 @@ generic category text.
 ## Current acceptance limits
 
 The browser adapter works only in a running tab with the Notification API.
-Desktop builds use one small Tauri bridge into maintained native backends:
-a locally patched mac-notification-sys 0.6.15 on macOS, the freedesktop notification
-interface through zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
-locked zbus dependency directly because notify-rust's send-then-listen wrapper
-can lose early actions. No dependency upgrade or new native FFI is needed.
-Banner permission remains system-controlled; alert sound is app-owned and plays
-in the renderer, not through the native backends. No permission-only plugin
-or synthetic desktop notification is installed. The macOS Dock settings below
-provide an explicit system authorization action. The main-window-only bridge
-carries display text and an opaque presentation ID, never an account, credential
-or navigation destination. Its Tauri response channel is registered before native
-submission.
+Desktop builds use one small Tauri bridge into native backends:
+`UNUserNotificationCenter` on bundled macOS, the freedesktop notification
+interface through zbus on Linux, and tauri-winrt-notification on Windows. Linux
+uses the already locked zbus dependency directly because notify-rust's
+send-then-listen wrapper can lose early actions. Alert sound remains app-owned
+in the renderer. The main-window-only bridge carries display text and an opaque
+presentation ID, never an account, credential or navigation destination. Its
+Tauri response channel is registered before native submission.
 
 Desktop clicks restore/foreground Buzz and then call the existing activation
-closure. macOS explicitly waits for a body click off the UI thread (the generic
-notify-rust wrapper omits that flag). Its local dependency patch shares one
-main-run-loop dismissal poll across all waiting notifications: one synchronous
-Notification Center query per 0.5-second tick, rather than one per card. The poll
-stops when no waits remain; retained cards do not expire. See
-[`BUZZ_PATCH.md`](../vendor/mac-notification-sys/BUZZ_PATCH.md) for provenance and
-regression coverage. Windows retains its callback when the
-banner fades, because timeout is not removal from Notification Center. Linux
+closure. macOS installs one app-lifetime delegate at setup and routes body
+clicks by request ID to the running presentation callback. Its foreground completion keeps
+notifications in Notification Center without displaying a banner. Native
+submission completion reports errors but does not confirm display; successful
+submissions stay registered for clicks. Unbundled development processes do not
+call UserNotifications or borrow Terminal's notification identity. Windows
+retains its callback when the banner fades, because timeout is not removal from
+Notification Center. Linux
 requests the standard default action and checks that the notification service
 supports actions. A single, sender-filtered receiver is armed on the same D-Bus
 connection before Notify. It is drained while the reply is pending; first terminal
@@ -138,22 +139,27 @@ framework's stale minimized-state focus guard. Compositor
 focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
-Banner permission state is not observable through these backends. Settings
-omits ineffective desktop banner permission controls (the page subtitle uses the
-reference copy and does not describe permission handling); sound controls are
-effective on desktop because
-playback happens in the app. The bridge accepts a submission before waiting for
-interaction: acceptance is **not** proof that a visible banner appeared. The macOS
-backend does not expose all delivery failures, and no uniform withdrawal/receipt
-guarantee is promised.
-Callbacks stop navigating after account change or frontend disposal. Native waits
-remain bounded until the OS resolves them; no artificial expiry strands an
-otherwise actionable alert. Reload/cold-start restoration remains out of scope.
+On macOS the native authorization state is read from the same
+`UNUserNotificationCenter` settings as Dock permission. Explicit Allow requests
+Alert, Sound and Badge on a fresh identity only; prior denials and disabled
+interactions remain system-controlled. Windows and Linux continue to report
+unknown banner permission. Settings on those platforms omits ineffective
+permission controls. The bridge accepts submission before waiting for
+interaction: acceptance is **not** proof that a visible banner appeared. No
+uniform withdrawal/receipt guarantee is promised.
+
+Callbacks stop navigating after account change or frontend disposal. Native
+click callbacks are bounded by capacity: the oldest OS card is withdrawn and
+its callback closed before a new request is admitted. An individually dismissed
+card without a delivered response may retain a slot until that boundary.
+Reload/cold-start restoration remains out of scope.
 
 Real banners require OS permission, an available notification service and
-appropriate app packaging/installation. macOS development notifications can be
-attributed to Terminal; Windows development notifications may use PowerShell's
-identity. Test the packaged app identity before claiming release acceptance.
+appropriate app packaging/installation. macOS development processes outside an
+app bundle cannot submit notifications; Windows development notifications may use
+PowerShell's identity. Test the packaged app identity before claiming release
+acceptance.
+
 Chromium/WebKit fixtures replace only OS/IPC boundaries; tests and native builds
 do not prove actual permission dialogs, appearance, sound or foregrounding.
 Report native checks and real banner/click results separately for each platform.
@@ -201,7 +207,7 @@ This permission capability requires an actual macOS `.app` bundle. Unbundled
 `tauri dev` never calls UserNotifications or borrows Terminal's badge permission.
 The native bridge is necessary because the official Tauri notification plugin's
 current desktop permission methods return Granted without querying these settings.
-Existing banner delivery/clicks and their acceptance limits above are unchanged.
+Banner delivery uses the modern notification center and app-lifetime delegate.
 Windows and Linux do not use the macOS permission bridge or display its controls.
 
 ### Validation boundary

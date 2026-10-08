@@ -331,8 +331,37 @@ for (const scenario of [
           })
           .click();
         await editor.fill(draft);
-        await page.keyboard.press("ArrowLeft");
+        // Establish the pre-revalidation caret through the composer's public API.
+        // A fill followed by ArrowLeft does not prove native/model selection has
+        // settled; this journey tests retention, not arrow-key editing.
+        await editor.evaluate((element, offset) => {
+          element.setSelectionRange(offset, offset);
+        }, draft.length - 1);
+        const expectCaret = () =>
+          expect
+            .poll(() =>
+              editor.evaluate((element) => {
+                const selection = document.getSelection();
+                return {
+                  start: element.selectionStart,
+                  end: element.selectionEnd,
+                  anchor: selection?.anchorOffset,
+                  head: selection?.focusOffset,
+                  inside:
+                    element.contains(selection?.anchorNode) &&
+                    element.contains(selection?.focusNode),
+                };
+              }),
+            )
+            .toEqual({
+              start: draft.length - 1,
+              end: draft.length - 1,
+              anchor: draft.length - 1,
+              head: draft.length - 1,
+              inside: true,
+            });
         await expect(editor).toBeFocused();
+        await expectCaret();
         const beforePlaying = await media.evaluateAll((elements) =>
           elements.map((element) => element.currentTime),
         );
@@ -350,18 +379,20 @@ for (const scenario of [
           )
           .toBe(true);
 
+        // pause() changes `paused` before the native media task has settled its
+        // final time. Observe that event instead of wrapping the method call.
         await media.evaluateAll((elements) => {
           for (const element of elements) {
-            const pause = element.pause;
-            element.pause = function () {
-              const wasPlaying = !this.paused;
-              const result = pause.call(this);
-              if (wasPlaying)
-                this.dataset.inboxPausedAt = String(this.currentTime);
-              return result;
-            };
+            element.addEventListener(
+              "pause",
+              () => {
+                element.dataset.inboxPausedAt = String(element.currentTime);
+              },
+              { once: true },
+            );
           }
         });
+        await expectCaret();
         heldClosure = focusedClosure;
         await reconnect();
         await expect(detail.getByText("Preview updating…")).toBeVisible();
@@ -421,6 +452,7 @@ for (const scenario of [
         await expect(editor).toHaveText(draft);
         // No focus()/locator.press()/fill() here: those would mask lost native
         // focus. Typing must insert at the pre-withholding interior caret.
+        await expectCaret();
         await page.keyboard.type(" recovered ");
         const recoveredDraft = `${draft.slice(0, -1)} recovered ${draft.slice(-1)}`;
         await expect(editor).toHaveText(recoveredDraft);

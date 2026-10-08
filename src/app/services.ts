@@ -13,6 +13,8 @@ import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { bindDeepLinks } from "../features/navigation/deep-links";
+import { bindSearchUsage } from "./shell/search-usage";
+import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -24,6 +26,7 @@ import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
+import { createInviteIntent } from "../features/communities/invite-intent";
 import { connectNativeTransport } from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
@@ -80,8 +83,21 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
-  // OS deep links; a no-op in the browser build.
-  ctx.effect(() => bindDeepLinks(navigationHost, communities));
+  const invites = createInviteIntent();
+  // OS deep links; a no-op in the browser build. Invite admission remains in
+  // the join dialog, never in navigation or the native queue.
+  ctx.effect(() =>
+    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+  );
+  // Search ranks places by how often and how recently they were opened.
+  ctx.effect(() =>
+    bindSearchUsage(navigation, () => {
+      const { selected, viewer } = communities.snapshot();
+      return selected && viewer
+        ? { viewer, communityOrigin: communityDestination(selected).url }
+        : undefined;
+    }),
+  );
   if (notifications.indicator.available)
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread),
@@ -105,6 +121,7 @@ export function createServices() {
     plugins,
     relay,
     communities,
+    invites,
     appearance,
     updates,
     dispose() {

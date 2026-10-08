@@ -166,6 +166,51 @@ async function retained(page, id) {
 // continuation, rather than sleeping on wall time.
 const presentation = (page) => page.clock.runFor(100);
 
+test("workflow ownership stays quiet while an explicit owner mention alerts", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await ready(page, app);
+  const publish = (explicit) => {
+    const event = app.signRelay({
+      kind: 9,
+      created_at: Math.floor(Date.now() / 1000),
+      content: explicit ? "@Owner review the result" : "@Agent do the work",
+      tags: [
+        ["h", "beta"],
+        ["p", app.viewer],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", app.viewer],
+        ...(explicit ? [["buzz:workflow-mention", app.viewer]] : []),
+      ],
+    });
+    app.histories.get("primary/beta").push(event);
+    app.relay.publish("primary", event);
+    return event;
+  };
+  const ownerOnly = publish(false);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+            .status,
+        ownerOnly.id,
+      ),
+    )
+    .toBe("ineligible");
+  // Verified receive/admission is synchronous; drain the presentation deadline.
+  await page.clock.runFor(100);
+  expect(await systemCount(page)).toBe(0);
+  const explicit = publish(true);
+  await observed(page, explicit.id);
+  await expect.poll(() => systemCount(page)).toBe(1);
+  expect(
+    await page.evaluate(() => window.notificationEvents[0].options.body),
+  ).toBe("@Owner review the result");
+});
+
 test("real live traffic alerts once; replay/reload stay quiet and choices persist", async ({
   page,
   app,

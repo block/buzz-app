@@ -45,6 +45,17 @@ export function controlFixture() {
         command: "buzz-agent",
         label: "Buzz Agent",
         providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+        configurationPolicy: {
+          authentication: "provider",
+          provider: "selector",
+          supportedModes: [],
+          model: "optional",
+          effortDiscovery: "unknown",
+          selectorEnvironment: {
+            model: "BUZZ_AGENT_MODEL",
+            provider: "BUZZ_AGENT_PROVIDER",
+          },
+        },
       },
     ],
   };

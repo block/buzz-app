@@ -26,11 +26,13 @@ import {
   shellPresentation,
 } from "./presentation";
 import {
+  matchName,
   SearchChoices,
   type SearchInputProps,
   type SearchDestination,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { usageScope } from "./search-usage";
 
 export type SearchServices = Pick<
   AppServices,
@@ -119,6 +121,9 @@ export function PageSearch({
     services?.shortcutBindings.subscribe ?? noSubscribe,
     services?.shortcutBindings.snapshot ?? noOverrides,
   );
+  // Every search surface reads pages from here, so rank and underline them
+  // here too: the disconnected and personal-space views show this list as is.
+  const needle = query.trim().toLowerCase();
   const destinations: SearchDestination[] = [
     ...orderPages(pages).map((page) => ({
       key: page.key,
@@ -126,10 +131,15 @@ export function PageSearch({
     })),
     { key: "settings", ...shellPresentation.settings },
   ]
-    .filter((page) =>
-      page.label.toLowerCase().includes(query.trim().toLowerCase()),
-    )
-    .map((page) => ({
+    .flatMap((page) => {
+      if (!needle) return [{ page, rank: 0 }];
+      const match = matchName(page.label, needle);
+      return match
+        ? [{ page: { ...page, matches: match.positions }, rank: match.rank }]
+        : [];
+    })
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ page }) => ({
       ...page,
       run: () => {
         returnFocus.current = document.getElementById("main-content");
@@ -329,6 +339,7 @@ function CommunitySearch({
       scopedChannelId={scopedChannelId}
       currentChannelId={currentChannelId}
       onScopeChange={onScopeChange}
+      usageScope={usageScope(scope)}
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();
         if (

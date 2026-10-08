@@ -2379,3 +2379,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+.composerActions[hidden] {
+  display: none;
+}

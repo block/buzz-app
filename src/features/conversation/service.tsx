@@ -15,6 +15,7 @@ import {
 } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type {
+  AttachmentRenderer,
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
@@ -25,6 +26,8 @@ import type {
 } from "./contracts";
 
 export type Conversation = {
+  attachments: ContributionReader<AttachmentRenderer>;
+  registerAttachment(renderer: AttachmentRenderer): void;
   messages: ContributionReader<MessageRenderer>;
   registerMessage(renderer: MessageRenderer): void;
   accessories: ContributionReader<ComposerAccessory>;
@@ -63,6 +66,7 @@ declare module "@deepseek-ai/cordis" {
 }
 function validate(
   value:
+    | AttachmentRenderer
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
@@ -82,6 +86,8 @@ function validate(
     );
 }
 export class ConversationService extends Service implements Conversation {
+  readonly attachments;
+  private readonly attachmentEntries;
   readonly messages;
   private readonly messageEntries;
   readonly tools;
@@ -96,6 +102,12 @@ export class ConversationService extends Service implements Conversation {
   private readonly linkEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    const attachments = createContributions<AttachmentRenderer>(ctx);
+    this.attachmentEntries = attachments;
+    this.attachments = {
+      snapshot: attachments.snapshot,
+      subscribe: attachments.subscribe,
+    };
     const messages = createContributions<MessageRenderer>(ctx);
     this.messageEntries = messages;
     this.messages = {
@@ -123,6 +135,12 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+  }
+  registerAttachment(value: AttachmentRenderer) {
+    validate(value);
+    if (typeof value.matches !== "function")
+      throw new Error("An attachment renderer needs a matcher");
+    this.attachmentEntries.register(this.ctx, value);
   }
   registerMessage(value: MessageRenderer) {
     validate(value);

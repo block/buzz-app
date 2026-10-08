@@ -34,6 +34,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
@@ -602,7 +603,20 @@ export const MessageRow = memo(function MessageRow({
                   source &&
                   (isProxySource(source) || isNativeMediaSource(source))
                 )
-                  return (
+                  return extensions?.attachments ? (
+                    <AttachmentView
+                      key={url}
+                      registry={extensions.attachments}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                      fallback={
+                        <AudioAttachment
+                          attachment={{ ...attachment, url }}
+                          source={source}
+                        />
+                      }
+                    />
+                  ) : (
                     <AudioAttachment
                       key={url}
                       attachment={{ ...attachment, url }}

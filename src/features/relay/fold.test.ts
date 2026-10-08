@@ -983,6 +983,7 @@ it("classifies voice-note mp4 metadata as audio with validated duration and file
       kind: "audio",
       mime: "video/mp4",
       name: "voice-note-1.mp4",
+      voiceNote: true,
       duration: 12.3,
     },
   ]);
@@ -1002,6 +1003,7 @@ it.each([
       kind: "audio",
       mime,
       name,
+      voiceNote: true,
     },
   ]);
 });
@@ -1013,7 +1015,13 @@ it("detects legacy voice-note mp4s from the link label when filename is absent",
   ]);
   const [row] = foldMessages("channel", relay.pubkey, [event]);
   expect(row?.attachments).toEqual([
-    { url, kind: "audio", mime: "video/mp4", name: "voice-note-2.mp4" },
+    {
+      url,
+      kind: "audio",
+      mime: "video/mp4",
+      name: "voice-note-2.mp4",
+      voiceNote: true,
+    },
   ]);
 });
 

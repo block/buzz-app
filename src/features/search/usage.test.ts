@@ -12,6 +12,7 @@ import {
   readSearchUsage,
   recordChoice,
   recordVisit,
+  searchOrder,
   usageScope,
 } from "./usage";
 
@@ -184,4 +185,27 @@ it("counts every completed open once, but not the destination restored at startu
     stop();
     host.dispose();
   }
+});
+
+it("orders an exact name, then the earlier choice, then lifted matches by band", () => {
+  for (let visit = 0; visit < 20; visit += 1)
+    recordVisit(scope, "person:used", now);
+  const usage = readSearchUsage(scope, now);
+  const order = (key: string, rank: number, band = 0) =>
+    searchOrder(usage, "person:picked", { key, rank, band });
+  // Exact and chosen rows lead every band.
+  expect(order("person:exact", 0, 4)).toBe(-2);
+  expect(order("person:picked", 3, 4)).toBe(-1);
+  // Usage lifts past one rank, never two, and never out of its band.
+  expect(order("person:used", 2)).toBeLessThan(order("person:other", 1));
+  expect(order("person:used", 3)).toBeGreaterThan(order("person:other", 1));
+  expect(order("person:used", 1, 1)).toBeGreaterThan(order("person:other", 3));
+  // Several keys for one row share one score.
+  expect(
+    searchOrder(usage, undefined, {
+      key: "person:dm",
+      rank: 2,
+      usageKeys: ["person:dm", "person:used"],
+    }),
+  ).toBe(order("person:used", 2));
 });

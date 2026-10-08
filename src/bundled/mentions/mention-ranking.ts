@@ -1,5 +1,5 @@
 import {
-  extendsName,
+  exactName,
   matchPerson,
   normalizeName,
 } from "../../features/search/person-match";
@@ -80,20 +80,13 @@ export function rankMentions(
     .map((k) => k.c);
 }
 /** Space is intent only for one exact key across the full, uncapped choice set. */
-export function exactMention(choices: readonly MentionChoice[], query: string) {
-  const needle = normalized(query);
-  if (!needle) return;
-  const matches = choices.filter(
-    (c) =>
-      c.aliases.length > 0 &&
-      [...c.aliases, c.label].some((name) => normalized(name) === needle),
-  );
-  if (
-    matches.length !== 1 ||
-    choices.some((c) =>
-      [...c.aliases, c.label].some((name) => extendsName(name, needle)),
-    )
-  )
-    return;
-  return matches[0]?.recipient.pubkey;
-}
+export const exactMention = (
+  choices: readonly MentionChoice[],
+  query: string,
+) =>
+  exactName(
+    choices,
+    (c) => [...c.aliases, c.label],
+    query,
+    (c) => c.aliases.length > 0,
+  )?.recipient.pubkey;

@@ -3,12 +3,13 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
+import { exactName, matchPerson } from "../search/person-match";
 import {
-  extendsName,
-  matchPerson,
-  normalizeName,
-} from "../search/person-match";
-import { pickerText, readSearchUsage, recordChoice } from "../search/usage";
+  pickerText,
+  readSearchUsage,
+  recordChoice,
+  searchOrder,
+} from "../search/usage";
 import { useSearchHighlight } from "../search/use-search-highlight";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -135,22 +136,20 @@ export function RecipientPicker({
     typed,
     new Set(eligible.map((person) => personKey(person.pubkey))),
   );
-  // Typed text puts an exact name first, then the person chosen before for
-  // this text, then relationship, then match quality lifted by how often you
-  // choose this person or visit your DM with them. The directory's own order
-  // breaks ties. Match ranks are whole numbers from 1 to 3 and the boost is
-  // below 2, so each relationship keeps its own band of ten.
+  // Typed text uses the search order with relationship as its band: an exact
+  // name, then the person chosen before for this text, then relationship,
+  // then match quality lifted by how often you choose this person or visit
+  // your DM with them. The directory's own order breaks ties.
   const order = (person: Recipient) => {
     if (!needle) return 0;
-    const rank = matchOf(person)?.tier ?? 3;
-    if (rank === 0) return -2;
-    if (personKey(person.pubkey) === picked) return -1;
+    const key = personKey(person.pubkey);
     const dm = dms.get(person.pubkey);
-    return (
-      relationshipRank(person) * 10 +
-      rank -
-      usage.boost(personKey(person.pubkey), ...(dm ? [`channel:${dm}`] : []))
-    );
+    return searchOrder(usage, picked, {
+      key,
+      rank: matchOf(person)?.tier ?? 3,
+      band: relationshipRank(person),
+      usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
+    });
   };
   const ordered = useRef<{ query: string; pubkeys: string[] }>({
     query,
@@ -201,14 +200,10 @@ export function RecipientPicker({
   // no longer name continues it ("Avery" waits while "Avery Chen" exists).
   // A search still running, failed, or with more pages could hold that longer
   // name or a namesake, so Space waits for the full list.
-  const exactRecipient = () => {
-    const typedName = normalizeName(query);
-    if (!typedName || !listed || directory.loading || directory.error) return;
-    const names = eligible.map((person) => normalizeName(person.name));
-    if (names.some((name) => extendsName(name, typedName))) return;
-    const exact = eligible.filter((_, index) => names[index] === typedName);
-    return exact.length === 1 ? exact[0] : undefined;
-  };
+  const exactRecipient = () =>
+    listed && !directory.loading && !directory.error
+      ? exactName(eligible, (person) => [person.name], query)
+      : undefined;
   const loadingRows = useRef(10);
   useEffect(() => {
     if (!directory.loading && !directory.error)

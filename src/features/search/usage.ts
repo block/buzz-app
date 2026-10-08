@@ -151,6 +151,32 @@ export function readSearchUsage(scope: string, now = Date.now()): SearchUsage {
   };
 }
 
+/** The one search order for picker rows; lower sorts first. An exact name
+ * (match rank 0) leads, then the viewer's earlier choice for this typed text,
+ * then the match rank lifted by usage: past a slightly better match, never
+ * past a much better one. `band` groups the lifted ranks first, ten apart, as
+ * New message recipients do by relationship; exact and chosen rows stay ahead
+ * of every band. `usageKeys` are the keys whose usage lifts the row, by
+ * default its own key. */
+export function searchOrder(
+  usage: SearchUsage,
+  picked: string | undefined,
+  row: {
+    key: string;
+    rank: number;
+    band?: number;
+    usageKeys?: readonly string[];
+  },
+) {
+  if (row.rank === 0) return -2;
+  if (row.key === picked) return -1;
+  return (
+    (row.band ?? 0) * 10 +
+    row.rank -
+    usage.boost(...(row.usageKeys ?? [row.key]))
+  );
+}
+
 /** The view-state partition for a community, as the rest of view state uses. */
 export function usageScope(scope: NavigationScope) {
   return relayPartition(

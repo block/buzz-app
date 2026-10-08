@@ -20,6 +20,8 @@ import type {
 } from "../../features/relay-staff/contract";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { RelayStaff } from "./RelayStaff";
+import { StrictMode } from "react";
+import { createSession, SessionProvider, useWrite } from "./session";
 import { createStaff, type StaffTarget } from "./staff";
 
 const signer = "a".repeat(64);
@@ -1420,4 +1422,246 @@ it("a reason refused before sending shows and can be edited", async () => {
   fireEvent.change(reason, { target: { value: "short" } });
   expect(reason).toHaveValue("short");
   expect(screen.getByRole("button", { name: /Confirm: Ban/ })).toBeEnabled();
+});
+
+it("targeted review: an operator result finished while closed is delivered once on next mount", async () => {
+  routes.probe = () => probe({ role: "operator", canStaff: true });
+  routes.listOperators = () => ok([]);
+  const late = holdNext("putOperator", () => fail({}));
+  const { reopen } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  fireEvent.change(await screen.findByLabelText("Public key"), {
+    target: { value: member },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await late.started();
+  cleanup();
+  await late.release(fail({ message: "Finished while closed" }));
+  reopen();
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  expect(await screen.findByText("Finished while closed")).toBeVisible();
+  reopen();
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  await screen.findByText("No staff configured.");
+  expect(screen.queryByText("Finished while closed")).toBeNull();
+});
+
+it("targeted review: only the original context claims a finished operator attempt", async () => {
+  routes.probe = () => probe({ role: "operator", canStaff: true });
+  routes.listOperators = () => ok([]);
+  const late = holdNext("putOperator", () => fail({}));
+  const { select } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  fireEvent.change(await screen.findByLabelText("Public key"), {
+    target: { value: member },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await late.started();
+  await select({ signer: member });
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  await screen.findByText("No staff configured.");
+  await late.release(fail({ message: "Original context only" }));
+  expect(screen.queryByText("Original context only")).toBeNull();
+  await select({ signer });
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  expect(await screen.findByText("Original context only")).toBeVisible();
+});
+
+it("targeted review: strict-mode and concurrent consumers claim each attempt once", async () => {
+  const { staff } = mount();
+  await screen.findByText(/Connected as moderator/);
+  const context = staff.context();
+  if (!context) throw new Error("no context");
+  const session = createSession(staff, context, {
+    status: "ok",
+    authMode: "nip98",
+    role: "moderator",
+    source: "db",
+    canAct: true,
+    canStaff: false,
+  });
+  cleanup();
+  routes.putOperator = () => fail({ message: "claimed" });
+  const handled: StaffRequest[] = [];
+  function Consumer({ name }: { name: string }) {
+    const write = useWrite("operators", (_outcome, sent) => handled.push(sent));
+    return (
+      <button
+        type="button"
+        onClick={() =>
+          write.run({ route: "putOperator", pubkey: member, role: "moderator" })
+        }
+      >
+        {name}
+      </button>
+    );
+  }
+  render(
+    <StrictMode>
+      <SessionProvider value={session}>
+        <Consumer name="first" />
+        <Consumer name="second" />
+      </SessionProvider>
+    </StrictMode>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "first" }));
+  await waitFor(() => expect(handled).toHaveLength(1));
+  fireEvent.click(screen.getByRole("button", { name: "second" }));
+  await waitFor(() => expect(handled).toHaveLength(2));
+  expect(sent("putOperator")).toHaveLength(2);
+});
+
+it("targeted review: resolve finished off-screen is delivered on reopening, not a later lifecycle", async () => {
+  let resolved = false;
+  routes.listReports = () =>
+    ok([{ ...report, status: resolved ? "resolved" : "open" }]);
+  routes.getReport = () =>
+    ok({ ...report, status: resolved ? "resolved" : "open" });
+  const late = holdNext("resolveReport", () =>
+    ok({ status: "resolved", activeAction: null }),
+  );
+  const { staff, reopen } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await late.started();
+  cleanup();
+  resolved = true;
+  await late.release(ok({ status: "resolved", activeAction: null }));
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Reopen report" });
+  // Fresh detail already has the final status, so Resolve is never mounted;
+  // the detail claims the result anyway.
+  expect(
+    await screen.findByText("Report resolved: resolved"),
+  ).toBeInTheDocument();
+  const context = staff.context();
+  expect(
+    context && staff.writes(context).get(`resolve ${report.id}`)?.unseen,
+  ).toBe(false);
+  // A later report reopen mounts Resolve and must not announce it again.
+  resolved = false;
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Ban" });
+  expect(screen.queryByText("Report resolved: resolved")).toBeNull();
+});
+
+it("targeted review: enforcement error finished while closed reaches reopened detail", async () => {
+  let failed = false;
+  const enforcement = {
+    id: "a1",
+    requestId: "q",
+    actorPubkey: signer,
+    actorRole: "moderator",
+    action: "ban",
+    status: "failed",
+    reason: null,
+    expiresAt: null,
+    errorMessage: "Native enforcement detail",
+    createdAt: "t",
+    updatedAt: "t",
+  };
+  routes.listReports = () => ok([report]);
+  routes.getReport = () =>
+    ok(
+      failed
+        ? { ...report, status: "processing", activeAction: enforcement }
+        : report,
+    );
+  const late = holdNext("resolveReport", () =>
+    fail({ code: "enforcement_failed" }),
+  );
+  const { reopen } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await late.started();
+  cleanup();
+  failed = true;
+  await late.release(
+    fail({
+      code: "enforcement_failed",
+      message: "Distinct completion failure",
+    }),
+  );
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Cancel and reopen" });
+  expect(screen.queryByText("Native enforcement detail")).toBeVisible();
+  expect(screen.queryByText("Distinct completion failure")).toBeVisible();
+});
+
+it("a reopen finished while closed is announced on the reopened detail, once", async () => {
+  let reopened = false;
+  const resolvedReport = { ...report, status: "resolved" };
+  routes.listReports = () => ok([reopened ? report : resolvedReport]);
+  routes.getReport = () => ok(reopened ? report : resolvedReport);
+  const late = holdNext("reopenReport", () => ok({ status: "open" }));
+  const { reopen } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen report" }));
+  await late.started();
+  cleanup();
+  reopened = true;
+  await late.release(ok({ ...report, status: "open" }));
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Ban" });
+  expect(await screen.findByText("Report reopened")).toBeInTheDocument();
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Ban" });
+  expect(screen.queryByText("Report reopened")).toBeNull();
+});
+
+it("a cancel finished while closed is announced on the reopened detail, once", async () => {
+  let cancelled = false;
+  const failed = {
+    ...report,
+    status: "processing",
+    activeAction: {
+      id: "a1",
+      requestId: "q",
+      actorPubkey: signer,
+      actorRole: "moderator",
+      action: "ban",
+      status: "failed",
+      reason: null,
+      expiresAt: null,
+      errorMessage: "nope",
+      createdAt: "t",
+      updatedAt: "t",
+    },
+  };
+  routes.listReports = () => ok([cancelled ? report : failed]);
+  routes.getReport = () => ok(cancelled ? report : failed);
+  const late = holdNext("cancelReport", () => ok({ status: "open" }));
+  const { reopen } = mountSwitchable();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Cancel and reopen" }),
+  );
+  await late.started();
+  cleanup();
+  cancelled = true;
+  await late.release(
+    ok({
+      status: "open",
+      activeAction: { ...failed.activeAction, status: "cancelled" },
+    }),
+  );
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Ban" });
+  expect(
+    await screen.findByText("Enforcement cancelled. The report is open again."),
+  ).toBeInTheDocument();
+  reopen();
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  await screen.findByRole("button", { name: "Ban" });
+  expect(
+    screen.queryByText("Enforcement cancelled. The report is open again."),
+  ).toBeNull();
 });

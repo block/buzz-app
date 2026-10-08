@@ -76,7 +76,7 @@
 }
 
 .avatars .avatar {
-  padding: 1.5px;
+  padding: var(--space-half);
   margin-inline-end: calc(-1 * var(--space-1));
   background: var(--surface-panel);
   border-radius: var(--radius-control);

@@ -88,7 +88,8 @@ signed in. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data.
 
 Every running instance, debug or release under any identifier, holds two locks
-shared in the user data folder before it looks for a pending sign-out:
+shared in the user data folder (created first if a first launch finds none)
+before it looks for a pending sign-out:
 
 - a **key lock** named for its human key store (`.<service>.instance.lock`), shared
   by every copy using that key whatever its identifier; and

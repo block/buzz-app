@@ -261,6 +261,13 @@ pub(crate) fn boot(
                 FAILED.to_owned()
             })
     };
+    // A first launch may find no user-data folder yet; the locks live in it.
+    if let Some(data) = paths.lock.parent() {
+        fs::create_dir_all(data).map_err(|error| {
+            eprintln!("buzz: could not create user data folder: {error}");
+            FAILED.to_owned()
+        })?;
+    }
     let locks = Locks {
         key: open(&paths.key_lock)?,
         all: open(&paths.lock)?,

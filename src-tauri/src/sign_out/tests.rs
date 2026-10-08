@@ -532,6 +532,14 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
 }
 
 #[test]
+fn a_first_launch_creates_a_missing_user_data_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_for(&dir.path().join("missing/share"), "identity");
+    assert!(boot(&paths, no_agents, || panic!("no marker")).is_ok());
+    assert!(paths.lock.is_file() && paths.key_lock.is_file());
+}
+
+#[test]
 fn every_identifier_shares_the_all_buzz_lock_and_each_key_has_its_own() {
     let (debug, release) = (
         Paths::resolve("dev.local.buzz.custom").unwrap(),

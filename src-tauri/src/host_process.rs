@@ -104,6 +104,15 @@ impl HostProcesses {
         if registry.entries.len() >= MAX_PROCESSES {
             return Err("Too many processes are running".into());
         }
+        // A job, unlike killing the child, also ends the helpers it starts.
+        #[cfg(windows)]
+        let job = crate::host_command::windows_job::WindowsJob::new()
+            .ok_or_else(|| format!("Could not start {program}"))?;
+        #[cfg(windows)]
+        let mut child = job
+            .spawn_hidden(&mut command)
+            .ok_or_else(|| format!("Could not start {program}"))?;
+        #[cfg(not(windows))]
         let mut child = command
             .spawn()
             .map_err(|error| format!("Could not start {program}: {error}"))?;
@@ -156,8 +165,8 @@ impl HostProcesses {
                     if let Some(group) = group {
                         unsafe { libc::kill(-group, libc::SIGTERM) };
                     }
-                    #[cfg(not(unix))]
-                    let _ = child.start_kill();
+                    #[cfg(windows)]
+                    job.terminate(STOP_GRACE).await;
                     match tokio::time::timeout(STOP_GRACE, child.wait()).await {
                         Ok(status) => status.ok(),
                         Err(_) => {
@@ -172,6 +181,8 @@ impl HostProcesses {
             if let Some(group) = group {
                 unsafe { libc::kill(-group, libc::SIGKILL) };
             }
+            #[cfg(windows)]
+            job.terminate(STOP_GRACE).await;
             for reader in readers.into_iter().flatten() {
                 let _ = reader.await;
             }
@@ -230,7 +241,8 @@ impl HostProcesses {
         }
     }
     /// Kills every process group at once: the app is exiting, and its async
-    /// tasks will not run again to stop them.
+    /// tasks will not run again to stop them. On Windows each process's job
+    /// kills it when the app's handle to the job closes.
     pub(crate) fn shutdown(&self) {
         self.stop_all();
         #[cfg(unix)]
@@ -331,11 +343,6 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     }
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-    }
 
     processes.start(page, plugin, &declared.program, command, on_event)
 }

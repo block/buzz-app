@@ -156,9 +156,15 @@ export class HostService extends Service implements Host {
       exit = resolve;
     });
     const onEvent = new Channel<ProcessEvent>((event) => {
-      if (event.type === "exit") exit(event.code);
-      else if (event.type === "stdout") onStdout?.(event.data);
-      else onStderr?.(event.data);
+      if (event.type === "exit") return exit(event.code);
+      // A throw here would stall the channel, so no later output or exit
+      // would arrive.
+      try {
+        if (event.type === "stdout") onStdout?.(event.data);
+        else onStderr?.(event.data);
+      } catch (error) {
+        console.error(`Process ${id} output handler failed`, error);
+      }
     });
     const handle = await invoke<number>("plugin_host_process_spawn", {
       id: owner.id,

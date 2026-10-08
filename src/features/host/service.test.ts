@@ -261,6 +261,29 @@ it("starts a declared process as the calling plugin and streams it", async () =>
   await expect(process?.exited).resolves.toBe(0);
 });
 
+it("keeps delivering process events after an output handler throws", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const process = await plugin.host.spawn?.("agent", {
+    onStdout: () => {
+      throw new Error("handler bug");
+    },
+  });
+  const [, spawn] = vi.mocked(invoke).mock.calls[0] as [
+    string,
+    { onEvent: { onmessage(event: unknown): void } },
+  ];
+  expect(() =>
+    spawn.onEvent.onmessage({ type: "stdout", data: "out" }),
+  ).not.toThrow();
+  expect(error).toHaveBeenCalled();
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  spawn.onEvent.onmessage({ type: "exit", code: 1 });
+  await expect(process?.exited).resolves.toBe(1);
+  error.mockRestore();
+});
+
 it("kills a plugin's processes when the plugin unloads", async () => {
   const root = new Context();
   new HostService(root);

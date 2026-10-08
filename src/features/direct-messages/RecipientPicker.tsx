@@ -7,6 +7,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
+import { matchPerson } from "../search/person-match";
 import { usePeople, type Recipient } from "./usePeople";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
@@ -71,7 +72,36 @@ export function RecipientPicker({
             : shared.has(person.pubkey)
               ? 3
               : 4;
-  const eligible = directory.people.filter(
+  // Remember eligible namesakes while search text and selection change.
+  const known = useRef(new Map<string, Recipient>());
+  // A managed agent also matches by its own name, as in mentions, even when
+  // its profile name differs. The directory searches profile names only.
+  const listed = new Map(
+    directory.people.map((person) => [person.pubkey, person]),
+  );
+  const byAgentName = query.trim()
+    ? agents.identities.flatMap((agent): Recipient[] => {
+        if (
+          !agent.managed ||
+          !agent.name ||
+          listed.has(agent.pubkey) ||
+          matchPerson(agent.name, query) === undefined
+        )
+          return [];
+        // Show the profile already seen for this key, as browsing did.
+        const profile =
+          known.current.get(agent.pubkey) ??
+          session.profiles.snapshot().get(agent.pubkey);
+        return [
+          {
+            ...(profile ?? { name: agent.name }),
+            pubkey: agent.pubkey,
+            isAgent: true,
+          },
+        ];
+      })
+    : [];
+  const eligible = [...directory.people, ...byAgentName].filter(
     (person) =>
       person.pubkey !== session.viewer &&
       !excludedPubkeys.includes(person.pubkey) &&
@@ -95,8 +125,6 @@ export function RecipientPicker({
     const person = byPubkey.get(pubkey);
     return person ? [person] : [];
   });
-  // Remember eligible namesakes while search text and selection change.
-  const known = useRef(new Map<string, Recipient>());
   for (const person of [...candidates, ...selected])
     known.current.set(person.pubkey, person);
   const groups = new Map<string, string[]>();

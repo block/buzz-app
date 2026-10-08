@@ -1823,6 +1823,88 @@ it.each([
   },
 );
 
+it.each([
+  ["resolves it", false],
+  ["reports a profile namesake as ambiguous", true],
+])("completing an agent's own name with Space %s", async (_, namesake) => {
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair(),
+    human = keypair();
+  const reads: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return Promise.resolve([
+          profile(agent, { display_name: "Legacy Bee" }),
+          ...(namesake ? [profile(human, { display_name: "Jose" })] : []),
+        ]);
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        reads.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: agent.pubkey, name: "José", managed: true }],
+    selectable: [{ pubkey: agent.pubkey, name: "José", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  const props = {
+    session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="from:jose" />);
+    // The picker offers the agent by its own name.
+    expect(
+      await within(
+        await screen.findByRole("group", { name: "Agents" }),
+      ).findByRole("option"),
+    ).toBeVisible();
+    mounted.rerender(<SearchResults {...props} query="from:jose " />);
+    if (!namesake) {
+      await waitFor(() =>
+        expect(reads.at(-1)).toEqual([
+          expect.objectContaining({ authors: [agent.pubkey] }),
+        ]),
+      );
+    } else {
+      // Both keys are offered; neither is searched silently.
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("group", { name: "People" })).getAllByRole(
+            "option",
+          ),
+        ).toHaveLength(1),
+      );
+      expect(
+        within(screen.getByRole("group", { name: "Agents" })).getAllByRole(
+          "option",
+        ),
+      ).toHaveLength(1);
+      expect(reads).toEqual([]);
+    }
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("adds a late shared agent without another keystroke or prefix read", async () => {
   vi.useFakeTimers();
   const relay = keypair(),

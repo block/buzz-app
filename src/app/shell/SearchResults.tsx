@@ -203,11 +203,26 @@ export function SearchResults({
   const operatorChannelId = isChannelUuid(operatorChannel)
     ? operatorChannel
     : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
+  // The author picker also matches a selectable agent by its own name, so a
+  // completed from: name resolves against the same names.
+  const agentSnapshot = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
   const search = useSearchMessages(
     session,
     query,
     scopedChannelId,
     operatorChannelId,
+    new Map(
+      agentSnapshot.selectable
+        .filter(
+          (agent) =>
+            !archiveHides(session.archives, agent.pubkey, session.viewer),
+        )
+        .map((agent) => [agent.pubkey, agent.name]),
+    ),
   );
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so

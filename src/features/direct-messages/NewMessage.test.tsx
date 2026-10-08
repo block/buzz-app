@@ -395,6 +395,33 @@ it("matches names from the start of a word, like mentions", async () => {
   ).not.toBeInTheDocument();
 });
 
+it("finds a managed agent by its own name when its profile name differs", async () => {
+  const t = setup();
+  t.updateControl({
+    status: "ready",
+    data: {
+      agents: [
+        {
+          pubkey: people[1]?.pubkey,
+          name: "José",
+          relayUrl: "https://relay.example",
+        } as AgentView,
+      ],
+      runtimeAvailable: true,
+    },
+    busy: false,
+    error: null,
+  } as AgentControlState);
+  t.mount();
+  // Browsing caches the agent under its profile name, Person 2.
+  await screen.findByRole("option", { name: "Person 2, Agent" });
+  await t.user.type(recipient(), "jose");
+  expect(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Person 1" })).toBeNull();
+});
+
 it("removes once for pointerdown plus click, then Backspace; effects outlive chips", async () => {
   const t = setup();
   t.mount();

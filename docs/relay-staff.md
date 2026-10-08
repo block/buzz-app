@@ -59,17 +59,26 @@ available.
 
 ## Writes
 
+Every write (resolve, reopen, cancelling a failed enforcement, direct actions,
+lifting a restriction and operator changes) is held in an in-memory store for
+the app session, keyed by the identity, admin host and relay it was made for.
+The store, not the screen, owns the request, whether it is sending and its last
+outcome. Screens subscribe to it, so a reply that arrives after a screen was
+left, the card was closed and reopened, or access was lost and regained still
+shows up, and a write that is sending can't be sent again, discarded or
+replaced. A held write is never offered or sent under another identity or admin
+host. Nothing is saved to disk.
+
 Resolve, reopen and direct actions freeze the whole request, including a
-`requestId` minted once. An outcome `unresolved()` reports (an ambiguous
-response, or a `pending` direct action) keeps it, so **Retry** resends the same
-request as it is, without reading the form again. Unresolved writes are held in
-memory for the app session, keyed by the identity, admin host and relay they
-were made for, outside the card and its access state. Leaving a report or
-community page, closing and reopening the card, or losing and regaining access
-all bring back the same request; it is never offered or sent under another
-identity or admin host. Nothing is saved to disk. A request that was never
-sent, or a definite rejection, releases it. `request_id_conflict` is shown as an error and
-is never resent under a new ID without the user starting a new action.
+`requestId` minted once, and **Retry** resends it exactly, without reading the
+form again. The other writes have no `requestId`, so a new attempt sends the
+current form. A write stays held while any attempt is unresolved (`unresolved()`:
+an ambiguous response, or a `pending` direct action). Before any such attempt,
+anything else settles it, including a request native code never sent. After one,
+only the relay's own answer to a request that was sent settles it: a retry that
+was never sent, or was refused for authorization, leaves the write held with
+the same `requestId`. `request_id_conflict` is shown as an error and is never
+resent under a new ID without the user starting a new action.
 
 A late answer to a read is dropped once the identity, admin host, community or
 search it was made for has changed: a new search or identity cancels it, and a

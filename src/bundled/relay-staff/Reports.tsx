@@ -15,7 +15,7 @@ import type {
   ReportResolution,
   StaffRequest,
 } from "../../features/relay-staff/contract";
-import { describe, useFrozenWrite, useRead, useSession } from "./session";
+import { describe, useWrite, useRead, useSession } from "./session";
 import {
   CommunityBadge,
   containsSecretKey,
@@ -286,17 +286,16 @@ function Enforcement({
   action: ActionRecordDto;
   onChanged(): void;
 }) {
-  const { canMutate, request } = useSession();
+  const { canMutate } = useSession();
   const notify = useToastNotification();
-  const [busy, setBusy] = useState(false);
+  const write = useWrite(`cancel ${action.id}`);
   const cancel = async () => {
-    setBusy(true);
-    const outcome = await request({
+    const outcome = await write.run({
       route: "cancelReport",
       id: reportId,
       actionId: action.id,
     });
-    setBusy(false);
+    if (!outcome) return;
     notify(
       outcome.ok
         ? "Enforcement cancelled. The report is open again."
@@ -323,7 +322,7 @@ function Enforcement({
       </p>
       {message && <p className="text-caption text-secondary">{message}</p>}
       {action.status === "failed" && canMutate && (
-        <Button size="sm" loading={busy} onClick={() => void cancel()}>
+        <Button size="sm" loading={write.busy} onClick={() => void cancel()}>
           Cancel and reopen
         </Button>
       )}
@@ -341,7 +340,7 @@ function Resolve({
   onChanged(): void;
 }) {
   const notify = useToastNotification();
-  const write = useFrozenWrite<ResolveRequest>(`resolve ${report.id}`);
+  const write = useWrite<ResolveRequest>(`resolve ${report.id}`);
   const [action, setAction] = useState<ReportAction | null>(null);
   const [reason, setReason] = useState("");
   const [secs, setSecs] = useState("");
@@ -457,7 +456,7 @@ function Reopen({
   onChanged(): void;
 }) {
   const notify = useToastNotification();
-  const write = useFrozenWrite<ReopenRequest>(`reopen ${report.id}`);
+  const write = useWrite<ReopenRequest>(`reopen ${report.id}`);
   const [reason, setReason] = useState("");
   const secret = containsSecretKey(reason);
   const submit = async () => {

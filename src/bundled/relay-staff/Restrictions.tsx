@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { RestrictionDto } from "../../features/relay-staff/contract";
-import { describe, usePages, useSession } from "./session";
+import type {
+  RestrictionDto,
+  StaffRequest,
+} from "../../features/relay-staff/contract";
+import { describe, usePages, useSession, useWrite } from "./session";
 import { Failure, Loading, shortKey, UNSUPPORTED_BROWSING } from "./ui";
 
 type Lift = { pubkey: string; kind: "ban" | "timeout" };
+type LiftRequest = Extract<StaffRequest, { route: "liftRestriction" }>;
 
 function active(row: RestrictionDto, now = new Date()) {
   return {
@@ -17,7 +21,7 @@ function active(row: RestrictionDto, now = new Date()) {
 }
 
 export function Restrictions({ communityHost }: { communityHost: string }) {
-  const { context, canMutate, request } = useSession();
+  const { context, canMutate } = useSession();
   const pages = usePages(
     (cursor) => ({
       route: "listRestrictions",
@@ -27,20 +31,20 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
     [context, communityHost],
   );
   const [lifting, setLifting] = useState<Lift | null>(null);
-  const [working, setWorking] = useState<string | null>(null);
+  const write = useWrite<LiftRequest>(`lift ${communityHost}`);
+  const working = write.busy ? (write.frozen?.pubkey ?? null) : null;
   const [error, setError] = useState("");
 
   const lift = async ({ pubkey, kind }: Lift) => {
     setLifting(null);
     setError("");
-    setWorking(pubkey);
-    const outcome = await request({
+    const outcome = await write.run({
       route: "liftRestriction",
       communityHost,
       kind,
       pubkey,
     });
-    setWorking(null);
+    if (!outcome) return;
     // A conflict means someone else already changed it: show the current list.
     if (outcome.ok || outcome.failure.status === 409) pages.restart();
     else setError(describe(outcome.failure));

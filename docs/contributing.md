@@ -154,7 +154,20 @@ shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
 user-level `target-dir`, so its app and bundled resources always match its sources;
 remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
 The pinned agent runtime is built once per clone and reused by worktrees with the
-same pin and toolchain. Native compilation still takes time in each new worktree. Parallel worktrees normally need
+same pin and toolchain. Its Cargo build directory is shared as well, so a pin or
+toolchain change recompiles only what changed: `agent-runtime-build/` inside an
+exported `CARGO_TARGET_DIR`, otherwise `buzz-agent-runtime/target/` in the Git
+common directory. Goose is fetched without its documentation and desktop UI
+trees. A target-scoped `.buzz-build-lock/` covers both runtime builds through
+bundle publication. A concurrent cache miss fails with a retry message; retry
+after the other build finishes. Ordinary failures release the lock. Terminating
+the preparation process or Cargo leaves it in place because compiler descendants
+may still be writing.
+The lock's `owner` file identifies the PID and worktree; confirm those compilers
+have exited before removing the reported lock directory and retrying. Do not
+remove an active lock. Interrupted compilation remains available for reuse.
+The macOS release cache includes this shared runtime target explicitly.
+Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
 ports must be integers from 1 to 65535. Browser dev

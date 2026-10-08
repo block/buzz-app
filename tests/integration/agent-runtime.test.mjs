@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
+// Fixture builds must never land in a developer's shell-wide Cargo target.
+delete process.env.CARGO_TARGET_DIR;
+
 test("native library and bundled tools pin the same immutable source", () => {
   const spec = JSON.parse(
     readFileSync(
@@ -76,6 +79,50 @@ test("runtime preparation builds missing resources, reuses verified files, and r
       .split("\n").length;
   assert.match(run(), /Verified inputs staged/);
   assert.equal(count(), 2);
+  // Both pins are fetched shallowly; Goose skips its documentation and UI trees.
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  assert.deepEqual(
+    readFileSync(path.join(directory, "git-calls.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line)),
+    [
+      ["source", "init", "--quiet"],
+      [
+        "source",
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        spec.repository,
+        spec.revision,
+      ],
+      ["source", "checkout", "--quiet", "--detach", spec.revision],
+      ["goose", "init", "--quiet"],
+      [
+        "goose",
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        spec.goose.repository,
+        spec.goose.revision,
+      ],
+      [
+        "goose",
+        "sparse-checkout",
+        "set",
+        "--no-cone",
+        "/*",
+        "!/documentation/",
+        "!/ui/",
+      ],
+      ["goose", "checkout", "--quiet", "--detach", spec.goose.revision],
+    ],
+  );
   assert.match(run(), /Agent runtime ready/);
   assert.equal(count(), 2, "warm preparation must not invoke Cargo");
   const filename =
@@ -163,7 +210,17 @@ test("worktrees of one clone reuse a verified runtime built from identical input
   const built = (root) => existsSync(path.join(root, "build-calls.jsonl"));
   const [one, two] = worktrees;
   const bundle = (root) => path.join(root, "src-tauri/resources/agent-runtime");
-  assert.match(run(one), /Verified inputs staged/);
+  const entries = () =>
+    readdirSync(path.join(common, "buzz-agent-runtime")).filter(
+      (name) => name !== "target",
+    );
+  const target = path.join(common, "buzz-agent-runtime/target");
+  assert.ok(run(one).includes(`Preparing the agent runtime in ${target};`));
+  assert.ok(
+    existsSync(path.join(target, "fixture-target/release/buzz")),
+    "worktrees of one clone share the runtime build directory",
+  );
+  assert.ok(!existsSync(path.join(one, "target")));
   assert.match(run(two), /Verified inputs restored/);
   assert.ok(!built(two), "a matching cached runtime must not invoke Cargo");
   assert.deepEqual(
@@ -171,7 +228,7 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     readFileSync(path.join(bundle(one), "manifest.json"), "utf8"),
   );
   // A corrupt cache entry is rebuilt, never copied into a worktree.
-  const [entry] = readdirSync(path.join(common, "buzz-agent-runtime"));
+  const [entry] = entries();
   writeFileSync(path.join(common, "buzz-agent-runtime", entry, "buzz"), "bad");
   rmSync(bundle(two), { recursive: true });
   assert.match(run(two), /Verified inputs staged/);
@@ -186,7 +243,7 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     JSON.stringify({ ...spec, revision: "0".repeat(40) }),
   );
   assert.match(run(one), /Verified inputs staged/);
-  assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 2);
+  assert.equal(entries().length, 2);
   writeFileSync(
     specPath,
     JSON.stringify({
@@ -195,8 +252,33 @@ test("worktrees of one clone reuse a verified runtime built from identical input
     }),
   );
   assert.match(run(one), /Verified inputs staged/);
-  assert.equal(readdirSync(path.join(common, "buzz-agent-runtime")).length, 3);
+  assert.equal(entries().length, 3);
   assert.match(run(one), /Agent runtime ready/);
+});
+
+test("a shell-wide Cargo target hosts the runtime build in its own subdirectory", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const common = path.join(directory, "common");
+  writeFileSync(path.join(directory, "git-common-dir"), common);
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+      // Relative, as a shell may export it; Cargo runs from the source stage.
+      env: { ...process.env, CARGO_TARGET_DIR: "shell-target" },
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const target = path.join(directory, "shell-target/agent-runtime-build");
+  assert.ok(existsSync(path.join(target, "fixture-target/release/buzz")));
+  assert.ok(!existsSync(path.join(common, "buzz-agent-runtime/target")));
+  assert.match(result.stdout, /Verified inputs staged/);
 });
 
 test("a build that finishes after a concurrent publish keeps the published entry", (t) => {
@@ -230,8 +312,9 @@ test("a build that finishes after a concurrent publish keeps the published entry
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   const entries = path.join(common, "buzz-agent-runtime");
-  assert.equal(readdirSync(entries).length, 1, "no leftover staging entries");
-  const [entry] = readdirSync(entries);
+  const published = readdirSync(entries).filter((name) => name !== "target");
+  assert.equal(published.length, 1, "no leftover staging entries");
+  const [entry] = published;
   const tool = (dir) => readFileSync(path.join(dir, "buzz"), "utf8");
   assert.ok(
     tool(path.join(entries, entry)).endsWith(one),
@@ -241,6 +324,121 @@ test("a build that finishes after a concurrent publish keeps the published entry
     tool(path.join(two, "src-tauri/resources/agent-runtime")).endsWith(two),
   );
 });
+
+for (const sharedTarget of ["git common directory", "exported target"]) {
+  test(`different pins cannot overwrite an in-flight runtime in the ${sharedTarget}`, (t) => {
+    const directory = mkdtempSync(path.join(tmpdir(), "buzz-runtime-race-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const common = path.join(directory, "common");
+    const [one, two, restored] = ["one", "two", "restored"].map((name) => {
+      const root = path.join(directory, name);
+      runtimeFixture(root);
+      writeFileSync(path.join(root, "git-common-dir"), common);
+      return root;
+    });
+    const specPath = path.join(two, "runtime/agent-runtime.json");
+    const spec = JSON.parse(readFileSync(specPath, "utf8"));
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        ...spec,
+        revision: "0".repeat(40),
+        goose: { ...spec.goose, revision: "1".repeat(40) },
+      }),
+    );
+    const target =
+      sharedTarget === "exported target"
+        ? path.join(directory, "shell-target")
+        : undefined;
+    const run = (cwd) =>
+      spawnSync(process.execPath, ["scripts/build-agent-runtime.mjs"], {
+        cwd,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { ...process.env, CARGO_TARGET_DIR: target },
+      });
+    // This starts B only after A's Buzz Cargo invocation has exited. Cargo's own
+    // per-invocation lock would allow B to overwrite A before A publishes.
+    writeFileSync(
+      path.join(one, "during-goose"),
+      JSON.stringify({ cwd: two, target }),
+    );
+    const first = run(one);
+    assert.equal(first.status, 0, first.stderr);
+    const contender = JSON.parse(
+      readFileSync(path.join(one, "contender-result.json"), "utf8"),
+    );
+    assert.equal(contender.status, 1, contender.stderr);
+    assert.match(contender.stderr, /Agent runtime build is locked/);
+    assert.ok(
+      !existsSync(path.join(two, "build-calls.jsonl")),
+      "contention fails before Cargo starts",
+    );
+    const second = run(two);
+    assert.equal(second.status, 0, second.stderr);
+    const restore = run(restored);
+    assert.equal(restore.status, 0, restore.stderr);
+    assert.match(restore.stdout, /Verified inputs restored/);
+    assert.ok(!existsSync(path.join(restored, "build-calls.jsonl")));
+    for (const [root, origin] of [
+      [one, one],
+      [two, two],
+      [restored, one],
+    ]) {
+      const bundle = path.join(root, "src-tauri/resources/agent-runtime");
+      const manifest = JSON.parse(
+        readFileSync(path.join(bundle, "manifest.json"), "utf8"),
+      );
+      assert.equal(
+        manifest.revision,
+        root === two ? "0".repeat(40) : spec.revision,
+      );
+      assert.equal(
+        manifest.goose.revision,
+        root === two ? "1".repeat(40) : spec.goose.revision,
+      );
+      for (const name of Object.keys(manifest.files)) {
+        assert.equal(
+          readFileSync(path.join(bundle, name), "utf8"),
+          `fixture ${name} ${origin}`,
+        );
+      }
+    }
+  });
+}
+
+for (const terminated of ["parent", "compiler"]) {
+  test(`${terminated} termination leaves the target locked until explicit recovery`, (t) => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), "buzz-runtime-terminated-"),
+    );
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    runtimeFixture(directory);
+    writeFileSync(path.join(directory, "terminate-build"), terminated);
+    const run = () =>
+      spawnSync(process.execPath, ["scripts/build-agent-runtime.mjs"], {
+        cwd: directory,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+    assert.notEqual(run().status, 0);
+    rmSync(path.join(directory, "terminate-build"));
+    const blocked = run();
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr, /Agent runtime build is locked/);
+    // The synchronous fixture has exited; recovery is now safe. No lease expiry
+    // or PID-based reaper may unlock a target while a compiler might still write.
+    rmSync(
+      path.join(directory, "target/agent-runtime-build/.buzz-build-lock"),
+      {
+        recursive: true,
+      },
+    );
+    const recovered = run();
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.match(recovered.stdout, /Verified inputs staged/);
+  });
+}
 
 test("packaged desktop build prepares runtime before frontend compilation", () => {
   const config = JSON.parse(

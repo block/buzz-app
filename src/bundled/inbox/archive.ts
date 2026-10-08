@@ -121,16 +121,23 @@ export function reopenArchives(
   if (!archives.length) return;
   const index = archiveIndex(archives);
   const reopened = new Set<Archive>();
-  const regrouped = new Map<Archive, Archive>();
+  const regrouped = new Map<Archive, InboxItem | null>();
   for (const item of items)
     for (const archive of matches(index, item)) {
       if (renewed(archive, item)) reopened.add(archive);
-      else if (archive.id !== item.id)
-        regrouped.set(archive, { ...archive, id: item.id });
+      // Count every match, including the saved coordinate: split evidence does
+      // not identify a replacement conversation, regardless of row order.
+      regrouped.set(archive, regrouped.has(archive) ? null : item);
     }
   const retained = archives
     .filter((archive) => !reopened.has(archive))
-    .map((archive) => regrouped.get(archive) ?? archive);
+    .map((archive) => {
+      const item = regrouped.get(archive);
+      // Never downgrade a verified root to an unresolved singleton reply.
+      return item?.rootId && archive.id !== item.id
+        ? { ...archive, id: item.id }
+        : archive;
+    });
   if (
     !reopened.size &&
     retained.every((archive, index) => archive === archives[index])

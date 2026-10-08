@@ -166,6 +166,78 @@ test("Inbox archive survives reload, restores, and reopens on a new mention", as
   await expect(rows).toHaveCount(1);
 });
 
+// Browser-only: a saved grouped archive must not drive a render/storage loop when
+// the real unread projection currently exposes only unresolved singleton replies.
+test("saved grouped archive converges with unresolved Inbox evidence across reload", async ({
+  page,
+  app,
+}) => {
+  const rootId = "f".repeat(64);
+  const replies = ["First unresolved request", "Second unresolved request"].map(
+    (content) =>
+      app.append("primary", channel, content, false, false, rootId, undefined, [
+        ["p", app.viewer],
+      ]),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  const rows = inbox
+    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(3);
+  await choose(page, inbox, "Show", "Inbox + archived");
+  const saved = await page.evaluate(
+    ({ channel, rootId, messageIds }) => {
+      const filterKey = Object.keys(localStorage).find(
+        (key) =>
+          key.startsWith("buzz-view.v1:") &&
+          JSON.parse(key.slice("buzz-view.v1:".length))[1] === "inbox:filters",
+      );
+      if (!filterKey) throw new Error("Missing Inbox filter scope");
+      const [scope] = JSON.parse(filterKey.slice("buzz-view.v1:".length));
+      const key = `buzz-view.v1:${JSON.stringify([scope, "inbox:archives"])}`;
+      const revision = JSON.stringify([
+        {
+          id: `${channel}:${rootId}`,
+          channelId: channel,
+          through: Math.floor(Date.now() / 1000),
+          messageIds,
+        },
+      ]);
+      localStorage.setItem(key, revision);
+      return { key, revision };
+    },
+    { channel, rootId, messageIds: replies.map(({ id }) => id) },
+  );
+  await page.addInitScript(() => {
+    window.archiveReconciliationWrites = 0;
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.includes("inbox:archives")) window.archiveReconciliationWrites++;
+      return setItem.call(this, key, value);
+    };
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    await page.reload();
+    await openPage(page, "Inbox");
+    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+    await expect(rows).toHaveCount(3);
+    await choose(page, inbox, "Show", "Archived");
+    await expect(rows).toHaveCount(2);
+    await choose(page, inbox, "Show", "Inbox");
+    await expect(rows).toHaveCount(1);
+    await choose(page, inbox, "Show", "Inbox + archived");
+    await expect(rows).toHaveCount(3);
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), saved.key),
+    ).toBe(saved.revision);
+    expect(await page.evaluate(() => window.archiveReconciliationWrites)).toBe(
+      0,
+    );
+  }
+});
+
 // Browser coverage proves Inbox/thread/composer wiring without an archive-on-send hook.
 test("Inbox sending keeps the conversation open until manually archived", async ({
   page,

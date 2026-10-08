@@ -140,6 +140,188 @@ it("persists a regrouped archive coordinate after its original evidence is repla
   ]);
 });
 
+it.each([2, 40, 54])(
+  "keeps a grouped archive stable while its evidence splits into %i unresolved rows",
+  (count) => {
+    const h = fixture();
+    const items: InboxItem[] = Array.from({ length: count }, (_, index) => {
+      const id = (index + 1).toString(16).padStart(64, "0");
+      return {
+        ...h.item,
+        id: `room:${id}`,
+        messageId: id,
+        latestMessageId: id,
+        messageIds: [id],
+        target: { kind: "message", channelId: "room", messageId: id },
+        mentioned: false,
+        mentions: [],
+        thread: true,
+      };
+    });
+    const rootId = "f".repeat(64);
+    const grouped: InboxItem = {
+      ...h.item,
+      id: `room:${rootId}`,
+      rootId,
+      target: { kind: "thread", channelId: "room", rootId },
+      messageIds: items.flatMap((item) => item.messageIds),
+      mentioned: false,
+      mentions: [],
+      thread: true,
+    };
+    updateArchive(h.scope, grouped, true);
+    const unrelated = { ...h.item, channelId: "other-room" };
+    updateArchive(h.scope, unrelated, true);
+    const draftKey = `buzz-view.v1:${JSON.stringify([h.scope, "draft:room"])}`;
+    localStorage.setItem(draftKey, JSON.stringify("Unsent draft"));
+    const original = viewRevision(h.scope, archiveKey);
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    for (const evidence of [items, items, [...items].reverse()]) {
+      reopenArchives(h.scope, evidence);
+      expect(viewRevision(h.scope, archiveKey)).toBe(original);
+      expect(evidence.every(h.archived)).toBe(true);
+    }
+    // Even a single remaining unresolved reply must not downgrade the root.
+    reopenArchives(h.scope, items.slice(0, 1));
+    reopenArchives(h.scope, [grouped]);
+    reopenArchives(h.scope, [grouped]);
+    expect(viewRevision(h.scope, archiveKey)).toBe(original);
+    expect(writes).not.toHaveBeenCalled();
+    expect(localStorage.getItem(draftKey)).toBe(JSON.stringify("Unsent draft"));
+    expect(h.archived(unrelated)).toBe(true);
+  },
+);
+
+it.each([false, true])(
+  "does not choose between ambiguous rows when the saved coordinate matches one: %s",
+  (matchesCurrent) => {
+    const h = fixture();
+    const secondId = "b".repeat(64);
+    const second: InboxItem = {
+      ...h.item,
+      id: `room:${secondId}`,
+      target: { kind: "message", channelId: "room", messageId: secondId },
+      messageId: secondId,
+      latestMessageId: secondId,
+      messageIds: [secondId],
+      mentions: [],
+      thread: true,
+    };
+    const saved = {
+      ...h.item,
+      id: matchesCurrent ? second.id : "room:old-coordinate",
+      messageIds: [...h.item.messageIds, secondId],
+    };
+    updateArchive(h.scope, saved, true);
+    const original = viewRevision(h.scope, archiveKey);
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    const unresolved = { ...h.item, thread: true };
+    for (const evidence of [
+      [unresolved, second],
+      [second, unresolved],
+    ]) {
+      reopenArchives(h.scope, evidence);
+      expect(viewRevision(h.scope, archiveKey)).toBe(original);
+    }
+    expect(writes).not.toHaveBeenCalled();
+    const rootId = "a".repeat(64);
+    const grouped: InboxItem = {
+      ...saved,
+      id: `room:${rootId}`,
+      rootId,
+      target: { kind: "thread", channelId: "room", rootId },
+    };
+    reopenArchives(h.scope, [grouped]);
+    expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([
+      {
+        id: grouped.id,
+        channelId: "room",
+        through: 30,
+        messageIds: saved.messageIds,
+      },
+    ]);
+    writes.mockClear();
+    for (const evidence of [
+      [grouped],
+      [unresolved, second],
+      [second],
+      [grouped],
+    ])
+      reopenArchives(h.scope, evidence);
+    expect(writes).not.toHaveBeenCalled();
+  },
+);
+
+it("does not rewrite a lone unresolved reply or choose between verified root matches", () => {
+  const h = fixture();
+  const secondId = "b".repeat(64);
+  const rootId = "a".repeat(64);
+  updateArchive(
+    h.scope,
+    {
+      ...h.item,
+      id: `room:${rootId}`,
+      messageIds: [...h.item.messageIds, secondId],
+    },
+    true,
+  );
+  const original = viewRevision(h.scope, archiveKey);
+  const writes = vi.spyOn(Storage.prototype, "setItem");
+  reopenArchives(h.scope, [{ ...h.item, thread: true }]);
+  expect(viewRevision(h.scope, archiveKey)).toBe(original);
+  const first: InboxItem = {
+    ...h.item,
+    id: `room:${rootId}`,
+    rootId,
+    target: { kind: "thread", channelId: "room", rootId },
+    thread: true,
+  };
+  const second: InboxItem = {
+    ...first,
+    id: `room:${secondId}`,
+    rootId: secondId,
+    target: { kind: "thread", channelId: "room", rootId: secondId },
+    messageIds: [secondId],
+    mentions: [],
+  };
+  for (const evidence of [
+    [first, second],
+    [second, first],
+  ]) {
+    reopenArchives(h.scope, evidence);
+    expect(viewRevision(h.scope, archiveKey)).toBe(original);
+  }
+  expect(writes).not.toHaveBeenCalled();
+});
+
+it("retires an ambiguous archive for a fresh mention without changing unrelated intent", () => {
+  const h = fixture();
+  const secondId = "b".repeat(64);
+  updateArchive(
+    h.scope,
+    { ...h.item, messageIds: [...h.item.messageIds, secondId] },
+    true,
+  );
+  const unrelated = { ...h.item, channelId: "other-room" };
+  updateArchive(h.scope, unrelated, true);
+  const fresh = {
+    ...h.item,
+    id: `room:${secondId}`,
+    messageIds: [secondId, "c".repeat(64)],
+    mentions: [{ id: "c".repeat(64), createdAt: 30 }],
+    thread: true,
+  };
+  const writes = vi.spyOn(Storage.prototype, "setItem");
+  reopenArchives(h.scope, [h.item, fresh]);
+  expect(h.archived(h.item)).toBe(false);
+  expect(h.archived(fresh)).toBe(false);
+  expect(h.archived(unrelated)).toBe(true);
+  expect(writes).toHaveBeenCalledTimes(1);
+  writes.mockClear();
+  reopenArchives(h.scope, [fresh, h.item]);
+  expect(writes).not.toHaveBeenCalled();
+});
+
 it("partitions archives by community and viewer, and never hides a failed save", () => {
   const h = fixture();
   updateArchive(h.scope, h.item, true);

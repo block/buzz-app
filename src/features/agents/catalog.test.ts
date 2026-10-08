@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "../relay/budget.ts";
 import { createOutbox } from "../relay/outbox.ts";
 import { flush, keypair, signed, type Key } from "../relay/testing.ts";
 import { createCommunityCatalog } from "./catalog.ts";
+import { bytes, MAX_CONTENT_BYTES } from "./catalog-envelope.ts";
 import { catalogRelay as relay, memoryStorage } from "./catalog-testing.ts";
 
 const alice = keypair(),
@@ -56,7 +58,11 @@ async function settled(writes: ReturnType<typeof createOutbox>, id: string) {
   for (let attempt = 0; attempt < 50; attempt++) {
     await flush();
     const item = writes.local.snapshot().find((entry) => entry.event.id === id);
-    if (item && item.delivery !== "sending") return item;
+    if (item && item.delivery !== "sending") {
+      // Accepted heads are confirmed by a strong coordinate read.
+      await flush();
+      return item;
+    }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("operation did not settle");
@@ -153,7 +159,12 @@ it("one owner shares and unshares; another reader discovers then loses it", asyn
   const b = client(server, bob);
   await a.writes.ready;
   await a.catalog.refresh();
-  const share = a.catalog.publish(30175, "helper", true, agentBody("Helper"));
+  const share = await a.catalog.publish(
+    30175,
+    "helper",
+    true,
+    agentBody("Helper"),
+  );
   expect(a.catalog.state(30175, "helper").change).toMatchObject({
     operation: share,
     shared: true,
@@ -176,7 +187,7 @@ it("one owner shares and unshares; another reader discovers then loses it", asyn
   });
 
   // Same-second unshare must still supersede the share under NIP-33.
-  const unshare = a.catalog.publish(30175, "helper", false);
+  const unshare = await a.catalog.publish(30175, "helper", false);
   const removed = await settled(a.writes, unshare);
   const shared = a.writes.local
     .snapshot()
@@ -203,7 +214,12 @@ it("reports a refusal, keeps it across a restart and retries it", async () => {
   await first.writes.ready;
   await first.catalog.refresh();
   server.refuse(true);
-  const id = first.catalog.publish(30178, "team-1", true, teamBody("Crew"));
+  const id = await first.catalog.publish(
+    30178,
+    "team-1",
+    true,
+    teamBody("Crew"),
+  );
   await settled(first.writes, id);
   expect(first.catalog.state(30178, "team-1")).toMatchObject({
     shared: false,
@@ -240,15 +256,15 @@ it("refuses to publish without a writer, a completed read or known content", asy
     local: undefined,
   });
   owners.push(catalog);
-  expect(() => catalog.queries.publish(30175, "x", true, "{}")).toThrow(
+  await expect(catalog.queries.publish(30175, "x", true, "{}")).rejects.toThrow(
     "This community cannot update catalog sharing.",
   );
   const { catalog: writable } = client(server, alice);
-  expect(() => writable.publish(30175, "unknown", false)).toThrow(
+  await expect(writable.publish(30175, "unknown", false)).rejects.toThrow(
     "The community catalog is still loading. Try again.",
   );
   await writable.refresh();
-  expect(() => writable.publish(30175, "unknown", false)).toThrow(
+  await expect(writable.publish(30175, "unknown", false)).rejects.toThrow(
     "Nothing has been shared from this coordinate.",
   );
 });
@@ -281,7 +297,7 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     const b = client(server, bob);
     await a.writes.ready;
     await a.catalog.refresh();
-    const id = a.catalog.publish(kind, "x", false);
+    const id = await a.catalog.publish(kind, "x", false);
     const sent = await settled(a.writes, id);
     expect(sent.event.created_at).toBe(ahead + 1);
     expect(a.catalog.state(kind, "x")).toMatchObject({
@@ -302,7 +318,10 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     const b = client(server, bob);
     await a.writes.ready;
     await a.catalog.refresh();
-    const sent = await settled(a.writes, a.catalog.publish(kind, "x", false));
+    const sent = await settled(
+      a.writes,
+      await a.catalog.publish(kind, "x", false),
+    );
     expect(sent.event.created_at).toBeGreaterThan(at);
     await b.catalog.refresh();
     expect(listed(b.catalog)).toEqual([]);
@@ -316,12 +335,12 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     await a.catalog.refresh();
     const share = await settled(
       a.writes,
-      a.catalog.publish(kind, "x", true, body),
+      await a.catalog.publish(kind, "x", true, body),
     );
     await a.catalog.dismiss(share.event.id);
     const unshare = await settled(
       a.writes,
-      a.catalog.publish(kind, "x", false),
+      await a.catalog.publish(kind, "x", false),
     );
     expect(unshare.event.created_at).toBeGreaterThan(share.event.created_at);
     await a.catalog.dismiss(unshare.event.id);
@@ -336,10 +355,10 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     const a = client(server, alice);
     await a.writes.ready;
     await a.catalog.refresh();
-    await settled(a.writes, a.catalog.publish(kind, "x", true, body));
+    await settled(a.writes, await a.catalog.publish(kind, "x", true, body));
     const unshare = await settled(
       a.writes,
-      a.catalog.publish(kind, "x", false),
+      await a.catalog.publish(kind, "x", false),
     );
     await a.catalog.dismiss(unshare.event.id);
     a.link.down = true;
@@ -362,7 +381,7 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     await a.catalog.refresh();
     const share = await settled(
       a.writes,
-      a.catalog.publish(kind, "x", true, body),
+      await a.catalog.publish(kind, "x", true, body),
     );
     server.put(
       signed(alice, {
@@ -393,11 +412,119 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
     const a = client(server, alice);
     await a.writes.ready;
     await a.catalog.refresh();
-    expect(() => a.catalog.publish(kind, "x", false)).toThrow(
+    await expect(a.catalog.publish(kind, "x", false)).rejects.toThrow(
       "Sharing is changing too quickly or your clock changed.",
     );
     expect(a.catalog.state(kind, "x")).toEqual({ shared: true });
   });
+
+  it("an accepted unshare a newer competing head outranks is not reported as removed", async () => {
+    const server = relay();
+    server.put(head(now()));
+    const a = client(server, alice);
+    const b = client(server, bob);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const release = server.hold();
+    const id = await a.catalog.publish(kind, "x", false);
+    // Another device lands a newer share after the pre-read; the relay keeps
+    // it and still answers the unshare as accepted (NIP-01 `duplicate:`).
+    server.put(head(now() + 60));
+    release();
+    const sent = await settled(a.writes, id);
+    expect(sent.delivery).toBe("accepted");
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: true });
+    await b.catalog.refresh();
+    expect(listed(b.catalog)).toHaveLength(1);
+  });
+
+  it("outranks a head another device published after the catalog read", async () => {
+    const server = relay();
+    server.put(head(now()));
+    const a = client(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const later = now() + 30;
+    server.put(head(later));
+    const sent = await settled(
+      a.writes,
+      await a.catalog.publish(kind, "x", false),
+    );
+    expect(sent.event.created_at).toBe(later + 1);
+    expect(a.catalog.state(kind, "x")).toMatchObject({
+      shared: false,
+      change: { shared: false, delivery: "accepted" },
+    });
+  });
+
+  it("shares and unshares maximum-size content through the outbox", async () => {
+    // Every `"` escapes once in content and again in the serialized event.
+    // Member prompts are capped, so a team spreads the padding over members.
+    const quarter = (pad: string, index: number) =>
+      pad.slice((index * pad.length) / 4, ((index + 1) * pad.length) / 4);
+    const shape = (pad: string) =>
+      kind === 30175
+        ? JSON.stringify({ display_name: "Big", system_prompt: pad })
+        : JSON.stringify({
+            v: 1,
+            name: "Big",
+            members: [0, 1, 2, 3].map((index) => ({
+              member_key: `k${index}`,
+              display_name: "Mate",
+              system_prompt: quarter(pad, index),
+            })),
+          });
+    const padded = (size: number) => {
+      const room = size - bytes(shape(""));
+      const text = shape(
+        '"'.repeat(Math.floor(room / 2)) + "a".repeat(room % 2),
+      );
+      expect(bytes(text)).toBe(size);
+      return text;
+    };
+    const server = relay();
+    const a = client(server, alice);
+    const b = client(server, bob);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const share = await settled(
+      a.writes,
+      await a.catalog.publish(kind, "x", true, padded(MAX_CONTENT_BYTES)),
+    );
+    expect(byteSize(share.event)).toBeGreaterThan(2 * OUTBOX_INPUT_MAX_BYTES);
+    expect(a.catalog.state(kind, "x")).toMatchObject({
+      shared: true,
+      change: { shared: true, delivery: "accepted" },
+    });
+    await b.catalog.refresh();
+    expect(listed(b.catalog)).toHaveLength(1);
+    const unshare = await settled(
+      a.writes,
+      await a.catalog.publish(kind, "x", false),
+    );
+    expect(bytes(unshare.event.content)).toBe(MAX_CONTENT_BYTES);
+    expect(a.catalog.state(kind, "x")).toMatchObject({
+      shared: false,
+      change: { shared: false, delivery: "accepted" },
+    });
+
+    await expect(
+      a.catalog.publish(kind, "y", true, padded(MAX_CONTENT_BYTES + 1)),
+    ).rejects.toThrow("Message is empty or too large");
+    expect(a.catalog.state(kind, "y")).toEqual({ shared: false });
+  });
+});
+
+it("keeps the ordinary input bound for non-catalog kinds", async () => {
+  const a = client(relay(), alice);
+  await a.writes.ready;
+  expect(() =>
+    a.writes.outbox.send({
+      kind: 9,
+      content: "x".repeat(OUTBOX_INPUT_MAX_BYTES),
+      tags: [["h", "channel"]],
+    }),
+  ).toThrow("Message is empty or too large");
 });
 
 it("reconciles a restored accepted share once the relay read returns it", async () => {
@@ -406,17 +533,22 @@ it("reconciles a restored accepted share once the relay read returns it", async 
   const first = client(server, alice, storage);
   await first.writes.ready;
   await first.catalog.refresh();
-  const id = first.catalog.publish(30175, "helper", true, agentBody("Helper"));
+  const id = await first.catalog.publish(
+    30175,
+    "helper",
+    true,
+    agentBody("Helper"),
+  );
   await settled(first.writes, id);
   await flush();
   first.owner.dispose();
 
   const second = client(server, alice, storage);
   await second.writes.ready;
-  expect(second.catalog.state(30175, "helper").change).toMatchObject({
-    operation: id,
-    delivery: "queued",
-    stalled: true,
+  // A restored receipt is not proof of the head until a fresh read.
+  expect(second.catalog.state(30175, "helper")).toMatchObject({
+    shared: false,
+    change: { operation: id, delivery: "queued" },
   });
   await second.catalog.refresh();
   expect(second.catalog.state(30175, "helper")).toMatchObject({

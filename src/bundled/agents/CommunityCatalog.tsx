@@ -113,7 +113,7 @@ export function CatalogShareSwitch({
     try {
       const text = next ? await content() : undefined;
       if (!mounted.current) return;
-      catalog.publish(kind, d, next, text);
+      await catalog.publish(kind, d, next, text, () => mounted.current);
     } catch (problem) {
       if (mounted.current) setError(message(problem));
     } finally {

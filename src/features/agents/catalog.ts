@@ -17,6 +17,8 @@ export type CatalogKind = typeof AGENT_CATALOG_KIND | typeof TEAM_CATALOG_KIND;
 const KINDS: readonly CatalogKind[] = [AGENT_CATALOG_KIND, TEAM_CATALOG_KIND];
 const PAGE = 200;
 const MAX_EVENTS = 5_000;
+const READ_FAILED =
+  "Could not read the community catalog. Check the community connection, then retry.";
 
 /** queued = the relay has not answered yet; rejected = it refused or failed. */
 export type CatalogDelivery = "queued" | "accepted" | "rejected";
@@ -47,7 +49,6 @@ function delivery(item: OutgoingEvent): CatalogDelivery {
       ? "rejected"
       : "queued";
 }
-const confirmed = (item: OutgoingEvent) => delivery(item) === "accepted";
 /** NIP-33 head order: newer created_at, then the lower id. */
 const outranks = (a: EventData, b: EventData) =>
   a.created_at > b.created_at || (a.created_at === b.created_at && a.id < b.id);
@@ -95,6 +96,19 @@ export function createCommunityCatalog({
     if (!known || outranks(event, known)) confirmedHeads.set(key, event);
   }
   let changes = new Map<string, OutgoingEvent>();
+  // An accepted receipt is not proof of the NIP-33 head: a relay holding a
+  // newer head answers `duplicate:` and keeps it. Only own changes a strong
+  // coordinate read returned as the head count as accepted.
+  const verified = new Set<string>();
+  // Answered by a read without becoming the head; re-read on the next refresh.
+  const checked = new Set<string>();
+  const verifying = new Map<string, Promise<void>>();
+  const outcome = (item: OutgoingEvent): CatalogDelivery => {
+    const value = delivery(item);
+    return value === "accepted" && !verified.has(item.event.id)
+      ? "queued"
+      : value;
+  };
 
   function localCatalog() {
     return (local?.snapshot() ?? []).filter(
@@ -103,9 +117,10 @@ export function createCommunityCatalog({
   }
   function build(): CommunityCatalogSnapshot {
     const items = localCatalog();
-    // Relay-accepted local heads count immediately; the relay read catches up.
-    for (const item of items.filter(confirmed))
-      retain((item.signed ?? item.event) as RelayEvent);
+    // Verified local heads count immediately; the relay read catches up.
+    for (const item of items)
+      if (verified.has(item.event.id))
+        retain((item.signed ?? item.event) as RelayEvent);
     const heads = catalogHeads([...relayEvents, ...confirmedHeads.values()]);
     ownHeads = new Map(
       [...heads].filter(([, event]) => event.pubkey === viewer),
@@ -148,8 +163,62 @@ export function createCommunityCatalog({
     for (const listener of listeners) notify(listener);
   }
   const stopLocal = local?.subscribe(() => {
-    if (!closed) publish();
+    if (closed) return;
+    publish();
+    void verifyAccepted();
   });
+
+  /** The authoritative head of one own or listed coordinate. */
+  async function readHead(kind: CatalogKind, owner: string, d: string) {
+    if (!reader) throw new Error("The community catalog is unavailable.");
+    const events = await reader.read(
+      [
+        {
+          kinds: [kind],
+          authors: [owner],
+          "#d": [d],
+          limit: 20,
+          consistency: "strong",
+        },
+      ],
+      { priority: "foreground" },
+    );
+    return catalogHeads(
+      events.filter((event) => event.pubkey === owner && catalogD(event) === d),
+    ).get(`${kind}:${owner}:${d}`);
+  }
+  async function verify(item: OutgoingEvent) {
+    const d = catalogD(item.event as RelayEvent);
+    if (d === undefined) return;
+    try {
+      const head = await readHead(item.event.kind as CatalogKind, viewer, d);
+      if (closed) return;
+      if (head) retain(head);
+      if (head?.id === item.event.id) verified.add(item.event.id);
+      else checked.add(item.event.id);
+    } catch {
+      // Stays pending; the next refresh or delivery change reads again.
+      return;
+    }
+    publish();
+  }
+  /** Promotes accepted own changes only once the relay's head is theirs. */
+  function verifyAccepted(): Promise<void> {
+    if (closed || !reader) return Promise.resolve();
+    const checks: Promise<void>[] = [];
+    for (const item of localCatalog()) {
+      const id = item.event.id;
+      if (delivery(item) !== "accepted" || verified.has(id) || checked.has(id))
+        continue;
+      let check = verifying.get(id);
+      if (!check) {
+        check = verify(item).finally(() => verifying.delete(id));
+        verifying.set(id, check);
+      }
+      checks.push(check);
+    }
+    return Promise.all(checks).then(() => {});
+  }
 
   async function readAll(reader: RelayReader, signal: AbortSignal) {
     const events: RelayEvent[] = [];
@@ -187,12 +256,13 @@ export function createCommunityCatalog({
         status = "ready";
         error = undefined;
         publish();
+        checked.clear();
+        return verifyAccepted();
       })
       .catch(() => {
         if (closed || owned.signal.aborted) return;
         status = "error";
-        error =
-          "Could not read the community catalog. Check the community connection, then retry.";
+        error = READ_FAILED;
         publish();
       })
       .finally(() => {
@@ -215,7 +285,7 @@ export function createCommunityCatalog({
             change: Object.freeze({
               operation: item.event.id,
               shared: isShared(item.event as RelayEvent),
-              delivery: delivery(item),
+              delivery: outcome(item),
               ...(item.delivery === "unknown"
                 ? { stalled: true as const }
                 : {}),
@@ -233,31 +303,12 @@ export function createCommunityCatalog({
   ): Promise<TeamPublication> {
     if (closed || !reader)
       throw new Error("This team is no longer available in the catalog.");
-    let events: readonly RelayEvent[];
+    let head: RelayEvent | undefined;
     try {
-      events = await reader.read(
-        [
-          {
-            kinds: [TEAM_CATALOG_KIND],
-            authors: [listed.owner],
-            "#d": [listed.d],
-            limit: 20,
-            consistency: "strong",
-          },
-        ],
-        { priority: "foreground" },
-      );
+      head = await readHead(TEAM_CATALOG_KIND, listed.owner, listed.d);
     } catch {
-      throw new Error(
-        "Could not read the community catalog. Check the community connection, then retry.",
-      );
+      throw new Error(READ_FAILED);
     }
-    const head = catalogHeads(
-      events.filter(
-        (event) =>
-          event.pubkey === listed.owner && catalogD(event) === listed.d,
-      ),
-    ).get(`${TEAM_CATALOG_KIND}:${listed.owner}:${listed.d}`);
     if (!head)
       throw new Error("This team is no longer available in the catalog.");
     if (head.id !== listed.eventId)
@@ -298,19 +349,36 @@ export function createCommunityCatalog({
       /** Publish a share or unshare head for one of the viewer's coordinates.
        * Unsharing is a newer head without the `shared` tag (NIP-AP), never a
        * deletion; adopted copies are separate, locally owned records. When
-       * `content` is omitted the newest known content is reused. */
-      publish(
+       * `content` is omitted the newest known content is reused. Nothing is
+       * sent once `active` reports the requester gone. */
+      async publish(
         kind: CatalogKind,
         d: string,
         shared: boolean,
         content?: string,
-      ): string {
-        if (closed || !outbox?.supports(kind))
+        active: () => boolean = () => true,
+      ): Promise<string> {
+        const writable = () => !closed && !!outbox?.supports(kind);
+        if (!writable())
           throw new Error("This community cannot update catalog sharing.");
-        // The replacement must outrank the relay's head, which only a
-        // completed read reveals on a fresh device.
         if (status !== "ready")
           throw new Error("The community catalog is still loading. Try again.");
+        // The replacement must outrank the relay's current head, including one
+        // another device published after the catalog read.
+        let current: RelayEvent | undefined;
+        try {
+          current = await readHead(kind, viewer, d);
+        } catch {
+          throw new Error(READ_FAILED);
+        }
+        if (!writable() || !outbox)
+          throw new Error("This community cannot update catalog sharing.");
+        if (!active())
+          throw new DOMException("Catalog sharing cancelled", "AbortError");
+        if (current) {
+          retain(current);
+          publish();
+        }
         const key = `${kind}:${viewer}:${d}`;
         const body =
           content ??
@@ -357,6 +425,8 @@ export function createCommunityCatalog({
       controller?.abort();
       relayEvents = [];
       confirmedHeads.clear();
+      verified.clear();
+      checked.clear();
       status = "unavailable";
       publish();
       listeners.clear();

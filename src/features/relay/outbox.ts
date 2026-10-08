@@ -7,6 +7,12 @@ import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
 import { MessageClock } from "./message-order";
+import {
+  bytes,
+  isCatalogKind,
+  MAX_CONTENT_BYTES,
+  MAX_EVENT_BYTES,
+} from "../agents/catalog-envelope";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -656,9 +662,14 @@ export function createOutbox(
         !outbox.supports(input.kind)
       )
         throw new Error("This relay connection cannot publish that event kind");
+      const catalog = isCatalogKind(input.kind);
       if (
         (input.kind === 9 && !input.content.trim()) ||
-        byteSize(input) > OUTBOX_INPUT_MAX_BYTES
+        // NIP-AP admits larger public definitions than ordinary input.
+        (catalog
+          ? bytes(input.content) > MAX_CONTENT_BYTES ||
+            byteSize(input) > MAX_EVENT_BYTES
+          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
       )
         throw new Error("Message is empty or too large");
       if (snapshot.length >= MAX_PENDING)
@@ -696,7 +707,7 @@ export function createOutbox(
             "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
           );
       }
-      if (input.kind === 30175 || input.kind === 30178) {
+      if (catalog) {
         // NIP-AP: max(now, head + 1) over the observed relay head and this
         // device's retained writes, so a replacement can never lose or tie.
         if (supersedes !== undefined)

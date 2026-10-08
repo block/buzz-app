@@ -5,6 +5,13 @@ use super::EventTemplate;
 use serde_json::Value;
 
 const MAX_CONTENT: usize = 65_535;
+/// Serialized event bound: JSON escaping at most doubles JSON-text content, plus
+/// the bounded tags and fields. Mirrors `MAX_EVENT_BYTES` in `catalog-envelope.ts`.
+pub(super) const MAX_EVENT_BYTES: usize = 2 * MAX_CONTENT + 2048;
+
+pub(super) fn is_catalog(kind: u16) -> bool {
+    matches!(kind, 30175 | 30178)
+}
 
 fn persona_slug(value: &str) -> bool {
     let bytes = value.as_bytes();
@@ -23,7 +30,7 @@ fn team_id(value: &str) -> bool {
 
 /** Exactly one `d`, at most one exact `["shared","true"]`, at most one `client-id`. */
 pub(super) fn valid(event: &EventTemplate) -> bool {
-    if !matches!(event.kind, 30175 | 30178)
+    if !is_catalog(event.kind)
         // Signed events return to JavaScript; timestamps must fit Number.MAX_SAFE_INTEGER.
         || event.created_at > 9_007_199_254_740_991
         || event.content.len() > MAX_CONTENT

@@ -244,7 +244,11 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = host.sign(event).await?;
+    let signed = if catalog::is_catalog(event.kind) {
+        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
+    } else {
+        host.sign(event).await?
+    };
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {

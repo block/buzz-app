@@ -3,6 +3,12 @@
 export const AGENT_CATALOG_KIND = 30175;
 export const TEAM_CATALOG_KIND = 30178;
 export const MAX_CONTENT_BYTES = 65_535;
+/** Serialized catalog event or template bound. Content is JSON text, which JSON
+ * string escaping at most doubles; the rest covers keys, the bounded tags, id,
+ * pubkey and signature. Mirrored by the native signer. */
+export const MAX_EVENT_BYTES = 2 * MAX_CONTENT_BYTES + 2048;
+export const isCatalogKind = (kind: unknown) =>
+  kind === AGENT_CATALOG_KIND || kind === TEAM_CATALOG_KIND;
 
 export type Body = Record<string, unknown>;
 export const bytes = (value: string) => new TextEncoder().encode(value).length;

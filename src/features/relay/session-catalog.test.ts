@@ -26,7 +26,7 @@ it("reconciles a restored catalog share through the session's verified read", as
   const catalog = first.session.communityCatalog;
   await first.session.outbox?.ready();
   await catalog.refresh();
-  const id = catalog.publish(
+  const id = await catalog.publish(
     30175,
     "helper",
     true,
@@ -42,10 +42,10 @@ it("reconciles a restored catalog share through the session's verified read", as
   owners.push(second);
   const restored = second.session.communityCatalog;
   await second.session.outbox?.ready();
-  expect(restored.state(30175, "helper").change).toMatchObject({
-    operation: id,
-    delivery: "queued",
-    stalled: true,
+  // A restored receipt is not proof of the head until a fresh read.
+  expect(restored.state(30175, "helper")).toMatchObject({
+    shared: false,
+    change: { operation: id, delivery: "queued" },
   });
   await restored.refresh();
   expect(restored.state(30175, "helper")).toMatchObject({

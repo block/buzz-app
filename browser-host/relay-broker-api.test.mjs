@@ -2130,6 +2130,37 @@ test("catalog publications sign only the owner-to-self NIP-AP envelope", async (
     ])
       expect((await h.post("sign", template)).status).toBe(400);
     expect(h.publications).toHaveLength(2);
+    // NIP-AP content may reach 65,535 bytes; each `"` doubles once more when
+    // the event is serialized, so only catalog kinds get the larger body bound.
+    const pad = (size) => {
+      const room = size - '{"display_name":"Big","system_prompt":""}'.length;
+      return JSON.stringify({
+        display_name: "Big",
+        system_prompt: '"'.repeat(Math.floor(room / 2)) + "a".repeat(room % 2),
+      });
+    };
+    const largest = { ...agent, content: pad(65_535) };
+    expect(Buffer.byteLength(largest.content)).toBe(65_535);
+    const signed = await h.post("sign", largest);
+    expect(signed.status).toBe(200);
+    const big = await signed.json();
+    expect(verifyEvent(big)).toBe(true);
+    expect(JSON.stringify(big).length).toBeGreaterThan(128 * 1024);
+    expect((await h.post("publish", big)).status).toBe(200);
+    expect(h.publications).toHaveLength(3);
+    expect(
+      (await h.post("sign", { ...agent, content: pad(65_536) })).status,
+    ).toBe(400);
+    expect(
+      (
+        await h.post("sign", {
+          kind: 9,
+          created_at: now,
+          content: "x".repeat(70_000),
+          tags: [["h", "channel"]],
+        })
+      ).status,
+    ).toBe(413);
   } finally {
     await h.close();
   }

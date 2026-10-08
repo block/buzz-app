@@ -327,9 +327,9 @@ fn rejects_reader_dto_aggregate_before_memory_publication() {
 
 #[test]
 fn per_event_envelope_boundary_matches_native_reader() {
-    let (mut low, mut high) = (0, 65_535);
+    let (mut low, mut high) = (0usize, 65_535usize);
     while low < high {
-        let middle = (low + high + 1) / 2;
+        let middle = (low + high).div_ceil(2);
         if buzz_agent_controller::validate_snapshot_memory_envelope("mem/a", &"x".repeat(middle))
             .is_ok()
         {

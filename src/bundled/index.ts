@@ -26,8 +26,6 @@ import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
 import agents2Manifest from "./agents2/manifest.json";
 import * as agents2 from "./agents2";
-import responderManifest from "./responder/manifest.json";
-import * as responder from "./responder";
 import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
@@ -149,11 +147,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agents2Manifest, apiVersion: 1 },
     module: agents2,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...responderManifest, apiVersion: 1 },
-    module: responder,
     enabledByDefault: true,
   },
   {

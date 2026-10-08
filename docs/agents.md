@@ -747,12 +747,12 @@ The channel's **Channel actions → View channel usage** item opens a dedicated
 account has positive access to the current channel and Settings → Agents →
 Show channel session usage is on (the default). Closing the tab unmounts its
 archive reader; turning the preference off removes the tab and stops reads. It
-does not change metric capture or retention. The first archive page loads when
-the Usage tab opens. Later
-pages require **Load more**; a page without channel matches does not prove the
-archive has none. **Refresh** re-reads the newest page; neither action fetches
-relay history. The client retains at most 2,000 decoded records while this tab
-lives and fences late reads on channel/access changes. Saved metrics remain
+does not change metric capture or retention. Opening the Usage tab reads archive
+pages automatically until exhaustion or the 2,000-record limit; an early page
+without channel matches does not prove the archive has none. **Refresh** starts
+a new scan from the newest page; neither action fetches relay history. The client
+retains at most 2,000 decoded records while this tab lives and fences late reads
+on channel/access changes. Saved metrics remain
 subject to the independent 90-day/byte eviction policy above, so loaded history
 is never a completeness guarantee. Restored usage is display-only and cannot
 establish working, typing, or online status.

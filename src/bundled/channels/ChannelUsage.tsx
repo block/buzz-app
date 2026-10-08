@@ -249,19 +249,14 @@ export function ChannelUsage({
         </section>
       )}
       {usage.status === "error" && (
-        <p role="alert">
-          Could not read saved usage.{" "}
-          <Button size="xs" onClick={usage.refresh}>
-            Retry
-          </Button>
-        </p>
+        <p role="alert">Could not read saved usage. Use Refresh to retry.</p>
       )}
-      {!agents.length && usage.status !== "loading" && (
+      {!agents.length && usage.status === "ready" && (
         <p>
           {usage.skipped || usage.unreadable
             ? "Some saved metrics could not be read. Usage history is incomplete."
-            : usage.hasMore
-              ? "No matching records loaded yet. More saved history available."
+            : usage.partial
+              ? "No matching records in the saved history scanned."
               : "No matching records in the saved history searched."}
         </p>
       )}
@@ -270,18 +265,8 @@ export function ChannelUsage({
           Some saved metrics could not be read. Usage history is incomplete.
         </p>
       )}
-      {usage.hasMore && (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={usage.status === "loading"}
-          onClick={usage.loadMore}
-        >
-          Load more
-        </Button>
-      )}
-      {usage.loaded >= 2000 && (
-        <p>Partial history. Refresh to search newer records.</p>
+      {usage.partial && (
+        <p>Partial history: 2,000-record scan limit reached.</p>
       )}
     </div>
   );

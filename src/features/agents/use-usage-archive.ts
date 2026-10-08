@@ -10,13 +10,13 @@ export function useUsageArchive(
 ) {
   const [state, setState] = useState<{
     records: ArchivePage["records"];
-    before: number | null;
+    partial: boolean;
     revision: number | null;
     skipped: number;
     status: "loading" | "ready" | "error" | "unavailable";
   }>({
     records: [],
-    before: null,
+    partial: false,
     revision: null,
     skipped: 0,
     status: host ? "loading" : "unavailable",
@@ -24,8 +24,6 @@ export function useUsageArchive(
   const pending = useRef(false);
   const abort = useRef(new AbortController());
   const generation = useRef(0);
-  const current = useRef(state);
-  current.current = state;
   const permitted = useRef(allowed);
   permitted.current = allowed;
   const reset = useCallback(() => {
@@ -35,26 +33,25 @@ export function useUsageArchive(
     pending.current = false;
     setState({
       records: [],
-      before: null,
+      partial: false,
       revision: null,
       skipped: 0,
       status: host ? "loading" : "unavailable",
     });
   }, [host]);
-  const load = useCallback(
-    async (more = false) => {
-      if (!host || !permitted.current || pending.current) return;
-      const prior = current.current;
-      if (
-        more &&
-        (prior.before === null || prior.records.length >= MAX_RECORDS)
-      )
-        return;
-      pending.current = true;
-      const token = generation.current;
-      const signal = abort.current.signal;
-      setState((value) => ({ ...value, status: "loading" }));
-      try {
+  const load = useCallback(async () => {
+    if (!host || !permitted.current || pending.current) return;
+    pending.current = true;
+    const token = generation.current;
+    const signal = abort.current.signal;
+    setState((value) => ({ ...value, status: "loading" }));
+    let records: ArchivePage["records"] = [];
+    let scanned = 0;
+    let skipped = 0;
+    let before: number | null = null;
+    let revision: number | null = null;
+    try {
+      while (scanned < MAX_RECORDS) {
         const settings = await host.settings(signal);
         if (
           signal.aborted ||
@@ -62,21 +59,13 @@ export function useUsageArchive(
           !permitted.current
         )
           return;
-        if (
-          more &&
-          prior.revision !== null &&
-          settings.revision !== prior.revision
-        ) {
-          // Clear/configure invalidates the visible page even if the next read fails.
+        if (revision !== null && settings.revision !== revision) {
           reset();
           setState((value) => ({ ...value, status: "error" }));
           return;
         }
         const page = await host.read(
-          {
-            kind: 44200,
-            ...(more && prior.before !== null ? { before: prior.before } : {}),
-          },
+          { kind: 44200, ...(before !== null ? { before } : {}) },
           signal,
         );
         if (
@@ -85,11 +74,10 @@ export function useUsageArchive(
           !permitted.current
         )
           return;
-        // The page itself is revision evidence. Discard obsolete rows before a
-        // fallible trailing settings read can stall or reject.
+        // Reject mixed revisions before a fallible trailing settings read.
         if (
           page.revision !== settings.revision ||
-          (more && prior.revision !== page.revision)
+          (revision !== null && page.revision !== revision)
         ) {
           reset();
           setState((value) => ({ ...value, status: "error" }));
@@ -102,36 +90,39 @@ export function useUsageArchive(
           !permitted.current
         )
           return;
-        // A clear/configure after the page must not re-admit stale rows.
         if (page.revision !== latest.revision) {
-          // A changed archive is not a completed load. Clear old rows and
-          // require an explicit retry rather than leaving a permanent spinner.
           reset();
           setState((value) => ({ ...value, status: "error" }));
           return;
         }
-        setState({
-          records: more
-            ? [...prior.records, ...page.records].slice(0, MAX_RECORDS)
-            : page.records.slice(0, MAX_RECORDS),
-          before: page.before,
-          revision: page.revision,
-          skipped: (more ? prior.skipped : 0) + page.skipped,
-          status: "ready",
-        });
-      } catch {
-        if (
-          !signal.aborted &&
-          token === generation.current &&
-          permitted.current
-        )
+        revision = page.revision;
+        records = [...records, ...page.records].slice(0, MAX_RECORDS);
+        skipped += page.skipped;
+        scanned += page.records.length + page.skipped;
+        // A non-advancing cursor must not cause an unbounded read loop.
+        if (page.before !== null && before !== null && page.before >= before) {
           setState((value) => ({ ...value, status: "error" }));
-      } finally {
-        if (token === generation.current) pending.current = false;
+          return;
+        }
+        if (page.before === null || scanned >= MAX_RECORDS) {
+          setState({
+            records,
+            skipped,
+            status: "ready",
+            partial: page.before !== null && scanned >= MAX_RECORDS,
+            revision,
+          });
+          return;
+        }
+        before = page.before;
       }
-    },
-    [host, reset],
-  );
+    } catch {
+      if (!signal.aborted && token === generation.current && permitted.current)
+        setState((value) => ({ ...value, status: "error" }));
+    } finally {
+      if (token === generation.current) pending.current = false;
+    }
+  }, [host, reset]);
   useEffect(() => {
     void channelId;
     if (!allowed) {
@@ -157,16 +148,13 @@ export function useUsageArchive(
   return {
     groups: projection.groups,
     status: allowed ? state.status : "unavailable",
-    hasMore:
-      allowed && state.before !== null && state.records.length < MAX_RECORDS,
+    partial: allowed && state.partial,
     skipped: allowed ? state.skipped : 0,
     unreadable: projection.unreadable,
-    loaded: state.records.length,
     refresh: () => {
       reset();
       void load();
     },
-    loadMore: () => void load(true),
     revision: state.revision,
   };
 }

@@ -1035,6 +1035,13 @@ export const test = base.extend({
         expect(filter.authors.length).toBeLessThanOrEqual(100);
         return [];
       }
+      if (filter.kinds?.includes(30178)) {
+        expect(filter).toEqual({
+          kinds: [30175, 30178],
+          limit: 200,
+        });
+        return [];
+      }
       if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
         expect(filter).toEqual({
           authors: [viewer],

@@ -65,10 +65,12 @@ relay's fixed 100 feedback items) every count reads as a lower bound, like
 "12+".
 
 People are shown by display name with their short key (`npub…` plus a suffix,
-lengthened until keys in a list are distinct), and the full npub can be copied
-from the identity preview. Names come from the connected community's profiles;
-someone with no profile there, often the case for other communities, is shown
-by short key only.
+lengthened until every key on the screen is distinct), and the full npub can be
+copied from the identity preview. A person keeps that label in the selectors and
+confirmation dialogs that follow. Names come from the connected community's
+profiles, and each screen that shows names says so in one line. Someone with no
+profile there, or a profile with no name, is shown by short key only. Each
+screen fetches its missing profiles in one batch.
 
 ## Writes
 

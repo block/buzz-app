@@ -20,7 +20,7 @@ import {
   type StaffRequest,
 } from "../../features/relay-staff/contract";
 import { npubEncode } from "nostr-tools/nip19";
-import { Person, PersonName } from "./people";
+import { Person, PersonName, usePeople } from "./people";
 import { reasonAudience, SECRET_REASON } from "./Reports";
 import { describe, useRead, useSession, useWrite, type Read } from "./session";
 import {
@@ -30,7 +30,6 @@ import {
   eventIdInput,
   NotConnected,
   publicKeyInput,
-  shortKey,
   time,
   UNSUPPORTED_BROWSING,
   type CommunityRef,
@@ -67,7 +66,8 @@ function lookupFailure(failure: StaffFailure) {
   return describe(failure);
 }
 
-type Member = { pubkey: string; name: string | null };
+/** `keyLabel` is the distinct short key from the list the member was picked in. */
+type Member = { pubkey: string; name: string | null; keyLabel?: string };
 type Draft = {
   host: string;
   action: Action;
@@ -90,6 +90,7 @@ type Frozen = {
   intent: Intent;
   community: CommunityRef;
   name: string | null;
+  keyLabel: string | null;
   member: MemberDetailDto | null;
   preview: EventPreviewDto | null;
 };
@@ -289,6 +290,7 @@ export function ActionsSection({ community }: { community: CommunityRef }) {
       {
         community,
         name: draft.member?.name ?? null,
+        keyLabel: draft.member?.keyLabel ?? null,
         member: member?.state === "ok" ? member.value : null,
         preview: preview?.state === "ok" ? preview.value : null,
       },
@@ -399,7 +401,7 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
   const { canMutate } = useSession();
   const c = useController();
   if (!c.frozen) return null;
-  const { intent, community, name, member, preview } = c.frozen;
+  const { intent, community, name, keyLabel, member, preview } = c.frozen;
   return (
     <div className="flex flex-col gap-2 rounded-md border px-3 py-2 text-body-sm">
       <p className="flex flex-wrap items-center gap-1.5">
@@ -411,13 +413,7 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
         {intent.action === "delete" ? (
           <code className="break-all">{intent.target}</code>
         ) : (
-          <span>
-            {name ? (
-              `${name} (${shortKey(intent.target)})`
-            ) : (
-              <PersonName pubkey={intent.target} />
-            )}
-          </span>
+          <PersonName pubkey={intent.target} name={name} label={keyLabel} />
         )}
         {intent.expirationSecs ? ` for ${intent.expirationSecs}s` : ""}?
       </p>
@@ -487,17 +483,21 @@ export function MemberPicker({
     [context, communityHost, searching ? q : null],
   );
 
+  const candidates: Member[] = pasted
+    ? [{ pubkey: pasted, name: null }]
+    : searching && results.state === "ok"
+      ? results.value.items.map((m) => ({ pubkey: m.pubkey, name: label(m) }))
+      : [];
+  const people = usePeople(candidates.map((candidate) => candidate.pubkey));
+
   if (member)
     return (
       <div className="flex items-center gap-2 text-body-sm">
-        {member.name ? (
-          <span title={npubEncode(member.pubkey)}>
-            {member.name}{" "}
-            <span className="text-secondary">({shortKey(member.pubkey)})</span>
-          </span>
-        ) : (
-          <PersonName pubkey={member.pubkey} />
-        )}
+        <PersonName
+          pubkey={member.pubkey}
+          name={member.name}
+          label={member.keyLabel}
+        />
         <Button
           size="sm"
           variant="link"
@@ -508,12 +508,6 @@ export function MemberPicker({
         </Button>
       </div>
     );
-
-  const candidates: Member[] = pasted
-    ? [{ pubkey: pasted, name: null }]
-    : searching && results.state === "ok"
-      ? results.value.items.map((m) => ({ pubkey: m.pubkey, name: label(m) }))
-      : [];
   return (
     <div className="flex flex-col gap-1">
       <Input
@@ -541,21 +535,19 @@ export function MemberPicker({
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-body-sm hover:bg-secondary"
                 onClick={() => {
-                  onChange(candidate);
+                  onChange({
+                    ...candidate,
+                    keyLabel: people.label(candidate.pubkey),
+                  });
                   setQuery("");
                 }}
               >
                 <span className="flex-1 truncate">
-                  {candidate.name ? (
-                    <>
-                      {candidate.name}{" "}
-                      <span className="text-secondary">
-                        ({shortKey(candidate.pubkey)})
-                      </span>
-                    </>
-                  ) : (
-                    <PersonName pubkey={candidate.pubkey} />
-                  )}
+                  <PersonName
+                    pubkey={candidate.pubkey}
+                    name={candidate.name}
+                    label={people.label(candidate.pubkey)}
+                  />
                 </span>
               </button>
             </li>

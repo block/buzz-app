@@ -6,8 +6,7 @@ import type {
   StaffRequest,
 } from "../../features/relay-staff/contract";
 import { describe, usePages, useSession, useWrite } from "./session";
-import { publicKeyLabels } from "../../shared/identity/public-key";
-import { Person, useNames } from "./people";
+import { NamesSource, Person, PeopleScope, usePeople } from "./people";
 import { Failure, Loading, UNSUPPORTED_BROWSING } from "./ui";
 
 type Lift = { pubkey: string; kind: "ban" | "timeout" };
@@ -34,8 +33,7 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
   );
   const [lifting, setLifting] = useState<Lift | null>(null);
   const keys = pages.items.map((row) => row.pubkey);
-  const names = useNames(keys);
-  const labels = publicKeyLabels(keys);
+  const names = usePeople(keys);
   const [error, setError] = useState("");
   const write = useWrite<LiftRequest>(`lift ${communityHost}`, (outcome) => {
     // A conflict means someone else already changed it: show the current list.
@@ -71,51 +69,54 @@ export function Restrictions({ communityHost }: { communityHost: string }) {
           No active bans or timeouts.
         </p>
       )}
-      <ul className="flex flex-col gap-1">
-        {pages.items.map((row) => {
-          const { banned, timedOut } = active(row);
-          return (
-            <li
-              key={row.pubkey}
-              className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
-            >
-              <span className="min-w-0 flex-1">
-                <Person pubkey={row.pubkey} keyLabel={labels.get(row.pubkey)} />
-              </span>
-              {banned && (
-                <span className="text-caption text-danger">banned</span>
-              )}
-              {timedOut && (
-                <span className="text-caption text-secondary">timeout</span>
-              )}
-              {banned && (
-                <Button
-                  size="sm"
-                  disabled={!canMutate}
-                  loading={working === row.pubkey}
-                  onClick={() =>
-                    setLifting({ pubkey: row.pubkey, kind: "ban" })
-                  }
-                >
-                  Lift ban
-                </Button>
-              )}
-              {timedOut && (
-                <Button
-                  size="sm"
-                  disabled={!canMutate}
-                  loading={working === row.pubkey}
-                  onClick={() =>
-                    setLifting({ pubkey: row.pubkey, kind: "timeout" })
-                  }
-                >
-                  Clear timeout
-                </Button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <PeopleScope people={names}>
+        {pages.items.length > 0 && <NamesSource />}
+        <ul className="flex flex-col gap-1">
+          {pages.items.map((row) => {
+            const { banned, timedOut } = active(row);
+            return (
+              <li
+                key={row.pubkey}
+                className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
+              >
+                <span className="min-w-0 flex-1">
+                  <Person pubkey={row.pubkey} />
+                </span>
+                {banned && (
+                  <span className="text-caption text-danger">banned</span>
+                )}
+                {timedOut && (
+                  <span className="text-caption text-secondary">timeout</span>
+                )}
+                {banned && (
+                  <Button
+                    size="sm"
+                    disabled={!canMutate}
+                    loading={working === row.pubkey}
+                    onClick={() =>
+                      setLifting({ pubkey: row.pubkey, kind: "ban" })
+                    }
+                  >
+                    Lift ban
+                  </Button>
+                )}
+                {timedOut && (
+                  <Button
+                    size="sm"
+                    disabled={!canMutate}
+                    loading={working === row.pubkey}
+                    onClick={() =>
+                      setLifting({ pubkey: row.pubkey, kind: "timeout" })
+                    }
+                  >
+                    Clear timeout
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </PeopleScope>
       {pages.loading && <Loading />}
       {pages.next && !pages.loading && (
         <Button size="sm" onClick={pages.more}>

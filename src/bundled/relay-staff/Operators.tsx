@@ -42,33 +42,30 @@ export function Operators() {
   const [input, setInput] = useState("");
   const [role, setRole] = useState<StaffRole>("moderator");
   const [error, setError] = useState("");
-  const write = useWrite<OperatorWrite>("operators");
+  /** A change to your own entry re-checks your role. */
+  const write = useWrite<OperatorWrite>("operators", (outcome, change) => {
+    if (!outcome.ok) return setError(describe(outcome.failure));
+    reload();
+    if (change.route === "putOperator") setInput("");
+    if (change.pubkey === context.signer) void staff.probe(context, true);
+  });
   const working = write.busy ? (write.frozen?.pubkey ?? null) : null;
   const [removing, setRemoving] = useState<OperatorDto | null>(null);
   const pubkey = publicKeyInput(input);
   const secret = containsSecretKey(input);
 
-  /** A change to your own entry re-checks your role. */
-  const after = async (change: OperatorWrite) => {
+  const after = (change: OperatorWrite) => {
     setError("");
-    const outcome = await write.run(change);
-    if (!outcome) return false;
-    if (!outcome.ok) {
-      setError(describe(outcome.failure));
-      return false;
-    }
-    reload();
-    if (change.pubkey === context.signer) void staff.probe(context, true);
-    return true;
+    write.run(change);
   };
-  const add = async (operators: OperatorDto[]) => {
+  const add = (operators: OperatorDto[]) => {
     if (!pubkey) return;
     const existing = operators.find((operator) => operator.pubkey === pubkey);
     if (existing)
       return setError(
         `Already staff as ${existing.effectiveRole}. Change their role on their row.`,
       );
-    if (await after({ route: "putOperator", pubkey, role })) setInput("");
+    after({ route: "putOperator", pubkey, role });
   };
 
   return (
@@ -98,7 +95,7 @@ export function Operators() {
                   size="sm"
                   loading={working !== null && working === pubkey}
                   disabled={!pubkey}
-                  onClick={() => void add(operators)}
+                  onClick={() => add(operators)}
                 >
                   Add
                 </Button>
@@ -152,7 +149,7 @@ export function Operators() {
                         disabled={working === operator.pubkey}
                         onValueChange={(value) =>
                           value !== operator.effectiveRole &&
-                          void after({
+                          after({
                             route: "putOperator",
                             pubkey: operator.pubkey,
                             role: value as StaffRole,
@@ -197,7 +194,7 @@ export function Operators() {
                     onClick={() => {
                       const target = removing.pubkey;
                       setRemoving(null);
-                      void after({ route: "deleteOperator", pubkey: target });
+                      after({ route: "deleteOperator", pubkey: target });
                     }}
                   >
                     Remove

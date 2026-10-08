@@ -143,21 +143,34 @@ export function describe(failure: StaffFailure) {
  * The write held under `key` for this session's context (see `Writes`). Its
  * request, `sending` state and last outcome live in the store, so a view
  * opened while the write is in flight, or after it settled, shows the truth.
+ * `onDone` runs in whichever view is open when an attempt finishes (or the
+ * next one to open), exactly once per attempt.
  */
-export function useWrite<R extends StaffRequest, M = unknown>(key: string) {
+export function useWrite<R extends StaffRequest, M = unknown>(
+  key: string,
+  onDone?: (outcome: StaffOutcome<StaffResults[R["route"]]>, sent: R) => void,
+) {
   const { request: send, writes } = useSession();
   const held = useSyncExternalStore(writes.subscribe, () =>
     writes.get(key),
   ) as Held<R, M> | null;
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    if (!held?.unseen || !done.current) return;
+    const seen = writes.see(key) as Held<R, M> | null;
+    if (seen?.outcome && seen.sent)
+      done.current(
+        seen.outcome as StaffOutcome<StaffResults[R["route"]]>,
+        seen.sent,
+      );
+  }, [held, key, writes]);
   return {
     held,
     frozen: held?.request ?? null,
     busy: held?.sending ?? false,
     /** Resends the held request; `fresh` only starts a new one. */
-    run: (fresh?: R) =>
-      writes.run(key, send, fresh) as Promise<StaffOutcome<
-        StaffResults[R["route"]]
-      > | null>,
+    run: (fresh?: R) => void writes.run(key, send, fresh),
     freeze: (request: R, meta: M) => writes.freeze(key, request, meta),
     discard: () => writes.discard(key),
   };

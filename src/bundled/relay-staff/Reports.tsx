@@ -288,14 +288,7 @@ function Enforcement({
 }) {
   const { canMutate } = useSession();
   const notify = useToastNotification();
-  const write = useWrite(`cancel ${action.id}`);
-  const cancel = async () => {
-    const outcome = await write.run({
-      route: "cancelReport",
-      id: reportId,
-      actionId: action.id,
-    });
-    if (!outcome) return;
+  const write = useWrite(`cancel ${action.id}`, (outcome) => {
     notify(
       outcome.ok
         ? "Enforcement cancelled. The report is open again."
@@ -303,7 +296,9 @@ function Enforcement({
       outcome.ok ? "success" : "error",
     );
     onChanged();
-  };
+  });
+  const cancel = () =>
+    write.run({ route: "cancelReport", id: reportId, actionId: action.id });
   const message = action.errorMessage?.includes(
     "kick target was already absent",
   )
@@ -322,7 +317,7 @@ function Enforcement({
       </p>
       {message && <p className="text-caption text-secondary">{message}</p>}
       {action.status === "failed" && canMutate && (
-        <Button size="sm" loading={write.busy} onClick={() => void cancel()}>
+        <Button size="sm" loading={write.busy} onClick={() => cancel()}>
           Cancel and reopen
         </Button>
       )}
@@ -340,7 +335,16 @@ function Resolve({
   onChanged(): void;
 }) {
   const notify = useToastNotification();
-  const write = useWrite<ResolveRequest>(`resolve ${report.id}`);
+  const write = useWrite<ResolveRequest>(`resolve ${report.id}`, (outcome) => {
+    if (outcome.ok) {
+      notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");
+      onChanged();
+      return;
+    }
+    notify(describe(outcome.failure), "error");
+    // The relay records a failed enforcement before answering.
+    if (outcome.failure.code === "enforcement_failed") onChanged();
+  });
   const [action, setAction] = useState<ReportAction | null>(null);
   const [reason, setReason] = useState("");
   const [secs, setSecs] = useState("");
@@ -351,9 +355,9 @@ function Resolve({
   const validDuration =
     action !== "timeout" || (Number.isInteger(duration) && duration > 0);
 
-  const submit = async () => {
+  const submit = () =>
     // A frozen request is resent as is; only a new action reads the form.
-    const outcome = await write.run(
+    write.run(
       action
         ? {
             route: "resolveReport",
@@ -365,16 +369,6 @@ function Resolve({
           }
         : undefined,
     );
-    if (!outcome) return;
-    if (outcome.ok) {
-      notify(`Report resolved: ${resolutionLabel(outcome.value)}`, "success");
-      onChanged();
-      return;
-    }
-    notify(describe(outcome.failure), "error");
-    // The relay records a failed enforcement before answering.
-    if (outcome.failure.code === "enforcement_failed") onChanged();
-  };
 
   return (
     <div className="flex flex-col gap-3 rounded-md border px-3 py-2.5">
@@ -434,7 +428,7 @@ function Resolve({
             variant="prominent"
             loading={write.busy}
             disabled={!write.frozen && (secret || !validDuration)}
-            onClick={() => void submit()}
+            onClick={() => submit()}
           >
             {write.frozen ? "Retry" : "Confirm"}: {LABELS[shown]} in{" "}
             {report.communityHost}
@@ -456,23 +450,22 @@ function Reopen({
   onChanged(): void;
 }) {
   const notify = useToastNotification();
-  const write = useWrite<ReopenRequest>(`reopen ${report.id}`);
-  const [reason, setReason] = useState("");
-  const secret = containsSecretKey(reason);
-  const submit = async () => {
-    const outcome = await write.run({
-      route: "reopenReport",
-      id: report.id,
-      requestId: crypto.randomUUID(),
-      ...(reason.trim() ? { reason: reason.trim() } : {}),
-    });
-    if (!outcome) return;
+  const write = useWrite<ReopenRequest>(`reopen ${report.id}`, (outcome) => {
     notify(
       outcome.ok ? "Report reopened" : describe(outcome.failure),
       outcome.ok ? "success" : "error",
     );
     if (outcome.ok) onChanged();
-  };
+  });
+  const [reason, setReason] = useState("");
+  const secret = containsSecretKey(reason);
+  const submit = () =>
+    write.run({
+      route: "reopenReport",
+      id: report.id,
+      requestId: crypto.randomUUID(),
+      ...(reason.trim() ? { reason: reason.trim() } : {}),
+    });
   return (
     <div className="flex flex-col gap-3 rounded-md border px-3 py-2.5">
       <p className="text-caption font-medium text-secondary">Reopen report</p>
@@ -494,7 +487,7 @@ function Reopen({
         size="sm"
         loading={write.busy}
         disabled={!write.frozen && secret}
-        onClick={() => void submit()}
+        onClick={() => submit()}
       >
         {write.frozen ? "Retry reopen" : "Reopen report"}
       </Button>

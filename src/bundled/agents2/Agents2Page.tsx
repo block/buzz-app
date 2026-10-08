@@ -15,6 +15,10 @@ import {
 import styles from "./Agents2Page.module.css";
 import { AgentTabs } from "./AgentTabs";
 import type { ChannelChoice } from "../../features/agents2/attention";
+import {
+  AgentDelete,
+  AgentProfilePending,
+} from "../../features/agents2/AgentManage";
 import { AttentionSummary } from "../../features/agents2/AttentionPanel";
 import { useAgents2, useChannelChoices } from "../../features/agents2/react";
 import type {
@@ -28,12 +32,10 @@ import {
   ArrowLeftIcon,
   CopyIcon,
   PlusIcon,
-  TrashIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Field } from "../../shared/design-system/ui/Field";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
@@ -475,27 +477,12 @@ function AgentBuild({
   channels: readonly ChannelChoice[];
   onRemoved(): void;
 }) {
-  const [confirming, setConfirming] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1500);
     return () => clearTimeout(timer);
   }, [copied]);
-  const remove = async () => {
-    setRemoving(true);
-    setError("");
-    try {
-      await agents2.remove(agent.pubkey);
-      setConfirming(false);
-      onRemoved();
-    } catch (reason) {
-      setError(message(reason));
-      setRemoving(false);
-    }
-  };
   return (
     <div className={styles.build}>
       <aside className={styles.rail} aria-label={`${agent.name} identity`}>
@@ -506,6 +493,7 @@ function AgentBuild({
           name={agent.name}
           onSave={(name) => agents2.save(agent.pubkey, { name })}
         />
+        <AgentProfilePending agents2={agents2} agent={agent} />
         <dl className={styles.facts}>
           <dt>Type</dt>
           <dd>{type?.title ?? "Type unavailable"}</dd>
@@ -525,13 +513,7 @@ function AgentBuild({
           </dd>
         </dl>
         <div className="mt-auto">
-          <Button
-            size="compact"
-            variant="ghost"
-            onClick={() => setConfirming(true)}
-          >
-            <TrashIcon size={14} aria-hidden="true" /> Delete agent
-          </Button>
+          <AgentDelete agents2={agents2} agent={agent} onRemoved={onRemoved} />
         </div>
       </aside>
       <section className={styles.work} aria-label={`${agent.name} settings`}>
@@ -548,33 +530,6 @@ function AgentBuild({
           channels={channels}
         />
       </section>
-      <Dialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title={`Delete ${agent.name}?`}
-        description="This removes it from every channel, archives it so it no longer appears in member lists or mention suggestions, and deletes its key from this device. It can't be undone."
-        preventClose={removing}
-        actions={
-          <>
-            <Button onClick={() => setConfirming(false)} disabled={removing}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              loading={removing}
-              onClick={() => void remove()}
-            >
-              Delete
-            </Button>
-          </>
-        }
-      >
-        {error ? (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        ) : null}
-      </Dialog>
     </div>
   );
 }

@@ -154,3 +154,13 @@ it("reads nothing from missing or malformed storage", () => {
   storage.setItem(STORAGE_KEY, "{");
   expect(readRecords(storage)).toEqual({});
 });
+
+it("keeps a pending profile flag only when it is exactly true", () => {
+  const storage = memoryStorage();
+  writeRecords(storage, { [pubkey]: { ...record, profilePending: true } });
+  expect(readRecords(storage)[pubkey]?.profilePending).toBe(true);
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY) as string);
+  stored.agents[pubkey].profilePending = "yes";
+  storage.setItem(STORAGE_KEY, JSON.stringify(stored));
+  expect(readRecords(storage)[pubkey]).not.toHaveProperty("profilePending");
+});

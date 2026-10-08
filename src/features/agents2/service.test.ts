@@ -6,6 +6,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { AgentIdentity, AgentsNative } from "./native";
 import { Agents2Service, type AgentType, type Delivery } from "./service";
+import { readRecords } from "./store";
 import { memoryStorage } from "./test-fakes";
 
 // Delete's channel step has its own coverage (relay-removal); here only its
@@ -52,8 +53,16 @@ function fakeRelay() {
       archived.add(pubkey);
     }),
   };
+  const profiles = {
+    current: new Map<string, RelayEvent>(),
+    ensure: vi.fn(async (_: readonly string[]) => {}),
+    event(pubkey: string) {
+      return this.current.get(pubkey);
+    },
+  };
   const session = {
     archives,
+    profiles,
     subscribeLive(listener: LiveListener) {
       live.add(listener);
       return () => live.delete(listener);
@@ -87,6 +96,7 @@ function fakeRelay() {
       for (const listener of live) listener(batch);
     },
     archives,
+    profiles,
   };
 }
 
@@ -161,6 +171,7 @@ async function setup({
     emit: fake.emit,
     connect: fake.connect,
     archives: fake.archives,
+    profiles: fake.profiles,
     ctx,
   };
 }
@@ -188,11 +199,13 @@ it("creates an agent with the community's attestation and its type's defaults", 
   expect(native.publish).toHaveBeenCalledWith(bot, {
     kind: 0,
     content: JSON.stringify({ name: "Echo", bot: true }),
+    tags: [],
   });
   expect(agent).toMatchObject({
     pubkey: bot,
     name: "Echo",
     config: { reply: "ok" },
+    profilePending: false,
   });
   expect(Object.keys(agent.attention)).toEqual([
     "interest/default",
@@ -398,14 +411,104 @@ it("does not let one owner's agents wake each other by replying", async () => {
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 });
 
-it("keeps a created agent when its profile cannot be published", async () => {
-  const { service, native } = await setup();
+it("keeps a created agent when its profile cannot be published, pending until a retry", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
   native.publish.mockRejectedValueOnce(new Error("offline"));
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const agent = await service.create({ type: "example/echo", name: "Echo" });
   expect(service.find(bot)).toBe(agent);
+  expect(agent.profilePending).toBe(true);
   expect(warn).toHaveBeenCalled();
   warn.mockRestore();
+  // Pending survives a reload, so the retry is not lost with the window.
+  expect(readRecords(storage)[bot]?.profilePending).toBe(true);
+  await service.publishProfile(bot);
+  expect(service.find(bot)?.profilePending).toBe(false);
+  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+    kind: 0,
+    content: JSON.stringify({ name: "Echo", bot: true }),
+    tags: [],
+  });
+});
+
+it("renames by changing only the name in the agent's current profile", async () => {
+  const { service, native, profiles } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  profiles.current.set(
+    bot,
+    event("profile", {
+      pubkey: bot,
+      kind: 0,
+      content: JSON.stringify({
+        name: "Echo",
+        display_name: "Echo",
+        picture: "https://example.test/echo.png",
+        about: "Answers.",
+      }),
+      tags: [
+        ["auth", viewer, "", "sig"],
+        ["client", "elsewhere"],
+      ],
+    }),
+  );
+  await service.save(bot, { name: "Echo Two" });
+  expect(profiles.ensure).toHaveBeenLastCalledWith([bot]);
+  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+    kind: 0,
+    content: JSON.stringify({
+      name: "Echo Two",
+      display_name: "Echo Two",
+      picture: "https://example.test/echo.png",
+      about: "Answers.",
+      bot: true,
+    }),
+    tags: [
+      ["auth", viewer, "", "sig"],
+      ["client", "elsewhere"],
+    ],
+  });
+  expect(service.find(bot)).toMatchObject({
+    name: "Echo Two",
+    profilePending: false,
+  });
+});
+
+it("keeps a rename pending when the current profile cannot be read, and publishes renames in order", async () => {
+  const { service, native, profiles } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  profiles.ensure.mockRejectedValueOnce(new Error("offline"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await service.save(bot, { name: "Two" });
+  warn.mockRestore();
+  expect(native.publish).toHaveBeenCalledTimes(1);
+  expect(service.find(bot)).toMatchObject({
+    name: "Two",
+    profilePending: true,
+  });
+  // A retry still in flight when another rename lands leaves that one pending,
+  // and the later publication carries the later name.
+  let release: () => void = () => {};
+  native.publish.mockImplementationOnce(async (pubkey, template) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return event("slow", { pubkey, kind: template.kind });
+  });
+  const retry = service.publishProfile(bot);
+  await vi.waitFor(() => expect(native.publish).toHaveBeenCalledTimes(2));
+  const renamed = service.save(bot, { name: "Three" });
+  await settle();
+  expect(native.publish).toHaveBeenCalledTimes(2);
+  release();
+  await Promise.all([retry, renamed]);
+  expect(native.publish).toHaveBeenCalledTimes(3);
+  expect(native.publish).toHaveBeenLastCalledWith(bot, {
+    kind: 0,
+    content: JSON.stringify({ name: "Three", bot: true }),
+    tags: [],
+  });
+  expect(service.find(bot)?.profilePending).toBe(false);
 });
 
 it("commits no identity when its record cannot be saved", async () => {

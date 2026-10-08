@@ -25,6 +25,7 @@ const agent = (name: string, n: number): Agent => ({
   config: { reply: `${name} says hi` },
   skipped: {},
   timers: {},
+  profilePending: false,
   attention: {
     "interest/default": {
       slug: "interest/default",
@@ -82,6 +83,7 @@ function setup(agents: Agent[], { shown = true } = {}) {
       return created;
     }),
     save: vi.fn(async () => {}),
+    publishProfile: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
   } satisfies Agents2;
   const disconnected = { status: "disconnected", generation: 0 };
@@ -183,4 +185,18 @@ it("saves a rename on Enter and discards it on Escape", async () => {
   expect(agents2.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
     name: "Kept",
   });
+});
+
+it("offers a retry while the agent's name is not published", async () => {
+  const user = userEvent.setup();
+  const { agents2 } = setup([
+    { ...agent("Ada", 1), profilePending: true },
+    agent("Bo", 2),
+  ]);
+  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.keyboard("{Enter}");
+  agents2.publishProfile.mockRejectedValueOnce(new Error("offline"));
+  await user.click(screen.getByRole("button", { name: "Retry publishing" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("offline");
+  expect(agents2.publishProfile).toHaveBeenCalledWith("1".repeat(64));
 });

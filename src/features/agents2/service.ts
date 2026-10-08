@@ -60,6 +60,9 @@ export type Agent<Config = unknown> = Readonly<{
   skipped: Readonly<Record<string, SkippedObject>>;
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
+  /** Its name has not reached the relay yet; others see it unnamed or by an
+   * older name until `publishProfile` succeeds. */
+  profilePending: boolean;
   config: Config;
 }>;
 export type AgentChange<Config = unknown> = Readonly<{
@@ -158,6 +161,9 @@ export type Agents2 = {
   find(pubkey: string): Agent | undefined;
   create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
+  /** Publishes the agent's name as its profile, keeping other profile fields.
+   * Create and rename try this themselves; it retries one left pending. */
+  publishProfile(pubkey: string): Promise<void>;
   remove(pubkey: string): Promise<void>;
 };
 declare module "@deepseek-ai/cordis" {
@@ -225,6 +231,8 @@ export class Agents2Service extends Service implements Agents2 {
   private binding: Binding | undefined;
   private stopLive: (() => void) | undefined;
   private runners = new Map<string, Runner>();
+  /** One profile publication per agent at a time, so the last name wins. */
+  private profiles = new Map<string, Promise<void>>();
 
   constructor(
     ctx: Context,
@@ -314,6 +322,7 @@ export class Agents2Service extends Service implements Agents2 {
       name: name.trim(),
       attention: {},
       config: defaults.config,
+      profilePending: true,
     };
     for (const [slug, value] of Object.entries(defaults.attention ?? {}))
       record = setAttention(record, slug, value);
@@ -334,9 +343,11 @@ export class Agents2Service extends Service implements Agents2 {
       identity,
     ];
     this.update();
-    // The agent exists from here on; a missing profile only leaves it unnamed
-    // for others until its next rename.
-    await this.publishProfile(pubkey);
+    // The agent exists from here on; a failed profile stays pending to retry.
+    // A new key has no profile to keep fields of, so this needs no read.
+    await this.queueProfile(pubkey, true).catch((error) =>
+      console.warn(`Agent ${record.name} profile was not published`, error),
+    );
     // Not only `find`: the community shown may have changed meanwhile, and the
     // agent belongs to the one it was made for.
     return (
@@ -354,6 +365,7 @@ export class Agents2Service extends Service implements Agents2 {
       if (!change.name.trim()) throw new Error("Name the agent");
       record = { ...record, name: change.name.trim() };
     }
+    if (renamed) record = { ...record, profilePending: true };
     if (change.config !== undefined)
       record = { ...record, config: change.config };
     for (const [slug, value] of Object.entries(change.attention ?? {}))
@@ -373,7 +385,24 @@ export class Agents2Service extends Service implements Agents2 {
         );
     }
     this.write(record);
-    if (renamed) await this.publishProfile(pubkey);
+    // The rename is saved either way; a failed profile stays pending to retry.
+    if (renamed)
+      await this.publishProfile(pubkey).catch((error) =>
+        console.warn(`Agent ${record.name} profile was not published`, error),
+      );
+  }
+
+  publishProfile = (pubkey: string) => this.queueProfile(pubkey, false);
+  private queueProfile(pubkey: string, fresh: boolean) {
+    const next = (this.profiles.get(pubkey) ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => this.sendProfile(pubkey, fresh));
+    this.profiles.set(pubkey, next);
+    const settle = () => {
+      if (this.profiles.get(pubkey) === next) this.profiles.delete(pubkey);
+    };
+    next.then(settle, settle);
+    return next;
   }
 
   /** As harness Delete does: leave every channel, then archive the identity so
@@ -427,19 +456,52 @@ export class Agents2Service extends Service implements Agents2 {
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
+      profilePending: record.profilePending === true,
       config: record.config,
     });
   }
-  private async publishProfile(pubkey: string) {
+  /** As harness profile edits do: read the agent's current kind 0 and change
+   * only what the app owns, so fields set elsewhere (a picture, an about) stay. */
+  private async sendProfile(pubkey: string, fresh: boolean) {
     const record = this.records[pubkey];
-    if (!record || !this.native) return;
+    if (!this.native) throw new Error("Agents run only in the desktop app");
+    if (!record?.profilePending) return;
+    let current: RelayEvent | undefined;
+    if (!fresh) {
+      const session = this.binding?.session;
+      if (!this.find(pubkey) || !session)
+        throw new Error("Open this agent's community to publish its profile");
+      await session.profiles.ensure([pubkey]);
+      current = session.profiles.event?.(pubkey);
+    }
+    let fields: Record<string, unknown> = {};
     try {
-      await this.native.publish(pubkey, {
-        kind: 0,
-        content: JSON.stringify({ name: record.name, bot: true }),
-      });
-    } catch (error) {
-      console.warn(`Agent ${record.name} profile was not published`, error);
+      const parsed: unknown = JSON.parse(current?.content ?? "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        fields = parsed as Record<string, unknown>;
+    } catch {
+      // Nothing readable to keep.
+    }
+    const { name } = record;
+    await this.native.publish(pubkey, {
+      kind: 0,
+      content: JSON.stringify({
+        ...fields,
+        name,
+        // Shown in place of `name` where present, so it follows the rename.
+        ...(typeof fields.display_name === "string"
+          ? { display_name: name }
+          : {}),
+        bot: true,
+      }),
+      // Native replaces the owner `auth` tag with its own.
+      tags: current?.tags ?? [],
+    });
+    // A rename made meanwhile is still pending; its own publication follows.
+    const latest = this.records[pubkey];
+    if (latest?.profilePending && latest.name === name) {
+      const { profilePending: _, ...published } = latest;
+      this.write(published);
     }
   }
 
@@ -528,6 +590,7 @@ export class Agents2Service extends Service implements Agents2 {
           prior.attention === record.attention &&
           prior.skipped === record.skipped &&
           prior.timers === record.timers &&
+          prior.profilePending === (record.profilePending === true) &&
           prior.config === record.config
           ? prior
           : this.view(identity, record),

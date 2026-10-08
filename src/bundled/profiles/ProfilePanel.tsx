@@ -55,6 +55,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
+import { AgentDelete } from "../../features/agents2/AgentManage";
 import { useAgent2, useChannelChoices } from "../../features/agents2/react";
 import type { Agents2 } from "../../features/agents2/service";
 import { agentSections } from "../../features/agents2/tabs";
@@ -480,6 +481,15 @@ function ProfileDetails({
                       running={runtimeAgent?.status === "running"}
                       onDeleted={close}
                     />
+                  )}
+                  {plugin && agents2 && (
+                    <div>
+                      <AgentDelete
+                        agents2={agents2}
+                        agent={plugin.agent}
+                        onRemoved={close}
+                      />
+                    </div>
                   )}
                   {knownAgent && (
                     <ProfileActivity

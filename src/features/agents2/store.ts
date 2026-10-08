@@ -34,6 +34,8 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
+  /** Its name has not yet reached the relay as its kind 0 profile. */
+  profilePending?: true;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -99,7 +101,14 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
         )
       )
         timers[slug] = state;
-    records[pubkey] = { ...record, attention, skipped, timers };
+    const { profilePending, ...rest } = record;
+    records[pubkey] = {
+      ...rest,
+      attention,
+      skipped,
+      timers,
+      ...(profilePending === true ? { profilePending } : {}),
+    };
   }
   return records;
 }

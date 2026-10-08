@@ -5,8 +5,8 @@ Sessions are focused work conversations built on ordinary private channels.
 ## Current contract
 
 - A session is the work conversation. The Sessions sidebar shows previous topics,
-  grouped into sections. Each section’s **+** starts a new session; selecting an
-  existing session opens its conversation.
+  grouped into sections. **New session** starts an unfiled conversation; a custom
+  section’s **+** inherits that section’s defaults. Selecting a saved session opens it.
 - Sessions are ordinary private stream channels. Creation, invitations, messages,
   roles, and membership use existing relay behavior. **No relay changes or new
   Sessions protocol are required or planned for this iteration.**
@@ -16,7 +16,7 @@ Sessions are focused work conversations built on ordinary private channels.
   Existing content and signed membership are not changed or deleted.
 - The sidebar arranges standalone sessions using the same relay-backed personal
   sections as channels. Moving an existing session changes organization only.
-- Each section has **Session settings…** and a **+** for a new session
+- Each custom section has **Session settings…** and a **+** for a new session
   in that section. Defaults include project folders, optional worktree location
   and base branch, Canvas, and optionally a copy of an existing template's lineup.
   Paths become Canvas instructions for the agent host; saving them does not create
@@ -34,11 +34,14 @@ Sessions are focused work conversations built on ordinary private channels.
 - A saved session's header **⋯ → Session settings…** edits that session's Canvas
   with the existing revision check. Changes do not update the section default or
   sibling sessions. Failed saves retain a local draft and explicit reload flow.
-- Saved sessions expose **Rename session…** in their row and header menus.
+- Saved sessions expose **Rename** in their row and header menus.
   The existing channel-details service verifies owner/admin permissions and the
   loaded revision, then sends a name-only kind-9002 command. Session metadata,
   visibility, and lifetime remain unchanged; uncertain delivery requires checking
   the saved result before another write. Automatic generated titles are not added.
+- Row menus offer **Section** destinations and **New section…**, plus **Copy** for
+  the session name, ID, and ordinary Buzz channel link. The unfiled Sessions
+  destination appears only for sessions currently in a custom section.
 - Workspace fields round-trip through a marked block in ordinary Canvas Markdown.
   If another editor changes that block, the settings dialog exposes the full
   Canvas instead of discarding custom text.

@@ -112,12 +112,6 @@
 .section {
   margin-block: var(--space-2);
 }
-.section:first-child {
-  margin-block-start: calc(
-    (var(--size-panel-header) - var(--size-control-sm)) /
-    2
-  );
-}
 .sectionHeading {
   display: flex;
   align-items: center;
@@ -135,6 +129,9 @@
   font-weight: var(--type-weight-normal);
   text-align: start;
   cursor: pointer;
+}
+.newSessionHeading {
+  color: var(--text-standard);
 }
 .sectionHeading span {
   overflow-wrap: anywhere;
@@ -236,7 +233,7 @@
   :hover,
   :focus-within,
   :has([aria-expanded="true"][aria-haspopup="menu"])
-),
+):not(:has([aria-current="page"])),
 .sectionHeader:is(
   :hover,
   :focus-within,
@@ -279,6 +276,9 @@
 }
 .sectionPanel:is([data-starting-style], [data-ending-style]) {
   height: 0;
+}
+.sectionHeading[aria-expanded="false"] .genericChevron {
+  transform: rotate(-90deg);
 }
 .chevronGlyph svg {
   transform: rotate(-90deg);

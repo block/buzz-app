@@ -271,7 +271,7 @@ function SessionWork({
               <MenuIcon>
                 <PencilSimpleIcon size={16} />
               </MenuIcon>
-              Rename session…
+              Rename
             </MenuItem>
             <MenuItem
               disabled={!!channel.readOnly || !session.canvas.available}

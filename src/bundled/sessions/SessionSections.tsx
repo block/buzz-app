@@ -1,3 +1,4 @@
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
@@ -31,9 +32,11 @@ import {
   FolderSimpleIcon,
   PlusIcon,
   PencilSimpleIcon,
+  CopyIcon,
 } from "../../shared/design-system/icons";
 import type { SessionListItem } from "./SessionsWorkspace";
 import styles from "./SessionsWorkspace.module.css";
+import channelStyles from "../channels/Channels.module.css";
 
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SessionSections({
@@ -49,6 +52,27 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  const [copyNotice, setCopyNotice] = useState<{
+    text: string;
+    error: boolean;
+  }>();
+  const copying = useRef(false);
+  const copy = async (value: string, label: string) => {
+    if (copying.current) return;
+    copying.current = true;
+    setCopyNotice(undefined);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyNotice({ text: `${label} copied`, error: false });
+    } catch {
+      setCopyNotice({
+        text: "Couldn’t copy. Try again from the session menu.",
+        error: true,
+      });
+    } finally {
+      copying.current = false;
+    }
+  };
   const preferences = session.sidebarPreferences;
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
@@ -104,6 +128,20 @@ export function SessionSections({
     ) ?? [];
   return (
     <>
+      {onNew && (
+        <div className={`${styles.section} ${styles.sectionHeader}`}>
+          <button
+            type="button"
+            className={`${styles.sectionHeading} ${styles.newSessionHeading}`}
+            onClick={() => onNew(undefined)}
+          >
+            <span className={styles.sectionIcon} aria-hidden="true">
+              <PlusIcon size={15} strokeWidth={2.5} />
+            </span>
+            <span>New session</span>
+          </button>
+        </div>
+      )}
       {(snapshot.status === "idle" || snapshot.status === "loading") && (
         <p role="status" className={styles.listMessage}>
           Loading sections…
@@ -137,16 +175,26 @@ export function SessionSections({
               aria-expanded={!collapsed.includes(section.id)}
               onClick={(event) => setAnimate(event.detail > 0)}
             >
-              <span className={styles.sectionIcon} aria-hidden="true">
-                <FolderSimpleIcon className={styles.folderGlyph} size={15} />
-                <span className={styles.chevronGlyph}>
+              {section.id && (
+                <span className={styles.sectionIcon} aria-hidden="true">
+                  <FolderSimpleIcon className={styles.folderGlyph} size={15} />
+                  <span className={styles.chevronGlyph}>
+                    <CaretDownIcon size={15} strokeWidth={2.5} />
+                  </span>
+                </span>
+              )}
+              <span>{section.name}</span>
+              {!section.id && (
+                <span
+                  className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                  aria-hidden="true"
+                >
                   <CaretDownIcon size={15} strokeWidth={2.5} />
                 </span>
-              </span>
-              <span>{section.name}</span>
+              )}
             </Collapsible.Trigger>
             <div className={styles.sectionActions}>
-              {onNew && (
+              {onNew && section.id && (
                 <IconButton
                   data-session-row-action=""
                   size="compact"
@@ -231,16 +279,21 @@ export function SessionSections({
                       <MenuIcon>
                         <PencilSimpleIcon size={16} />
                       </MenuIcon>
-                      Rename session…
+                      Rename
                     </MenuItem>
                     <MenuSubmenu>
                       <MenuSubmenuTrigger disabled={!preferences.writable}>
-                        Move to
+                        <MenuIcon>
+                          <FolderSimpleIcon size={16} />
+                        </MenuIcon>
+                        Section
                       </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup aria-label="Move to section">
-                        <MenuItem onClick={() => move(item.id)}>
-                          Sessions
-                        </MenuItem>
+                      <MenuSubmenuPopup aria-label="Session section">
+                        {section.id && (
+                          <MenuItem onClick={() => move(item.id)}>
+                            Sessions
+                          </MenuItem>
+                        )}
                         {groups.map((group) => (
                           <MenuItem
                             key={group.id}
@@ -250,7 +303,37 @@ export function SessionSections({
                           </MenuItem>
                         ))}
                         <MenuItem onClick={() => setCreatingFor(item)}>
-                          Create new section…
+                          New section…
+                        </MenuItem>
+                      </MenuSubmenuPopup>
+                    </MenuSubmenu>
+                    <MenuSubmenu>
+                      <MenuSubmenuTrigger>
+                        <MenuIcon>
+                          <CopyIcon size={16} />
+                        </MenuIcon>
+                        Copy
+                      </MenuSubmenuTrigger>
+                      <MenuSubmenuPopup aria-label="Copy session">
+                        <MenuItem
+                          onClick={() => void copy(item.title, "Session name")}
+                        >
+                          Copy session name
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => void copy(item.id, "Session ID")}
+                        >
+                          Copy session ID
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() =>
+                            void copy(
+                              `buzz://channel/${encodeURIComponent(item.id)}`,
+                              "Session link",
+                            )
+                          }
+                        >
+                          Copy link to session
                         </MenuItem>
                       </MenuSubmenuPopup>
                     </MenuSubmenu>
@@ -289,6 +372,14 @@ export function SessionSections({
             </Button>
           </div>
         ))}
+      {copyNotice && (
+        <ToastNotice
+          title={copyNotice.text}
+          tone={copyNotice.error ? "error" : "success"}
+          timeout={copyNotice.error ? 0 : 4000}
+          onDismiss={() => setCopyNotice(undefined)}
+        />
+      )}
       {settingsFor && (
         <WorkspaceSettings
           key={settingsFor.id}

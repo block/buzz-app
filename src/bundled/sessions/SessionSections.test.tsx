@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 import type { RelaySession } from "../../features/relay/session";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SessionSections } from "./SessionSections";
 
 afterEach(() => {
@@ -105,10 +106,10 @@ it("creates and moves through the relay service, then restores in a fresh store"
   await user.click(
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "Create new section…" }),
+    await screen.findByRole("menuitem", { name: "New section…" }),
   );
   await user.type(
     screen.getByRole("textbox", { name: "Section name" }),
@@ -154,7 +155,7 @@ it("rolls back a rejected move and keeps retry available", async () => {
   await user.click(
     screen.getByRole("button", { name: "Actions for Planning" }),
   );
-  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  (await screen.findByRole("menuitem", { name: "Section" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
   expect(await screen.findByText("Relay unavailable")).toBeVisible();
@@ -206,13 +207,75 @@ it("starts an unfiled session from the Sessions heading plus without collapsing 
   const owner = h.store();
   render(h.view(owner.queries));
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "New session in Sessions" }),
-  );
+  await user.click(screen.getByRole("button", { name: "New session" }));
   expect(h.onNew).toHaveBeenCalledWith(undefined);
+  expect(
+    screen.queryByRole("button", { name: "New session in Sessions" }),
+  ).toBeNull();
   expect(screen.getByRole("button", { name: "Sessions" })).toHaveAttribute(
     "aria-expanded",
     "true",
   );
   owner.dispose();
+});
+
+it.each([
+  ["Copy session name", "Planning"],
+  ["Copy session ID", "session"],
+  ["Copy link to session", "buzz://channel/session"],
+])("copies the session value for %s", async (label, expected) => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(<ToastProvider>{h.view(h.store().queries)}</ToastProvider>);
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Planning" }),
+  );
+  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: label }));
+  expect(write).toHaveBeenCalledWith(expected);
+});
+
+it("reports a clipboard failure without claiming success", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+    new Error("denied"),
+  );
+  render(<ToastProvider>{h.view(h.store().queries)}</ToastProvider>);
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Planning" }),
+  );
+  (await screen.findByRole("menuitem", { name: "Copy" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy session ID" }),
+  );
+  expect(
+    await screen.findByText("Couldn’t copy. Try again from the session menu."),
+  ).toBeVisible();
+});
+
+it("only offers Sessions as a destination from a custom section", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const store = h.store();
+  render(h.view(store.queries));
+  const openSectionMenu = async () => {
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Planning" }),
+    );
+    (await screen.findByRole("menuitem", { name: "Section" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("menuitem", { name: "New section…" });
+  };
+  await openSectionMenu();
+  expect(screen.queryByRole("menuitem", { name: "Sessions" })).toBeNull();
+  await user.click(screen.getByRole("menuitem", { name: "Work" }));
+  await waitFor(() => expect(h.saved().assignments.session).toBe("work"));
+  await openSectionMenu();
+  await user.click(screen.getByRole("menuitem", { name: "Sessions" }));
+  await waitFor(() => expect(h.saved().assignments.session).toBeUndefined());
+  store.dispose();
 });

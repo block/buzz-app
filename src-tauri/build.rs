@@ -80,6 +80,7 @@ fn main() {
             "media_stream_base",
             "media_snapshot_read",
             "get_os_idle_seconds",
+            "workspace_pick_folder",
             "plugin_import_folder",
             "plugin_import_git",
             "plugin_import_install",

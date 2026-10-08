@@ -259,6 +259,27 @@ async fn prepare_import(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn workspace_pick_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose a source repository")
+            .blocking_pick_folder()
+            .map(|folder| {
+                folder
+                    .into_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
@@ -455,6 +476,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_stream_base,
         media_snapshot_read,
         get_os_idle_seconds,
+        workspace_pick_folder,
         plugin_import_folder,
         plugin_import_git,
         plugin_import_install,

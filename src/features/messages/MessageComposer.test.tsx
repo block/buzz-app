@@ -3235,10 +3235,8 @@ it.each(
         screen.getByRole("button", { name: "Choose an agent" }),
       );
       await view.user.click(
-        await screen.findByRole("menuitemradio", {
-          name: parent
-            ? "Honey Adds to session and channel"
-            : "Honey Adds to session",
+        await screen.findByRole("button", {
+          name: parent ? "Honey — adds to session and channel" : "Honey",
         }),
       );
     }
@@ -3387,9 +3385,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   await view.user.click(
     screen.getByRole("button", { name: "Choose an agent" }),
   );
-  await view.user.click(
-    await screen.findByRole("menuitemradio", { name: "Fizz" }),
-  );
+  await view.user.click(await screen.findByRole("button", { name: "Fizz" }));
   await view.user.type(view.input(), "Hello");
   await view.user.keyboard("{Enter}");
   expect(view.messages.send).toHaveBeenLastCalledWith(

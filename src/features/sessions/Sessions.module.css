@@ -169,10 +169,10 @@
     var(--corner-size) no-repeat,
     url("./agent-picker-shape.svg") bottom right / var(--corner-size)
     var(--corner-size) no-repeat,
-    linear-gradient(#000 0 0) center / calc(100% - var(--corner-size)) 100%
-    no-repeat,
-    linear-gradient(#000 0 0) center / 100% calc(100% - var(--corner-size))
-    no-repeat;
+    linear-gradient(currentColor 0 0) center / calc(100% - var(--corner-size))
+    100% no-repeat,
+    linear-gradient(currentColor 0 0) center / 100%
+    calc(100% - var(--corner-size)) no-repeat;
 }
 @media (hover: hover) and (pointer: fine) {
   .agentTrigger
@@ -227,7 +227,7 @@
 }
 
 .agentIdentifier {
-  font-size: 0.875em;
+  font-size: var(--text-caption);
   color: var(--text-subtle);
   font-weight: var(--type-weight-normal);
 }

@@ -226,6 +226,6 @@ it("keeps a unique selectable agent plain despite a cached namesake", async () =
   render(<AgentChoice session={f.session} value={a} onChange={change} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Change agent: Larry" }));
-  await user.click(await screen.findByRole("menuitemradio", { name: "Larry" }));
-  expect(change).toHaveBeenCalledWith(a, expect.anything());
+  await user.click(await screen.findByRole("button", { name: "Larry" }));
+  expect(change).toHaveBeenCalledWith(a);
 });

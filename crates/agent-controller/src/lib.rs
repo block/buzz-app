@@ -29,7 +29,7 @@ mod test_executable;
 pub use supervisor::dispatch as dispatch_agent_supervisor;
 
 pub use agent_defaults::{AgentDefaultsEdit, AgentDefaultsView};
-pub use app_agent::{AppAgent, AppAgents, NewAppAgent};
+pub use app_agent::{AppAgent, AppAgents, NewAppAgent, Published};
 pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
 pub use create::{CreationProfile, NewAgent};

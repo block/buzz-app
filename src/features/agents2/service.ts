@@ -60,9 +60,6 @@ export type Agent<Config = unknown> = Readonly<{
   skipped: Readonly<Record<string, SkippedObject>>;
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
-  /** Its name has not reached the relay yet; others see it unnamed or by an
-   * older name until `publishProfile` succeeds. */
-  profilePending: boolean;
   config: Config;
 }>;
 export type AgentChange<Config = unknown> = Readonly<{
@@ -161,9 +158,8 @@ export type Agents2 = {
   find(pubkey: string): Agent | undefined;
   create(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
   save(pubkey: string, change: AgentChange): Promise<void>;
-  /** Publishes the agent's name as its profile, keeping other profile fields.
-   * Create and rename try this themselves; it retries one left pending. */
-  publishProfile(pubkey: string): Promise<void>;
+  /** Deletes its key at once. Leaving its channels and archiving it follow in
+   * the background whenever its community is open. */
   remove(pubkey: string): Promise<void>;
 };
 declare module "@deepseek-ai/cordis" {
@@ -175,14 +171,27 @@ declare module "@deepseek-ai/cordis" {
 const QUEUE_LIMIT = 32;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
-/** Bounds Delete's relay steps, which otherwise wait on the outbox. */
-const REMOVE_TIMEOUT_MS = 60_000;
+/** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
+const CLEANUP_TIMEOUT_MS = 60_000;
 /** Runs per agent per minute; bounds two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
 const TIMER_TICK_MS = 5_000;
 const EMPTY = Object.freeze({});
+const blank = (pubkey: string): AgentRecord => ({
+  pubkey,
+  attention: EMPTY,
+  config: undefined,
+});
+/** A new agent's settings: its type's defaults. */
+function defaults(pubkey: string, type: RegisteredAgentType) {
+  const { config, attention = {} } = type.defaults();
+  let record: AgentRecord = { pubkey, attention: {}, config };
+  for (const [slug, value] of Object.entries(attention))
+    record = setAttention(record, slug, value);
+  return record;
+}
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 const bounded = (set: Set<string>, id: string) => {
@@ -195,13 +204,15 @@ type Binding = {
   origin: string;
   viewer: string;
   session: RelaySession;
+  /** Aborts when this binding is replaced, so no work outlives its session. */
+  controller: AbortController;
 };
 type Job = { trigger: Trigger; channelId?: string };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
   filter?: ReturnType<typeof compileFilter>;
 };
-/** One agent's runtime, for as long as its identity and record exist. Edits do not
+/** One agent's runtime, for as long as its identity exists. Edits do not
  * replace it: each job reads the agent as it is when the job starts, and the
  * watches are recompiled only when its attention changes. */
 type Runner = {
@@ -209,6 +220,7 @@ type Runner = {
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
   controller: AbortController;
+  /** Events waiting to run; due timers are found when a run starts instead. */
   queue: Job[];
   running: boolean;
   windowStart: number;
@@ -225,14 +237,18 @@ type Runner = {
 export class Agents2Service extends Service implements Agents2 {
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
+  /** Every saved identity, deleted ones included: native's list is the agent
+   * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
   private records: Record<string, AgentRecord>;
   private state: AgentsSnapshot;
   private binding: Binding | undefined;
   private stopLive: (() => void) | undefined;
   private runners = new Map<string, Runner>();
-  /** One profile publication per agent at a time, so the last name wins. */
-  private profiles = new Map<string, Promise<void>>();
+  /** Counts list requests, so only the latest one is applied. */
+  private listed = 0;
+  /** Deleted agents whose community cleanup is running. */
+  private cleaning = new Set<string>();
 
   constructor(
     ctx: Context,
@@ -256,13 +272,17 @@ export class Agents2Service extends Service implements Agents2 {
         relay.subscribe(() => this.bind()),
       ];
       this.bind();
-      void this.load();
-      const tick = setInterval(() => this.tick(), TIMER_TICK_MS);
+      void this.refresh();
+      // Wakes each runner, which starts any timer that is due.
+      const tick = setInterval(() => {
+        for (const runner of this.runners.values()) void this.drain(runner);
+      }, TIMER_TICK_MS);
       return () => {
         clearInterval(tick);
         for (const stop of stops) stop();
         this.stopLive?.();
         this.stopLive = undefined;
+        this.binding?.controller.abort();
         this.binding = undefined;
         for (const runner of this.runners.values()) this.retire(runner);
         this.runners.clear();
@@ -315,57 +335,31 @@ export class Agents2Service extends Service implements Agents2 {
     if (!binding) throw new Error("Connect to a community first");
     if (!kind) throw new Error("That agent type is not available");
     if (!name.trim()) throw new Error("Name the agent");
-    const defaults = kind.defaults();
-    let record: AgentRecord = {
-      pubkey: "",
-      type,
-      name: name.trim(),
-      attention: {},
-      config: defaults.config,
-      profilePending: true,
-    };
-    for (const [slug, value] of Object.entries(defaults.attention ?? {}))
-      record = setAttention(record, slug, value);
-    const pubkey = await native.prepare(
+    const settings = defaults("", kind);
+    const identity = await native.create(
       relayOrigin(binding.origin),
       binding.viewer,
+      type,
+      name.trim(),
     );
-    // The record is saved before native commits, so every committed identity has
-    // one to manage it by. If authorizing or committing fails, the record stays:
-    // without an identity it is never shown, and the next load prunes it.
-    this.write({ ...record, pubkey });
-    const identity = await native.commit(
-      pubkey,
-      await native.authorize(pubkey),
-    );
-    this.identities = [
-      ...this.identities.filter((saved) => saved.pubkey !== pubkey),
-      identity,
-    ];
-    this.update();
-    // The agent exists from here on; a failed profile stays pending to retry.
-    // A new key has no profile to keep fields of, so this needs no read.
-    await this.queueProfile(pubkey, true).catch((error) =>
-      console.warn(`Agent ${record.name} profile was not published`, error),
-    );
-    // Not only `find`: the community shown may have changed meanwhile, and the
-    // agent belongs to the one it was made for.
-    return (
-      this.find(pubkey) ??
-      this.view(identity, this.records[pubkey] ?? { ...record, pubkey })
-    );
+    const record = { ...settings, pubkey: identity.pubkey };
+    try {
+      this.write(record);
+    } catch (error) {
+      // The agent exists either way; unsaved settings start from the defaults.
+      console.warn(`Agent ${identity.name} settings were not saved`, error);
+    }
+    await this.refresh();
+    return this.view(identity, record);
   }
 
   async save(pubkey: string, change: AgentChange) {
-    let record = this.records[pubkey];
-    if (!record) throw new Error("No such agent on this device");
-    const renamed =
-      change.name !== undefined && change.name.trim() !== record.name;
-    if (change.name !== undefined) {
-      if (!change.name.trim()) throw new Error("Name the agent");
-      record = { ...record, name: change.name.trim() };
-    }
-    if (renamed) record = { ...record, profilePending: true };
+    const identity = this.live(pubkey);
+    if (!this.native || !identity)
+      throw new Error("No such agent on this device");
+    const name = change.name?.trim();
+    if (name === "") throw new Error("Name the agent");
+    let record = this.recordOf(identity);
     if (change.config !== undefined)
       record = { ...record, config: change.config };
     for (const [slug, value] of Object.entries(change.attention ?? {}))
@@ -384,59 +378,19 @@ export class Agents2Service extends Service implements Agents2 {
           "Remove or move the watches and timers that use this Interest first",
         );
     }
-    this.write(record);
-    // The rename is saved either way; a failed profile stays pending to retry.
-    if (renamed)
-      await this.publishProfile(pubkey).catch((error) =>
-        console.warn(`Agent ${record.name} profile was not published`, error),
-      );
+    if (change.config !== undefined || change.attention) this.write(record);
+    if (name !== undefined && name !== identity.name) {
+      await this.native.rename(pubkey, name);
+      // Shows the new name and publishes it as the agent's profile.
+      await this.refresh();
+    }
   }
 
-  publishProfile = (pubkey: string) => this.queueProfile(pubkey, false);
-  private queueProfile(pubkey: string, fresh: boolean) {
-    const next = (this.profiles.get(pubkey) ?? Promise.resolve())
-      .catch(() => {})
-      .then(() => this.sendProfile(pubkey, fresh));
-    this.profiles.set(pubkey, next);
-    const settle = () => {
-      if (this.profiles.get(pubkey) === next) this.profiles.delete(pubkey);
-    };
-    next.then(settle, settle);
-    return next;
-  }
-
-  /** As harness Delete does: leave every channel, then archive the identity so
-   * it drops out of member lists and mention suggestions, then delete the key.
-   * Each relay step is confirmed first; the key is the only irreversible step,
-   * so any earlier failure leaves Delete retryable. */
   async remove(pubkey: string) {
     if (!this.native) throw new Error("Agents run only in the desktop app");
-    const session = this.binding?.session;
-    if (!this.find(pubkey) || !session)
-      throw new Error("Open this agent's community to delete it");
-    const signal = AbortSignal.timeout(REMOVE_TIMEOUT_MS);
-    await removeAgentFromChannels(session, pubkey, signal);
-    // The archive cache is not live; Delete needs a read started now.
-    const { archives } = session;
-    await archives.ensure();
-    await archives.refresh();
-    signal.throwIfAborted();
-    if (archives.state(pubkey) !== "archived") {
-      // Without an owner-attested profile the agent is not in the directory, so
-      // there is nothing to hide (and no consent path to archive it with).
-      const consent = archives.writable
-        ? await archives.consent(pubkey, signal)
-        : null;
-      if (consent) await archives.request("archive", pubkey, signal);
-    }
     await this.native.remove(pubkey);
-    this.identities = this.identities.filter(
-      (saved) => saved.pubkey !== pubkey,
-    );
-    const { [pubkey]: _, ...rest } = this.records;
-    this.records = rest;
-    writeRecords(this.storage, rest);
-    this.update();
+    // Drops its settings, and starts its cleanup if its community is open.
+    await this.refresh();
   }
 
   /** Saves one record; memory changes only once storage has taken it. */
@@ -446,91 +400,140 @@ export class Agents2Service extends Service implements Agents2 {
     this.records = records;
     this.update();
   }
+  private live(pubkey: string) {
+    return this.identities.find(
+      (identity) => identity.pubkey === pubkey && !identity.deleted,
+    );
+  }
+  /** Its saved settings or, without any, its type's defaults, kept in memory
+   * until a save stores them. Without its type there are no defaults yet. */
+  private recordOf({ pubkey, type }: AgentIdentity) {
+    const kind = this.types().find((entry) => entry.key === type);
+    if (!this.records[pubkey] && kind)
+      try {
+        this.records = { ...this.records, [pubkey]: defaults(pubkey, kind) };
+      } catch (error) {
+        console.warn(`Agent type ${type} has invalid defaults`, error);
+      }
+    return this.records[pubkey] ?? blank(pubkey);
+  }
   private view(identity: AgentIdentity, record: AgentRecord): Agent {
     return Object.freeze({
       pubkey: identity.pubkey,
-      name: record.name,
-      type: record.type,
+      name: identity.name,
+      type: identity.type,
       owner: identity.owner,
       relay: identity.relay,
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
-      profilePending: record.profilePending === true,
       config: record.config,
     });
   }
-  /** As harness profile edits do: read the agent's current kind 0 and change
-   * only what the app owns, so fields set elsewhere (a picture, an about) stay. */
-  private async sendProfile(pubkey: string, fresh: boolean) {
-    const record = this.records[pubkey];
-    if (!this.native) throw new Error("Agents run only in the desktop app");
-    if (!record?.profilePending) return;
-    let current: RelayEvent | undefined;
-    if (!fresh) {
-      const session = this.binding?.session;
-      if (!this.find(pubkey) || !session)
-        throw new Error("Open this agent's community to publish its profile");
-      await session.profiles.ensure([pubkey]);
-      current = session.profiles.event?.(pubkey);
-    }
-    let fields: Record<string, unknown> = {};
+  private inScope(identity: AgentIdentity, binding: Binding) {
     try {
-      const parsed: unknown = JSON.parse(current?.content ?? "{}");
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-        fields = parsed as Record<string, unknown>;
+      return (
+        identity.owner === binding.viewer &&
+        relayPartition(relayOrigin(identity.relay), binding.viewer) ===
+          binding.scope
+      );
     } catch {
-      // Nothing readable to keep.
-    }
-    const { name } = record;
-    await this.native.publish(pubkey, {
-      kind: 0,
-      content: JSON.stringify({
-        ...fields,
-        name,
-        // Shown in place of `name` where present, so it follows the rename.
-        ...(typeof fields.display_name === "string"
-          ? { display_name: name }
-          : {}),
-        bot: true,
-      }),
-      // Native replaces the owner `auth` tag with its own.
-      tags: current?.tags ?? [],
-    });
-    // A rename made meanwhile is still pending; its own publication follows.
-    const latest = this.records[pubkey];
-    if (latest?.profilePending && latest.name === name) {
-      const { profilePending: _, ...published } = latest;
-      this.write(published);
+      return false;
     }
   }
 
-  private async load() {
+  /** Reads the agent list from native. Every change is made there first and
+   * then read back here, so the list has one source. */
+  private async refresh() {
     if (!this.native) return;
-    // Only what existed before the list was asked for may be pruned; an agent
-    // created while it is in flight is missing from it but very much alive.
-    const before = new Set(Object.keys(this.records));
+    const turn = ++this.listed;
     try {
-      const listed = await this.native.list();
-      const created = this.identities.filter(
-        (identity) => !listed.some((saved) => saved.pubkey === identity.pubkey),
+      const identities = await this.native.list();
+      // A newer list is on its way; this one may predate a change.
+      if (turn !== this.listed) return;
+      this.identities = identities;
+      this.state = Object.freeze({ ...this.state, status: "ready" });
+      // Settings whose agent is gone do nothing.
+      const live = new Set(
+        identities
+          .filter((saved) => !saved.deleted)
+          .map((saved) => saved.pubkey),
       );
-      this.identities = [...listed, ...created];
-      // A record whose key is gone can never run again.
-      const kept = new Set(this.identities.map((identity) => identity.pubkey));
-      const orphan = (key: string) => before.has(key) && !kept.has(key);
-      if (Object.keys(this.records).some(orphan)) {
+      if (Object.keys(this.records).some((pubkey) => !live.has(pubkey))) {
         this.records = Object.fromEntries(
-          Object.entries(this.records).filter(([key]) => !orphan(key)),
+          Object.entries(this.records).filter(([pubkey]) => live.has(pubkey)),
         );
         writeRecords(this.storage, this.records);
       }
-      this.state = { ...this.state, status: "ready" };
     } catch (error) {
-      this.state = { ...this.state, status: "error", error: message(error) };
+      if (turn !== this.listed) return;
+      this.state = Object.freeze({
+        ...this.state,
+        status: "error",
+        error: message(error),
+      });
     }
     this.update();
     this.notify();
+    this.sync();
+  }
+
+  /** Brings the relay in line with the saved identities: publishes each name
+   * its community lacks, and finishes Delete for the open community. Each step
+   * is safe to repeat; what fails is tried again on the next refresh or connect. */
+  private sync() {
+    const native = this.native;
+    const binding = this.binding;
+    for (const identity of this.identities)
+      if (!identity.deleted)
+        native
+          ?.publishProfile(identity.pubkey)
+          .catch((error) =>
+            console.warn(
+              `Agent ${identity.name} profile was not published`,
+              error,
+            ),
+          );
+      else if (binding && this.inScope(identity, binding))
+        void this.cleanup(identity.pubkey, binding);
+  }
+  /** As harness Delete does: leave every channel, then archive the identity so
+   * it drops out of member lists and mention suggestions. The owner signs both,
+   * so neither needs the deleted key. Nothing is final until each is confirmed. */
+  private async cleanup(pubkey: string, binding: Binding) {
+    if (this.cleaning.has(pubkey)) return;
+    this.cleaning.add(pubkey);
+    const signal = AbortSignal.any([
+      binding.controller.signal,
+      AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
+    ]);
+    const { session } = binding;
+    try {
+      await removeAgentFromChannels(session, pubkey, signal);
+      const { archives } = session;
+      if (archives.writable) {
+        // The archive cache is not live; this needs a read started now.
+        await archives.ensure();
+        await archives.refresh();
+        signal.throwIfAborted();
+        const state = archives.state(pubkey);
+        // An unfinished read says nothing, least of all "not archived".
+        if (state === "unknown") throw new Error("Archive state is unknown");
+        // Without an owner-attested profile the agent is not in the directory,
+        // so there is nothing to hide (and no consent path to archive it with).
+        const consent =
+          state === "not-archived" && (await archives.consent(pubkey, signal));
+        signal.throwIfAborted();
+        if (consent) await archives.request("archive", pubkey, signal);
+      }
+      await this.native?.forget(pubkey);
+      await this.refresh();
+    } catch (error) {
+      if (!binding.controller.signal.aborted)
+        console.warn("Deleted agent cleanup will be retried", error);
+    } finally {
+      this.cleaning.delete(pubkey);
+    }
   }
 
   private bind() {
@@ -546,6 +549,7 @@ export class Agents2Service extends Service implements Agents2 {
             origin: snapshot.origin,
             viewer: snapshot.viewer,
             session: snapshot.session,
+            controller: new AbortController(),
           }
         : undefined;
     if (
@@ -554,43 +558,35 @@ export class Agents2Service extends Service implements Agents2 {
     )
       return;
     this.stopLive?.();
+    this.binding?.controller.abort();
     this.stopLive = live?.session.subscribeLive((batch) =>
       this.dispatch(batch),
     );
     this.binding = live;
     this.update();
+    if (live) this.sync();
   }
 
   // Joins identities, records and the connection into the visible agents, and
   // keeps one runner per saved agent. Runners outlive edits and reconnects; one is
-  // retired only when its agent is removed, and its run is aborted when the
+  // retired only when its agent is deleted, and its run is aborted when the
   // agent's type is replaced.
   private update() {
     const binding = this.binding;
+    const identities = this.identities.filter((identity) => !identity.deleted);
     const agents: Agent[] = [];
-    for (const identity of this.identities) {
-      const record = this.records[identity.pubkey];
-      if (!record || !binding || identity.owner !== binding.viewer) continue;
-      try {
-        if (
-          relayPartition(relayOrigin(identity.relay), binding.viewer) !==
-          binding.scope
-        )
-          continue;
-      } catch {
-        continue;
-      }
+    for (const identity of identities) {
+      if (!binding || !this.inScope(identity, binding)) continue;
+      const record = this.recordOf(identity);
       // Reuse the frozen agent while nothing visible changed, so subscribers see
       // a stable snapshot.
       const prior = this.find(identity.pubkey);
       agents.push(
         prior &&
-          prior.name === record.name &&
-          prior.type === record.type &&
+          prior.name === identity.name &&
           prior.attention === record.attention &&
-          prior.skipped === record.skipped &&
-          prior.timers === record.timers &&
-          prior.profilePending === (record.profilePending === true) &&
+          prior.skipped === (record.skipped ?? EMPTY) &&
+          prior.timers === (record.timers ?? EMPTY) &&
           prior.config === record.config
           ? prior
           : this.view(identity, record),
@@ -598,17 +594,12 @@ export class Agents2Service extends Service implements Agents2 {
     }
     const types = new Map(this.types().map((type) => [type.key, type]));
     for (const [pubkey, runner] of this.runners)
-      if (
-        !this.records[pubkey] ||
-        !this.identities.some((identity) => identity.pubkey === pubkey)
-      ) {
+      if (!identities.some((identity) => identity.pubkey === pubkey)) {
         this.retire(runner);
         this.runners.delete(pubkey);
       }
-    for (const identity of this.identities) {
-      const record = this.records[identity.pubkey];
-      if (!record) continue;
-      const type = types.get(record.type);
+    for (const identity of identities) {
+      const type = types.get(identity.type);
       const runner = this.runners.get(identity.pubkey);
       if (!runner)
         this.runners.set(identity.pubkey, this.runner(identity, type));
@@ -727,54 +718,48 @@ export class Agents2Service extends Service implements Agents2 {
 
   // Spec schedule rules: occurrence k is due at armed_at + k × interval, at most one
   // runs when overdue, then the next is due interval after it ran. A timer with no
-  // saved state counts what was already due as used (see timerState).
-  private tick(now = Math.floor(Date.now() / 1000)) {
-    let changed = false;
-    for (const runner of this.runners.values()) {
-      const agent = this.find(runner.pubkey);
-      const record = this.records[runner.pubkey];
-      if (!agent || !record || !runner.type?.run) continue;
-      const prior = record.timers ?? {};
-      let timers = prior;
-      for (const object of Object.values(agent.attention)) {
-        const timer = object.value;
-        if (timer.type !== "timer" || !timer.enabled) continue;
-        const state = timerState(timer, timers[object.slug], now);
-        if (state !== timers[object.slug])
-          timers = { ...timers, [object.slug]: state };
-        if (now < state.nextDue || timerSpent(timer, state, now)) continue;
-        timers = {
-          ...timers,
-          [object.slug]: {
-            ...state,
-            used: state.used + 1,
-            nextDue: now + timer.interval_secs,
-          },
+  // saved state counts what was already due as used (see timerState). Checked as a
+  // run starts, so no timer has more than one occurrence waiting, and one removed,
+  // disabled or expired meanwhile never runs.
+  private dueTimer(agent: Agent): Job | undefined {
+    const now = Math.floor(Date.now() / 1000);
+    for (const object of Object.values(agent.attention)) {
+      const timer = object.value;
+      if (timer.type !== "timer" || !timer.enabled) continue;
+      const saved = agent.timers[object.slug];
+      let state = timerState(timer, saved, now);
+      const due = now >= state.nextDue && !timerSpent(timer, state, now);
+      if (due)
+        state = {
+          ...state,
+          used: state.used + 1,
+          nextDue: now + timer.interval_secs,
         };
-        const interest =
-          agent.attention[`interest/${timer.interest_id}`]?.value;
-        this.enqueue(runner, {
-          trigger: {
-            type: "timer",
-            slug: object.slug,
-            timer,
-            ...(interest?.type === "interest" ? { interest } : {}),
-          },
-        });
+      if (state !== saved) {
+        const record = this.records[agent.pubkey] ?? blank(agent.pubkey);
+        try {
+          this.write({
+            ...record,
+            timers: { ...record.timers, [object.slug]: state },
+          });
+        } catch (error) {
+          // Unsaved, it would run again at once; it waits for storage instead.
+          console.warn(`Agent ${agent.name} timer state was not saved`, error);
+          continue;
+        }
       }
-      if (timers !== prior) {
-        this.records = {
-          ...this.records,
-          [record.pubkey]: { ...record, timers },
-        };
-        changed = true;
-      }
+      if (!due) continue;
+      const interest = agent.attention[`interest/${timer.interest_id}`]?.value;
+      return {
+        trigger: {
+          type: "timer",
+          slug: object.slug,
+          timer,
+          ...(interest?.type === "interest" ? { interest } : {}),
+        },
+      };
     }
-    if (changed) {
-      writeRecords(this.storage, this.records);
-      // Shows the new run counts; the runners and their queues carry on.
-      this.update();
-    }
+    return undefined;
   }
 
   private enqueue(runner: Runner, job: Job) {
@@ -792,15 +777,16 @@ export class Agents2Service extends Service implements Agents2 {
     void this.drain(runner);
   }
 
-  // One run at a time per agent, in arrival order. Each job runs the agent as it
-  // is when the job starts. While the agent is out of view (disconnected, another
-  // community) the queue pauses and update() resumes it; a type that cannot run
-  // drops what is queued. A run that ignores its deadline stops holding
-  // the queue when the deadline passes; it is not otherwise fenced.
+  // One run at a time per agent: events in arrival order, then a due timer.
+  // Each job runs the agent as it is when the job starts. While the agent is out
+  // of view (disconnected, another community) the queue pauses and update()
+  // resumes it; a type that cannot run drops what is queued. A run that ignores
+  // its deadline stops holding the queue when the deadline passes; it is not
+  // otherwise fenced.
   private async drain(runner: Runner) {
     if (runner.running) return;
     runner.running = true;
-    while (runner.queue.length && this.runners.get(runner.pubkey) === runner) {
+    while (this.runners.get(runner.pubkey) === runner) {
       const agent = this.find(runner.pubkey);
       if (!agent) break;
       const type = runner.type;
@@ -809,7 +795,8 @@ export class Agents2Service extends Service implements Agents2 {
         runner.queue.length = 0;
         break;
       }
-      const job = runner.queue.shift() as Job;
+      const job = runner.queue.shift() ?? this.dueTimer(agent);
+      if (!job) break;
       const lifetime = runner.controller.signal;
       const signal = AbortSignal.any([
         lifetime,

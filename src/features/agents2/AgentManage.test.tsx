@@ -18,16 +18,13 @@ const agent = {
   attention: {},
   skipped: {},
   timers: {},
-  profilePending: false,
 } satisfies Agent;
 
 it("deletes after confirming, and keeps the dialog open with the error when Delete fails", async () => {
   const user = userEvent.setup();
   const remove = vi
     .fn<Agents2["remove"]>()
-    .mockRejectedValueOnce(
-      new Error("Open this agent's community to delete it"),
-    )
+    .mockRejectedValueOnce(new Error("Credential store refused"))
     .mockResolvedValueOnce();
   const onRemoved = vi.fn();
   render(
@@ -40,7 +37,7 @@ it("deletes after confirming, and keeps the dialog open with the error when Dele
   await user.click(screen.getByRole("button", { name: "Delete agent" }));
   await user.click(screen.getByRole("button", { name: "Delete" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Open this agent's community to delete it",
+    "Credential store refused",
   );
   expect(onRemoved).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Delete" }));

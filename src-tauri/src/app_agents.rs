@@ -2,39 +2,72 @@
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event at a time, and native signs and posts it to the agent's community.
 use crate::agents::profile_http::authorization;
-use buzz_agent_controller::{AppAgent, AppAgents, Credentials, NewAppAgent, PlatformCredentials};
+use buzz_agent_controller::{
+    AppAgent, AppAgents, Credentials, PlatformCredentials, Published, Secret,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-/// The identity file (which locks its own writes across app instances) and the
-/// keys awaiting attestation, by pubkey. It owns its credential handle so Agents2
-/// never waits on, or fails with, the harness agent controller (whose storage
-/// lock another app may hold).
+/// The identity file (which locks its own writes across app instances) and its
+/// own credential handle, so Agents2 never waits on, or fails with, the harness
+/// agent controller (whose storage lock another app may hold).
 #[derive(Clone)]
-pub(crate) struct AppAgentHost(
-    Result<AppAgents, String>,
-    Arc<std::sync::Mutex<Vec<NewAppAgent>>>,
-    Arc<dyn Credentials>,
-);
-/// Creates abandoned before commit are dropped, oldest first, past this many.
-const PENDING_LIMIT: usize = 8;
+pub(crate) struct AppAgentHost {
+    agents: Result<AppAgents, String>,
+    credentials: Arc<dyn Credentials>,
+    /// Each key after its first read, so only create and first use reach the
+    /// credential store, whose lock refuses rather than waits. Waiting on this
+    /// lock instead lets concurrent publications queue for that first read.
+    keys: Arc<Mutex<HashMap<String, Arc<Secret>>>>,
+    /// One profile publication at a time, so each is newer than the last.
+    profiles: Arc<tokio::sync::Mutex<()>>,
+}
 impl AppAgentHost {
     pub(crate) fn new(path: Result<PathBuf, String>) -> Self {
-        Self(
-            path.map(AppAgents::open),
-            Arc::default(),
-            Arc::new(PlatformCredentials::default()),
-        )
+        Self {
+            agents: path.map(AppAgents::open),
+            credentials: Arc::new(PlatformCredentials::default()),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+        }
     }
-    fn agents(&self) -> Result<AppAgents, String> {
-        self.0.clone()
-    }
-    fn pending(&self) -> std::sync::MutexGuard<'_, Vec<NewAppAgent>> {
-        self.1
+    fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
+        self.keys
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// The agent's key; read from the credential store only on first use.
+    async fn key(&self, agent: AppAgent) -> Result<(AppAgent, Arc<Secret>), String> {
+        let host = self.clone();
+        blocking(move || {
+            let pubkey = agent.pubkey.clone();
+            let mut keys = host.keys();
+            let key = match keys.get(&pubkey) {
+                Some(key) => key.clone(),
+                None => {
+                    let key = Arc::new(agent.read_key(host.credentials.as_ref())?);
+                    keys.insert(pubkey, key.clone());
+                    key
+                }
+            };
+            Ok((agent, key))
+        })
+        .await
+    }
+    /// The agent, if it still has its key. One deleted elsewhere loses its cached key.
+    async fn agent(&self, pubkey: String) -> Result<AppAgent, String> {
+        let host = self.clone();
+        blocking(move || {
+            let agent = host.agents.clone()?.get(&pubkey);
+            if agent.is_err() {
+                host.keys().remove(&pubkey);
+            }
+            agent
+        })
+        .await
     }
 }
 
@@ -53,6 +86,10 @@ pub(crate) struct AppAgentSummary {
     pubkey: String,
     relay: String,
     owner: String,
+    #[serde(rename = "type")]
+    agent_type: String,
+    name: String,
+    deleted: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -60,6 +97,9 @@ impl From<AppAgent> for AppAgentSummary {
             pubkey: agent.pubkey,
             relay: agent.relay,
             owner: agent.owner,
+            agent_type: agent.agent_type,
+            name: agent.name,
+            deleted: agent.deleted,
         }
     }
 }
@@ -68,78 +108,75 @@ impl From<AppAgent> for AppAgentSummary {
 pub(crate) async fn app_agent_list(
     state: tauri::State<'_, AppAgentHost>,
 ) -> Result<Vec<AppAgentSummary>, String> {
-    let agents = state.agents()?;
+    let agents = state.agents.clone()?;
     blocking(move || Ok(agents.list()?.into_iter().map(Into::into).collect())).await
 }
 
-/// Generates a key for `owner` in `destination`. The caller has the community
-/// attest it (its `authorize-agent` route), then commits that attestation.
+/// Generates a key for `owner` in `destination`, has the signed-in owner attest
+/// it, and saves both. Nothing is saved unless all three succeed.
 #[tauri::command]
-pub(crate) async fn app_agent_create_prepare(
-    state: tauri::State<'_, AppAgentHost>,
-    destination: String,
-    owner: String,
-) -> Result<String, String> {
-    let prepared = AppAgents::prepare(&destination, &owner)?;
-    let pubkey = prepared.pubkey().to_owned();
-    let mut pending = state.pending();
-    if pending.len() >= PENDING_LIMIT {
-        pending.remove(0);
-    }
-    pending.push(prepared);
-    Ok(pubkey)
-}
-
-/// Has the signed-in owner attest only the pending key, for its prepared owner.
-/// Agents2 never goes through the harness agent host for this.
-#[tauri::command]
-pub(crate) async fn app_agent_create_authorize(
+pub(crate) async fn app_agent_create(
     state: tauri::State<'_, AppAgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
-    pubkey: String,
-) -> Result<Vec<String>, String> {
-    let owner = state
-        .pending()
-        .iter()
-        .find(|prepared| prepared.pubkey() == pubkey)
-        .map(|prepared| prepared.owner().to_owned())
-        .ok_or("Create request expired; try again")?;
-    identity.inner().authorize_agent(owner, pubkey).await
-}
-
-/// Saves the pending key with its owner attestation.
-#[tauri::command]
-pub(crate) async fn app_agent_create_commit(
-    state: tauri::State<'_, AppAgentHost>,
-    pubkey: String,
-    auth: Vec<String>,
+    destination: String,
+    owner: String,
+    agent_type: String,
+    name: String,
 ) -> Result<AppAgentSummary, String> {
-    let agents = state.agents()?;
-    let prepared = {
-        let mut pending = state.pending();
-        pending
-            .iter()
-            .position(|prepared| prepared.pubkey() == pubkey)
-            .map(|index| pending.remove(index))
-    }
-    .ok_or("Create request expired; try again")?;
-    let credentials = state.2.clone();
+    let agents = state.agents.clone()?;
+    let prepared = AppAgents::prepare(&destination, &owner, &agent_type, &name)?;
+    let auth = identity
+        .inner()
+        .authorize_agent(owner, prepared.pubkey().to_owned())
+        .await?;
+    let host = state.inner().clone();
     blocking(move || {
-        credentials.retry();
-        agents.commit(prepared, &auth, credentials.as_ref())
+        // Held so no first key read meets this write in the credential store.
+        let mut keys = host.keys();
+        host.credentials.retry();
+        let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
+        keys.insert(agent.pubkey.clone(), Arc::new(key));
+        Ok(agent.into())
     })
     .await
-    .map(Into::into)
 }
 
+#[tauri::command]
+pub(crate) async fn app_agent_rename(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    name: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.rename(&pubkey, &name)).await
+}
+
+/// Deletes the key now. The row stays, marked deleted, until the WebView has
+/// cleaned up the community and calls `app_agent_forget`.
 #[tauri::command]
 pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
 ) -> Result<(), String> {
-    let agents = state.agents()?;
-    let credentials = state.2.clone();
-    blocking(move || agents.remove(&pubkey, credentials.as_ref())).await
+    let host = state.inner().clone();
+    blocking(move || {
+        // Held across the deletion, so no publication re-reads the key meanwhile.
+        let mut keys = host.keys();
+        keys.remove(&pubkey);
+        host.agents
+            .clone()?
+            .remove(&pubkey, host.credentials.as_ref())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn app_agent_forget(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.forget(&pubkey)).await
 }
 
 #[derive(Deserialize)]
@@ -158,14 +195,43 @@ pub(crate) async fn app_agent_publish(
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
-    let agents = state.agents()?;
-    let credentials = state.2.clone();
-    let (agent, key) = blocking(move || {
-        let agent = agents.get(&pubkey)?;
-        agent.read_key(credentials.as_ref()).map(|key| (agent, key))
-    })
-    .await?;
+    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
+    post(&agent, &key, signed).await
+}
+
+/// Publishes the agent's profile if its name differs from the last one its
+/// community accepted. Safe to call any time; one runs at a time.
+#[tauri::command]
+pub(crate) async fn app_agent_publish_profile(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<(), String> {
+    let _turn = state.profiles.lock().await;
+    let agent = state.agent(pubkey).await?;
+    if agent.profile.as_ref().map(|last| &last.name) == Some(&agent.name) {
+        return Ok(());
+    }
+    let (agent, key) = state.key(agent).await?;
+    let signed = post(&agent, &key, agent.profile_event(&key)?).await?;
+    let created_at = signed
+        .get("created_at")
+        .and_then(Value::as_u64)
+        .ok_or("Invalid agent event")?;
+    let agents = state.agents.clone()?;
+    blocking(move || {
+        agents.published(
+            &agent.pubkey,
+            Published {
+                name: agent.name,
+                created_at,
+            },
+        )
+    })
+    .await
+}
+
+async fn post(agent: &AppAgent, key: &Secret, signed: Value) -> Result<Value, String> {
     let event_id = signed
         .get("id")
         .and_then(Value::as_str)
@@ -182,7 +248,7 @@ pub(crate) async fn app_agent_publish(
         .header("Content-Type", "application/json")
         .header(
             "Authorization",
-            authorization(agent.http_auth(&key, &bytes)?)?,
+            authorization(agent.http_auth(key, &bytes)?)?,
         )
         .header("x-auth-tag", &agent.auth)
         .body(bytes)

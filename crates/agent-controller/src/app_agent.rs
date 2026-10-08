@@ -1,15 +1,16 @@
 //! Identities for agents the app runs through a plugin (Agents2). They are not
 //! harness agents: there is no process, harness setting or controller record.
 //! Native keeps each key and its owner attestation and signs only bounded kinds.
+//! The saved identities are the agent list: each row names its type and name.
 use crate::config::{agent_id, canonical_key, canonical_relay};
 use crate::secret::validate_attestation;
 use crate::{Credentials, Result, Secret};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// What a plugin agent may publish: its profile (0), a deletion (5), a reaction
-/// (7), a message (9) or an edit of its own message (40003).
-const KINDS: [u16; 5] = [0, 5, 7, 9, 40003];
+/// What a plugin agent may publish: a deletion (5), a reaction (7), a message
+/// (9) or an edit of its own message (40003). Its profile (0) is the app's.
+const KINDS: [u16; 4] = [5, 7, 9, 40003];
 
 /// One saved identity. The key itself stays in the OS credential store.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +22,25 @@ pub struct AppAgent {
     pub owner: String,
     /// The owner's NIP-OA `auth` tag as a JSON array string.
     pub auth: String,
+    /// The agent type's key, `pluginId/typeId`, fixed at create. Rows saved
+    /// before it was recorded read as an unavailable type with no name.
+    #[serde(rename = "type", default)]
+    pub agent_type: String,
+    #[serde(default)]
+    pub name: String,
+    /// The last profile its community accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Published>,
+    /// Its key is gone. The row stays until its community confirms it left its
+    /// channels and was archived, which the owner signs, not the agent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Published {
+    pub name: String,
+    pub created_at: u64,
 }
 impl AppAgent {
     fn credential_id(&self) -> String {
@@ -41,15 +61,10 @@ impl AppAgent {
         key: &Secret,
         kind: u16,
         content: String,
-        mut tags: Vec<Vec<String>>,
+        tags: Vec<Vec<String>>,
     ) -> Result<serde_json::Value> {
-        if key.pubkey() != self.pubkey {
-            return Err("Agent identity changed".into());
-        }
         if !KINDS.contains(&kind) {
-            return Err(
-                "Agents can sign profiles, messages, edits, reactions and deletions only".into(),
-            );
+            return Err("Agents can sign messages, edits, reactions and deletions only".into());
         }
         if content.len() > 64 * 1024
             || tags.len() > 256
@@ -59,11 +74,31 @@ impl AppAgent {
         {
             return Err("Agent event is too large".into());
         }
+        let tags = self.attested(key, tags)?;
+        key.signed(kind, content, tags)
+    }
+    /// Its profile as this row describes it, replacing the last one accepted.
+    /// No other writer exists: only this device holds the key.
+    pub fn profile_event(&self, key: &Secret) -> Result<serde_json::Value> {
+        valid_name(&self.name)?;
+        let content = serde_json::json!({ "name": self.name, "bot": true }).to_string();
+        let tags = self.attested(key, vec![])?;
+        key.sign_event_after(
+            0,
+            content,
+            tags,
+            self.profile.as_ref().map(|p| p.created_at),
+        )
+    }
+    fn attested(&self, key: &Secret, mut tags: Vec<Vec<String>>) -> Result<Vec<Vec<String>>> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
         let auth: Vec<String> =
             serde_json::from_str(&self.auth).map_err(|_| "Invalid owner authorization")?;
         tags.retain(|tag| tag.first().map(String::as_str) != Some("auth"));
         tags.push(auth);
-        key.signed(kind, content, tags)
+        Ok(tags)
     }
     /// NIP-98 authorization for posting `body` to this agent's community.
     pub fn http_auth(&self, key: &Secret, body: &[u8]) -> Result<serde_json::Value> {
@@ -79,6 +114,8 @@ pub struct NewAppAgent {
     key: Secret,
     relay: String,
     owner: String,
+    agent_type: String,
+    name: String,
 }
 impl NewAppAgent {
     pub fn pubkey(&self) -> &str {
@@ -100,6 +137,7 @@ impl AppAgents {
     pub fn open(path: PathBuf) -> Self {
         Self { path }
     }
+    /// Every row, deleted ones included.
     pub fn list(&self) -> Result<Vec<AppAgent>> {
         match std::fs::read(&self.path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -108,10 +146,11 @@ impl AppAgents {
             Err(_) => Err("Could not read saved agent identities".into()),
         }
     }
+    /// An agent that still has its key.
     pub fn get(&self, pubkey: &str) -> Result<AppAgent> {
         self.list()?
             .into_iter()
-            .find(|agent| agent.pubkey == pubkey)
+            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
             .ok_or_else(|| "No such agent on this device".into())
     }
     /// Runs `change` on the saved list while holding the cross-process lock, and
@@ -142,26 +181,48 @@ impl AppAgents {
         std::fs::write(&temp, bytes).map_err(|_| "Could not save agent identities")?;
         std::fs::rename(&temp, &self.path).map_err(|_| "Could not save agent identities".into())
     }
-    pub fn prepare(destination: &str, owner: &str) -> Result<NewAppAgent> {
+    /// Changes one agent that still has its key.
+    fn edit(&self, pubkey: &str, change: impl FnOnce(&mut AppAgent)) -> Result<()> {
+        self.update(|agents| {
+            let agent = agents
+                .iter_mut()
+                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            change(agent);
+            Ok(())
+        })
+    }
+    pub fn prepare(
+        destination: &str,
+        owner: &str,
+        agent_type: &str,
+        name: &str,
+    ) -> Result<NewAppAgent> {
         if !canonical_key(owner) {
             return Err("Choose a signed-in owner".into());
+        }
+        if agent_type.is_empty() || agent_type.len() > 256 {
+            return Err("Choose an agent type".into());
         }
         Ok(NewAppAgent {
             relay: canonical_relay(destination)?,
             key: Secret::generate()?,
             owner: owner.into(),
+            agent_type: agent_type.into(),
+            name: valid_name(name)?,
         })
     }
     /// Saves the identity, then the key, so a saved key always has an identity to
     /// delete it by. If the key cannot be saved, the identity is withdrawn once
     /// its key is known to be gone; otherwise it stays for `remove` to retry.
-    /// An attestation for another key or owner is refused.
+    /// An attestation for another key or owner is refused. Returns the key too,
+    /// so its first use needs no credential read.
     pub fn commit(
         &self,
         prepared: NewAppAgent,
         auth: &[String],
         credentials: &dyn Credentials,
-    ) -> Result<AppAgent> {
+    ) -> Result<(AppAgent, Secret)> {
         let auth = serde_json::to_string(auth).map_err(|_| "Invalid owner authorization")?;
         validate_attestation(&auth, prepared.key.pubkey())?;
         let tag: Vec<String> =
@@ -174,6 +235,10 @@ impl AppAgents {
             relay: prepared.relay,
             owner: prepared.owner,
             auth,
+            agent_type: prepared.agent_type,
+            name: prepared.name,
+            profile: None,
+            deleted: false,
         };
         let id = agent.credential_id();
         self.update(|agents| {
@@ -189,31 +254,59 @@ impl AppAgents {
         });
         if let Err(error) = saved {
             if credentials.delete(&id, &agent.pubkey).is_ok() {
-                let _ = self.forget(&agent.pubkey);
+                let _ = self.update(|agents| {
+                    agents.retain(|saved| saved.pubkey != agent.pubkey);
+                    Ok(())
+                });
             }
             return Err(error);
         }
-        Ok(agent)
+        Ok((agent, prepared.key))
     }
-    /// Deletes the key, then forgets the identity, so a failed deletion can be
+    pub fn rename(&self, pubkey: &str, name: &str) -> Result<()> {
+        let name = valid_name(name)?;
+        self.edit(pubkey, |agent| agent.name = name)
+    }
+    /// Records a profile its community accepted, unless a newer one already is.
+    pub fn published(&self, pubkey: &str, profile: Published) -> Result<()> {
+        self.edit(pubkey, |agent| {
+            if agent
+                .profile
+                .as_ref()
+                .is_none_or(|last| last.created_at < profile.created_at)
+            {
+                agent.profile = Some(profile);
+            }
+        })
+    }
+    /// Deletes the key, then marks the row deleted, so a failed deletion can be
     /// retried. Absence is success.
     pub fn remove(&self, pubkey: &str, credentials: &dyn Credentials) -> Result<()> {
         let Some(agent) = self
             .list()?
             .into_iter()
-            .find(|agent| agent.pubkey == pubkey)
+            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
         else {
             return Ok(());
         };
         credentials.delete(&agent.credential_id(), &agent.pubkey)?;
-        self.forget(pubkey)
+        self.edit(pubkey, |agent| agent.deleted = true)
     }
-    fn forget(&self, pubkey: &str) -> Result<()> {
+    /// Drops a deleted row once its community has been cleaned up.
+    pub fn forget(&self, pubkey: &str) -> Result<()> {
         self.update(|agents| {
-            agents.retain(|agent| agent.pubkey != pubkey);
+            agents.retain(|agent| agent.pubkey != pubkey || !agent.deleted);
             Ok(())
         })
     }
+}
+
+fn valid_name(name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+        return Err("Name the agent in one line".into());
+    }
+    Ok(name.into())
 }
 
 #[cfg(test)]

@@ -47,7 +47,7 @@ export function AgentDelete({
         open={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}
-        description="This removes it from every channel, archives it so it no longer appears in member lists or mention suggestions, and deletes its key from this device. It can't be undone."
+        description="This deletes its key from this device. Then, whenever its community is open, it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
         preventClose={removing}
         actions={
           <>
@@ -71,45 +71,5 @@ export function AgentDelete({
         ) : null}
       </Dialog>
     </>
-  );
-}
-
-/** Shown while the agent's name has not reached the relay, with a Retry. */
-export function AgentProfilePending({
-  agents2,
-  agent,
-}: {
-  agents2: Agents2;
-  agent: Agent;
-}) {
-  const [publishing, setPublishing] = useState(false);
-  const [error, setError] = useState("");
-  if (!agent.profilePending) return null;
-  const retry = async () => {
-    setPublishing(true);
-    setError("");
-    try {
-      await agents2.publishProfile(agent.pubkey);
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setPublishing(false);
-    }
-  };
-  return (
-    <div role="status" className="flex flex-col items-start gap-1">
-      <p className="m-0 text-body-sm text-secondary">
-        Its name isn't published yet, so others may see it unnamed or by an
-        older name.
-      </p>
-      {error && (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {error}
-        </p>
-      )}
-      <Button size="compact" loading={publishing} onClick={() => void retry()}>
-        Retry publishing
-      </Button>
-    </div>
   );
 }

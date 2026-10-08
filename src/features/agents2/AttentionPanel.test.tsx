@@ -18,7 +18,6 @@ const agent: Agent = {
   config: {},
   skipped: {},
   timers: {},
-  profilePending: false,
   attention: {
     "interest/release-triage": {
       slug: "interest/release-triage",

@@ -108,7 +108,7 @@ impl Secret {
     ) -> Result<serde_json::Value> {
         self.sign_event_after(kind, content, tags, None)
     }
-    fn sign_event_after(
+    pub(crate) fn sign_event_after(
         &self,
         kind: u16,
         content: String,

@@ -15,10 +15,7 @@ import {
 import styles from "./Agents2Page.module.css";
 import { AgentTabs } from "./AgentTabs";
 import type { ChannelChoice } from "../../features/agents2/attention";
-import {
-  AgentDelete,
-  AgentProfilePending,
-} from "../../features/agents2/AgentManage";
+import { AgentDelete } from "../../features/agents2/AgentManage";
 import { AttentionSummary } from "../../features/agents2/AttentionPanel";
 import { useAgents2, useChannelChoices } from "../../features/agents2/react";
 import type {
@@ -120,11 +117,7 @@ export function Agents2Page({
         agents2={agents2}
         types={types}
         onClose={() => browse()}
-        // The community may have changed while it was created; the agent then
-        // lives in the one it was made for, so stay on this grid.
-        onCreated={(agent) =>
-          agents2.find(agent.pubkey) ? build(agent.pubkey) : browse()
-        }
+        onCreated={(agent) => build(agent.pubkey)}
       />
     ) : selected ? (
       <AgentPeek
@@ -493,7 +486,6 @@ function AgentBuild({
           name={agent.name}
           onSave={(name) => agents2.save(agent.pubkey, { name })}
         />
-        <AgentProfilePending agents2={agents2} agent={agent} />
         <dl className={styles.facts}>
           <dt>Type</dt>
           <dd>{type?.title ?? "Type unavailable"}</dd>

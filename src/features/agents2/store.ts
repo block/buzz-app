@@ -1,6 +1,7 @@
-// Device-local storage for Agents2 agents: each agent's attention objects in the
+// Device-local settings for Agents2 agents: each agent's attention objects in the
 // `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
-// run state. The key and owner attestation live in native custody, never here. A
+// run state. Which agents exist, their type and name, and their keys live in
+// native custody, never here; a record without an identity does nothing. A
 // relay-backed store can replace this later without changing the record shape.
 import {
   OBJECT_LIMIT,
@@ -21,9 +22,6 @@ export type SkippedObject = Readonly<{
 }>;
 export type AgentRecord = Readonly<{
   pubkey: string;
-  /** The registered agent type's key, `pluginId/typeId`. */
-  type: string;
-  name: string;
   /** Keyed by slug (`interest/<id>` or `watch/<id>`). */
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored objects that are invalid or over a limit. They do nothing, and stay
@@ -34,8 +32,6 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
-  /** Its name has not yet reached the relay as its kind 0 profile. */
-  profilePending?: true;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -62,13 +58,7 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
     return {};
   const records: Record<string, AgentRecord> = {};
   for (const [pubkey, record] of Object.entries((stored as Stored).agents)) {
-    if (
-      !PUBKEY.test(pubkey) ||
-      record?.pubkey !== pubkey ||
-      typeof record.type !== "string" ||
-      typeof record.name !== "string"
-    )
-      continue;
+    if (!PUBKEY.test(pubkey) || record?.pubkey !== pubkey) continue;
     const attention: Record<string, AttentionObject> = {};
     const skipped: Record<string, SkippedObject> = {};
     const counts = { Interests: 0, "watches and timers": 0 };
@@ -101,13 +91,12 @@ export function readRecords(storage: Storage): Record<string, AgentRecord> {
         )
       )
         timers[slug] = state;
-    const { profilePending, ...rest } = record;
     records[pubkey] = {
-      ...rest,
+      pubkey,
       attention,
       skipped,
+      config: record.config,
       timers,
-      ...(profilePending === true ? { profilePending } : {}),
     };
   }
   return records;

@@ -1158,6 +1158,7 @@ it.each(["peer", "own"] as const)(
       viewer: author === "own" ? row.authorId : "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { report: vi.fn(async () => {}) },
+      profiles: { subscribe: () => () => {}, event: () => undefined },
       outbox: {
         supports: () => true,
         subscribe: () => () => {},
@@ -1381,16 +1382,34 @@ it("shows working dots only while a known agent types in this thread", () => {
       },
     },
   } as unknown as RelaySession;
-  const view = renderMessage({ session, onOpenThread: () => {} });
+  let view = renderMessage({ session, onOpenThread: () => {} });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",
     });
     expect(working.querySelector("[data-thread-working]")).not.toBeNull();
+    expect(working).not.toHaveTextContent(/is working|agents are working/);
+    view.unmount();
+    const open = vi.fn();
+    view = renderMessage({
+      session,
+      row: { ...row, replyCount: 0, participants: [] },
+      onOpenThread: open,
+    });
+    const first = screen.getByRole("button", {
+      name: "View thread: Brain is working",
+    });
+    expect(first).toHaveTextContent("View thread");
+    expect(first).not.toHaveTextContent("is working");
+    fireEvent.click(first);
+    expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
     act(() => {
       entries = [];
       for (const listener of listeners) listener();
     });
+    expect(screen.queryByRole("button", { name: /^View thread:/ })).toBeNull();
+    view.unmount();
+    view = renderMessage({ session, onOpenThread: () => {} });
     const idle = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });

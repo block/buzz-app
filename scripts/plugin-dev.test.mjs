@@ -1,4 +1,7 @@
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import * as filesystem from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { win32 } from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,4 +68,54 @@ test("refuses bundled identities and destructive output destinations", async () 
   await expect(
     buildInboxDev({ out: join(root, "src/bundled/inbox") }),
   ).rejects.toThrow("source checkout");
+});
+
+// Exercise Windows filesystem semantics on every host without a Windows-only job.
+test("generates portable host imports with Windows filesystem paths", async () => {
+  const windowsRoot = "C:\\buzz";
+  const nativeRead = filesystem.readFile;
+  const nativeExec = execFileSync;
+  const localPath = (path) =>
+    path.startsWith(windowsRoot)
+      ? join(root, ...win32.relative(windowsRoot, path).split("\\"))
+      : path;
+  vi.doMock("node:path", async (original) => ({
+    ...(await original()),
+    ...win32,
+  }));
+  vi.doMock("node:fs/promises", async (original) => ({
+    ...(await original()),
+    readFile: (path, ...args) => nativeRead(localPath(path), ...args),
+  }));
+  vi.doMock("node:child_process", async (original) => ({
+    ...(await original()),
+    execFileSync: (file, args, options) =>
+      nativeExec(file, args, { ...options, cwd: localPath(options.cwd) }),
+  }));
+  try {
+    vi.resetModules();
+    const windows = await import("./plugin-dev.mjs");
+    const modules = await windows.inboxDependencies(windowsRoot);
+    expect([...modules.keys()]).toEqual(
+      [...(await inboxDependencies())].map(([key]) => key),
+    );
+    const host = windows.inboxHostPlugin(windowsRoot);
+    expect(
+      host.transform(
+        "export const plugins = [];",
+        "C:/buzz/src/bundled/index.ts",
+      ),
+    ).toContain("virtual:buzz-inbox-host");
+    const generated = await host.load("\0virtual:buzz-inbox-host");
+    expect(generated).toContain(
+      'from "C:/buzz/src/features/messages/MessageComposer.tsx"',
+    );
+    expect(generated).not.toContain("bundled/inbox/InboxPage");
+    expect(generated).not.toContain("\\\\");
+  } finally {
+    vi.doUnmock("node:path");
+    vi.doUnmock("node:fs/promises");
+    vi.doUnmock("node:child_process");
+    vi.resetModules();
+  }
 });

@@ -9,7 +9,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseSync, transformSync } from "rolldown/utils";
 import { build } from "vite";
@@ -19,6 +19,19 @@ const pluginDirectory = "src/bundled/inbox";
 const registry = "__BUZZ_HOST_MODULES__";
 const virtualHost = "virtual:buzz-inbox-host";
 const cssToken = "__BUZZ_INBOX_DEV_CSS__";
+
+const vitePath = (path) => path.replaceAll("\\", "/");
+function inside(directory, path) {
+  const child = relative(directory, path);
+  return (
+    child !== "" &&
+    child !== ".." &&
+    !child.startsWith(`..${sep}`) &&
+    !isAbsolute(child)
+  );
+}
+const moduleKey = (directory, path) =>
+  vitePath(relative(join(directory, "src"), path)).replace(/\.tsx?$/, "");
 
 async function sourcePath(path) {
   for (const suffix of ["", ".ts", ".tsx", "/index.ts", "/index.tsx"]) {
@@ -53,12 +66,12 @@ export async function inboxDependencies(directory = root) {
       const resolved = specifier.startsWith(".")
         ? await sourcePath(resolve(dirname(path), specifier))
         : specifier;
-      if (resolved.startsWith(`${owned}/`)) {
+      if (inside(owned, resolved)) {
         await visit(resolved);
         continue;
       }
       const key = specifier.startsWith(".")
-        ? relative(join(directory, "src"), resolved).replace(/\.tsx?$/, "")
+        ? moduleKey(directory, resolved)
         : specifier;
       if (key.startsWith(".."))
         throw new Error(`Import outside src: ${specifier}`);
@@ -140,7 +153,7 @@ export function inboxHostPlugin(directory = root) {
       const entries = [];
       let index = 0;
       for (const [key, { path, names }] of modules) {
-        const source = path.startsWith("/") ? path : key;
+        const source = isAbsolute(path) ? vitePath(path) : key;
         let value;
         if (names.has("*")) {
           value = `m${index++}`;
@@ -160,7 +173,11 @@ export function inboxHostPlugin(directory = root) {
       return `${imports.join("\n")}\nglobalThis.${registry} = Object.freeze({ buildId: ${JSON.stringify(await hostBuildId(directory))}, modules: Object.freeze({ ${entries.join(",\n")} }) });`;
     },
     transform(code, id) {
-      if (id.split("?")[0] !== join(directory, "src/bundled/index.ts")) return;
+      if (
+        vitePath(id.split("?")[0]) !==
+        vitePath(join(directory, "src/bundled/index.ts"))
+      )
+        return;
       return `import ${JSON.stringify(virtualHost)};\n${code}`;
     },
   };
@@ -179,8 +196,8 @@ export async function buildInboxDev({
   out = resolve(out);
   if (
     out === resolve(directory) ||
-    resolve(directory).startsWith(`${out}/`) ||
-    out.startsWith(`${join(resolve(directory), "src")}/`) ||
+    inside(out, resolve(directory)) ||
+    inside(join(resolve(directory), "src"), out) ||
     out === join(resolve(directory), "src")
   )
     throw new Error("Output must not replace the source checkout");
@@ -198,7 +215,7 @@ export async function buildInboxDev({
   }
   const modules = await inboxDependencies(directory);
   const buildId = await hostBuildId(directory);
-  const entry = resolve(directory, ".inbox-dev-entry.js");
+  const entry = vitePath(resolve(directory, ".inbox-dev-entry.js"));
   const owned = resolve(directory, pluginDirectory);
   const shimPrefix = "\0buzz-host:";
   const check = `const host = globalThis.${registry}; if (!host || host.buildId !== ${JSON.stringify(buildId)}) throw new Error("Inbox Dev targets a different Buzz host. Build it from the source for your installed app.");`;
@@ -221,13 +238,13 @@ export async function buildInboxDev({
           )
             return;
           const path =
-            source.startsWith(".") || source.startsWith("/")
+            source.startsWith(".") || isAbsolute(source)
               ? await sourcePath(resolve(dirname(importer), source))
               : source;
-          if (path.startsWith(`${owned}/`)) return;
+          if (inside(owned, path)) return;
           const key =
-            source.startsWith(".") || source.startsWith("/")
-              ? relative(join(directory, "src"), path).replace(/\.tsx?$/, "")
+            source.startsWith(".") || isAbsolute(source)
+              ? moduleKey(directory, path)
               : source;
           if (!modules.has(key))
             throw new Error(`Unsupported host import: ${source}`);
@@ -235,7 +252,7 @@ export async function buildInboxDev({
         },
         load(moduleId) {
           if (moduleId === entry)
-            return `import * as implementation from ${JSON.stringify(join(owned, "index.tsx"))};
+            return `import * as implementation from ${JSON.stringify(vitePath(join(owned, "index.tsx")))};
 export const inject = implementation.inject;
 export function apply(ctx) {
   ctx.effect(() => {

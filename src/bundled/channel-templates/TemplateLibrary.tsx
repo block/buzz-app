@@ -37,11 +37,7 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { TeamDirectShare } from "../agents/DirectShare";
-import {
-  CommunityCatalogDialog,
-  adoptCatalogTeam,
-} from "../agents/CommunityCatalog";
-import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-protocol";
+import { adoptCatalogTeam } from "../agents/CommunityCatalog";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import type { useTemplateCatalog } from "./useTemplateCatalog";
 import styles from "./TemplateLibrary.module.css";
@@ -69,8 +65,6 @@ export function TemplateLibrary({
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<TeamSnapshot>();
   const [deploying, setDeploying] = useState<Team>();
-  const [addTeamOpen, setAddTeamOpen] = useState(false);
-  const [catalogOpen, setCatalogOpen] = useState(false);
   const [editing, setEditing] = useState<Selection>();
   const [sharing, setSharing] = useState<Team>();
   const [deleting, setDeleting] = useState<Selection>();
@@ -221,7 +215,17 @@ export function TemplateLibrary({
                       onClick={(event) => {
                         if (type === "team") {
                           trigger.current = event.currentTarget;
-                          setAddTeamOpen(true);
+                          open(
+                            {
+                              value: {
+                                type: "team",
+                                id: crypto.randomUUID(),
+                                name: "",
+                                agents: [],
+                              },
+                            },
+                            event.currentTarget,
+                          );
                         } else {
                           open(
                             {
@@ -340,82 +344,6 @@ export function TemplateLibrary({
             close={() => setDeploying(undefined)}
           />
         )}
-        <Dialog
-          open={addTeamOpen}
-          onOpenChange={setAddTeamOpen}
-          title="Add team"
-        >
-          <div className="flex flex-col gap-3">
-            <Button
-              disabled={disabled}
-              onClick={() => {
-                setAddTeamOpen(false);
-                open(
-                  {
-                    value: {
-                      type: "team",
-                      id: crypto.randomUUID(),
-                      name: "",
-                      agents: [],
-                    },
-                  },
-                  newTeam.current,
-                );
-              }}
-            >
-              Create team manually
-            </Button>
-            {control?.previewTeam && control.create && session?.viewer && (
-              <Button
-                disabled={disabled}
-                onClick={() => {
-                  setAddTeamOpen(false);
-                  input.current?.click();
-                }}
-              >
-                Import team snapshot
-              </Button>
-            )}
-            {session?.communityCatalog.available() && (
-              <Button
-                onClick={() => {
-                  setAddTeamOpen(false);
-                  setCatalogOpen(true);
-                }}
-              >
-                Choose from catalog
-              </Button>
-            )}
-          </div>
-        </Dialog>
-        {catalogOpen && session && (
-          <CommunityCatalogDialog
-            session={session}
-            onClose={() => setCatalogOpen(false)}
-            hasCopy={(publication, id) =>
-              publication.kind !== AGENT_CATALOG_KIND &&
-              kit
-                .snapshot()
-                .entries.some(
-                  (entry) =>
-                    entry.record.value.type === "team" &&
-                    entry.record.value.id === id,
-                )
-            }
-            onAddTeam={
-              control?.previewTeam && kit.available && session.viewer
-                ? (listed) =>
-                    adoptCatalogTeam(
-                      session,
-                      control,
-                      destination,
-                      session.viewer ?? "",
-                      listed,
-                    )
-                : undefined
-            }
-          />
-        )}
         {sharing && control && session && (
           <TeamDirectShare
             session={session}
@@ -427,6 +355,7 @@ export function TemplateLibrary({
         )}
         {editing && (
           <ChannelTemplatesDialog
+            key={editing.value.id}
             session={session}
             open
             onOpenChange={(open) => {
@@ -439,6 +368,35 @@ export function TemplateLibrary({
             expected={editing.eventId}
             active={active}
             finalFocus={trigger}
+            catalogSession={
+              editing.value.type === "team" && !editing.eventId
+                ? session
+                : undefined
+            }
+            onAddCatalogTeam={
+              session?.viewer && control?.previewTeam && kit.available
+                ? (publication) =>
+                    adoptCatalogTeam(
+                      session,
+                      control,
+                      destination,
+                      session.viewer ?? "",
+                      publication,
+                    )
+                : undefined
+            }
+            onImport={
+              editing.value.type === "team" &&
+              !editing.eventId &&
+              control?.previewTeam &&
+              control.create &&
+              session?.viewer
+                ? () => {
+                    setEditing(undefined);
+                    input.current?.click();
+                  }
+                : undefined
+            }
           />
         )}
         <Dialog

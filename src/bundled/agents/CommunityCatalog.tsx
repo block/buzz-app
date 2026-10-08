@@ -725,6 +725,80 @@ export function CommunityCatalogDialog({
   );
 }
 
+/** The existing catalog preview is reusable inside the Add surface. */
+export function AgentCatalogPreview({
+  publication,
+  session,
+}: {
+  publication: AgentPublication;
+  session: RelaySession;
+}) {
+  const agent = publication.agent;
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center gap-3">
+        <Avatar
+          size="large"
+          src={avatarMedia(agent.avatarUrl, session.media)}
+          alt=""
+          fallback={agent.displayName}
+        />
+        <div>
+          <h3 className="m-0 text-heading">{agent.displayName}</h3>
+          <AddedBy
+            label={
+              publication.owner === session.viewer
+                ? "You"
+                : publication.owner.slice(0, 12)
+            }
+          />
+        </div>
+      </div>
+      {agent.description && (
+        <p className="m-0 text-body-sm text-secondary">{agent.description}</p>
+      )}
+      <Metadata agent={agent} />
+      <div className="flex flex-col gap-2">
+        <h4 className="m-0 text-label">Agent instructions</h4>
+        <Instructions text={agent.systemPrompt} />
+      </div>
+    </div>
+  );
+}
+
+export function TeamCatalogPreview({
+  publication,
+}: {
+  publication: TeamPublication;
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h3 className="m-0 text-heading">{publication.name}</h3>
+        {publication.description && <p>{publication.description}</p>}
+      </div>
+      {publication.instructions && (
+        <div>
+          <h4 className="text-label">Team instructions</h4>
+          <Instructions text={publication.instructions} />
+        </div>
+      )}
+      <div>
+        <h4 className="text-label">{publication.members.length} members</h4>
+        <ul className="m-0 list-none p-0">
+          {publication.members.map((member) => (
+            <Member
+              key={member.memberKey}
+              member={member}
+              picture={member.avatarUrl}
+            />
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function AddedBy({ label }: { label: string }) {
   return (
     <p className="m-0 text-body-sm text-secondary">

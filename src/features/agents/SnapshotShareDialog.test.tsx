@@ -173,6 +173,18 @@ it.each(["agent", "team"] as const)(
     ).toHaveTextContent(
       `Anyone you share this ${kind} with will receive a copy they can add and use. Changes you make later won’t sync.`,
     );
+    const recipients = screen.getByRole("combobox", {
+      name: "Message recipients",
+    });
+    expect(recipients).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("listbox", { name: "People" })).toBeNull();
+    await user.click(recipients);
+    expect(recipients).toHaveAttribute("aria-expanded", "true");
+    expect(
+      await screen.findByRole("option", { name: /Receiver/ }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(recipients).toHaveAttribute("aria-expanded", "false");
     await user.click(screen.getByRole("button", { name: "Copy link" }));
     await waitFor(() => expect(f.props.copyLink).toHaveBeenCalledTimes(1));
     expect(f.props.encodeSnapshot).toHaveBeenCalledWith(
@@ -233,6 +245,9 @@ it("excludes relay authority and retains the exact uncertain-send receipt", asyn
   );
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   expect(
     screen.queryByRole("option", { name: /Authority/ }),
@@ -270,6 +285,9 @@ it("confirms memory for named recipients before submitting a team", async () => 
   const f = fixture("team");
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await waitFor(() =>
     expect(
@@ -344,6 +362,9 @@ it.each(["reopen", "remount"])(
     );
     const user = userEvent.setup();
     let view = render(<SnapshotShareDialog {...f.props} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Message recipients" }),
+    );
     await user.click(await screen.findByRole("option", { name: /Receiver/ }));
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByRole("alert");
@@ -384,6 +405,9 @@ it("dismisses a terminal failure before applying an option edit", async () => {
   });
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await screen.findByRole("alert");
@@ -420,6 +444,9 @@ it("retains the failed receipt and original options if dismissal fails", async (
   f.outbox.dismiss.mockRejectedValueOnce(new Error("Storage failed"));
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await screen.findByRole("alert");
@@ -518,6 +545,9 @@ it("recovers a receipt when unmounted during delivery acceptance", async () => {
   });
   const user = userEvent.setup();
   const first = render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await started;
@@ -537,6 +567,9 @@ it("allows confirmation-only retry when delivery succeeds but acknowledgement fa
   f.outbox.acknowledge.mockRejectedValueOnce(new Error("Storage failed"));
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -647,6 +680,9 @@ it.each([false, true])(
     f.directMessages.delivered.mockRejectedValueOnce(new Error("Unknown"));
     const user = userEvent.setup();
     const view = render(<SnapshotShareDialog {...f.props} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "Message recipients" }),
+    );
     await user.click(await screen.findByRole("option", { name: /Receiver/ }));
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByRole("alert");
@@ -690,6 +726,9 @@ it("does not show recovery instructions during a fresh in-flight send", async ()
   );
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() =>
@@ -719,6 +758,9 @@ it("shows no recovery instructions or retry label while accepted delivery is ack
   });
   const user = userEvent.setup();
   render(<SnapshotShareDialog {...f.props} />);
+  await user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
   await user.click(await screen.findByRole("option", { name: /Receiver/ }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(f.outbox.acknowledge).toHaveBeenCalledOnce());

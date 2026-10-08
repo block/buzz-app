@@ -657,16 +657,11 @@ it("adopts a shared agent through the create form with its portable settings", a
   const view = render(render_(bobView));
   const openCatalog = async () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Choose from catalog" }),
-    );
-    return screen.findByRole("button", {
-      name: /Helper (is already in My Agents|from Community Catalog)/,
-    });
+    return screen.findByRole("button", { name: "Helper" });
   };
   fireEvent.click(await openCatalog());
-  const form = await screen.findByRole("dialog", { name: "Create agent" });
-  fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+  const form = await screen.findByRole("dialog", { name: "Add agent" });
+  fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
   await waitFor(() => expect(commit).toHaveBeenCalledOnce());
   const edit = commit.mock.calls[0]?.[1];
   expect(edit).toMatchObject({
@@ -690,20 +685,28 @@ it("adopts a shared agent through the create form with its portable settings", a
   });
 
   const added = await openCatalog();
-  expect(added).toHaveAccessibleName("Helper is already in My Agents");
-  expect(added).toBeDisabled();
+  fireEvent.click(added);
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Add agent" },
+    ),
+  ).toBeDisabled();
   fireEvent.keyDown(added, { key: "Escape" });
   await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Community Catalog" }),
-    ).toBeNull(),
+    expect(screen.queryByRole("dialog", { name: "Add agent" })).toBeNull(),
   );
 
   // Another viewer on this installation has added nothing.
   view.rerender(render_(client(server, keypair())));
-  expect(await openCatalog()).toHaveAccessibleName(
-    "Add Helper from Community Catalog",
-  );
+  expect(await openCatalog()).toHaveAccessibleName("Helper");
+  fireEvent.click(screen.getByRole("button", { name: "Helper" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Add agent" },
+    ),
+  ).toBeEnabled();
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
@@ -713,9 +716,14 @@ it("adopts a shared agent through the create form with its portable settings", a
     (agent) => agent.id !== "copy-1",
   );
   await control.refresh();
-  expect(await openCatalog()).toHaveAccessibleName(
-    "Add Helper from Community Catalog",
-  );
+  expect(await openCatalog()).toHaveAccessibleName("Helper");
+  fireEvent.click(screen.getByRole("button", { name: "Helper" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Add agent" })).getByRole(
+      "button",
+      { name: "Add agent" },
+    ),
+  ).toBeEnabled();
 });
 
 it.each([
@@ -791,16 +799,9 @@ it.each([
       />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Choose from catalog" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Add Preset from Community Catalog",
-      }),
-    );
-    const form = await screen.findByRole("dialog", { name: "Create agent" });
-    fireEvent.click(within(form).getByRole("button", { name: "Create agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preset" }));
+    const form = await screen.findByRole("dialog", { name: "Add agent" });
+    fireEvent.click(within(form).getByRole("button", { name: "Add agent" }));
     await waitFor(() => expect(commit).toHaveBeenCalledOnce());
     // The preset owns its model and credentials; the default harness differs.
     expect(commit.mock.calls[0]?.[1]).toMatchObject({

@@ -187,7 +187,7 @@ it("shows preview rejection beside import and clears it on retry", async () => {
     type: "application/json",
   });
   fireEvent.click(screen.getByRole("button", { name: "Create team" }));
-  fireEvent.click(screen.getByRole("button", { name: "Import team snapshot" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   fireEvent.change(input, { target: { files: [file] } });
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Invalid team snapshot",
@@ -200,7 +200,7 @@ it("shows preview rejection beside import and clears it on retry", async () => {
     members: [],
   });
   fireEvent.click(screen.getByRole("button", { name: "Create team" }));
-  fireEvent.click(screen.getByRole("button", { name: "Import team snapshot" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   fireEvent.change(input, { target: { files: [file] } });
   expect(
     await screen.findByRole("dialog", { name: /Import team snapshot/i }),
@@ -209,24 +209,15 @@ it("shows preview rejection beside import and clears it on retry", async () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("offers manual creation from one team launcher without a second import button", async () => {
+it("opens team creation directly without a chooser", async () => {
   const user = userEvent.setup();
   fixture(false, [], "ready", true, "team");
-  expect(
-    screen.queryByRole("button", { name: "Import team snapshot" }),
-  ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Create team" }));
-  const options = screen.getByRole("dialog", { name: "Add team" });
+  const dialog = screen.getByRole("dialog", { name: "Add team" });
   expect(
-    within(options).getByRole("button", { name: "Create team manually" }),
-  ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Import team snapshot" }),
-  ).toBeNull();
-  await user.click(
-    within(options).getByRole("button", { name: "Create team manually" }),
-  );
-  expect(screen.getByRole("button", { name: "Save team" })).toBeDisabled();
+    within(dialog).getByRole("button", { name: "Save team" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toBeVisible();
 });
 
 it("delete cancellation leaves the page and saved data intact", async () => {
@@ -400,10 +391,6 @@ it.each(["template", "team"] as const)(
       name: type === "team" ? "Create team" : "New template",
     });
     await user.click(trigger);
-    if (type === "team")
-      await user.click(
-        screen.getByRole("button", { name: "Create team manually" }),
-      );
     expect(screen.getByRole("button", { name: `Save ${type}` })).toBeDisabled();
     await user.type(
       screen.getByRole("textbox", { name: "Name" }),

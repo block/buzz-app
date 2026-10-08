@@ -354,6 +354,7 @@ export function AgentSnapshotImport({
   receivedBytes?: Uint8Array;
   onClose(): void;
 }) {
+  const fileInput = useRef<HTMLInputElement>(null);
   const requestId = useRef(crypto.randomUUID());
   const [snapshot, setSnapshot] = useState<AgentSnapshot>();
   const [artwork, setArtwork] = useState<Uint8Array>();
@@ -630,13 +631,28 @@ export function AgentSnapshotImport({
       ) : (
         <div className="space-y-4">
           {!receivedBytes && (
-            <input
-              type="file"
-              disabled={busy}
-              accept=".json,.png,.agent.json,.agent.png,application/json,image/png"
-              aria-label="Agent snapshot"
-              onChange={(event) => void read(event.target.files?.[0])}
-            />
+            <>
+              <input
+                ref={fileInput}
+                hidden
+                type="file"
+                disabled={busy}
+                accept=".json,.png,.agent.json,.agent.png,application/json,image/png"
+                aria-label="Agent snapshot"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void read(file);
+                }}
+              />
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => fileInput.current?.click()}
+              >
+                Choose file
+              </Button>
+            </>
           )}
           {snapshot && (
             <>

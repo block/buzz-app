@@ -130,7 +130,6 @@ export function AgentControlPanel({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [importingSnapshot, setImportingSnapshot] = useState(false);
-  const [addOptions, setAddOptions] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const edit = (agent: AgentView, avatar?: string) => {
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
@@ -266,7 +265,9 @@ export function AgentControlPanel({
       size="sm"
       aria-haspopup="dialog"
       disabled={localPending}
-      onClick={() => setAddOptions(true)}
+      onClick={() =>
+        setAdding({ destination: importDestination, owner: createOwner ?? "" })
+      }
     >
       <PlusIcon size={16} aria-hidden="true" /> Add agent
     </Button>
@@ -302,50 +303,6 @@ export function AgentControlPanel({
         ) : (
           <div className="flex justify-end gap-2">{headerButtons}</div>
         ))}
-      <Dialog.Root open={addOptions} onOpenChange={setAddOptions}>
-        <Dialog.Portal>
-          <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
-          <Dialog.Popup
-            data-buzz-ui=""
-            className="buzz-dialog agent-dialog text-body"
-          >
-            <Dialog.Title className="text-heading">Add agent</Dialog.Title>
-            <div className="flex flex-col gap-3 p-4">
-              <Button
-                onClick={() => {
-                  setAddOptions(false);
-                  setAdding({
-                    destination: importDestination,
-                    owner: createOwner ?? "",
-                  });
-                }}
-              >
-                Create agent manually
-              </Button>
-              {control.create && (
-                <Button
-                  onClick={() => {
-                    setAddOptions(false);
-                    setImportingSnapshot(true);
-                  }}
-                >
-                  Import agent snapshot
-                </Button>
-              )}
-              {catalog && session?.communityCatalog.available() && (
-                <Button
-                  onClick={() => {
-                    setAddOptions(false);
-                    setCatalogOpen(true);
-                  }}
-                >
-                  Choose from catalog
-                </Button>
-              )}
-            </div>
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
       {catalogOpen && catalogBrowser}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
@@ -571,6 +528,15 @@ export function AgentControlPanel({
           onClose={() => setAdding(null)}
           onCreated={adding.onCreated}
           onOpenHarnesses={onOpenHarnesses}
+          catalogSession={session}
+          onImport={
+            control.create && !adding.source && !adding.initialSettings
+              ? () => {
+                  setAdding(null);
+                  setImportingSnapshot(true);
+                }
+              : undefined
+          }
         />
       )}
       {editing && (

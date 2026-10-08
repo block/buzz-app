@@ -356,6 +356,7 @@ function ShareContents({
             <RecipientPicker
               session={session}
               selected={recipients}
+              initiallyOpen={false}
               disabled={locked || send.phase === "done"}
               excludedPubkeys={excluded}
               onChange={(people) => void edit(() => setRecipients(people))}

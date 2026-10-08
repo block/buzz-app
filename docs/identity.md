@@ -74,9 +74,12 @@ and ticks "I have my key". **Also wipe this device** requires typing
 `wipe all my data`; **Also remove my agents** appears only with wipe. Wipe clears
 this app's data, local data, WebView storage, caches and plugin storage. It cannot
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
-is unavailable with the development broker (`BUZZ_DEV_VIEWER`) and in
-development builds, which share the human key, agent keys and plugin storage
-with each other whatever their identifier. Wipe is unavailable while
+is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development
+builds can sign out but not wipe: they have their own human key, but share agent
+keys and plugin storage with the installed app, so the dialog disables wipe and
+the native command refuses it. A development-build sign-out signs out every
+development build, which share the debug key, and leaves the installed app
+signed in. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data.
 
 Every running instance, debug or release under any identifier, takes one fixed
@@ -107,15 +110,23 @@ webview storage, service or identity read:
 4. The renamed folders and anything recreated in place are deleted, then the
    marker. Kept agents keep only what they need to be identified and start
    again: the agent list with their settings (`agents.json`), the shared agent
-   defaults (`defaults.json`) and their keys in the keychain. Everything else in
+   defaults (`defaults.json`), including any API keys entered in their
+   settings, and their keys in the keychain. Everything else in
    `agent-controller`, including saved Databricks logins, logs and anything
-   added there later, is deleted; a kept Databricks agent must reconnect.
+   added there later, is deleted; a kept Databricks agent must reconnect through **Browse models**.
+   The dialog says both.
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
 registry confirmed absent means its keys are already gone; failing to check it
-stops before anything moves. The wipe never acts through a link: every wiped
-folder, its trash and the kept registry must be a real folder or absent, checked
-before the marker is written and again before anything moves. Every other presence check in the wipe is fallible
+stops before anything moves. The wipe never acts through a link at Buzz's own
+folders: every wiped folder, its `.sign-out-trash` sibling, the kept
+`agent-controller` in both, and the agent list when agents are removed must be a
+real folder or absent. This is checked before the marker is written, before
+anything moves, and again right before every move, rollback and delete. The OS
+storage folders above them (`Application Support`, `Caches`, `~/Library/WebKit`)
+are trusted as the app already trusts them, so if one is a link the wipe removes
+only Buzz's folder under it. The wipe is not designed to resist another program
+swapping folders while it runs. Every other presence check in the wipe is fallible
 too: one that can't look fails the attempt, keeping the marker. If renaming or the key delete fails, the renames are rolled back. On any failure
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without

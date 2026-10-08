@@ -667,9 +667,9 @@ fn kept_agents_keep_their_keys() {
 
 #[test]
 fn only_release_builds_sign_out_and_wipe_needs_default_plugin_storage() {
-    assert!(refusal(true, false, false, false, false)
-        .unwrap()
-        .contains("development builds"));
+    assert_eq!(refusal(true, false, false, false, false), None);
+    assert_eq!(refusal(true, false, false, true, false), Some(DEV_WIPE));
+    assert_eq!(refusal(true, false, false, true, true), Some(DEV_WIPE));
     assert!(refusal(false, true, false, false, false)
         .unwrap()
         .contains("development broker"));
@@ -734,6 +734,87 @@ fn a_shutdown_failure_keeps_the_marker_and_asks_to_reopen() {
     assert!(paths.marker.exists());
 }
 
+/// An outside folder holding `files`, for links to point at.
+#[cfg(unix)]
+fn outside(dir: &Path, files: &[&str]) -> PathBuf {
+    let outside = dir.join("outside");
+    for file in files {
+        let path = outside.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, file.as_bytes()).unwrap();
+    }
+    outside
+}
+#[cfg(unix)]
+fn unchanged(outside: &Path, files: &[&str]) {
+    for file in files {
+        assert_eq!(fs::read(outside.join(file)).unwrap(), file.as_bytes());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_storage_parent_is_trusted_and_only_buzz_folder_under_it_goes() {
+    let (dir, mut paths) = fixture();
+    let files = ["sentinel", "app/localstorage"];
+    let outside = outside(dir.path(), &files);
+    let parent = dir.path().join("Library-WebKit");
+    std::os::unix::fs::symlink(&outside, &parent).unwrap();
+    paths.others = vec![parent.join("app")];
+    mark(&paths, true, false);
+    assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+    assert!(fs::symlink_metadata(&parent).unwrap().is_symlink());
+    assert!(!outside.join("app").exists());
+    unchanged(&outside, &["sentinel"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_never_moves_through_an_app_data_swapped_for_a_link() {
+    let (dir, paths) = fixture();
+    let files = ["agent-controller/sentinel"];
+    let outside = outside(dir.path(), &files);
+    mark(&paths, true, false);
+    let result = finish_pending(&paths, no_agents, || {
+        fs::rename(&paths.app_data, dir.path().join("displaced")).unwrap();
+        std::os::unix::fs::symlink(&outside, &paths.app_data).unwrap();
+        Err("keychain busy".into())
+    });
+    assert_eq!(result, Err(FAILED.to_owned()));
+    assert!(paths.marker.exists());
+    assert_eq!(
+        listing(&outside),
+        ["agent-controller/", "agent-controller/sentinel"]
+    );
+    unchanged(&outside, &files);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_wipe_folder_or_trash_recreated_as_a_link_fails_and_the_retry_finishes() {
+    for linked in ["webkit", "webkit.sign-out-trash"] {
+        let (dir, paths) = fixture();
+        let files = ["sentinel"];
+        let outside = outside(dir.path(), &files);
+        let link = dir.path().join(linked);
+        mark(&paths, true, false);
+        let result = finish_pending(&paths, no_agents, || {
+            let _ = fs::rename(&link, dir.path().join("displaced"));
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            Ok(())
+        });
+        assert_eq!(result, Err(FAILED.to_owned()), "{linked}");
+        assert!(paths.marker.exists());
+        unchanged(&outside, &files);
+        fs::remove_file(&link).unwrap();
+        fs::create_dir(&link).unwrap();
+        assert_eq!(finish_pending(&paths, no_agents, || Ok(())), Ok(()));
+        assert!(!paths.marker.exists());
+        assert!(!link.exists());
+        unchanged(&outside, &files);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_linked_wipe_folder_refuses_before_any_marker() {
@@ -764,7 +845,7 @@ fn production_acl_lets_sign_out_reach_native_validation() {
     assert_eq!(
         error,
         serde_json::json!({
-            "message": "Sign out is unavailable in development builds",
+            "message": "Removing agents is part of wiping this device",
             "reopen": false
         })
     );

@@ -336,6 +336,22 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   identity.dispose();
 });
 
+it("offers only plain sign out in development builds", async () => {
+  vi.stubEnv("MODE", "development");
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(
+    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByText(/Wipe is unavailable in development builds/),
+  ).toBeVisible();
+  vi.unstubAllEnvs();
+  identity.dispose();
+});
+
 it("keeps the dialog open and shows the error when native sign out refuses", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();

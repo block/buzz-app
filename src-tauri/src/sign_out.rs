@@ -21,6 +21,7 @@ const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try 
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Wipe is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
+const DEV_WIPE: &str = "Wipe is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
 const KEPT: &str = "agent-controller";
 /// What a kept agent needs to be identified and start again: the agent list
 /// with each agent's settings, and the shared agent defaults. Its keys live in
@@ -275,11 +276,12 @@ fn missing(result: std::io::Result<()>) -> std::io::Result<()> {
 /// earlier attempt that stopped part-way.
 fn move_aside(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let moved = trash(path);
-    if !moved.try_exists()? {
+    if !real_dir(&moved)? {
+        real_dir(path)?;
         missing(fs::rename(path, &moved))?;
     }
     if let Some(child) = kept {
-        if moved.join(child).try_exists()? && !path.join(child).try_exists()? {
+        if real_dir(&moved.join(child))? && !(real_dir(path)? && real_dir(&path.join(child))?) {
             fs::create_dir_all(path)?;
             fs::rename(moved.join(child), path.join(child))?;
         }
@@ -289,16 +291,19 @@ fn move_aside(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
 
 fn move_back(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let moved = trash(path);
-    if !moved.try_exists()? {
+    if !real_dir(&moved)? {
         return Ok(());
     }
     if let Some(child) = kept {
-        if path.join(child).try_exists()? {
+        if real_dir(path)? && real_dir(&path.join(child))? {
+            real_dir(&moved.join(child))?;
             fs::rename(path.join(child), moved.join(child))?;
         }
     }
     // Only the kept child was returned, so anything else here is unexpected; keep it.
-    missing(fs::remove_dir(path))?;
+    if real_dir(path)? {
+        missing(fs::remove_dir(path))?;
+    }
     fs::rename(moved, path)
 }
 
@@ -306,10 +311,18 @@ fn move_back(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
 /// original or was recreated.
 fn clear(path: &Path, kept: Option<&str>) -> std::io::Result<()> {
     let Some(kept) = kept else {
-        return missing(fs::remove_dir_all(path));
+        return remove_real_dir(path);
     };
     clear_except(path, &[kept])?;
     clear_except(&path.join(kept), &KEPT_FILES)
+}
+
+/// Delete a real folder; absent is done, and a link is refused, never followed or unlinked.
+fn remove_real_dir(path: &Path) -> std::io::Result<()> {
+    if !real_dir(path)? {
+        return Ok(());
+    }
+    missing(fs::remove_dir_all(path))
 }
 
 fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
@@ -399,7 +412,7 @@ fn finish(
     // The key is gone, so nothing is rolled back from here: clear what was moved
     // aside and anything in place now, then the marker.
     for (path, kept) in targets {
-        missing(fs::remove_dir_all(trash(path)))
+        remove_real_dir(&trash(path))
             .and_then(|()| clear(path, kept))
             .map_err(|error| format!("delete wiped {}: {error}", path.display()))?;
     }
@@ -465,11 +478,12 @@ fn refusal(
 ) -> Option<&'static str> {
     if dev_viewer {
         Some("Sign out is unavailable while the development broker supplies your identity")
-    } else if debug {
-        // Debug builds share the human key, agent keys and plugin storage with each other.
-        Some("Sign out is unavailable in development builds")
     } else if remove_agents && !wipe {
         Some("Removing agents is part of wiping this device")
+    } else if wipe && debug {
+        // Debug builds have their own human key, but share agent keys and plugin
+        // storage with the installed app, so only plain sign-out is safe.
+        Some(DEV_WIPE)
     } else if wipe && plugin_home {
         Some("Wipe is unavailable while BUZZODZ_HOME moves plugin storage")
     } else {

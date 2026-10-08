@@ -53,6 +53,9 @@ export function SignOutDialog({
   const [error, setError] = useState("");
   // Agents may already be stopped; only reopening Buzz can finish or recover.
   const [reopen, setReopen] = useState(false);
+  // Development builds share agent keys and plugin storage with the installed
+  // app, so the native side refuses wipe there; say so up front.
+  const devBuild = import.meta.env.MODE === "development";
   const ready = signOutReady({ touched, haveKey, wipe, phrase });
   async function confirm() {
     setPending(true);
@@ -98,7 +101,7 @@ export function SignOutDialog({
         <Checkbox
           label="Also wipe this device’s Buzz data"
           checked={wipe}
-          disabled={pending}
+          disabled={pending || devBuild}
           onCheckedChange={(checked) => {
             setWipe(checked);
             if (!checked) {
@@ -107,6 +110,12 @@ export function SignOutDialog({
             }
           }}
         />
+        {devBuild && (
+          <p className="text-body-sm text-muted">
+            Wipe is unavailable in development builds because they share agent
+            keys and plugin storage with the installed Buzz.
+          </p>
+        )}
         {wipe && (
           <>
             <Checkbox
@@ -131,7 +140,7 @@ export function SignOutDialog({
               you exported, or relay data; your npub and its history stay on the
               relays.
               {!removeAgents &&
-                " Kept agents keep their list, settings and keys; their saved logins and logs are wiped."}
+                " Kept agents keep their list, settings (including any API keys entered there) and keys; their saved logins and logs are wiped. Kept Databricks agents need reconnecting through Browse models."}
             </p>
           </>
         )}

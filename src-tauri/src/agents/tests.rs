@@ -1285,7 +1285,8 @@ mod overlap {
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                stream.read(&mut request).await.unwrap();
+                let received = stream.read(&mut request).await.unwrap();
+                assert!(received > 0, "broker connection closed before request");
                 let body = json!({"viewer":expected}).to_string();
                 stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             });
@@ -1358,7 +1359,8 @@ mod overlap {
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            stream.read(&mut request).await.unwrap();
+            let received = stream.read(&mut request).await.unwrap();
+            assert!(received > 0, "broker connection closed before request");
             entered.send(()).unwrap();
             released.await.unwrap();
             let body = json!({"viewer":expected}).to_string();

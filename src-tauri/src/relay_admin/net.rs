@@ -168,8 +168,10 @@ fn public_v4(ip: Ipv4Addr) -> bool {
 
 /// Blocks inside global unicast `2000::/3` that the IANA IPv6 special-purpose
 /// registry lists as not globally reachable, or that embed arbitrary IPv4.
-/// `2001::/23` (IETF protocol assignments) is refused whole: it holds Teredo,
-/// benchmarking, ORCHID and others, and no admin host lives there.
+/// `2001::/23` (IETF protocol assignments) and `2002::/16` (6to4) are refused
+/// whole as a deliberate conservative choice. This also blocks a few globally
+/// reachable special-purpose ranges (PCP/TURN anycast, AMT, AS112, ORCHID);
+/// no exceptions are carved out for them.
 const V6_REFUSED: &[(u128, u8)] = &[
     (0x2001_0000 << 96, 23), // IETF protocol assignments (Teredo, benchmarking, ORCHID…)
     (0x2001_0db8 << 96, 32), // documentation

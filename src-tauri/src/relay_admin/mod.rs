@@ -49,6 +49,8 @@ struct Failure {
     body_empty: bool,
     code: Option<String>,
     not_sent: bool,
+    /// A 401/403 arrived: re-check access. Says nothing about a sent write.
+    auth_lost: bool,
     message: String,
 }
 
@@ -61,6 +63,7 @@ impl Failure {
             body_empty: false,
             code: None,
             not_sent: true,
+            auth_lost: false,
             message: message.into(),
         }
     }
@@ -73,6 +76,7 @@ impl Failure {
             body_empty: false,
             code: None,
             not_sent: false,
+            auth_lost: false,
             message: message.into(),
         }
     }
@@ -260,10 +264,15 @@ async fn classify(
             body_empty: false,
             code: None,
             not_sent: false,
+            auth_lost: false,
             message: message.into(),
         });
     }
     let success = response.status().is_success();
+    let challenge = response
+        .headers()
+        .get("www-authenticate")
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"nostr"));
     let body = match read_capped(&mut response, if success { success_cap } else { ERROR_CAP }).await
     {
         Read::Complete(body) => body,
@@ -290,7 +299,8 @@ async fn classify(
         };
         let valid = match request {
             Some(request) => {
-                (body.is_empty() || value.is_some()) && shape::valid(request, value.as_ref())
+                (body.is_empty() || value.is_some())
+                    && shape::valid(request, status, value.as_ref())
             }
             None => false,
         };
@@ -307,31 +317,27 @@ async fn classify(
             None => Ok(Value::Null),
         };
     }
-    let envelope = serde_json::from_slice::<Value>(&body).ok();
-    let field = |name: &str| {
-        envelope
-            .as_ref()
-            .and_then(|e| e.pointer(&format!("/error/{name}")))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
+    let envelope = shape::rejection(status, challenge, &body);
     let category = match status {
-        401 => Category::Unauthorized,
-        403 => Category::Forbidden,
         404 | 405 if body.is_empty() => Category::Unsupported,
         500.. => Category::Ambiguous,
-        // A write is only definitively refused by the relay's own error envelope.
-        _ if write && field("code").is_none() => Category::Ambiguous,
+        // Once sent, a write is only definitively refused by the relay's own
+        // error envelope; a gateway's 401/403/4xx says nothing about it.
+        _ if write && envelope.is_none() => Category::Ambiguous,
+        401 => Category::Unauthorized,
+        403 => Category::Forbidden,
         _ => Category::Rejected,
     };
+    let (code, message) = envelope.unzip();
     Err(Failure {
         category,
         status: Some(status),
         body_complete: true,
         body_empty: body.is_empty(),
-        code: field("code"),
+        code,
         not_sent: false,
-        message: field("message").unwrap_or_else(|| default_message(category).into()),
+        auth_lost: matches!(status, 401 | 403),
+        message: message.unwrap_or_else(|| default_message(category).into()),
     })
 }
 

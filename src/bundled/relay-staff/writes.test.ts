@@ -14,6 +14,7 @@ const ambiguous: StaffOutcome<unknown> = {
     bodyEmpty: false,
     code: null,
     notSent: false,
+    authLost: false,
     message: "",
   },
 };

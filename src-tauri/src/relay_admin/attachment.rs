@@ -37,6 +37,7 @@ fn mismatch(status: u16, code: &str, message: &str) -> Failure {
         body_empty: false,
         code: Some(code.into()),
         not_sent: false,
+        auth_lost: false,
         message: message.into(),
     }
 }

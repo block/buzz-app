@@ -2023,3 +2023,33 @@ it("a list fetches every unknown profile in one batch", async () => {
   expect(ensured).toHaveLength(1);
   expect(new Set(ensured[0])).toEqual(new Set(keys));
 });
+
+it("member search fetches every unknown result profile in one batch", async () => {
+  const keys = ["a", "b", "c"].map((c) => c.repeat(64));
+  routes.searchMembers = () =>
+    ok({
+      items: keys.map((pubkey) => ({
+        pubkey,
+        displayName: null,
+        nip05: null,
+        avatarUrl: null,
+      })),
+    });
+  const ensured: string[][] = [];
+  mountWithProfiles(new Map(), ensured);
+  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /team\.example\.com/ }),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+  fireEvent.change(screen.getByLabelText("Member"), {
+    target: { value: "x" },
+  });
+  await screen.findByRole("list", { name: "Members" });
+  await waitFor(() =>
+    expect(ensured.some((ids) => ids.includes(keys[0] as string))).toBe(true),
+  );
+  const search = ensured.filter((ids) => keys.some((k) => ids.includes(k)));
+  expect(search).toHaveLength(1);
+  expect(new Set(search[0])).toEqual(new Set(keys));
+});

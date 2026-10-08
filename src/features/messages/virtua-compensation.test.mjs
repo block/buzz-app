@@ -27,6 +27,9 @@ function setup({
   horizontal = false,
   direction = "ltr",
   offset = 1300,
+  cache,
+  estimate,
+  itemSize = 100,
 } = {}) {
   const {
     store: createStore,
@@ -39,7 +42,7 @@ function setup({
   )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
     direction,
   }));
-  const store = createStore(layout(20, 100));
+  const store = createStore(layout(20, itemSize, cache, estimate));
   const declarations = new Map();
   const style = {
     getPropertyValue: (name) => declarations.get(name)?.[0] ?? "",
@@ -50,6 +53,8 @@ function setup({
   };
   const viewport = new EventTarget();
   const calls = [];
+  const observed = [];
+  const frames = [];
   let resize;
   const axis = horizontal ? "overflow-x" : "overflow-y";
   const key = horizontal ? "scrollLeft" : "scrollTop";
@@ -65,9 +70,18 @@ function setup({
           constructor(callback) {
             resize = callback;
           }
-          observe() {}
-          unobserve() {}
+          observe(target) {
+            observed.push(["observe", target]);
+          }
+          unobserve(target) {
+            observed.push(["unobserve", target]);
+          }
           disconnect() {}
+        },
+        // Row measurements wait for the next frame; `frame()` runs it.
+        requestAnimationFrame: (callback) => frames.push(callback),
+        cancelAnimationFrame: (id) => {
+          frames[id - 1] = () => {};
         },
       },
     },
@@ -103,11 +117,16 @@ function setup({
     style,
     axis,
     calls,
+    observed,
     resize: (entries) => resize(entries),
+    frame() {
+      for (const callback of frames.splice(0)) callback();
+    },
     // Render computes the mounted range between the length change and the
     // layout effect that flushes the jump; ChannelTimeline's buffer is 1600.
-    prepend(length = 40, buffer = 1600) {
-      store.W(5, [length, true]);
+    // The render's `estimateSize` travels with the length change.
+    prepend(length = 40, buffer = 1600, estimate) {
+      store.W(5, [length, true, estimate]);
       store.i(buffer);
       driver.J();
     },
@@ -514,6 +533,359 @@ it("a prepend whose rows are not mounted ends its shift at scroll-end as before"
   c.store.W(3, [[19, 110]]);
   c.driver.J();
   expect(c.calls.at(-1).options).toEqual({ top: 10, behavior: "instant" });
+  c.driver._();
+});
+
+// `estimateSize` caches a size known before measurement like a measured one:
+// the row renders visible at its predicted offset, and an equal measurement
+// is dropped before any state change, so nothing renders or scrolls.
+it("seeds unmeasured sizes at creation behind the snapshot, and an equal measurement does nothing", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 0,
+    cache: [[188, -1], 100],
+    estimate: (index) => 50 + index,
+  });
+  expect([c.store.h(0), c.store.h(1), c.store.h(19)]).toEqual([188, 51, 69]);
+  expect(c.store.R(1)).toBe(false);
+  expect(c.store.u(3)).toBe(188 + 51 + 52);
+  expect(c.store.t()).toBe(1328);
+  const notify = vi.fn();
+  c.store.H(15, notify);
+  const version = c.store.I();
+  c.store.W(
+    3,
+    Array.from({ length: 20 }, (_, index) => [index, index ? 50 + index : 188]),
+  );
+  c.driver.J();
+  expect(c.store.I()).toBe(version);
+  expect(notify).not.toHaveBeenCalled();
+  expect(c.calls).toEqual([]);
+  c.driver._();
+});
+
+// The shift-pending wait only covers unmeasured rows, and a predicted prepend
+// has none, so the former first row must be re-predicted inside the jump.
+it("a predicted prepend jumps by the predicted rows and the former first row's new size", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  // Twenty older rows predicted at 110 (+200 over the 100px estimate), and the
+  // former first row, index 20 now, without its header (188 → 100).
+  c.prepend(40, 1600, (index) => (index < 20 ? 110 : 100));
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 2112, behavior: "instant" },
+      overflow: "",
+      priority: "",
+    },
+  ]);
+  expect(c.store.R(0)).toBe(false);
+  expect(paragraph(20, 0)).toBe(88);
+  // Their measurement frame lands after scroll-end and matches: no-op.
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  const version = c.store.I();
+  c.store.W(3, [
+    ...Array.from({ length: 20 }, (_, index) => [index, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.store.I()).toBe(version);
+  expect(c.calls).toEqual([]);
+  expect(paragraph(20, 0)).toBe(88);
+  c.driver._();
+});
+
+it("a shift that removes the first rows re-predicts the row now first inside its jump", () => {
+  const estimate = (index) => (index ? 100 : 188);
+  const c = setup({ platform: "Linux x86_64", offset: 1000, estimate });
+  const reading = c.store.u(5) - c.viewport.scrollTop;
+  // The two oldest rows (-288) leave; the row now first gains the day divider
+  // and author header (100 → 188).
+  c.prepend(18, 1600, estimate);
+  expect(c.calls.map(({ method, options }) => [method, options.top])).toEqual([
+    ["scrollBy", -200],
+  ]);
+  expect([c.store.h(0), c.store.t()]).toEqual([188, 1888]);
+  expect(c.store.u(3) - c.viewport.scrollTop).toBe(reading);
+  c.driver._();
+});
+
+it("an append seeds only the new rows, without a jump", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 1500,
+    estimate: () => 100,
+  });
+  c.store.W(5, [22, false, (index) => (index < 20 ? 50 : 77)]);
+  c.store.i(1600);
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  expect([c.store.h(19), c.store.h(20), c.store.h(21)]).toEqual([100, 77, 77]);
+  expect([c.store.R(21), c.store.t()]).toEqual([false, 2154]);
+  c.driver._();
+});
+
+// The rows an estimator leaves unknown are the ones that do not resemble the
+// rows it seeds, so `itemSize` is only their initial size: the default becomes
+// the median of their own measurements, as stock estimates without `itemSize`.
+it("with an estimator, unseeded rows take the median measured size of unseeded rows once those exceed the viewport", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 0,
+    estimate: (index) => (index < 10 ? undefined : 80),
+  });
+  expect([c.store.h(8), c.store.R(8), c.store.R(10)]).toEqual([
+    100,
+    true,
+    false,
+  ]);
+  // 7 x 70 = 490px, inside the 500px viewport: not yet.
+  c.store.W(3, [
+    ...Array.from({ length: 7 }, (_, index) => [index, 70]),
+    [10, 80],
+  ]);
+  expect(c.store.h(8)).toBe(100);
+  // The eighth exceeds it. All cached sizes (70 x8, 80 x10) would give 80.
+  c.store.W(3, [[7, 70]]);
+  expect([c.store.h(8), c.store.h(9), c.store.R(8)]).toEqual([70, 70, true]);
+  c.store.W(5, [22, false]); // rows appended later without a seed
+  expect(c.store.h(21)).toBe(70);
+  c.driver._();
+  // Without an estimator, `itemSize` still turns estimation off.
+  const stock = setup({ platform: "Linux x86_64", offset: 0 });
+  stock.store.W(
+    3,
+    Array.from({ length: 10 }, (_, index) => [index, 70]),
+  );
+  expect(stock.store.h(10)).toBe(100);
+  stock.driver._();
+});
+
+it("without an estimator, automatic estimation still samples every cached size", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 0,
+    itemSize: 0,
+    cache: [Array.from({ length: 10 }, () => 300), 100],
+  });
+  c.store.W(
+    3,
+    Array.from({ length: 8 }, (_, index) => [index + 10, 70]),
+  );
+  // Median of 300 x10 and 70 x8, as stock.
+  expect(c.store.h(18)).toBe(300);
+  c.driver._();
+});
+
+it("with an estimator, the buffer does not wait for automatic estimation", () => {
+  const seeded = setup({ offset: 1300, estimate: () => 100 });
+  const stock = setup({ offset: 1300 });
+  // Exact sizes never complete the estimate, yet the buffer applies as with
+  // `itemSize` alone.
+  expect(seeded.store.i(200)).toEqual(stock.store.i(200));
+  expect(seeded.store.i(200)).not.toEqual(seeded.store.i(0));
+  seeded.driver._();
+  stock.driver._();
+});
+
+it("an imperative resize is not a measurement for automatic estimation", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 0,
+    estimate: (index) => (index < 10 ? undefined : 80),
+  });
+  // 8 x 70 = 560px of predictions for unseeded rows: the default stays.
+  c.driver.resize(Array.from({ length: 8 }, (_, index) => [index, 70]));
+  expect([c.store.h(7), c.store.h(8)]).toEqual([70, 100]);
+  c.driver._();
+});
+
+it("rows the estimator leaves undefined keep stock sizing, and the shift still waits for them", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  // The former first row and the ten oldest rows are predicted; the rest keep
+  // the 100px estimate, hidden until measured.
+  c.prepend(40, 1600, (index) =>
+    index < 10 ? 110 : index === 20 ? 100 : undefined,
+  );
+  expect(c.viewport.scrollTop).toBe(2012);
+  expect([c.store.R(9), c.store.R(10), c.store.h(20)]).toEqual([
+    false,
+    true,
+    100,
+  ]);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  // The late frame still meets shift policy: +100 above, the top row as seeded.
+  c.store.W(3, [
+    ...Array.from({ length: 10 }, (_, index) => [index + 10, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 100, behavior: "instant" });
+  expect(paragraph(20, 0)).toBe(88);
+  c.calls.length = 0;
+  c.store.W(3, [[21, 150]]); // that batch ended the shift
+  c.driver.J();
+  expect(c.calls).toEqual([]);
+  c.driver._();
+});
+
+// Seeding the prepended rows but not the former first row would leave nothing
+// unmeasured to wait for, so that row's late shrink would meet native policy.
+it("a prepend whose former first row is unknown seeds none of its rows, so the shift waits for their late frame", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  const asked = [];
+  c.prepend(40, 1600, (index) => {
+    asked.push(index);
+    return index < 20 ? 110 : undefined;
+  });
+  expect(asked).toEqual([20]);
+  expect(c.viewport.scrollTop).toBe(2000);
+  expect([c.store.R(0), c.store.R(19), c.store.h(20)]).toEqual([
+    true,
+    true,
+    188,
+  ]);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  c.store.W(3, [
+    ...Array.from({ length: 20 }, (_, index) => [index, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 112, behavior: "instant" });
+  expect(paragraph(20, 0)).toBe(88);
+  c.driver._();
+});
+
+// The handle's `resize` is the measured resize path over predicted sizes.
+it("an imperative resize over predicted sizes keeps the measured resize policy", () => {
+  for (const [shift, row, size, top] of [
+    [false, 2, 150, 30], // wholly above the 1200–1700 viewport
+    [false, 9, 100, -20], // ends exactly at the viewport start
+    [false, 3, 120, null], // equal to the prediction
+    [false, 10, 150, null], // the viewport start is kept
+    [false, 12, 150, null], // visible
+    [false, 15, 150, null], // below
+    [true, 12, 150, 30], // a shift corrects the row at the 1440 start
+    [true, 16, 150, 30], // and one starting above the 1940 end
+    [true, 17, 150, null], // but not a row below it
+  ]) {
+    const c = setup({
+      platform: "Linux x86_64",
+      offset: 1200,
+      estimate: () => 120,
+    });
+    if (shift) {
+      c.prepend(22, 1600, () => 120);
+      expect(c.viewport.scrollTop).toBe(1440);
+      c.viewport.dispatchEvent(new Event("scroll"));
+    } else c.store.W(2); // idle
+    c.calls.length = 0;
+    c.store.W(3, [[row, size]]);
+    c.driver.J();
+    expect(c.calls.map((call) => call.options.top)).toEqual(
+      top === null ? [] : [top],
+    );
+    c.driver._();
+  }
+});
+
+it("re-measures only the mounted targets among imperatively resized items", () => {
+  const c = setup({ platform: "Linux x86_64", estimate: () => 100 });
+  const rows = [10, 11, 12].map((index) => ({ index }));
+  const unmount = rows.map((row) => c.driver.P(row, row.index));
+  unmount[2]();
+  c.observed.length = 0;
+  c.driver.resize([
+    [2, 120],
+    [11, 130],
+    [12, 130],
+  ]);
+  // A re-observed target reports its current size even when unchanged.
+  expect(c.observed).toEqual([
+    ["unobserve", rows[1]],
+    ["observe", rows[1]],
+  ]);
+  c.driver._();
+});
+
+// A mounted row's measurement waits for the next frame. A prediction set in
+// between, after a second content change, is newer; the deferred entry must
+// not revert it before the re-armed observation reports the current box.
+it("a resize drops the row's deferred measurement, so a stale entry cannot revert it", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0, estimate: () => 100 });
+  const row = { offsetParent: {} };
+  c.driver.P(row, 5);
+  c.resize([{ target: row, contentRect: { height: 140 } }]);
+  c.observed.length = 0;
+  c.driver.resize([[5, 160]]);
+  expect(c.store.h(5)).toBe(160);
+  c.frame();
+  expect(c.store.h(5)).toBe(160);
+  expect(c.observed).toEqual([
+    ["unobserve", row],
+    ["observe", row],
+  ]);
+  c.driver._();
+});
+
+// Like the viewport path: an imperative jump or a correction earlier in this
+// frame has moved the native offset, and its scroll event is still queued.
+it("a resize reads the native offset first, so a row above a jump that precedes its event is compensated", () => {
+  const c = setup({
+    platform: "Linux x86_64",
+    offset: 600,
+    estimate: () => 100,
+  });
+  c.store.W(2); // idle
+  c.viewport.scrollTop = 1000;
+  c.calls.length = 0;
+  // Row 7 (700–800) is wholly above the new start, not the stale one.
+  c.driver.resize([[7, 150]]);
+  c.driver.J();
+  expect(c.store.T()).toBe(1000);
+  expect(c.calls.map(({ method, options }) => [method, options.top])).toEqual([
+    ["scrollBy", 50],
+  ]);
+  expect(c.viewport.scrollTop).toBe(1050);
+  c.driver._();
+});
+
+// The app resizes changed rows after a commit. A prepend whose former first
+// row is unknown left its rows unmeasured; a same-commit content change below
+// must neither seed them nor end the shift that waits for them.
+it("a resize after a withheld prepend keeps its shift waiting for the late frame", () => {
+  const c = setup({ platform: "Linux x86_64", offset: 0 });
+  const paragraph = openHistory(c);
+  c.prepend(40, 1600, (index) => (index < 20 ? 110 : undefined));
+  // The jump's scroll event has not arrived yet.
+  c.driver.resize([[35, 150]]);
+  c.driver.J();
+  expect([c.store.R(0), c.store.R(19), c.store.h(35)]).toEqual([
+    true,
+    true,
+    150,
+  ]);
+  // Row 20 still holds its 188px size with the 88px header.
+  expect(paragraph(20, 88)).toBe(88);
+  c.viewport.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersByTime(150);
+  c.calls.length = 0;
+  c.store.W(3, [
+    ...Array.from({ length: 20 }, (_, index) => [index, 110]),
+    [20, 100],
+  ]);
+  c.driver.J();
+  expect(c.calls.at(-1).options).toEqual({ top: 112, behavior: "instant" });
+  expect(paragraph(20, 0)).toBe(88);
   c.driver._();
 });
 

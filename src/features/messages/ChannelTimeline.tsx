@@ -15,8 +15,11 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
+import { afterNextFrameIdle } from "./after-next-frame-idle";
 import { MessageRow } from "./MessageRow";
-import { continuesMessageGroup } from "./message-grouping";
+import { placements } from "./row-height/placement";
+import { RowHeightProbe } from "./row-height/RowHeightProbe";
+import { useRowHeights } from "./row-height/use-row-heights";
 import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -186,6 +189,7 @@ function Timeline({
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const placed = useMemo(() => placements(rows), [rows]);
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -217,7 +221,12 @@ function Timeline({
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
-  const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
+  const [size, setSize] = useState({
+    width: 0,
+    height: 0,
+    edgeHeight: 0,
+    rowWidth: 0,
+  });
   const width = size.width;
   const latest = useRef({ signature, width });
   latest.current = { signature, width };
@@ -349,6 +358,65 @@ function Timeline({
       ? navigation.target.messageId
       : undefined);
   const targetIndex = rows.findIndex((row) => row.id === targetId);
+  const heights = useRowHeights({
+    rows,
+    placed,
+    rowWidth: size.rowWidth,
+    viewport: size.height,
+    landing: () => {
+      const anchor = savedPosition.current?.bottom
+        ? undefined
+        : savedPosition.current?.anchor;
+      const restored = anchor
+        ? rows.findIndex(
+            (row) =>
+              row.id === anchor.id ||
+              row.membershipRows?.some((member) => member.id === anchor.id),
+          )
+        : -1;
+      return targetIndex >= 0
+        ? targetIndex
+        : restored >= 0
+          ? restored
+          : rows.length - 1;
+    },
+    handle,
+    scroller,
+    session: queries,
+    resolveName,
+    profiles,
+    canOpenLink,
+    extensions,
+  });
+  const rowWidth = heights.rowWidth;
+  const verifyHeights = heights.settled;
+  // A new Virtualizer's first commit mounts only the viewport, as stock
+  // Virtua's does until its own estimate, which a seeded Virtualizer's
+  // buffer does not wait for (patches/README.md); the buffer follows
+  // once it is positioned (settled or revealed), in the first idle period
+  // after the next frame (without requestIdleCallback, once the timeline
+  // has had no new rows, size or scroll for a moment), or at the reader's
+  // first input: off a switch's first frames. That idle slice and the
+  // following ones also predict the window's unmeasured rows (fillHeights),
+  // setting those predicted before the buffer mounts them and the rest once
+  // all are tried; the first input stops them. Scheduled once per
+  // Virtualizer (`null` after input): only an unmount (a hidden retained
+  // pane) resets it.
+  const [buffered, setBuffered] = useState(false);
+  const bufferIdle = useRef<ReturnType<typeof afterNextFrameIdle> | null>(
+    undefined,
+  );
+  const fillHeights = heights.fill;
+  const bufferWhenIdle = useCallback(() => {
+    if (bufferIdle.current !== undefined) return;
+    let first = true;
+    bufferIdle.current = afterNextFrameIdle(() => {
+      const done = fillHeights(first);
+      first = false;
+      setBuffered(true);
+      return done;
+    });
+  }, [fillHeights]);
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
     intent.current++;
@@ -359,8 +427,9 @@ function Timeline({
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
   const completeTarget = useCallback(() => {
+    bufferWhenIdle();
     navigation?.complete({ status: "opened" });
-  }, [navigation]);
+  }, [navigation, bufferWhenIdle]);
   const exactRevealed = useMessageReveal({
     scroller,
     focus: !(
@@ -394,28 +463,42 @@ function Timeline({
       latest.current.signature,
       measured,
     );
-    let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
+    let measuredSize = { width: 0, height: 0, edgeHeight: 0, rowWidth: 0 };
+    const unbuffer = () => {
+      bufferIdle.current?.cancel();
+      bufferIdle.current = undefined;
+    };
     const measure = () => {
       const next = {
         width: element.clientWidth,
         height: element.clientHeight,
         edgeHeight: edge.current?.getBoundingClientRect().height ?? 0,
+        // Fractional, unlike clientWidth: the row model lays text out in it.
+        rowWidth: rowWidth(),
       };
       if (
         next.width === measuredSize.width &&
         next.height === measuredSize.height &&
-        next.edgeHeight === measuredSize.edgeHeight
+        next.edgeHeight === measuredSize.edgeHeight &&
+        next.rowWidth === measuredSize.rowWidth
       )
         return;
       measuredSize = next;
       settled.current = false;
       setSize(next);
+      if (next.width) return;
+      // A hidden scroller loses its offset: the next one is no reader input,
+      // even when exact row sizes leave the list no shorter than before.
+      measuredPosition.current = null;
+      unbuffer();
+      setBuffered(false);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     if (edge.current) observer.observe(edge.current);
     return () => {
+      unbuffer();
       if (gestureFrame.current !== undefined)
         cancelAnimationFrame(gestureFrame.current);
       gestureFrame.current = undefined;
@@ -434,7 +517,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope, transient]);
+  }, [channelId, geometry, scope, transient, rowWidth]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent
@@ -444,6 +527,8 @@ function Timeline({
     undefined,
   );
   useLayoutEffect(() => {
+    // New rows or a new size: the timeline is not quiet yet.
+    bufferIdle.current?.quiet();
     if (
       pendingReveal.current &&
       pendingReveal.current.intent !== intent.current
@@ -550,6 +635,8 @@ function Timeline({
         if (!restore && !follow.current) {
           settled.current = true;
           readingPositioned(scroller.current);
+          bufferWhenIdle();
+          verifyHeights();
           return;
         }
         restorePosition();
@@ -585,6 +672,8 @@ function Timeline({
       }
       settled.current = true;
       readingPositioned(scroller.current);
+      bufferWhenIdle();
+      verifyHeights();
       if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
@@ -615,6 +704,8 @@ function Timeline({
     exactRevealed,
     updateJumpToLatest,
     revealMessageId,
+    verifyHeights,
+    bufferWhenIdle,
   ]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
@@ -654,6 +745,9 @@ function Timeline({
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
   const gesture = (upward = false) => {
+    bufferIdle.current?.cancel();
+    bufferIdle.current = null;
+    setBuffered(true);
     restoredAnchor.current = undefined;
     intent.current++;
     userScrolled.current = true;
@@ -729,6 +823,7 @@ function Timeline({
           updateJumpToLatest(element);
         }
         loadNearTop(element);
+        bufferIdle.current?.quiet();
       }}
     >
       <div ref={edge} className={styles.edge}>
@@ -760,22 +855,16 @@ function Timeline({
           ref={handle}
           scrollRef={scroller}
           shift={prepend}
-          bufferSize={1600}
+          bufferSize={buffered || !heights.enabled ? 1600 : 0}
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
           as="ol"
           item="li"
           startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
+          {...heights.props(initialCache.current)}
         >
           {rows.map((row, index) => {
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+            const day = placed[index]?.day ?? true;
             return row.membership ? (
               <MembershipRow
                 resolveName={resolveName}
@@ -790,11 +879,7 @@ function Timeline({
               />
             ) : (
               <MessageRow
-                layout={
-                  continuesMessageGroup(rows[index - 1], row)
-                    ? "continuation"
-                    : "timeline"
-                }
+                layout={placed[index]?.layout ?? "timeline"}
                 session={queries}
                 scope={scope}
                 key={row.id}
@@ -816,6 +901,13 @@ function Timeline({
             );
           })}
         </Virtualizer>
+      )}
+      {heights.enabled && (
+        <RowHeightProbe
+          ref={heights.probe}
+          calibrating={heights.calibrating}
+          emoji={heights.emoji}
+        />
       )}
       {!rows.length && !window.hasMore && (
         <p className={styles.empty}>No messages yet.</p>

@@ -1,9 +1,9 @@
 # Virtua 0.51.0 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
-`src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller
-and store are patched; CommonJS, window scrolling, and other-framework exports
-are untouched.
+`src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller,
+store and `Virtualizer` (with its declaration file) are patched; CommonJS,
+window scrolling, and other-framework exports are untouched.
 Keep the dependency pinned to 0.51.0 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
 
@@ -183,14 +183,105 @@ per run, interleaved runs). Installed-driver regressions cover immediate
 viewport delivery with deferred rows, removal and remount, and the offset read
 in LTR and RTL.
 
+## Sizes known before measurement
+
+An unmeasured row mounts hidden at the default size. Its measurement arrives a
+frame later and costs a synchronous render and, when the row is above the
+reading position, a correction that interrupts momentum on Mac WebKit. A size
+cached before mount, like a `cache` snapshot entry, avoids all of that: the row
+renders visible at its final offset, and an equal measurement is dropped before
+any state change.
+
+`Virtualizer` therefore accepts `estimateSize(index)`, returning a size or
+`undefined`. The layout consults it at creation for entries the snapshot lacks;
+snapshot measurements take precedence. Each length change carries the estimator
+of the render that made it, since a latest-ref would still map the previous
+render's indexes. Appended items are seeded without a jump. Under `shift`, the
+jump is the sum of the prepended predictions plus the size change of the item
+that was first, which lost its day divider and author header to its new
+predecessor. The shift's wait above covers only unmeasured rows, and a predicted
+prepend has none, so that item's late measurement would otherwise meet native
+policy. The application cannot correct it after the commit: until the jump's
+scroll event, the store's offset still precedes the jump. That item is therefore
+consulted first, and if it is `undefined` no prepended item is seeded: they stay
+unmeasured, so the wait covers the frame that measures them together with it.
+A removal from the start predicts the new first item the same way. Otherwise
+`undefined` keeps stock behaviour for that index, including the wait.
+
+The handle's `resize(pairs)` sets new predictions after a width or font change
+through the measured resize path, which VGrid's `resizeRows` already uses: rows
+above the reading position are compensated and rows below are not. Like the
+viewport path, it first reads the native offset: a jump or correction earlier in
+the frame can precede its scroll event, and a stale offset would misclassify
+rows near the viewport start. A prediction is not a measurement, so mounted
+targets among the pairs are unobserved and observed again. The fresh observation
+reports the real size, which confirms the value or corrects it; otherwise a
+mounted row whose height did not change would keep a wrong prediction until it
+remounts. Re-arming also drops the target's deferred entry: it predates the new
+size, and flushing it in the next frame would revert the size before the fresh
+observation arrives. The driver's element-to-index map becomes an iterable
+`Map`; unmount still deletes entries. `resize` renders synchronously: call it
+outside React render and effects, with committed indexes. The timeline calls it
+at most twice per new Virtualizer, for unmeasured rows that are not mounted and
+before any reader input
+([docs/channels.md](../docs/channels.md#predicted-row-heights)); its post-commit
+reconciliation (width, font or content changes) is deferred.
+
+Predicted and measured sizes are deliberately indistinguishable, as restored
+sizes already are. A prediction off by any fraction of a pixel costs the stock
+correction.
+
+Stock Virtua sizes unmeasured items at `itemSize`, or, without it, estimates
+that default once: when measurements that change cached sizes exceed the
+viewport, it becomes the median cached size, and `bufferSize` is ignored until
+then, even for items appended later. Exact predictions never complete that
+estimate, and a fixed `itemSize` cannot know the items an estimator leaves
+unknown, which are by construction unlike the ones it seeds. On a channel whose
+rows are mostly membership changes, the timeline's rough `itemSize` (80px)
+missed every membership row (52px), which then mounted hidden and corrected:
+171 corrections over a 640-row upward traversal against 138 with stock sizing
+in Chromium, 172 against 139 in WebKit. A Virtualizer created with an estimator
+therefore keeps the estimate, with `itemSize` (or 40) as its initial default and
+the stock trigger, but samples only measurements of items that had no size: a
+seeded item's equal measurement never reaches the sample, a snapshot's entries
+are not in it, and the handle's `resize` is not a measurement. Its `bufferSize`
+applies without waiting. One created without an estimator is unchanged. That
+traversal then corrects 125–130 times in Chromium and 135–137 in WebKit.
+Compensation policies, observer deferral, the scheduler and momentum handling
+are unchanged; VList and WindowVirtualizer do not accept the prop.
+`ChannelTimeline` passes `itemSize` and the estimator together, only to a
+Virtualizer created with its model ready; one created earlier keeps stock sizing
+for its lifetime ([docs/channels.md](../docs/channels.md#predicted-row-heights)).
+
+Installed store/driver regressions cover seeding behind a snapshot (an equal
+batch leaves the store version unchanged), a predicted prepend whose late equal
+frame is a no-op, a prepend whose former first item is unknown (nothing is
+seeded, and its late frame keeps the reading position), removal from the start,
+an append, partial predictions under the shift's wait, resize policy over
+predicted sizes, re-observation of mounted targets only, a resize that drops the
+row's deferred measurement, a resize after a jump whose scroll event is still
+queued, and a resize after a withheld prepend (the shift keeps waiting for its
+late frame). A jsdom test mounts
+the real `Virtualizer` for the prop and handle. Each fails on the previous
+bundle, and copied-bundle mutants of each new hunk fail at least one of them.
+The estimate's regression (the default becomes the median measurement of
+unseeded items, not of every cached size, once they exceed the viewport) fails
+on the previous bundle; three more hold on both and fail its mutants: stock
+estimation still samples every cached size, a seeded Virtualizer's buffer does
+not wait, and `resize` pairs do not complete the estimate.
+They do not establish that browser measurements equal predictions (heights are
+LayoutUnit-snapped and divided by zoom), or how either engine treats `observe()`
+on a target it already observes; unobserving first avoids depending on it.
+
 ## Automated checks
 
 ```sh
 bin/pnpm install --frozen-lockfile
 bin/pnpm typecheck
 bin/pnpm exec vitest run src/features/messages/virtua-compensation.test.mjs \
+  src/features/messages/virtua-predicted-sizes.test.tsx \
   src/features/messages/ChannelTimeline.test.tsx
-bin/pnpm test:browser history-loading.spec.mjs image-scroll.spec.mjs initial-position.spec.mjs \
+bin/pnpm test:browser history-loading.spec.mjs image-scroll.spec.mjs initial-position.spec.mjs row-heights.spec.mjs \
   --project chromium --project webkit --no-deps --workers=1
 ```
 

@@ -8,6 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
+import { QUIET_MS } from "./after-next-frame-idle";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
 import type { ChannelWindow } from "../relay/contracts";
@@ -17,23 +18,87 @@ import { readView, writeView } from "../../shared/view-state";
 // Real React lifecycle; only the virtualizer's imperative layout boundary is
 // modeled here. Browser journeys retain the actual same-message/4px contract.
 const scroll = vi.hoisted(() => ({ toIndex: vi.fn(), toOffset: vi.fn() }));
+// With `sizes`, the list reports them as its cache (-1: unmeasured), mounts
+// only its last `mounted` rows and records `resize` calls.
+const list = vi.hoisted(() => {
+  const list = {
+    sizes: undefined as number[] | undefined,
+    mounted: 1,
+    resize: vi.fn((pairs: [number, number][]) => {
+      for (const [index, size] of pairs)
+        if (list.sizes) list.sizes[index] = size;
+    }),
+  };
+  return list;
+});
 vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
-      { children }: { children: ReactNode },
+      { children, bufferSize }: { children: ReactNode; bufferSize: number },
       ref,
     ) {
       useImperativeHandle(ref, () => ({
-        cache: undefined,
+        cache: list.sizes && [list.sizes, 40],
+        scrollOffset: 0,
+        findItemIndex: () => (list.sizes?.length ?? 1) - 1,
+        resize: list.resize,
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
-      return <ol style={{ height: 2000 }}>{children}</ol>;
+      return (
+        <ol data-buffer={bufferSize} style={{ height: 2000 }}>
+          {list.sizes
+            ? [children].flat().slice(list.sizes.length - list.mounted)
+            : children}
+        </ol>
+      );
     }),
   };
 });
+// jsdom has no canvas text measurement, so the timeline keeps Virtua's own
+// buffer; a case that observes the deferred buffer turns predictions on, and
+// one that observes the fill gets a ready model whose predictions each take
+// 9 ms on the clock (the fill's budget is 8 ms) and are then cache hits.
+const heights = vi.hoisted(() => {
+  let spent = 0;
+  let prepared = new WeakSet<object>();
+  return {
+    capable: false,
+    ready: undefined as object | undefined,
+    clock: () => spent,
+    forget: () => {
+      prepared = new WeakSet();
+    },
+    model: {
+      estimate: () => 40,
+      predict: (row: object, _: unknown, __: unknown, compute = true) => {
+        if (compute) {
+          spent += 9;
+          prepared.add(row);
+        }
+        return prepared.has(row) ? 40 : "budget";
+      },
+    },
+  };
+});
+vi.mock("./row-height/environment", async (original) => {
+  const actual = await original<typeof import("./row-height/environment")>();
+  return {
+    ...actual,
+    get capable() {
+      return heights.capable;
+    },
+    calibrate: (...args: Parameters<typeof actual.calibrate>) =>
+      heights.ready ? undefined : actual.calibrate(...args),
+    environment: {
+      subscribe: actual.environment.subscribe,
+      snapshot: () => heights.ready ?? actual.environment.snapshot(),
+    },
+  };
+});
 const frames = new Map<number, FrameRequestCallback>();
+const idles = new Map<number, () => void>();
 const resizes = new Set<() => void>();
 let nextFrame = 0;
 const owners: { dispose(): void }[] = [];
@@ -48,6 +113,13 @@ beforeEach(() => {
     return nextFrame;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  // jsdom has no idle periods: one follows each frame here, so a timeline's
+  // idle work (its buffer) lands at a known point rather than a later task.
+  vi.stubGlobal("requestIdleCallback", (callback: () => void) => {
+    idles.set(++nextFrame, callback);
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelIdleCallback", (id: number) => idles.delete(id));
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -63,8 +135,15 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  heights.capable = false;
+  heights.ready = undefined;
+  list.sizes = undefined;
+  list.mounted = 1;
+  list.resize.mockClear();
+  vi.useRealTimers();
   for (const owner of owners.splice(0)) owner.dispose();
   frames.clear();
+  idles.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -74,6 +153,10 @@ async function frame() {
     for (const [id, callback] of [...frames]) {
       frames.delete(id);
       callback(0);
+    }
+    for (const [id, callback] of [...idles]) {
+      idles.delete(id);
+      callback();
     }
   });
 }
@@ -695,5 +778,115 @@ it.each([
     await frame();
     h.unmount();
     expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+  },
+);
+
+it("without idle callbacks, mounts the buffer once row updates and scrolls stop for a quiet period", async () => {
+  heights.capable = true;
+  vi.stubGlobal("requestIdleCallback", undefined);
+  const h = mount(true);
+  const buffer = () => screen.getByRole("list").dataset.buffer;
+  const feed = screen.getByRole("region", { name: "Channel message history" });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  await frame(); // Settled at the bottom.
+  await frame(); // The next frame: the quiet period starts.
+  expect(buffer()).toBe("0");
+  // Each row update or scroll inside the period starts it again.
+  for (const activity of [h.promote, () => fireEvent.scroll(feed), h.promote]) {
+    act(() => vi.advanceTimersByTime(QUIET_MS - 1));
+    activity();
+  }
+  act(() => vi.advanceTimersByTime(QUIET_MS - 1));
+  expect(buffer()).toBe("0");
+  act(() => vi.advanceTimersByTime(1));
+  expect(buffer()).toBe("1600");
+});
+
+function fillable() {
+  heights.capable = true;
+  heights.ready = {
+    model: heights.model,
+    metrics: { epoch: 1, inset: 0, single: { timeline: 40, continuation: 20 } },
+    hover: true,
+    fonts: 0,
+  };
+  // Prediction time is the fake model's; the list is wide enough to predict.
+  const now = performance.now.bind(performance);
+  vi.spyOn(performance, "now").mockImplementation(
+    () => now() + heights.clock(),
+  );
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    width: 800,
+    height: 0,
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 800,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+  // Three rows, all unmeasured; only the newest is mounted.
+  list.sizes = [-1, -1, -1];
+  const h = mount(true);
+  h.prependOlder();
+  return h;
+}
+const written = () => list.resize.mock.calls.map(([pairs]) => pairs);
+// A new viewport size: the timeline settles again.
+async function relayout() {
+  await act(async () => {
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(500);
+    for (const resize of resizes) resize();
+  });
+  for (let index = 0; index < 3; index++) await frame();
+}
+
+it("mounts the buffer after the first idle slice, which sets the rows it predicted, and sets the rest once all are tried", async () => {
+  fillable();
+  // No row is mounted or predicted yet: three slices.
+  list.mounted = 0;
+  heights.forget();
+  const buffer = () => screen.getByRole("list").dataset.buffer;
+  await frame(); // Settled at the bottom; the next frame and idle follow.
+  await frame();
+  // One row per slice (each prediction spends the budget): the buffer
+  // mounts the row the first slice predicted at its size.
+  expect(written()).toEqual([[[2, 40]]]);
+  expect(buffer()).toBe("1600");
+  // A middle slice only predicts; the last sets the rest in one write.
+  await frame();
+  expect(written()).toHaveLength(1);
+  await frame();
+  expect(written()).toEqual([
+    [[2, 40]],
+    [
+      [0, 40],
+      [1, 40],
+    ],
+  ]);
+  // Once done, a later settle does not fill again, even with rows unknown.
+  list.sizes = [-1, -1, -1];
+  await relayout();
+  expect(written()).toHaveLength(2);
+});
+
+it.each([
+  ["before the first idle slice", 1, "0", []],
+  ["between slices", 2, "1600", [[[1, 40]]]],
+])(
+  "the reader's first input %s mounts the buffer and stops the fill",
+  async (_, frames, on, before) => {
+    fillable();
+    const buffer = () => screen.getByRole("list").dataset.buffer;
+    for (let index = 0; index < frames; index++) await frame();
+    expect(buffer()).toBe(on);
+    expect(written()).toEqual(before);
+    fireEvent.wheel(
+      screen.getByRole("region", { name: "Channel message history" }),
+    );
+    expect(buffer()).toBe("1600");
+    await relayout();
+    expect(written()).toEqual(before);
   },
 );

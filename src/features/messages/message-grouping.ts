@@ -1,4 +1,4 @@
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 
 export function continuesMessageGroup(
   previous: ChannelMessage | undefined,
@@ -20,4 +20,13 @@ export function continuesMessageGroup(
     new Date(previous.createdAt * 1000).toDateString() ===
       new Date(current.createdAt * 1000).toDateString()
   );
+}
+
+/** The name a timeline row's byline shows. */
+export function bylineName(
+  row: ChannelMessage,
+  profile: Profile | undefined,
+  resolveName: (pubkey: string, fallback: string) => string,
+): string {
+  return resolveName(row.authorId, profile?.name ?? row.authorId.slice(0, 10));
 }

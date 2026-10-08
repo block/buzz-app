@@ -50,5 +50,8 @@ button.link {
   font: inherit;
   /* Inline anchors paint around the font box, without the prose line leading. */
   line-height: normal;
+  /* A button is an inline-block: its padding would grow the line. Inline
+     content never grows a line (docs/channels.md); the paint is unchanged. */
+  margin-block: calc(-1 * var(--space-half));
   cursor: pointer;
 }

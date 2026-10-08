@@ -99,6 +99,7 @@ vi.mock("react", async (original) => ({
   },
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
+  useContext: (context: { _currentValue: unknown }) => context._currentValue,
 }));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),

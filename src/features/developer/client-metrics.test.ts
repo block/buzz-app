@@ -392,6 +392,39 @@ it("records event-loop lag as long tasks and sums CPU per stage", () => {
   expect(mainThread.cpu["verify.read"]).toEqual({ ms: 15, count: 30 });
 });
 
+it("aggregates row height checks by kind without row identities", () => {
+  const { metrics } = setup();
+  metrics.rowHeight("timeline", { predicted: 60, measured: 60, seeded: true });
+  metrics.rowHeight("timeline", {
+    predicted: 80,
+    measured: 79.984375,
+    seeded: false,
+  });
+  metrics.rowHeight("timeline", { reason: "link" });
+  metrics.rowHeight("timeline", { reason: "link" });
+  metrics.rowHeight("membership", { reason: "membership" });
+  expect(metrics.summary().rowHeights).toEqual({
+    timeline: {
+      predicted: 2,
+      seeded: 1,
+      exact: 1,
+      mismatched: 1,
+      maxDelta: 0.015625,
+      unpredicted: { link: 2 },
+    },
+    membership: {
+      predicted: 0,
+      seeded: 0,
+      exact: 0,
+      mismatched: 0,
+      maxDelta: 0,
+      unpredicted: { membership: 1 },
+    },
+  });
+  metrics.reset();
+  expect(metrics.summary().rowHeights).toEqual({});
+});
+
 it("records nothing when disabled, and unit tests get the disabled singleton", () => {
   const h = setup({ enabled: false });
   h.metrics.channelMounted("alpha");

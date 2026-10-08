@@ -57,6 +57,26 @@
   margin: 0;
   padding: 0;
 }
+/* Row-height calibration after the list: its inline size, no block size,
+   never painted, scrollable or hit (row-height/RowHeightProbe.tsx). */
+.rowProbe {
+  block-size: 0;
+  overflow: hidden;
+  contain: layout paint;
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Like a Virtua item: its own formatting context keeps margins inside. */
+.rowProbe > * {
+  contain: layout style;
+}
+.rowProbe [data-sample] {
+  white-space: nowrap;
+}
+/* As wide as its content, so the link chip in it takes its cap. */
+.rowProbe [data-sample="chip"] {
+  width: max-content;
+}
 .edge {
   /* ChannelTimeline measures this region for Virtua's pixel startMargin. */
   height: 3.5rem;
@@ -128,7 +148,7 @@
   gap: var(--space-2);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
 }
 .byline time {
   color: var(--text-subtle);
@@ -144,7 +164,7 @@
   margin: var(--space-1) 0 0;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -810,7 +830,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   text-decoration: none;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
 }
 a.fileAttachment:hover {
   background: var(--surface-hover);
@@ -1346,7 +1366,16 @@ button.mediaPreview {
   border-radius: var(--radius-control);
   background: var(--affordance-subtle);
 }
+/* A custom emoji's box is taller than a line. Margins of minus half its height
+   keep it out of the line's height without moving it: inline content never
+   grows a line (docs/channels.md). Large emoji set their own line height. */
+.text img {
+  /* The emoji's height (Emoji.module.css), not spacing. */
+  --emoji-height: var(--inline-emoji-size, 1.375rem);
+  margin-block: calc(-0.5 * var(--emoji-height));
+}
 .text[data-single-emoji] img {
+  margin-block: 0;
   vertical-align: top;
 }
 .text[data-single-emoji] {
@@ -1358,15 +1387,11 @@ button.mediaPreview {
   margin: var(--space-1) 0 0;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
   overflow-wrap: anywhere;
 }
 .plainText {
   white-space: pre-wrap;
-}
-.text :where(p, li),
-.plainText {
-  text-wrap-style: pretty;
 }
 .text p {
   line-height: inherit;
@@ -1468,7 +1493,7 @@ button.mediaPreview {
   border-spacing: 0;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
   overflow-wrap: normal;
   scrollbar-width: thin;
   white-space: nowrap;
@@ -1511,6 +1536,15 @@ button.mediaPreview {
 .text a:not([data-link-renderer]):hover {
   text-decoration-thickness: 2px;
 }
+/* A link is an inline block (its chip, LinkPreview.module.css), which an
+   ancestor's decoration does not reach: struck through, it draws the line. */
+.text del a {
+  text-decoration-line: line-through;
+}
+.text del a:not([data-link-renderer]),
+.text del a:not([data-link-renderer]):hover {
+  text-decoration-line: underline line-through;
+}
 .imageAlt {
   color: var(--text-subtle);
   font-style: italic;
@@ -1544,7 +1578,7 @@ button.mediaPreview {
   color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  letter-spacing: normal;
 }
 .membership p {
   margin: 0;
@@ -2308,9 +2342,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 .feed .message[data-layout="continuation"] .messageGutter {
   flex-basis: var(--size-control);
-}
-.text pre {
-  text-wrap-style: auto;
 }
 
 .jumpToLatest {

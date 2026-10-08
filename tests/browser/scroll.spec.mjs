@@ -89,6 +89,20 @@ async function observeWork(page) {
     }
   });
 }
+// Counts every scroller write: Virtua's shift jumps and its corrections.
+async function watchWrites(page) {
+  await page.evaluate(() => {
+    window.timelineWrites = 0;
+    for (const method of ["scrollBy", "scrollTo"]) {
+      const original = Element.prototype[method];
+      Element.prototype[method] = function (...args) {
+        if (this.matches?.("[data-message-scroller]")) window.timelineWrites++;
+        return original.apply(this, args);
+      };
+    }
+  });
+}
+const writes = (page) => page.evaluate(() => window.timelineWrites);
 async function workSample(page) {
   return page.evaluate(() => {
     const sample = window.browserPerformanceSample;
@@ -287,6 +301,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
 }, async ({ page, app, browserName }) => {
   await open(page, app);
   await observeWork(page);
+  await watchWrites(page);
   let loaded = 20;
   const cursors = new Set();
   while (loaded < historySize) {
@@ -320,6 +335,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     );
     cursors.add(cursor);
     expect(pending.events).toHaveLength(20);
+    const writesBefore = await writes(page);
     pending.release();
     loaded += pending.events.length;
     await expect
@@ -327,6 +343,13 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
       .toBeGreaterThan(height + 500);
     await settle(page);
     await expectAnchor(page, before);
+    // The page and the former first row are seeded with their predicted
+    // sizes: the shift's jump keeps the anchor, and no late measurement
+    // corrects it (docs/channels.md, predicted row heights).
+    expect(
+      (await writes(page)) - writesBefore,
+      "a predicted page needs only its shift's jump",
+    ).toBe(1);
     expect(
       await history(page).locator(rowSelector).count(),
     ).toBeLessThanOrEqual(100);

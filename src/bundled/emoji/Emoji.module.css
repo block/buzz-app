@@ -7,6 +7,13 @@
   object-fit: contain;
   vertical-align: middle;
 }
+/* Unavailable or failed media: the same box, as an outlined tile. */
+.customEmoji[data-unavailable] {
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  outline: 1px solid var(--border-standard);
+  outline-offset: -1px;
+}
 .emojiPicker {
   border: 0;
   padding: 0;

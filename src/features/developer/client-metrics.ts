@@ -125,6 +125,17 @@ export function createClientMetrics({
     },
   ];
   const cpu = new Map<string, { ms: number; count: number }>();
+  const rowHeights = new Map<
+    string,
+    {
+      predicted: number;
+      seeded: number;
+      exact: number;
+      mismatched: number;
+      maxDelta: number;
+      unpredicted: Record<string, number>;
+    }
+  >();
   let pending:
     | {
         channel: string;
@@ -244,6 +255,7 @@ export function createClientMetrics({
         longTaskMs: longTasks.reduce((sum, task) => sum + task.duration, 0),
         cpu: Object.fromEntries(cpu),
       },
+      rowHeights: Object.fromEntries(rowHeights),
       phases: phases.map((entry) => ({
         ...entry,
         routeMs: distribution(entry.routeMs),
@@ -359,6 +371,37 @@ export function createClientMetrics({
       entry.count += count;
       cpu.set(stage, entry);
     }),
+    /** One mounted timeline row's predicted height against its measured
+     * one, or why it had none, aggregated by row kind. */
+    rowHeight: active(
+      (
+        kind: string,
+        outcome:
+          | { predicted: number; measured: number; seeded: boolean }
+          | { reason: string },
+      ) => {
+        const entry = rowHeights.get(kind) ?? {
+          predicted: 0,
+          seeded: 0,
+          exact: 0,
+          mismatched: 0,
+          maxDelta: 0,
+          unpredicted: {},
+        };
+        rowHeights.set(kind, entry);
+        if ("reason" in outcome) {
+          entry.unpredicted[outcome.reason] =
+            (entry.unpredicted[outcome.reason] ?? 0) + 1;
+          return;
+        }
+        const delta = Math.abs(outcome.measured - outcome.predicted);
+        entry.predicted++;
+        if (outcome.seeded) entry.seeded++;
+        if (delta) entry.mismatched++;
+        else entry.exact++;
+        entry.maxDelta = Math.max(entry.maxDelta, delta);
+      },
+    ),
     /** Observe live route state; derives connect/reconnect phases and coverage. */
     live: active((session: string, state: LiveState) => {
       if (!owns(session)) return;
@@ -440,6 +483,7 @@ export function createClientMetrics({
       queries.length = 0;
       longTasks.length = 0;
       cpu.clear();
+      rowHeights.clear();
       skipped = 0;
       // Keep `shown`: the pane still shows it, and reselecting it opens nothing.
       pending = undefined;

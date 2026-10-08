@@ -54,6 +54,7 @@ import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
+import { bylineName } from "./message-grouping";
 
 export type MessageRowProps = {
   row: ChannelMessage;
@@ -210,10 +211,7 @@ export const MessageRow = memo(function MessageRow({
         .map(({ pubkey, name }) => resolveName(pubkey, name))
         .join(", ")} working`
     : undefined;
-  const name = resolveName(
-    row.authorId,
-    profile?.name ?? row.authorId.slice(0, 10),
-  );
+  const name = bylineName(row, profile, resolveName);
   const workflowOwnerName = row.workflowOwnerId
     ? resolveName(
         row.workflowOwnerId,

@@ -120,7 +120,7 @@ for (const scope of ["channel", "thread"]) {
   test(`${scope} typing preserves viewport bounds and the visible bottom through completion and expiry`, async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
     await open(page, app);
     await expect
       .poll(() =>
@@ -179,6 +179,11 @@ for (const scope of ["channel", "thread"]) {
     ).toBeGreaterThan(100);
     const idle = await history.boundingBox();
     const idleComposer = await composer.boundingBox();
+    // Actual browser geometry: idle typing must not reserve a blank strip.
+    expect(Math.abs(idle.y + idle.height - idleComposer.y)).toBeLessThan(1);
+    await page.screenshot({
+      path: testInfo.outputPath(`${scope}-composer-no-gap.png`),
+    });
     const stable = async () => {
       expect(await history.boundingBox()).toEqual(idle);
       expect(await composer.boundingBox()).toEqual(idleComposer);

@@ -14,6 +14,7 @@ import {
   catalogTeamSnapshot,
   parsePublication,
   TEAM_CATALOG_KIND,
+  teamCatalogContent,
   type TeamPublication,
 } from "../../features/agents/catalog-protocol";
 import {
@@ -42,6 +43,17 @@ vi.mock("../../features/agents/team-bundles", async (original) => ({
   ...(await original<typeof import("../../features/agents/team-bundles")>()),
   importTeamMembers: vi.fn(),
 }));
+
+// The share projection's last asynchronous step; its settled result is the
+// completion barrier for assertions that nothing was published.
+vi.mock("../../features/agents/catalog-protocol", async (original) => {
+  const actual =
+    await original<typeof import("../../features/agents/catalog-protocol")>();
+  return {
+    ...actual,
+    teamCatalogContent: vi.fn(actual.teamCatalogContent),
+  };
+});
 
 const owners: { dispose(): void }[] = [];
 afterEach(() => {
@@ -188,9 +200,15 @@ function pendingShare() {
         settle = { resolve, reject };
       }),
   );
+  // Preview passes through unless a test holds it to delay the projection.
+  let previewGate: Promise<void> = Promise.resolve();
+  const previewTeam = vi.fn(async (content: string) => {
+    await previewGate;
+    return JSON.parse(content) as TeamSnapshot;
+  });
   const control = {
     snapshot: () => ({ data: { agents: [member] } }),
-    previewTeam: async (content: string) => JSON.parse(content) as TeamSnapshot,
+    previewTeam,
   } as unknown as AgentControl;
   const writes = createOutbox(
     owner.pubkey,
@@ -235,6 +253,14 @@ function pendingShare() {
     loadTeam,
     published,
     settle: () => settle,
+    holdPreview() {
+      let release!: () => void;
+      previewGate = new Promise((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+    previewTeam,
     queries: catalog.queries,
   };
 }
@@ -293,9 +319,21 @@ it("does not publish a projection that settles after the dialog is gone", async 
   const view = render(test.dialog);
   await startShare(test.loadTeam);
 
+  const releasePreview = test.holdPreview();
   view.unmount();
-  test.settle().resolve({ team: { name: "Crew" } });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  try {
+    test.settle().resolve({ team: { name: "Crew" } });
+    await waitFor(() => expect(test.previewTeam).toHaveBeenCalledTimes(1));
+  } finally {
+    releasePreview();
+  }
+  // Barrier: the whole projection has settled. What remains of the share
+  // continuation is promise reactions with no I/O, which run before the next
+  // macrotask, so after it any late publication would already be recorded.
+  await waitFor(() => expect(teamCatalogContent).toHaveBeenCalledTimes(1));
+  const [projection] = vi.mocked(teamCatalogContent).mock.results;
+  await expect(projection?.value).resolves.toEqual(expect.any(String));
+  await new Promise((drained) => setTimeout(drained, 0));
   expect(test.queries.state(TEAM_CATALOG_KIND, "crew").change).toBeUndefined();
   expect(await test.published()).toEqual([]);
 });

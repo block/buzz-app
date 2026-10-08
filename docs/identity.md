@@ -78,6 +78,16 @@ for each attempt. Native networking permits only discovery, join-policy, invite
 mint/acceptance/claim, relay-advertised GIF search, query, event and bounded
 workflow run-history routes on HTTPS origins, with bounded bodies, timeouts and
 no redirects. JavaScript never obtains the private key for transport.
+
+Relay staff console requests (`relay_admin_*`) use a separate native owner.
+The admin origin comes only from the selected relay's NIP-11 `admin_api` and
+must be a public HTTPS host. Every probe, read, write, attachment fetch and
+retry resolves that host, refuses the request if any answer is loopback,
+private, link-local or otherwise reserved (or if DNS fails or returns nothing),
+and connects only to the vetted addresses while keeping the hostname for TLS
+and NIP-98. That client ignores system proxies and follows no redirects. The
+webview names a closed route; native code builds the URL, checks the request's
+expected relay, admin origin and signer before signing, and caps each response.
 NIP-11 `self` establishes relay authority; the operator-contact `pubkey` is not
 a substitute. The existing live owner handles WSS/NIP-42 authentication and
 signature verification. IPC permissions remain limited to the main WebView.

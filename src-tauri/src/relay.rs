@@ -598,6 +598,19 @@ fn verify_signature(event: &serde_json::Value) -> Result<()> {
 }
 
 async fn channel_creation_supported(community: &str) -> Result<bool> {
+    let info = relay_info(community).await?;
+    Ok(info
+        .get("self")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(hex_key)
+        && info
+            .get("supported_nips")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+}
+
+/// The community's unsigned NIP-11 document.
+pub(crate) async fn relay_info(community: &str) -> Result<serde_json::Value> {
     let url = request_url(community, "/", "GET")?;
     let mut response = client()?
         .get(url)
@@ -615,16 +628,7 @@ async fn channel_creation_supported(community: &str) -> Result<bool> {
         "Invalid community information",
     )
     .await?;
-    let info: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|_| "Invalid community information")?;
-    Ok(info
-        .get("self")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(hex_key)
-        && info
-            .get("supported_nips")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+    serde_json::from_slice(&body).map_err(|_| "Invalid community information".into())
 }
 
 fn client() -> Result<&'static reqwest::Client> {

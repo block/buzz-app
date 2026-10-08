@@ -372,6 +372,5 @@ export interface RelayStaffBackend {
   saveAttachment(
     context: StaffContext,
     ref: AttachmentRef,
-    suggestedName: string,
   ): Promise<SaveResult>;
 }

@@ -22,6 +22,7 @@ function record(
     kind,
     channelIds: [channelId],
     receivedAt: 1000,
+    historical: false,
     createdAt: 1,
     plaintext: JSON.stringify({
       kind,
@@ -62,6 +63,13 @@ const message = {
 const snapshot = (): Snapshot => ({
   status: "listening",
   trimmed: 0,
+  history: "unavailable",
+  hasOlder: false,
+  historyOlder: false,
+  historySkipped: 0,
+  historyAgents: [],
+  capture: "off",
+
   typing: [],
   records: [
     record("1", agent, "initial", 1, "turn_started"),

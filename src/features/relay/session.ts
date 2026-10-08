@@ -553,6 +553,8 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
+        activity.messagesChanged(visible);
+        if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
@@ -685,6 +687,7 @@ export function createRelaySession(
           canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
         }
       : undefined,
+    (id) => recent.peek(id)?.event ?? retainedEvent(id),
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity

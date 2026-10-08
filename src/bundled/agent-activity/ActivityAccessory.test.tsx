@@ -2,7 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 
 import { afterEach, expect, it, vi } from "vitest";
 import { ActivityAccessory } from "./ActivityAccessory";
@@ -46,6 +52,11 @@ function fixture() {
   ]);
   const session = {
     viewer,
+    presence: {
+      subscribe: () => () => {},
+      status: () => "online",
+      limited: () => false,
+    },
     agentActivity: activity.queries,
     agentChoices: createAgentLibrary(undefined).queries,
     profiles: {
@@ -88,6 +99,18 @@ function fixture() {
     scope: "test",
     channelId: "c",
     threadRootId: root,
+    message: {
+      id: root,
+      channelId: "c",
+      authorId: viewer,
+      createdAt: 1,
+      content: "Request",
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      participants: [],
+      replyCount: 0,
+    },
     canOpen: () => true,
     open,
   };
@@ -105,7 +128,7 @@ function fixture() {
   };
 }
 
-it("shows one line per agent across multiple turns, removing only the settled agent", () => {
+it("shows one bubble with one avatar per agent across multiple turns, removing only the settled agent", () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />);
   try {
@@ -113,25 +136,25 @@ it("shows one line per agent across multiple turns, removing only the settled ag
     f.send(A, "a2", 1, "turn_started", { triggeringEventIds: [root] });
     f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
     expect(
-      screen.getAllByRole("button", { name: /View activity for Blossom/ }),
+      screen.getAllByRole("button", { name: /View agent activity/ }),
     ).toHaveLength(1);
-    expect(
-      screen.getAllByRole("button", { name: /View activity for Bubbles/ }),
-    ).toHaveLength(1);
+    expect(screen.getAllByTitle("Blossom")).toHaveLength(1);
+    expect(screen.getAllByTitle("Bubbles")).toHaveLength(1);
+    expect(view.container.querySelector(".buzz-avatar-status-dot")).toBeNull();
     f.send(A, "a1", 2, "turn_completed");
     expect(
-      screen.getByRole("button", { name: /View activity for Blossom/ }),
+      screen.getByRole("button", { name: /View agent activity: Blossom/ }),
     ).toBeInTheDocument();
     f.send(A, "a2", 2, "turn_completed");
     expect(
       screen.queryByRole("button", { name: /Blossom/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /View activity for Bubbles/ }),
+      screen.getByRole("button", { name: /View agent activity: Bubbles/ }),
     ).toBeInTheDocument();
     f.send(B, "b1", 2, "turn_completed");
     expect(
-      screen.queryByLabelText("Agent activity in this thread"),
+      screen.queryByLabelText("Agent activity on this message"),
     ).not.toBeInTheDocument();
   } finally {
     view.unmount();
@@ -147,8 +170,8 @@ it("does not show sibling thread work and reports lost freshness without pretend
     f.send(B, "here", 1, "turn_started", { triggeringEventIds: [root] });
     act(() => vi.advanceTimersByTime(31000));
     expect(
-      screen.getByRole("button", { name: /View activity for Bubbles/ }),
-    ).toHaveTextContent("work status unknown");
+      screen.getByRole("button", { name: /View agent activity: Bubbles/ }),
+    ).toHaveTextContent("Status unknown");
     f.send(B, "here", 2, "turn_completed");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   } finally {
@@ -163,9 +186,74 @@ it("keeps namesakes as separate exact identities", () => {
   try {
     f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
     f.send(B, "b", 1, "turn_started", { triggeringEventIds: [root] });
-    const buttons = screen.getAllByRole("button", { name: /Blossom/ });
-    expect(buttons).toHaveLength(2);
-    expect(buttons[0]?.textContent).not.toBe(buttons[1]?.textContent);
+    const avatars = screen.getAllByTitle(/Blossom/);
+    expect(avatars).toHaveLength(2);
+    expect(avatars[0]?.getAttribute("title")).not.toBe(
+      avatars[1]?.getAttribute("title"),
+    );
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("previews only live scoped actions and retains profile navigation", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(A, "old", 1, "turn_started", { triggeringEventIds: [root] });
+    const thought = (text: string) => ({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text },
+        },
+      },
+    });
+    f.send(A, "old", 2, "acp_read", thought("Old thought"));
+    f.send(A, "old", 3, "turn_completed");
+    f.send(A, "new", 1, "turn_started", { triggeringEventIds: [root] });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    expect(
+      screen.getByText("Waiting for activity details"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Old thought")).not.toBeInTheDocument();
+    f.send(A, "new", 2, "acp_read", thought("Current thought"));
+    expect(screen.getByText("Current thought")).toBeInTheDocument();
+    f.send(B, "sibling", 1, "turn_started", { triggeringEventIds: [next] });
+    f.send(B, "sibling", 2, "acp_read", thought("Private sibling thought"));
+    expect(
+      screen.queryByText("Private sibling thought"),
+    ).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(31000));
+    expect(
+      screen.getByText("Activity interrupted or out of date"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Current thought")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View activity for Blossom" }),
+    );
+    expect(f.props.open).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it("removes the whole popup when access is revoked", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(<ActivityAccessory {...f.props} canOpen={() => false} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   } finally {
     view.unmount();
     f.dispose();

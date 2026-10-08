@@ -20,14 +20,15 @@ export function ComposerAccessories({
   );
   const order = (entry: ComposerAccessory) =>
     Number.isFinite(entry.order) ? (entry.order ?? 0) : 0;
-  return [...entries]
+  return entries
+    .filter((entry) => (entry.placement === "message") === !!props.message)
     .sort(
       (a, b) =>
         order(a) - order(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
     )
     .map((entry) => (
       <ContributionBoundary
-        key={contributionKey(entry)}
+        key={`${contributionKey(entry)}:${props.scope}:${props.channelId}:${props.message?.id ?? props.threadRootId ?? ""}`}
         fallback={<p role="status">{entry.title} unavailable</p>}
       >
         <OwnedAccessory entry={entry} registry={registry} {...props} />
@@ -50,7 +51,11 @@ function OwnedAccessory({
     useState<Pick<ComposerAccessoryProps, "canOpen" | "open">>();
   useLayoutEffect(() => {
     let live = true;
-    const active = () => live && registry.snapshot().includes(entry);
+    const session = props.session;
+    const active = () =>
+      live &&
+      registry.snapshot().includes(entry) &&
+      current.current.session === session;
     setCommands({
       canOpen: (target) => active() && current.current.canOpen(target),
       open: (target) => active() && current.current.open(target),
@@ -58,7 +63,7 @@ function OwnedAccessory({
     return () => {
       live = false;
     };
-  }, [entry, registry]);
+  }, [entry, registry, props.session]);
   const Accessory = entry.component;
   return commands ? <Accessory {...props} {...commands} /> : null;
 }

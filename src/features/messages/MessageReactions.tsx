@@ -340,10 +340,12 @@ export function MessageReactions(
   props: Props & {
     onFocusedRemoval?: () => void;
     profiles?: ReadonlyMap<string, Profile>;
+    displayedReactions?: readonly MessageReaction[];
   },
 ) {
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
+  const reactions = props.displayedReactions ?? row.reactions;
   const action = useReactionAction(props);
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -375,7 +377,7 @@ export function MessageReactions(
       }}
     >
       {active &&
-        row.reactions.map((reaction, index) => {
+        reactions.map((reaction, index) => {
           const key = JSON.stringify([reaction.content, reaction.emoji?.url]);
           const slideFrom =
             preview?.key === key ? preview.fromIndex : preview?.index;
@@ -419,7 +421,7 @@ export function MessageReactions(
             />
           );
         })}
-      {active && row.reactions.length > 0 && !props.disabled && (
+      {active && reactions.length > 0 && !props.disabled && (
         <span
           className={styles.inlineReactionTool}
           data-testid="inline-add-reaction"

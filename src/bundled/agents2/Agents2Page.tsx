@@ -597,21 +597,19 @@ function NameField({
     });
   };
   return (
-    <div className={styles.nameInput}>
-      <Field label="Name" labelVisibility="hidden" error={error || undefined}>
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-            if (event.key === "Escape") {
-              setDraft(name);
-              event.currentTarget.blur();
-            }
-          }}
-        />
-      </Field>
-    </div>
+    <Field label="Name" labelVisibility="hidden" error={error || undefined}>
+      <Input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            setDraft(name);
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </Field>
   );
 }

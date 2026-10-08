@@ -81,7 +81,7 @@
 .tileName {
   max-width: 100%;
   overflow: hidden;
-  font-weight: 600;
+  font-weight: var(--type-weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -129,9 +129,6 @@
 .rail .portraitLarge {
   width: 6rem;
   height: 6rem;
-}
-.nameInput input {
-  font-weight: 600;
 }
 .facts {
   display: grid;

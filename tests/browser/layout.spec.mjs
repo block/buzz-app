@@ -60,6 +60,7 @@ const destinationTitles = [
   "Bestie",
   "Projects",
   "Agents",
+  "Agents2",
   "Sessions",
   "Workflows",
 ];
@@ -1047,6 +1048,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Bestie",
     "Projects",
     "Agents",
+    "Agents2",
     "Sessions",
     "Workflows",
   ];
@@ -1127,6 +1129,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Inbox",
     "Bestie",
     "Agents",
+    "Agents2",
     "Sessions",
     "Workflows",
   ]);

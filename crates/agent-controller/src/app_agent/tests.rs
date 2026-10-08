@@ -51,7 +51,7 @@ fn creates_saves_and_removes_an_identity_with_its_key() {
     let (agents, agent) = created(dir.path(), &credentials);
     assert_eq!(agent.relay, "wss://relay.example");
     assert_eq!(agent.events_url(), "https://relay.example/events");
-    assert_eq!(agents.list().unwrap(), [agent.clone()]);
+    assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
     assert_eq!(agents.get(&agent.pubkey).unwrap(), agent);
     assert!(agent.read_key(&credentials).is_ok());
     agents.remove(&agent.pubkey, &credentials).unwrap();

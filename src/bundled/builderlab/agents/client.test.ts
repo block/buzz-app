@@ -70,12 +70,19 @@ it("rejects an owner proof from a different community identity before attestatio
 
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: [{ ...row, agent_instructions: "Review carefully." }],
+    }),
+  );
   expect(await h.client.list(h.signal)).toEqual([
     {
       id: row.agent_id,
       name: row.agent_name,
       pubkey: row.agent_pubkey,
       status: "Active",
+      instructions: "Review carefully.",
     },
   ]);
   expect(h.host.request).toHaveBeenCalledWith({
@@ -86,7 +93,7 @@ it("lists the authenticated account through the configured native host", async (
       "Content-Type": "application/json",
       "X-BB-Session-Credential": "secret",
     },
-    body: "{}",
+    body: JSON.stringify({ include_instructions: true }),
   });
 });
 it.each([{}, { agents: [] }])(
@@ -122,6 +129,7 @@ it.each([
   { status: 1, agents: {} },
   { status: 1, agents: [null] },
   { status: 1, agents: [{ ...row, agent_pubkey: "bad" }] },
+  { status: 1, agents: [{ ...row, agent_instructions: 42 }] },
 ])("rejects invalid responses %j", async (value) => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValue(response(value));
@@ -188,6 +196,65 @@ const remoteAgent = {
   pubkey: row.agent_pubkey,
   status: "Active",
 } as const;
+it("replaces instructions verbatim through the authenticated host", async () => {
+  const h = await fixture();
+  const instructions = "  Review carefully.\nPreserve formatting.\n";
+  vi.mocked(h.host.request).mockResolvedValue(response({}));
+  await h.client.updateInstructions(remoteAgent, instructions, h.signal);
+  expect(h.host.request).toHaveBeenCalledWith({
+    url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent",
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-BB-Session-Credential": "secret",
+    },
+    body: JSON.stringify({
+      agent_pubkey: row.agent_pubkey,
+      agent_instructions: instructions,
+    }),
+  });
+});
+it.each([
+  { instructions: "", purpose: "empty clearing", accepted: true },
+  {
+    instructions: "x".repeat(20_000),
+    purpose: "maximum length",
+    accepted: true,
+  },
+  { instructions: "   ", purpose: "blank", accepted: false },
+  { instructions: "x".repeat(20_001), purpose: "oversized", accepted: false },
+])(
+  "validates $purpose instructions before dispatch",
+  async ({ instructions, accepted }) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValue(response({}));
+    if (accepted) {
+      await h.client.updateInstructions(remoteAgent, instructions, h.signal);
+      expect(h.host.request).toHaveBeenCalledOnce();
+      expect(
+        JSON.parse(vi.mocked(h.host.request).mock.calls[0]?.[0].body ?? "{}")
+          .agent_instructions,
+      ).toBe(instructions);
+    } else {
+      await expect(
+        h.client.updateInstructions(remoteAgent, instructions, h.signal),
+      ).rejects.toThrow("Instructions must");
+      expect(h.host.request).not.toHaveBeenCalled();
+    }
+  },
+);
+it("does not edit inactive agents or invalid identities", async () => {
+  const h = await fixture();
+  for (const agent of [
+    { ...remoteAgent, status: "Unattested" as const },
+    { ...remoteAgent, pubkey: "bad" },
+  ])
+    await expect(
+      h.client.updateInstructions(agent, "Review carefully.", h.signal),
+    ).rejects.toThrow("Only Active agents");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 it("deletes through the configured authenticated host", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValue(

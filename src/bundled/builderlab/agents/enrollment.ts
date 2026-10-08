@@ -114,7 +114,7 @@ export function createEnrollment(
   }
   function remember(context: Enrollment, agent: RemoteAgent) {
     if (deleting(agent))
-      throw new Error("Agent deletion is pending. Retry Delete agent.");
+      throw new Error("Agent deletion is pending. Retry Delete.");
     if (context)
       localStorage.setItem(storageKey(context.key, agent.pubkey), "pending");
   }
@@ -317,7 +317,7 @@ export function createEnrollment(
               outbox,
               id,
               signal,
-              "Record deletion is not confirmed. Retry Delete agent.",
+              "Record deletion is not confirmed. Retry Delete.",
             );
           } finally {
             if (
@@ -333,9 +333,7 @@ export function createEnrollment(
           await session.agentChoices.refresh();
           check();
           if (session.agentLibrary.snapshot().status !== "ready")
-            throw new Error(
-              "Community discovery is pending. Retry Delete agent.",
-            );
+            throw new Error("Community discovery is pending. Retry Delete.");
         }
         // TODO: Require a successful strong relay-only read proving the exact
         // 30177 coordinate absent before deleting the runtime. An accepted kind 5

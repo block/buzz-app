@@ -17,7 +17,7 @@ import type {
 import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
-import { foldMessages } from "./fold";
+import { foldMessages, deletionApplies } from "./fold";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -191,6 +191,7 @@ export function createUnread({
   reader,
   viewer,
   relayAuthor,
+  signingAuthority,
   workflowAuthority,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
@@ -200,6 +201,7 @@ export function createUnread({
   reader: RelayReader;
   viewer: string;
   relayAuthor?: string;
+  signingAuthority?: string;
   workflowAuthority?: string | undefined;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
@@ -396,9 +398,15 @@ export function createUnread({
     ownThreads.clear();
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
-      for (const [name, id] of event.tags)
-        if (name === "e" && id && events.get(id)?.pubkey === event.pubkey)
-          tombstones.add(id);
+      for (const [name, id] of event.tags) {
+        const target = id ? events.get(id) : undefined;
+        if (
+          name === "e" &&
+          target &&
+          deletionApplies(event, target, signingAuthority)
+        )
+          tombstones.add(target.id);
+      }
     }
     for (const event of events.values()) {
       if (!contentKind(event) || tombstones.has(event.id)) continue;

@@ -840,6 +840,9 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     workflowAuthority: transport?.archiveAuthority,
+    ...(transport?.archiveAuthority
+      ? { signingAuthority: transport.archiveAuthority }
+      : {}),
     notify,
     follows: browserThreadFollows(readScope),
   });

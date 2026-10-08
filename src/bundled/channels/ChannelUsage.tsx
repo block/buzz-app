@@ -4,6 +4,7 @@ import { useListedChannel } from "../../features/relay/listed-channel";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Select } from "../../shared/design-system/ui/Select";
 import { useUsageArchive } from "../../features/agents/use-usage-archive";
 import type { UsageRecord, UsageSession } from "../../features/agents/usage";
 import styles from "./ChannelUsage.module.css";
@@ -143,10 +144,10 @@ export function ChannelUsage({
   const resolve = useChannelIdentityNames(session, channelId);
   const [agent, setAgent] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   if (!allowed || !session.agentActivity?.archive) return null;
   const agents = [...new Set(usage.groups.map((group) => group.agent))];
-  const groups = usage.groups.filter((group) => group.agent === agent);
+  const activeAgent = agent && agents.includes(agent) ? agent : null;
+  const groups = usage.groups.filter((group) => group.agent === activeAgent);
   const group =
     groups.find((group) => group.key === selected) ??
     (groups.length === 1 ? groups[0] : undefined);
@@ -155,35 +156,32 @@ export function ChannelUsage({
     <div className={styles.owner}>
       <fieldset className={styles.strip} aria-label="Channel session usage">
         <span>Channel session usage</span>
-        {agents.slice(0, showAll ? undefined : 3).map((id) => {
-          const sessions = usage.groups.filter((group) => group.agent === id);
-          return (
-            <Button
-              key={id}
-              size="sm"
-              variant={agent === id ? "subtle" : "ghost"}
-              aria-expanded={agent === id}
-              onClick={() => {
-                setAgent(agent === id ? null : id);
-                setSelected(null);
-              }}
-            >
-              {label(id)} ·{" "}
-              {sessions.length === 1
-                ? total(sessions[0]?.latest ?? null)
-                : `${sessions.length} sessions`}
-            </Button>
-          );
-        })}
-        {agents.length > 3 && (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => setShowAll(!showAll)}
-          >
-            {showAll ? "Fewer agents" : "More agents"}
-          </Button>
-        )}
+        <div className={styles.agentPicker}>
+          <Select
+            label="Agent usage"
+            variant="compact"
+            value={activeAgent ?? ""}
+            placeholder="Select agent"
+            groups={[
+              {
+                label: "",
+                options: agents.map((id) => {
+                  const sessions = usage.groups.filter(
+                    (group) => group.agent === id,
+                  );
+                  return {
+                    value: id,
+                    label: `${label(id)} · ${sessions.length === 1 ? total(sessions[0]?.latest ?? null) : `${sessions.length} sessions`}`,
+                  };
+                }),
+              },
+            ]}
+            onValueChange={(id) => {
+              setAgent(id);
+              setSelected(null);
+            }}
+          />
+        </div>
         {usage.status === "loading" && (
           <span role="status">Loading saved usage…</span>
         )}
@@ -191,10 +189,10 @@ export function ChannelUsage({
           Refresh
         </Button>
       </fieldset>
-      {agent && (
+      {activeAgent && (
         <section className={styles.details} aria-label="Session usage details">
           <div className={styles.heading}>
-            <h2>Session usage · {label(agent)}</h2>
+            <h2>Session usage · {label(activeAgent)}</h2>
             <Button size="xs" variant="ghost" onClick={() => setAgent(null)}>
               Close
             </Button>
@@ -245,7 +243,7 @@ export function ChannelUsage({
                   {group.latest?.pricing ?? "Not reported"}
                 </p>
               </details>
-              <Turns group={group} name={label(agent)} />
+              <Turns group={group} name={label(activeAgent)} />
             </div>
           )}
         </section>

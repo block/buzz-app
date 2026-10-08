@@ -20,6 +20,10 @@
   color: var(--text-subtle);
   white-space: nowrap;
 }
+.agentPicker {
+  min-width: 0;
+  max-width: min(100%, 20rem);
+}
 .details {
   min-height: 0;
   padding: var(--space-2) var(--space-panel-inset);

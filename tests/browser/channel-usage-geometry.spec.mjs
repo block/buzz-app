@@ -64,9 +64,13 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
   await page.getByRole("menuitem", { name: "View channel usage" }).click();
   const pane = page.getByRole("tabpanel", { name: "Usage" });
   const usage = pane.getByRole("group", { name: "Channel session usage" });
-  const agentPills = usage.getByRole("button", { name: /sessions/ });
-  await expect(agentPills).toHaveCount(3);
-  await agentPills.first().click();
+  const picker = usage.getByRole("combobox", { name: "Agent usage" });
+  await picker.click();
+  await expect(page.getByRole("option", { name: /sessions/ })).toHaveCount(3);
+  const choices = await page
+    .getByRole("option", { name: /sessions/ })
+    .allTextContents();
+  await page.getByRole("option", { name: choices[0] }).click();
   const sessions = pane.getByRole("group", { name: "Select session" });
   await sessions.getByRole("button", { name: "Session 2" }).click();
   await expect(
@@ -103,8 +107,9 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
   await page.setViewportSize({ width: 1200, height: 400 });
   const owner = usage.locator("..");
   for (const index of [1, 2, 0]) {
-    await agentPills.nth(index).click();
-    await expect(agentPills.nth(index)).toBeInViewport();
+    await picker.click();
+    await page.getByRole("option", { name: choices[index] }).click();
+    await expect(picker).toBeInViewport();
     expect(
       await owner.evaluate((element) => element.scrollWidth),
     ).toBeLessThanOrEqual(

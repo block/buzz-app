@@ -739,6 +739,9 @@ unidentified records. The latest cumulative snapshot is selected by turn sequenc
 turn deltas are shown only when reliable. Unknown counters are not zero and cache
 counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
 
+The Usage tab's agent dropdown shows each agent's latest total or session count;
+selecting an agent reveals its session details.
+
 The channel's **Channel actions → View channel usage** item opens a dedicated
 **Usage** tab in the channel's side pane. It is available only while this
 account has positive access to the current channel and Settings → Agents →

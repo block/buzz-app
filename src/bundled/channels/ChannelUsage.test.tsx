@@ -92,10 +92,12 @@ it("opens the selected agent, requires explicit multi-session selection, and exp
   ];
   const { session } = fixture(records);
   render(<ChannelUsage session={session} channelId="channel" />);
-  expect(await screen.findByText(/2 sessions/)).toBeTruthy();
-  expect(screen.getByText(/30 tokens/)).toBeTruthy();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: /2 sessions/ }));
+  const picker = screen.getByRole("combobox", { name: "Agent usage" });
+  expect(picker.textContent).toContain("Select agent");
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: /2 sessions/ }));
+  expect(picker.textContent).toContain("2 sessions");
   expect(
     screen.getByText("Session totals may include other threads."),
   ).toBeTruthy();
@@ -120,9 +122,11 @@ it("opens the selected agent, requires explicit multi-session selection, and exp
 it("hides decoded usage when the authorized channel disappears", async () => {
   const { session, revoke } = fixture([frame(1, "a", 1, 10)]);
   render(<ChannelUsage session={session} channelId="channel" />);
-  expect(await screen.findByText(/10 tokens/)).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Agent usage" }),
+  ).toBeTruthy();
   revoke();
-  expect(screen.queryByText(/10 tokens/)).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Agent usage" })).toBeNull();
   expect(screen.queryByText("Channel session usage")).toBeNull();
 });
 function PreferredUsage({ session }: { session: RelaySession }) {
@@ -134,7 +138,9 @@ it("unmounts archive reader when usage display is disabled and reloads on enable
   localStorage.clear();
   const { session, archive } = fixture([frame(1, "a", 1, 10)]);
   render(<PreferredUsage session={session} />);
-  expect(await screen.findByText(/10 tokens/)).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Agent usage" }),
+  ).toBeTruthy();
   const reads = vi.mocked(archive.read);
   const before = reads.mock.calls.length;
   act(() => {
@@ -145,6 +151,8 @@ it("unmounts archive reader when usage display is disabled and reloads on enable
   act(() => {
     setChannelUsagePreference(true);
   });
-  expect(await screen.findByText(/10 tokens/)).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Agent usage" }),
+  ).toBeTruthy();
   expect(reads).toHaveBeenCalledTimes(before + 1);
 });

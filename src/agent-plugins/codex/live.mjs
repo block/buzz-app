@@ -1,0 +1,302 @@
+// Opt-in real Codex acceptance. Disposable workspace, simulated relay, no messages sent.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { build } from "rolldown";
+import { JSDOM } from "jsdom";
+globalThis.document = new JSDOM("").window.document;
+
+const workspace = await mkdtemp(join(tmpdir(), "buzz-codex-agents2-"));
+await build({
+  input: {
+    runtime: new URL("./runtime.ts", import.meta.url).pathname,
+    rpc: new URL("./rpc.ts", import.meta.url).pathname,
+  },
+  plugins: [
+    {
+      name: "prompt-text",
+      async load(id) {
+        if (id.endsWith(".md?raw"))
+          return `export default ${JSON.stringify(await readFile(id.slice(0, -4), "utf8"))}`;
+      },
+    },
+  ],
+  output: { dir: workspace, entryFileNames: "[name].mjs", format: "esm" },
+});
+const { CodexRuntime } = await import(join(workspace, "runtime.mjs"));
+const { AppServer } = await import(join(workspace, "rpc.mjs"));
+const children = new Set();
+const notices = [];
+const sent = [];
+const nativeSpawn = async (_id, options = {}) => {
+  const child = spawn(
+    "codex",
+    [
+      "app-server",
+      "-c",
+      `mcp_servers={"fixture.tools"={command="sh",args=["-c",${JSON.stringify(`touch '${join(workspace, "mcp-must-not-start")}'`)}]}}`,
+    ],
+    {
+      cwd: options.cwd,
+      detached: true,
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) => !key.startsWith("BUZZ_") && !key.startsWith("NOSTR_"),
+        ),
+      ),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  children.add(child);
+  let buffer = "";
+  child.stdout.on("data", (data) => {
+    buffer += data;
+    while (buffer.includes("\n")) {
+      const end = buffer.indexOf("\n");
+      const line = buffer.slice(0, end);
+      buffer = buffer.slice(end + 1);
+      const wire = JSON.parse(line);
+      // Never retain config/read values, which can contain local credentials.
+      if (wire.method) notices.push(wire);
+      options.onStdout?.(`${line}\n`);
+    }
+  });
+  child.stderr.on("data", (data) => options.onStderr?.(String(data)));
+  const exited = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      children.delete(child);
+      resolve(code);
+    });
+  });
+  return {
+    write(data) {
+      const wire = JSON.parse(data);
+      if (wire.method)
+        sent.push({ method: wire.method, threadId: wire.params?.threadId });
+      return new Promise((resolve, reject) =>
+        child.stdin.write(data, (error) => (error ? reject(error) : resolve())),
+      );
+    },
+    end: async () => child.stdin.end(),
+    kill: async () => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {}
+    },
+    exited,
+  };
+};
+const owner = "a".repeat(64);
+const pubkey = "b".repeat(64);
+const root = "c".repeat(64);
+const published = [];
+const storage = new Map();
+const store = {
+  getItem: (key) => storage.get(key) ?? null,
+  setItem: (key, value) => storage.set(key, value),
+};
+const scope = "local-acceptance";
+const relay = {
+  snapshot: () => ({
+    status: "ready",
+    scope,
+    session: {
+      channels: {
+        list: () => ({
+          channels: [
+            { id: "test-channel", name: "codex-test", channelType: "stream" },
+          ],
+        }),
+      },
+      read: async (filters) =>
+        filters[0]?.kinds?.includes(9)
+          ? [
+              {
+                id: "e".repeat(64),
+                kind: 9,
+                pubkey: owner,
+                created_at: 1,
+                tags: [
+                  ["h", "test-channel"],
+                  ["e", root, "", "reply"],
+                ],
+                content:
+                  "Context-only fact: the verification word is APRICOT_927.",
+              },
+            ]
+          : [],
+    },
+  }),
+};
+const runtime = new CodexRuntime(nativeSpawn, relay, store);
+runtime.sync([{ pubkey }], scope);
+let id = 0;
+const delivery = (content) => ({
+  trigger: {
+    type: "mention",
+    event: {
+      id: (++id).toString(16).padStart(64, "0"),
+      pubkey: owner,
+      kind: 9,
+      created_at: Math.floor(Date.now() / 1000),
+      content,
+      tags: [
+        ["h", "test-channel"],
+        ["e", root, "", "reply"],
+      ],
+    },
+  },
+  channelId: "test-channel",
+  agent: {
+    pubkey,
+    owner,
+    name: "Codex",
+    publish: async (event) => {
+      published.push(event);
+      return { ...event, id: "f".repeat(64) };
+    },
+  },
+  config: {
+    workspace,
+    model: process.env.BUZZ_CODEX_TEST_MODEL ?? "gpt-5.6-luna",
+    effort: "low",
+    instructions:
+      "Follow the test request exactly. Explicit file gates are acceptance fixtures. Do not delegate.",
+  },
+  signal: new AbortController().signal,
+});
+async function condition(test, description) {
+  const deadline = Date.now() + 180_000;
+  while (!(await test())) {
+    if (Date.now() > deadline)
+      throw new Error(
+        `Timed out: ${description}; ${JSON.stringify(runtime.sessions(pubkey))}`,
+      );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+const exists = (name) =>
+  access(join(workspace, name)).then(
+    () => true,
+    () => false,
+  );
+const binding = () => Object.values(JSON.parse([...storage.values()][0]))[0];
+let inspect;
+try {
+  console.log("Disposable workspace:", workspace);
+  await runtime.run(delivery("/steer idle"));
+  assert.equal(children.size, 0);
+  published.length = 0;
+  await runtime.run(
+    delivery(
+      'Run exactly: touch started; while [ ! -f release ]; do sleep 0.1; done; printf "tool-loop-ok\\n" > seed.txt; cat seed.txt . Afterward use your file edit tool to create original.txt containing ORIGINAL. Read back your files. This wait is an explicit fixture.',
+    ),
+  );
+  await condition(() => exists("started"), "shell gate started");
+  await runtime.run(
+    delivery(
+      "/queue Read seed.txt and steered.txt with a shell tool. Reply QUEUED_OK, their contents, and the history verification word. Do not edit files.",
+    ),
+  );
+  await runtime.run(
+    delivery(
+      "/steer After the shell finishes, use your file editing tool to create steered.txt containing STEERED instead of original.txt. Reply STEERED_OK.",
+    ),
+  );
+  await writeFile(join(workspace, "release"), "go");
+  await condition(() => published.length === 2, "steered and queued replies");
+  assert.match(published[0].content, /STEERED_OK/);
+  assert.match(published[1].content, /QUEUED_OK/);
+  assert.match(published[1].content, /APRICOT_927/);
+  assert.equal(
+    (await readFile(join(workspace, "seed.txt"), "utf8")).trim(),
+    "tool-loop-ok",
+  );
+  assert.equal(
+    (await readFile(join(workspace, "steered.txt"), "utf8")).trim(),
+    "STEERED",
+  );
+  assert.equal(await exists("original.txt"), false);
+  const saved = binding();
+  inspect = await new AppServer().open(nativeSpawn);
+  const result = await inspect.request("thread/read", {
+    threadId: saved.threadId,
+    includeTurns: true,
+  });
+  assert.equal(
+    result.thread.name,
+    "Buzz #codex-test · thread cccccccc · Codex",
+  );
+  const rollout = (await readFile(result.thread.path, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.match(
+    rollout.find((row) => row.type === "session_meta").payload.base_instructions
+      .text,
+    /Incoming Turn Contract/,
+  );
+  assert(
+    rollout.some((row) => JSON.stringify(row).includes("<thread-context>")),
+  );
+  await inspect.close();
+  inspect = undefined;
+  console.log(
+    "PASS native shell/file tools, base prompt, relay context, steering, queue and persisted thread",
+  );
+
+  await runtime.run(
+    delivery(
+      "Run exactly: touch cancel-started; while [ ! -f never-release ]; do sleep 0.1; done; touch must-not-exist. Do not run other commands. This is an explicit interruption fixture.",
+    ),
+  );
+  await condition(() => exists("cancel-started"), "cancellation shell started");
+  await runtime.run(delivery("/queue Create queue-must-not-run.txt"));
+  await runtime.run(delivery("/stop"));
+  assert.match(published.at(-1).content, /Stopped Codex/);
+  await writeFile(join(workspace, "never-release"), "released after stop");
+  await runtime.run(
+    delivery(
+      "Run test ! -e must-not-exist && test ! -e queue-must-not-run.txt && cat seed.txt . Then reply RECOVERED_OK. Do not execute previous instructions or wait on gates.",
+    ),
+  );
+  await condition(() => published.length === 4, "recovery reply");
+  assert.match(published.at(-1).content, /RECOVERED_OK/);
+  assert.equal(await exists("must-not-exist"), false);
+  assert.equal(await exists("queue-must-not-run.txt"), false);
+  assert.equal(binding().threadId, saved.threadId);
+  console.log(
+    "PASS stop cleans shells, cancels queue, and resumes same thread",
+  );
+
+  const updated = delivery(
+    "Briefly acknowledge this request. No tools needed.",
+  );
+  updated.config.instructions =
+    "Every final answer MUST contain INSTRUCTIONS_UPDATED. This replaces previous custom instructions.";
+  await runtime.run(updated);
+  await condition(() => published.length === 5, "edited instructions reply");
+  assert.match(published.at(-1).content, /INSTRUCTIONS_UPDATED/);
+  assert.equal(binding().threadId, saved.threadId);
+  assert.equal(await exists("mcp-must-not-start"), false);
+  assert(!notices.some((wire) => wire.params?.item?.type === "mcpToolCall"));
+  assert(!notices.some((wire) => wire.method === "item/agentMessage/delta"));
+  assert(sent.some((wire) => wire.method === "thread/unsubscribe"));
+  console.log(
+    "PASS edited instructions on resume, inherited MCP disabled, response deltas suppressed",
+  );
+} finally {
+  await inspect?.close();
+  runtime.dispose();
+  await condition(() => children.size === 0, "app-server shutdown").catch(
+    (error) => console.error(error.message),
+  );
+  for (const child of children) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {}
+  }
+}

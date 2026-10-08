@@ -1,0 +1,10 @@
+{
+  "id": "buzz.codex",
+  "name": "Codex",
+  "apiVersion": 1,
+  "host": {
+    "processes": [
+      { "id": "app-server", "program": "codex", "args": ["app-server"] }
+    ]
+  }
+}

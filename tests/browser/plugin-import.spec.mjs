@@ -262,6 +262,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
+      await appearance.screenshot({
+        path: info.outputPath(`appearance-${scale}-${width}-${mode}.png`),
+      });
       // Icon buttons grow with the interface while keeping their square shape.
       await expect(
         page.getByRole("button", { name: "Search Buzz", exact: true }),

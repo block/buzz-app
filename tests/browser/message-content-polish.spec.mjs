@@ -174,7 +174,7 @@ test("file anchors and native download buttons share hover and focus affordances
     await expectReadable(control);
   }
   await specimen(page, "file-download")
-    .getByRole("button", { name: "View Alex Morgan profile", exact: true })
+    .getByRole("button", { name: "More message actions", exact: true })
     .focus();
   await page.keyboard.press(tabKey(browserName));
   await expect(download).toBeFocused();

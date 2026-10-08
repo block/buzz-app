@@ -573,12 +573,10 @@ for (const width of [1492, 1280, 1024, 700, 390])
       await expect(actions).toHaveCSS("opacity", "1");
       if (width >= 640) {
         // Both author headers and headerless continuations end the bar at the
-        // body edge, independent of row padding and toolbar height.
+        // bubble edge, independent of row padding and toolbar height.
         const placement = await row.evaluate((node) => {
           const bar = node.querySelector('[aria-label="Message actions"]');
-          const body = node.querySelector(
-            '[class*="_text_"], [class*="_plainText_"]',
-          );
+          const body = node.querySelector('[class*="_messageBubble_"]');
           return {
             actual: bar.getBoundingClientRect().bottom,
             expected: body.getBoundingClientRect().top,

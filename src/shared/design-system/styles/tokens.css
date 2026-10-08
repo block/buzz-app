@@ -288,9 +288,6 @@
      use is worse than no comment, because it reads as a decision
      someone made. `pnpm census` lists the real readers. */
   --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
-  /* Transparent neutral rims preserve image colors underneath. */
-  --image-edge-light: oklch(0 0 0 / 0.1);
-  --image-edge-dark: oklch(1 0 0 / 0.1);
   --bubble-ink: #ffffff;
   --bubble-neutral: var(--neutral-3);
   --bubble-blue: #2563eb;
@@ -539,7 +536,6 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
-  --border-image: var(--image-edge-light);
   --surface-message: var(--neutral-2);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
@@ -611,7 +607,6 @@
 
 :root[data-color-mode="dark"],
 .dark {
-  --border-image: var(--image-edge-dark);
   --surface-message: var(--neutral-4);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);

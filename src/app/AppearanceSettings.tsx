@@ -111,7 +111,7 @@ export function AppearanceSettings({
             trailing={(label) => (
               <fieldset
                 {...label}
-                className="m-0 grid min-w-0 grid-cols-5 gap-2 border-0 p-0"
+                className="m-0 flex w-48 min-w-0 max-w-full flex-wrap gap-2 border-0 p-0"
               >
                 {BUBBLE_COLORS.map((color) => (
                   <IconButton

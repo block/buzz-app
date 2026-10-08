@@ -27,7 +27,6 @@
 }
 
 .history {
-  margin-block-start: var(--space-3);
   overflow-y: auto;
   min-height: 0;
   display: flex;
@@ -113,6 +112,12 @@
 .section {
   margin-block: var(--space-2);
 }
+.section:first-child {
+  margin-block-start: calc(
+    (var(--size-panel-header) - var(--size-control-sm)) /
+    2
+  );
+}
 .sectionHeading {
   display: flex;
   align-items: center;
@@ -142,7 +147,10 @@
   align-items: center;
   min-width: 0;
 }
+/* The enclosing row owns the hover and selection surface, including actions. */
 .organizedRow > :first-child {
+  --interaction-row-hover: transparent;
+  --interaction-selected: transparent;
   flex: 1;
   min-width: 0;
 }

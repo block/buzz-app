@@ -67,12 +67,24 @@ function client(
  * `holdNext` answers the next coordinate read with the relay state at the
  * time it was issued, but only once released. */
 function coalescingClient(server: ReturnType<typeof relay>, as: Key) {
-  const writes = createOutbox(as.pubkey, server.writer(as), memoryStorage(), {
-    timeoutMs: 1_000,
-  });
+  const writer = server.writer(as);
+  const writes = createOutbox(
+    as.pubkey,
+    {
+      ...writer,
+      publish(event: RelayEvent) {
+        publishes++;
+        return writer.publish(event);
+      },
+    },
+    memoryStorage(),
+    { timeoutMs: 1_000 },
+  );
   const base = server.reader(as);
   let gate: Promise<void> | undefined;
+  let failing = false;
   let issued = 0;
+  let publishes = 0;
   const transport: ReadTransport = {
     viewer: as.pubkey,
     relayAuthor: "relay",
@@ -81,6 +93,10 @@ function coalescingClient(server: ReturnType<typeof relay>, as: Key) {
       const events = await base.read(filters);
       if (!filters[0]?.["#d"]) return events;
       issued++;
+      if (failing) {
+        failing = false;
+        throw new Error("offline");
+      }
       const wait = gate;
       gate = undefined;
       await wait;
@@ -99,6 +115,10 @@ function coalescingClient(server: ReturnType<typeof relay>, as: Key) {
     writes,
     catalog: catalog.queries,
     issued: () => issued,
+    publishes: () => publishes,
+    failNext() {
+      failing = true;
+    },
     holdNext() {
       let release = () => {};
       gate = new Promise((resolve) => (release = resolve));
@@ -594,6 +614,42 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
       .snapshot()
       .filter((item) => item.event.kind === kind);
     expect(own.map((item) => item.event.id)).toEqual([id]);
+  });
+
+  it("a Retry during refresh reconciliation re-reads without resending", async () => {
+    const server = relay();
+    const a = coalescingClient(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const release = server.hold();
+    const id = await a.catalog.publish(kind, "x", true, body);
+    a.failNext();
+    release();
+    await settled(a.writes, id);
+    expect(a.catalog.state(kind, "x").change?.stalled).toBe(true);
+    expect(a.publishes()).toBe(1);
+    // A refresh starts a strong confirmation read that stays pending.
+    const read = a.holdNext();
+    const issued = a.issued();
+    const refreshed = a.catalog.refresh();
+    for (let i = 0; i < 50 && a.issued() === issued; i++) await flush();
+    expect(a.issued()).toBe(issued + 1);
+    expect(a.catalog.state(kind, "x").change?.stalled).toBeUndefined();
+    // A Retry rendered before the refresh still only reconciles.
+    a.catalog.retry(id);
+    a.catalog.retry(id);
+    await flush();
+    expect(a.publishes()).toBe(1);
+    read();
+    await refreshed;
+    for (let i = 0; i < 5; i++) await flush();
+    expect(a.catalog.state(kind, "x")).toEqual({
+      shared: true,
+      change: { operation: id, shared: true, delivery: "accepted" },
+    });
+    a.catalog.retry(id);
+    await flush();
+    expect(a.publishes()).toBe(1);
   });
 
   it("shares and unshares maximum-size content through the outbox", async () => {

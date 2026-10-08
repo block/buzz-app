@@ -265,8 +265,8 @@ export function createCommunityCatalog({
         for (const event of events) if (event.pubkey === viewer) retain(event);
         status = "ready";
         error = undefined;
-        publish();
         unconfirmed.clear();
+        publish();
         return verifyAccepted();
       })
       .catch(() => {
@@ -412,9 +412,13 @@ export function createCommunityCatalog({
         return id;
       },
       retry(operation: string) {
-        // An accepted change only needs a fresh confirmation, not a resend.
-        if (unconfirmed.delete(operation)) {
-          publish();
+        const item = localCatalog().find(
+          (entry) => entry.event.id === operation,
+        );
+        // The relay already took an accepted or seen change: re-read its
+        // head, never resend it, even if a refresh cleared the marker.
+        if (item && delivery(item) === "accepted") {
+          if (unconfirmed.delete(operation)) publish();
           void verifyAccepted();
         } else outbox?.retry(operation);
       },

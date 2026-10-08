@@ -23,6 +23,9 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 
+const scope = (channelId: string, threadRootId?: string) =>
+  JSON.stringify(threadRootId ? [channelId, threadRootId] : [channelId]);
+
 export function ActivityPanel({
   relay,
   target = "",
@@ -68,12 +71,16 @@ export function ActivityDetails({
     [snapshot.records, snapshot.historyAgents],
   );
   const [selected, select] = useState(selection?.agent ?? "");
-  // "" is every conversation, a channel ID is the whole channel, and
-  // `channel thread` is one thread (IDs contain no spaces).
+  // "" is every conversation, [channel] the whole channel and [channel, root]
+  // one thread; JSON keeps any channel ID intact.
   const [conversation, selectConversation] = useState(
-    [selection?.channelId, selection?.threadRootId].filter(Boolean).join(" "),
+    selection?.channelId
+      ? scope(selection.channelId, selection.threadRootId)
+      : "",
   );
-  const [channelId = "", threadRootId] = conversation.split(" ");
+  const [channelId = "", threadRootId] = conversation
+    ? (JSON.parse(conversation) as string[])
+    : [];
   const agentChoices = useMemo(
     () => [...new Set([...agents, ...(selected ? [selected] : [])])],
     [agents, selected],
@@ -130,29 +137,44 @@ export function ActivityDetails({
     );
   }, [records]);
   const [view, setView] = useState<"transcript" | "raw">("transcript");
-  // Threads are discovered from loaded turns and labelled by their first turn.
+  // Threads are discovered from loaded turns, timed by their first loaded turn
+  // and named by their first loaded prompt.
   const threads = useMemo(() => {
-    const found = new Map<string, string>();
+    const found = new Map<
+      string,
+      {
+        channelId: string;
+        root: string;
+        time?: string;
+        text?: string | undefined;
+      }
+    >();
     for (const turn of activityTranscript(snapshot.records, { agent }).turns) {
-      const key = `${turn.channelId} ${turn.threadRootId}`;
-      if (!turn.channelId || !turn.threadRootId || found.has(key)) continue;
-      const prompt = turn.items.find((item) => item.type === "prompt");
-      const text =
-        prompt?.type === "prompt"
-          ? prompt.text.split("\n").find(Boolean)?.slice(0, 60)
-          : undefined;
-      found.set(
-        key,
-        `${new Date(turn.startedAt).toLocaleString(undefined, {
+      if (!turn.channelId || !turn.threadRootId) continue;
+      const key = scope(turn.channelId, turn.threadRootId);
+      const thread = found.get(key) ?? {
+        channelId: turn.channelId,
+        root: turn.threadRootId,
+        time: new Date(turn.startedAt).toLocaleString(undefined, {
           dateStyle: "short",
           timeStyle: "short",
-        })} · ${text || `thread ${turn.threadRootId.slice(0, 8)}`}`,
-      );
+        }),
+      };
+      found.set(key, thread);
+      const prompt = turn.items.find((item) => item.type === "prompt");
+      if (prompt?.type === "prompt")
+        thread.text ||= prompt.text.split("\n").find(Boolean)?.slice(0, 60);
     }
     if (threadRootId && !found.has(conversation))
-      found.set(conversation, `thread ${threadRootId.slice(0, 8)}`);
-    return found;
-  }, [snapshot.records, agent, threadRootId, conversation]);
+      found.set(conversation, { channelId, root: threadRootId });
+    return [...found].map(([key, { channelId, root, time, text }]) => ({
+      key,
+      channelId,
+      label: [time, text || `thread ${root.slice(0, 8)}`]
+        .filter(Boolean)
+        .join(" · "),
+    }));
+  }, [snapshot.records, agent, channelId, threadRootId, conversation]);
   const transcript = useMemo(
     () =>
       activityTranscript(snapshot.records, {
@@ -423,12 +445,12 @@ export function ActivityDetails({
                     label: channelName(id),
                     options: [
                       {
-                        value: id,
+                        value: scope(id),
                         label: `${channelName(id)} · whole channel, including threads`,
                       },
-                      ...[...threads]
-                        .filter(([key]) => key.startsWith(`${id} `))
-                        .map(([key, label]) => ({
+                      ...threads
+                        .filter((thread) => thread.channelId === id)
+                        .map(({ key, label }) => ({
                           value: key,
                           label: `${channelName(id)} › ${label}`,
                         })),

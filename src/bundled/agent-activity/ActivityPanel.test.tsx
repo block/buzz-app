@@ -314,3 +314,36 @@ it("keeps focus on a reply link while activity updates", () => {
   expect(within(panel).getByRole("link", { name: "docs" })).toBe(link);
   expect(link).toHaveFocus();
 });
+
+it("keeps channel IDs with spaces and names threads by a later prompt", async () => {
+  const { session, send } = fixture();
+  const inChannel = (event: object) => ({ ...event, channelId: "a b" });
+  send([
+    // The first loaded turn has no prompt; a later one names the thread.
+    inChannel(frame("old", "turn_liveness", { threadRootEventId: root })),
+    inChannel(frame("new", "turn_started", { threadRootEventId: root })),
+    inChannel(frame("new", "acp_write", prompt("named later"))),
+    inChannel(frame("new", "turn_completed")),
+    inChannel(frame("main", "turn_started", {})),
+    inChannel(frame("main", "acp_write", prompt("channel talk"))),
+  ]);
+  render(
+    <ActivityDetails
+      session={session}
+      selection={{ agent, channelId: "a b", threadRootId: root }}
+    />,
+  );
+  const user = userEvent.setup();
+  const panel = screen.getByRole("region", { name: "Agent activity" });
+  const conversation = within(panel).getByRole("combobox", {
+    name: "Conversation",
+  });
+  expect(conversation).toHaveTextContent(/^#a b › .+ · named later$/);
+  expect(within(panel).getByText("named later")).toBeVisible();
+  expect(within(panel).queryByText("channel talk")).toBeNull();
+  await user.click(conversation);
+  await user.click(
+    await screen.findByRole("option", { name: /^#a b · whole channel/ }),
+  );
+  expect(within(panel).getByText("channel talk")).toBeVisible();
+});

@@ -739,7 +739,10 @@ unidentified records. The latest cumulative snapshot is selected by turn sequenc
 turn deltas are shown only when reliable. Unknown counters are not zero and cache
 counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
 
-The first archive page loads when a positively accessible thread opens. Later
+The first archive page loads when a positively accessible thread opens and the
+Settings → Agents → Show channel session usage preference is on (the default).
+Turning the preference off unmounts the display and stops reads in open threads;
+it does not change metric capture or retention. Later
 pages require **Load more**; a page without channel matches does not prove the
 archive has none. **Refresh** re-reads the newest page; neither action fetches
 relay history. The client retains at most 2,000 decoded records while this thread

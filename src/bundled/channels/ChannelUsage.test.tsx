@@ -5,6 +5,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { ArchiveHost, ArchivePage } from "../../features/archive/types";
 import { ChannelUsage } from "./ChannelUsage";
+import {
+  setChannelUsagePreference,
+  useChannelUsagePreference,
+} from "../../features/agents/channel-usage-preference";
 const key = (n: number) => n.toString(16).padStart(64, "0");
 const frame = (
   agent: number,
@@ -120,4 +124,27 @@ it("hides decoded usage when the authorized channel disappears", async () => {
   revoke();
   expect(screen.queryByText(/10 tokens/)).toBeNull();
   expect(screen.queryByText("Channel session usage")).toBeNull();
+});
+function PreferredUsage({ session }: { session: RelaySession }) {
+  return useChannelUsagePreference() ? (
+    <ChannelUsage session={session} channelId="channel" />
+  ) : null;
+}
+it("unmounts archive reader when usage display is disabled and reloads on enable", async () => {
+  localStorage.clear();
+  const { session, archive } = fixture([frame(1, "a", 1, 10)]);
+  render(<PreferredUsage session={session} />);
+  expect(await screen.findByText(/10 tokens/)).toBeTruthy();
+  const reads = vi.mocked(archive.read);
+  const before = reads.mock.calls.length;
+  act(() => {
+    setChannelUsagePreference(false);
+  });
+  expect(screen.queryByText("Channel session usage")).toBeNull();
+  expect(reads).toHaveBeenCalledTimes(before);
+  act(() => {
+    setChannelUsagePreference(true);
+  });
+  expect(await screen.findByText(/10 tokens/)).toBeTruthy();
+  expect(reads).toHaveBeenCalledTimes(before + 1);
 });

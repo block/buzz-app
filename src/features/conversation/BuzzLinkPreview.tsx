@@ -6,6 +6,7 @@ import {
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   LightningIcon,
   LockIcon,
@@ -169,6 +170,44 @@ function PreviewContent({
         {messagePreviewText(message.content) ||
           (message.attachments.length ? "Attachment" : "Empty message")}
       </span>
+    </>
+  );
+}
+
+/** Hover card for a channel-only link. Discovery supplies the summary; a
+ * nonmember sees an open channel's public metadata and never its roster. */
+export function ChannelLinkPreview({
+  channel,
+}: {
+  channel: Pick<
+    ChannelSummary,
+    "name" | "description" | "private" | "readOnly" | "members"
+  >;
+}) {
+  const Icon = channelIcon(channel);
+  const details = [
+    channel.private ? "Private channel" : "Public channel",
+    channel.readOnly ? "Not joined" : "Joined",
+    channel.members?.length
+      ? `${channel.members.length} ${channel.members.length === 1 ? "member" : "members"}`
+      : "",
+  ].filter(Boolean);
+  return (
+    <>
+      <span className={styles.byline}>
+        <Icon aria-hidden="true" size={20} />
+        <span className={styles.metadata}>
+          <span className={styles.author}>
+            <strong>{channel.name}</strong>
+          </span>
+          <span className={styles.channel}>
+            <span>{details.join(" · ")}</span>
+          </span>
+        </span>
+      </span>
+      {channel.description && (
+        <span className={styles.message}>{channel.description}</span>
+      )}
     </>
   );
 }

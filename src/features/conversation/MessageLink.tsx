@@ -27,7 +27,8 @@ import {
   LinkLabelContext,
   LinkContentContext,
 } from "./LinkLabelContext";
-import { BuzzLinkPreview } from "./BuzzLinkPreview";
+import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
+import { useChannelReference } from "./channel-reference";
 import { messageViewKey } from "../messages/view-key";
 import styles from "./LinkPreview.module.css";
 
@@ -86,7 +87,29 @@ export function MessageLink({
   const [previewOpen, setPreviewOpen] = useState(false);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
-  const display = label ?? directoryLabel;
+  const internal = isBuzzLink(url);
+  const parsed = internal ? parseBuzzLink(url) : null;
+  const destination = parsed?.format === "legacy" ? parsed : undefined;
+  // Channel-only links name a channel the reader may not have joined.
+  const reference = useChannelReference(
+    session?.channels,
+    destination && !destination.messageId && !destination.threadRootId
+      ? destination.channelId
+      : undefined,
+  );
+  // DMs and sessions keep their existing presentation.
+  const named =
+    reference.channel &&
+    !reference.channel.hidden &&
+    reference.channel.channelType !== "dm" &&
+    reference.channel.channelType !== "session"
+      ? reference.channel
+      : undefined;
+  const withheld = reference.unavailable;
+  const shown = withheld ? "Private channel" : children;
+  const display = withheld
+    ? "Private channel"
+    : (label ?? directoryLabel ?? (named ? `#${named.name}` : undefined));
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -113,9 +136,6 @@ export function MessageLink({
       setCopying(false);
     }
   }
-  const internal = isBuzzLink(url);
-  const parsed = internal ? parseBuzzLink(url) : null;
-  const destination = parsed?.format === "legacy" ? parsed : undefined;
   const preview =
     session && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
@@ -165,11 +185,7 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const content = Content ? (
-      <Content url={url} />
-    ) : (
-      (children ?? display ?? url)
-    );
+    const content = Content ? <Content url={url} /> : (shown ?? display ?? url);
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
@@ -177,7 +193,13 @@ export function MessageLink({
         href={url}
         aria-label={display}
         data-link-label={label ?? ""}
-        title={!preview ? url : undefined}
+        title={
+          withheld
+            ? "Private channel. You aren’t a member, or it no longer exists."
+            : !preview && !named
+              ? url
+              : undefined
+        }
         className={entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
@@ -229,6 +251,20 @@ export function MessageLink({
         </ContextMenuRoot>
       );
     }
+    if (active && interactive && named && session)
+      return (
+        <PreviewCard
+          trigger={element}
+          link={<a href={url} {...navigation} />}
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          side="top"
+          className={styles.popup ?? ""}
+          aria-label="Channel preview"
+        >
+          <ChannelLinkPreview channel={named} />
+        </PreviewCard>
+      );
     return active && interactive && preview && session ? (
       <PreviewCard
         trigger={element}
@@ -279,9 +315,11 @@ export function MessageLink({
     </>
   );
   return (
-    <LinkChannelPrivateContext value={channelPrivate}>
+    <LinkChannelPrivateContext
+      value={channelPrivate || withheld || !!named?.private}
+    >
       <LinkLabelContext value={display}>
-        <LinkContentContext value={children}>{result}</LinkContentContext>
+        <LinkContentContext value={shown}>{result}</LinkContentContext>
       </LinkLabelContext>
     </LinkChannelPrivateContext>
   );

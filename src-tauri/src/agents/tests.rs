@@ -1267,8 +1267,8 @@ mod overlap {
         drop(admission);
         let release = async {
             let stopped = stopping.await;
-            // Stop was already queued behind preparation; cancellation is now
-            // checked before opening credentials after tool discovery.
+            // A Stop queued behind Start preparation cancels Start before
+            // credential access after tool discovery.
             assert!(gate.idle(), "cancelled Start opened credentials");
             assert!(
                 !stopped
@@ -2842,7 +2842,7 @@ async fn claude_auth_uses_the_discovered_node_path() {
         .env(FIXTURE, root.path())
         .env("HOME", root.path())
         .env("SHELL", shell)
-        .env("PATH", "/nonexistent-pr709-tools")
+        .env("PATH", "/nonexistent-inherited-tools")
         .output()
         .unwrap();
     assert!(

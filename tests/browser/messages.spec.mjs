@@ -631,14 +631,14 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(draft).toHaveJSProperty("value", "");
     await choose("Switch scope");
     await expect(draft).toHaveJSProperty("value", "keep first draft");
-    for (const [index, kind] of [9, 40002].entries()) {
-      await page.evaluate((value) => window.messagesFixture.deep(value), kind);
-      await expect(history.locator("[data-message-id]")).toHaveCount(
-        64 + index,
+    for (const kind of [9, 40002]) {
+      const id = await page.evaluate(
+        (value) => window.messagesFixture.deep(value),
+        kind,
       );
       const literal = history
-        .getByText("literal deep message", { exact: false })
-        .last();
+        .locator(`[data-message-id="${id}"]`)
+        .getByText("literal deep message", { exact: false });
       await expect(literal).toBeVisible();
       await expect(literal).toHaveCSS("white-space", "pre-wrap");
     }

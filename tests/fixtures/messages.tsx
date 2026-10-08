@@ -442,7 +442,8 @@ Object.assign(window, {
           ? signed(agent, {
               kind,
               content: JSON.stringify({ content }),
-              created_at: 2_000,
+              // Later than the kind 9 row: each arrival is the mounted latest.
+              created_at: 2_001,
               tags: [
                 ["h", channelOne],
                 ["e", roots[0].id, "", "reply"],
@@ -453,6 +454,7 @@ Object.assign(window, {
             ]);
       events.push(event);
       incoming([event]);
+      return event.id;
     },
     live() {
       const event = message(viewer, channelOne, "Live reply", 1000, [

@@ -24,6 +24,7 @@ import type { ChannelMessage } from "../relay/contracts";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
+vi.mock("virtua", () => import("./virtua.testing"));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
   return { useRowProfiles: () => profiles };

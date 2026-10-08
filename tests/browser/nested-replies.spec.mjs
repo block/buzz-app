@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -523,6 +523,11 @@ for (const width of [1492, 1280, 1024, 700, 390])
       }
     };
     await page.setViewportSize({ width, height: 950 });
+    // An opening thread refuses the keyboard until its rows are positioned.
+    await expect(panel.getByLabel("Thread messages")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
     await expandAll();
     // Retain the existing continuation-clock contract on a real same-parent
     // sibling now that crossing a branch deliberately repeats the author.
@@ -561,6 +566,12 @@ for (const width of [1492, 1280, 1024, 700, 390])
           history.clientHeight / 2;
       });
       const restingHeight = (await row.boundingBox()).height;
+      // Virtua ignores the pointer until scrolling stops.
+      await settle(page, panel.getByLabel("Thread messages"));
+      await expect(panel.locator("[data-thread-rows] > ol")).not.toHaveCSS(
+        "pointer-events",
+        "none",
+      );
       await row.hover();
       expect((await row.boundingBox()).height).toBe(restingHeight);
       // Every reply, nested or not, exposes the same full bar. Revealing it must

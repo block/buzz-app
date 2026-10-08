@@ -22,7 +22,7 @@ export type NipOaAuthorization = readonly [
   signature: string,
 ];
 export interface Host {
-  runCommand(id: string): Promise<string | null>;
+  runCommand(id: string, input?: string): Promise<string | null>;
   request(input: HostRequest): Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
     agentPubkey: string,
@@ -101,7 +101,7 @@ export class HostService extends Service implements Host {
     return tag;
   }
 
-  async runCommand(id: string): Promise<string | null> {
+  async runCommand(id: string, input?: string): Promise<string | null> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri()) return null;
     try {
@@ -109,6 +109,7 @@ export class HostService extends Service implements Host {
         id: owner.id,
         revision: owner.revision,
         commandId: id,
+        ...(input === undefined ? {} : { input }),
       });
     } catch {
       return null;

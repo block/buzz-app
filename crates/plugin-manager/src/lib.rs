@@ -18,6 +18,7 @@ pub type Result<T> = std::result::Result<T, String>;
 const LIMIT: u64 = 8 * 1024 * 1024;
 pub const DEFAULT_HOST_COMMAND_OUTPUT_BYTES: u64 = 4096;
 pub const MAX_HOST_COMMAND_OUTPUT_BYTES: u64 = 1024 * 1024;
+pub const MAX_HOST_COMMAND_INPUT_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -42,6 +43,12 @@ pub struct HostCommand {
     pub id: String,
     pub program: String,
     pub args: Vec<String>,
+    #[serde(
+        default,
+        rename = "maxInputBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_input_bytes: Option<u64>,
     #[serde(
         default,
         rename = "maxOutputBytes",
@@ -72,6 +79,9 @@ impl Manifest {
                         byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
                     })
                     || command.args.len() > 16
+                    || command
+                        .max_input_bytes
+                        .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_INPUT_BYTES).contains(&limit))
                     || command
                         .max_output_bytes
                         .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&limit))
@@ -1265,6 +1275,22 @@ mod tests {
         ] {
             let mut invalid = manifest.clone();
             invalid["host"]["commands"][0]["maxOutputBytes"] = limit;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        assert_eq!(old.host.as_ref().unwrap().commands[0].max_input_bytes, None);
+        for limit in [1, 4096, super::MAX_HOST_COMMAND_INPUT_BYTES] {
+            let mut valid = manifest.clone();
+            valid["host"]["commands"][0]["maxInputBytes"] = serde_json::json!(limit);
+            assert!(artifact_from_text(&valid.to_string(), "export const x = 1".into()).is_ok());
+        }
+        for limit in [
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(super::MAX_HOST_COMMAND_INPUT_BYTES + 1),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid["host"]["commands"][0]["maxInputBytes"] = limit;
             assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
         }
         for invalid_origin in [

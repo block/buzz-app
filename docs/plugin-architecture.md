@@ -464,10 +464,10 @@ Plugins can declare host access in `manifest.json`:
 }
 ```
 
-Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
+Plugins declaring `host` in `inject` use `ctx.host.runCommand(id, input?)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
 ID; the program and arguments come only from the plugin's manifest. Native
-execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
+execution uses no shell, accepts no stdin by default, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
 1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
 bound returns `null` without truncation. Existing declarations retain the 4 KiB
@@ -489,6 +489,9 @@ This is a command entry inside `host.commands`. The plugin parses the inventory;
 the host only enforces the declared byte limit.
 
 The direct command invocation has a five-second deadline;
+commands may declare `maxInputBytes` (1–65536) for optional UTF-8 stdin data.
+Undeclared or oversized input is rejected before spawning. Input never changes
+the installed program or arguments, and its delivery shares the existing deadline.
 cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a

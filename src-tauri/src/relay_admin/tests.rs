@@ -1403,3 +1403,286 @@ fn each_dto_field_and_status_is_checked() {
     // Only lifting a restriction may be empty.
     assert!(!shape::valid(&direct, 204, None));
 }
+
+#[tokio::test]
+async fn review_pass2_all_registry_non_global_boundaries_refuse_literal_and_dns() {
+    let witnesses = [
+        "0.0.0.0",
+        "0.255.255.255",
+        "10.0.0.0",
+        "10.255.255.255",
+        "100.64.0.0",
+        "100.127.255.255",
+        "127.0.0.0",
+        "127.255.255.255",
+        "169.254.0.0",
+        "169.254.255.255",
+        "172.16.0.0",
+        "172.31.255.255",
+        "192.0.0.0",
+        "192.0.0.255",
+        "192.0.0.7",
+        "192.0.0.8",
+        "192.0.0.170",
+        "192.0.0.171",
+        "192.0.2.0",
+        "192.0.2.255",
+        "192.88.99.0",
+        "192.88.99.255",
+        "192.88.99.2",
+        "192.168.0.0",
+        "192.168.255.255",
+        "198.18.0.0",
+        "198.19.255.255",
+        "198.51.100.0",
+        "198.51.100.255",
+        "203.0.113.0",
+        "203.0.113.255",
+        "240.0.0.0",
+        "255.255.255.255",
+        "::1",
+        "::",
+        "::ffff:0.0.0.0",
+        "::ffff:255.255.255.255",
+        "64:ff9b:1::",
+        "64:ff9b:1:ffff:ffff:ffff:ffff:ffff",
+        "100::",
+        "100::ffff:ffff:ffff:ffff",
+        "100:0:0:1::",
+        "100::1:ffff:ffff:ffff:ffff",
+        "2001::",
+        "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "2001:0:ffff:ffff:ffff:ffff:ffff:ffff",
+        "2001:2::",
+        "2001:2:0:ffff:ffff:ffff:ffff:ffff",
+        "2001:10::",
+        "2001:1f:ffff:ffff:ffff:ffff:ffff:ffff",
+        "2001:db8::",
+        "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+        "2002::",
+        "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "3fff::",
+        "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "5f00::",
+        "5f00:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "fc00::",
+        "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        "fe80::",
+        "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    ];
+    let fixture = fixture(vec![]).await;
+    let answers = witnesses
+        .iter()
+        .map(|ip| Some(vec![ip.parse().unwrap()]))
+        .collect();
+    let net = Net::custom(Arc::new(Script(Mutex::new(answers))), public);
+    let host = IdentityHost::fixture();
+    let probe = request(json!({"route":"probe"}));
+    for ip in witnesses {
+        let addr: IpAddr = ip.parse().unwrap();
+        assert!(!public(addr), "predicate {ip}");
+        let literal = match addr {
+            IpAddr::V4(v) => format!("https://{v}"),
+            IpAddr::V6(v) => format!("https://[{v}]"),
+        };
+        assert!(admin_origin(&literal).is_err(), "literal {ip}");
+        assert!(
+            run(&net, &host, &fixture, &probe)
+                .await
+                .unwrap_err()
+                .not_sent,
+            "dns {ip}"
+        );
+    }
+    assert!(fixture.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn review_pass3_html_401_and_cut_off_403_still_report_auth_loss() {
+    let fixture = fixture(vec![
+        reply("401 Unauthorized", "text/html", "<html>Sign in</html>"),
+        Reply::Raw(b"HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 999\r\nConnection: close\r\n\r\n{}".to_vec()),
+    ]).await;
+    let net = net(&fixture, vec![lo(); 2]);
+    let host = IdentityHost::fixture();
+    let mut missed = Vec::new();
+    for _ in 0..2 {
+        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
+        assert_eq!(failure.category, Category::Ambiguous);
+        println!("auth loss witness: {failure:?}");
+        if !failure.auth_lost {
+            missed.push(failure.status);
+        }
+    }
+    assert!(
+        missed.is_empty(),
+        "401/403 missed access recheck: {missed:?}"
+    );
+}
+
+#[tokio::test]
+async fn review_pass3_original_native_witnesses_now_refuse_bad_addresses_and_successes() {
+    for ip in ["192.88.99.2", "2001:2::1", "2001:1::4", "3fff::1"] {
+        assert!(!public(ip.parse().unwrap()), "still accepts {ip}");
+        let literal = if ip.contains(':') {
+            format!("https://[{ip}]")
+        } else {
+            format!("https://{ip}")
+        };
+        assert!(admin_origin(&literal).is_err());
+    }
+    let fixture = fixture(vec![
+        reply("200 OK", "application/json", r#"{"gateway":"sign in"}"#),
+        reply("200 OK", "application/json", r#"{"state":"not-an-action"}"#),
+        reply("204 No Content", "application/json", ""),
+    ])
+    .await;
+    let net = net(&fixture, vec![lo(); 3]);
+    let host = IdentityHost::fixture();
+    let probe = request(json!({"route":"probe"}));
+    for request in [&probe, &ban(ID), &ban(ID)] {
+        assert_eq!(
+            run(&net, &host, &fixture, request)
+                .await
+                .unwrap_err()
+                .category,
+            Category::Ambiguous
+        );
+    }
+}
+
+#[tokio::test]
+async fn review_pass3_valid_reason_must_fit_betas_body_limit() {
+    // Adapted from the pass-3 witness: the over-limit body is now refused
+    // before signing instead of being sent and held as ambiguous.
+    let req = request(
+        json!({"route":"resolveReport","id":ID,"action":"timeout","requestId":ID,"reason":"😀".repeat(1000),"expirationSecs":3600}),
+    );
+    let fixture = fixture(vec![reply(
+        "413 Payload Too Large",
+        "text/plain",
+        "length limit exceeded",
+    )])
+    .await;
+    let net = net(&fixture, vec![lo()]);
+    let host = IdentityHost::fixture();
+    let failure = run(&net, &host, &fixture, &req).await.unwrap_err();
+    assert!(failure.not_sent, "{failure:?}");
+    assert_eq!(failure.message, "Reason is too long");
+    assert!(fixture.seen.lock().unwrap().is_empty(), "nothing was sent");
+}
+
+/// Resolve is the only route a valid reason can push past the limit: test it
+/// at exactly 4,096 bytes and one over, with multi-byte characters and JSON escapes in the reason.
+#[test]
+fn write_bodies_are_capped_at_betas_limit_in_bytes() {
+    let origin = Url::parse("https://admin.test").unwrap();
+    let routes = [
+        json!({"route":"resolveReport","id":ID,"action":"timeout","requestId":ID,"expirationSecs":3600}),
+    ];
+    for base in routes {
+        let with = |reason: String| {
+            let mut v = base.clone();
+            v["reason"] = json!(reason);
+            request(v).build(&origin)
+        };
+        // Escapes ("\"" and "\\" become 2 bytes), 2- and 4-byte characters.
+        let mut hit = None;
+        'search: for prefix in ["\"\\é", "\"\\", "\"é", "\\é", "\"", "\\"] {
+            for emoji in (0..=997).rev() {
+                for ascii in 0..=3 {
+                    let reason = format!("{prefix}{}{}", "😀".repeat(emoji), "a".repeat(ascii));
+                    if reason.chars().count() < 1000
+                        && with(reason.clone()).map(|b| b.body.len()) == Ok(route::BODY_MAX)
+                    {
+                        hit = Some(reason);
+                        break 'search;
+                    }
+                }
+            }
+        }
+        let at_limit = hit.unwrap_or_else(|| panic!("no 4096-byte reason for {base}"));
+        assert!(with(at_limit.clone()).is_ok(), "{base}");
+        let over = with(format!("{at_limit}\""));
+        assert_eq!(
+            over.map(|b| b.body.len()),
+            Err("Reason is too long".into()),
+            "{base}"
+        );
+        let over = with(format!("{at_limit}a"));
+        assert!(over.is_err(), "{base}");
+    }
+    // Every other body-bearing route stays under the limit even with its
+    // widest valid input; the cap still guards them.
+    let widest = "😀".repeat(1000);
+    for v in [
+        json!({"route":"reopenReport","id":ID,"requestId":ID,"reason":widest}),
+        json!({"route":"directAction","communityHost":"c.example","action":"timeout","target":PK,"requestId":ID,"expirationSecs":315_360_000,"reason":widest}),
+        json!({"route":"cancelReport","id":ID,"actionId":ID}),
+        json!({"route":"setFeedbackStatus","id":ID,"status":"archived"}),
+        json!({"route":"putOperator","pubkey":PK,"role":"moderator"}),
+    ] {
+        let built = request(v.clone()).build(&origin).unwrap();
+        assert!(
+            !built.body.is_empty() && built.body.len() <= route::BODY_MAX,
+            "{v}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_received_401_or_403_reports_lost_access() {
+    let html = |s: &str| reply(s, "text/html", "<html>Sign in</html>");
+    let cut = |s: &str| {
+        Reply::Raw(format!("HTTP/1.1 {s}\r\ncontent-type: application/json\r\ncontent-length: 999\r\nconnection: close\r\n\r\n{{}}").into_bytes())
+    };
+    let big = |s: &str| {
+        reply(
+            s,
+            "application/json",
+            &format!("\"{}\"", "x".repeat(route::ERROR_CAP + 1)),
+        )
+    };
+    let mut replies = Vec::new();
+    for status in ["401 Unauthorized", "403 Forbidden"] {
+        replies.extend([html(status), cut(status), big(status)]);
+    }
+    // Once through the request path, once through the attachment path.
+    let all: Vec<Reply> = replies
+        .iter()
+        .cloned()
+        .chain(replies.iter().cloned())
+        .collect();
+    let fixture = fixture(all).await;
+    let net = net(&fixture, vec![lo(); replies.len() * 2]);
+    let host = IdentityHost::fixture();
+    for i in 0..replies.len() {
+        let failure = run(&net, &host, &fixture, &ban(ID)).await.unwrap_err();
+        assert_eq!(
+            (failure.category, failure.auth_lost),
+            (Category::Ambiguous, true),
+            "request {i}: {failure:?}"
+        );
+    }
+    let ctx = context(&host, &fixture).await;
+    let attachment = AttachmentRef {
+        feedback_id: ID.into(),
+        sha256: "ab".repeat(32),
+        mime: "image/png".into(),
+        size: 4,
+    };
+    for i in 0..replies.len() {
+        let failure = fetch(
+            &net,
+            &host,
+            &ctx,
+            Some(origin(&fixture)),
+            &attachment,
+            Use::Preview,
+        )
+        .await
+        .unwrap_err();
+        assert!(failure.auth_lost, "attachment {i}: {failure:?}");
+        assert!(matches!(failure.status, Some(401 | 403)), "attachment {i}");
+    }
+}

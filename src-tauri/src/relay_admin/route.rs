@@ -14,6 +14,9 @@ pub(super) const PROBE_CAP: usize = 8 * 1024;
 /// Error envelopes are small; anything bigger is not the relay's envelope.
 pub(super) const ERROR_CAP: usize = 64 * 1024;
 const REASON_MAX: usize = 1000;
+/// beta's admin router refuses larger bodies before its handler runs
+/// (`RequestBodyLimitLayer::new(4096)`), with no API envelope.
+pub(super) const BODY_MAX: usize = 4096;
 const QUERY_MAX: usize = 255;
 const CURSOR_MAX: usize = 1024;
 const MAX_EXPIRATION_SECS: u64 = 10 * 365 * 24 * 60 * 60;
@@ -507,10 +510,15 @@ impl StaffRequest {
                 ("GET", format!("/events/{}", hex64(id)?), None, SUCCESS_CAP)
             }
         };
+        let body = body.map(self::body).unwrap_or_default();
+        if body.len() > BODY_MAX {
+            // Only the free-text reason can grow a body this far.
+            return Err("Reason is too long".into());
+        }
         Ok(Built {
             method,
             url: admin_url(origin, &path, &query)?,
-            body: body.map(self::body).unwrap_or_default(),
+            body,
             success_cap,
         })
     }

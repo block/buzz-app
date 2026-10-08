@@ -2957,6 +2957,85 @@ it("a read reply stays read after a reload that does not load its root", async (
   );
 });
 
+it("a channel mark replaces a message mark whose message is no longer loaded", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 11);
+  h.emit([first]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  lease.dispose();
+  // The save keeps the message's channel with its mark.
+  expect(h.journal()?.homes).toEqual({ [first.id]: "room" });
+  await h.clearCache();
+  h.grant("room");
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+  expect(h.journal()?.homes).toEqual({});
+});
+
+it("finds the channels of marked messages that are not loaded, then drops the covered marks", async () => {
+  const author = keypair();
+  const covered = message(author, "room", "covered", 11);
+  const late = message(author, "room", "late", 40);
+  const missing = "f".repeat(64);
+  const marks = {
+    room: 30,
+    [`msg:${covered.id}`]: 11,
+    [`thread:${covered.id}`]: 12,
+    [`msg:${missing}`]: 12,
+    // No channel mark reaches 40, so this one is not asked for.
+    [`msg:${late.id}`]: 40,
+  };
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // Old saves have no channels, in the journal or the reserve.
+    state: {
+      frontiers: { room: 30, [`msg:${covered.id}`]: 11 },
+      overrides: {},
+    },
+    reserve: Object.fromEntries(
+      Object.entries(marks).filter(
+        ([key]) => key !== "room" && key !== `msg:${covered.id}`,
+      ),
+    ),
+  }));
+  h.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.ids)
+      ? [covered, late].filter((event) =>
+          filters.some((filter) => filter.ids?.includes(event.id)),
+        )
+      : [],
+  );
+  h.grant("room");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect({
+      ...h.journal()?.state.frontiers,
+      ...h.journal()?.reserve,
+    }).toEqual({
+      room: 30,
+      [`msg:${missing}`]: 12,
+      [`msg:${late.id}`]: 40,
+    }),
+  );
+  const asked = h.query.mock.calls.flatMap(([filters]) =>
+    filters.flatMap((filter) => filter.ids ?? []),
+  );
+  expect(asked.sort()).toEqual([covered.id, missing].sort());
+  // Finding channels changes no read, so it publishes nothing.
+  expect(h.journal()?.revision).toBe(0);
+  // Each message is asked for once per session.
+  await h.session.unread.refresh();
+  await flush();
+  expect(
+    h.query.mock.calls.flatMap(([filters]) =>
+      filters.flatMap((filter) => filter.ids ?? []),
+    ),
+  ).toHaveLength(2);
+});
+
 it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
   const read = message(keypair(), "dm", "read", 12);
   // Fill the journal directly: owner tests cover bulk pressure/publication/restart.

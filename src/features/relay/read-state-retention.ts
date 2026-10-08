@@ -10,6 +10,16 @@ export type CoveredFrontier = (
   key: string,
   frontier: (key: string) => number | undefined,
 ) => string | undefined;
+/** The message a mark is about. Message, thread and thread catch-up marks
+ * each name one message (a thread names its root); other marks name none. */
+export function markMessage(key: string): string | undefined {
+  const separator = key.indexOf(":");
+  const kind = key.slice(0, separator);
+  return separator > 0 &&
+    (kind === "msg" || kind === "thread" || kind === "thread-activity")
+    ? key.slice(separator + 1) || undefined
+    : undefined;
+}
 /** Broader marks first: a channel or thread mark covers many messages, so
  * losing one makes old history unread again. Catch-up marks (`activity:`,
  * `thread-activity:`) come next: only this app reads them, so recent catch-up

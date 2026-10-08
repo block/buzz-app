@@ -2243,6 +2243,32 @@ fn pi_version_probe_times_out_and_retires_helpers() {
 
 #[test]
 #[cfg(unix)]
+fn explicit_snapshot_worker_counts_reach_listener_without_imported_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.imported = serde_json::Value::Null;
+    let key = Secret::parse(KEY, PUB).unwrap();
+    fs::write(dir.path().join("exit-listener"), "").unwrap();
+    for count in [1, 4] {
+        a.environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        a.validate().unwrap();
+        let mut command = runtime
+            .command_with_defaults(&a, &key, &deployment_defaults())
+            .unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("worker-count")).unwrap(),
+            count.to_string()
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn worker_environment_override_beats_imported_parallelism_and_removal_restores_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();

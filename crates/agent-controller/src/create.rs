@@ -89,14 +89,31 @@ impl Controller {
             .insert("profilePending".into(), Value::Bool(true));
         self.store.insert(vec![agent])
     }
+    /// Scope memory writes to a saved native-created identity and its owner attestation.
+    pub fn memory_target(&self, id: &str) -> Result<CreationProfile> {
+        let target = self.profile_target(id, false)?;
+        let native = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .is_some_and(|agent| agent.extra.get("nativeCreated") == Some(&Value::Bool(true)));
+        if !native {
+            return Err("Snapshot memory requires a native-created agent".into());
+        }
+        Ok(target)
+    }
     pub fn creation_profile(&self, id: &str) -> Result<CreationProfile> {
+        self.profile_target(id, true)
+    }
+    fn profile_target(&self, id: &str, pending: bool) -> Result<CreationProfile> {
         let agent = self
             .store
             .agents()?
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
-        if agent.extra.get("profilePending") != Some(&Value::Bool(true)) {
+        if pending && agent.extra.get("profilePending") != Some(&Value::Bool(true)) {
             return Err("No pending profile update".into());
         }
         let auth = agent.auth_tag.ok_or("Missing owner authorization")?;

@@ -1544,6 +1544,19 @@ async fn publish_acquired(
     .await
 }
 
+/// Restore only owner-addressed snapshot memory to this saved native identity.
+#[tauri::command]
+pub(crate) async fn agent_control_snapshot_memory_write(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    id: String,
+    entries: Vec<SnapshotMemoryEntry>,
+) -> Result<MemoryWriteResult, String> {
+    snapshot_memory::restore(state.inner().clone(), identity, id, entries).await
+}
+pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
+mod snapshot_memory;
+
 mod profile_http;
 
 #[cfg(test)]

@@ -313,6 +313,11 @@ export function AgentsPage({
                     }}
                     resolveName={resolveName}
                     importDestination={importDestination}
+                    session={
+                      connection.status === "ready"
+                        ? connection.session
+                        : undefined
+                    }
                     createOwner={
                       connection.status === "ready"
                         ? connection.viewer
@@ -328,6 +333,7 @@ export function AgentsPage({
                       label,
                       onUseHere,
                       onImport,
+                      onExport,
                     ) =>
                       state.status === "unavailable" ? (
                         <>
@@ -358,6 +364,7 @@ export function AgentsPage({
                           }
                           onUseHere={onUseHere}
                           onImport={onImport}
+                          onExport={onExport}
                         />
                       ) : (
                         <ManagedAgents
@@ -367,6 +374,7 @@ export function AgentsPage({
                           label={label}
                           edit={edit}
                           duplicate={duplicate}
+                          onExport={onExport}
                           remove={remove}
                           importedId={importedId}
                           control={control}
@@ -401,6 +409,7 @@ function ManagedAgents({
   state,
   edit,
   duplicate,
+  onExport,
   remove,
   importedId,
   control,
@@ -416,6 +425,7 @@ function ManagedAgents({
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;
+  onExport(agent: AgentView): void;
   remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
@@ -466,6 +476,7 @@ function ManagedAgents({
               }
               onEdit={edit}
               onDuplicate={duplicate}
+              onExport={onExport}
               onDelete={control.delete ? remove : undefined}
               onViewProfile={
                 sameCommunityAgents([agent], connection.scope ?? "").length

@@ -48,7 +48,7 @@ pub use runtime::{
     installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,
     ModelContext,
 };
-pub use secret::{Credentials, Secret};
+pub use secret::{validate_snapshot_memory_envelope, Credentials, Secret};
 pub use skills::ensure_buzz_cli_skill;
 pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

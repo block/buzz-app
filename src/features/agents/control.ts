@@ -60,12 +60,16 @@ export interface AgentView {
   respondTo: "owner-only" | "allowlist" | "anyone" | null;
   /** Imported provider backend id; null for local agents. */
   backend: string | null;
+  /** Redacted native effective behavior not representable by standalone snapshots. */
+  snapshotExportLimitations?: string[];
   acpCommand: string | null;
   mcpCommand: string | null;
   /** Model/provider the next start uses from saved selectors or build
    * defaults. Null when none applies or an environment override decides it. */
   launchModel: string | null;
   launchProvider: string | null;
+  /** Next-start listener workers, including native defaults/overrides; never a raw env value. */
+  launchParallelism?: number | null;
   /** Environment key deciding that selector; its value stays native. */
   launchModelEnv: string | null;
   launchProviderEnv: string | null;
@@ -224,6 +228,10 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?(
+    id: string,
+    entries: readonly { slug: string; body: string }[],
+  ): Promise<{ written: number; total: number; errors: string[] }>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
@@ -289,6 +297,7 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  writeSnapshotMemory?: AgentControlHost["writeSnapshotMemory"];
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
@@ -548,6 +557,7 @@ export function createAgentControl(
   const installPi = host?.installPi;
   const installClaude = host?.installClaude;
   const checkClaudeAuth = host?.checkClaudeAuth;
+  const writeSnapshotMemory = host?.writeSnapshotMemory;
   return {
     models,
     ...(checkClaudeAuth ? { checkClaudeAuth } : {}),
@@ -626,6 +636,23 @@ export function createAgentControl(
                 return native.publishProfile(id);
               },
               ready,
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(writeSnapshotMemory
+      ? {
+          writeSnapshotMemory: (
+            id: string,
+            entries: readonly { slug: string; body: string }[],
+          ) =>
+            run(
+              () => writeSnapshotMemory(id, entries),
+              () => {
+                if (state.data) ready(state.data);
+              },
               false,
               undefined,
               true,

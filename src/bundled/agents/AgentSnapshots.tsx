@@ -408,13 +408,13 @@ export function AgentSnapshotImport({
     const readId = crypto.randomUUID();
     requestId.current = readId;
     if (!file) return;
-    if (file.size > MAX_AGENT_SNAPSHOT_FILE_BYTES) {
-      setFileError("Snapshot exceeds the size limit.");
-      return;
-    }
     const legacyError = legacyAgentFileError(file.name);
     if (legacyError) {
       setFileError(legacyError);
+      return;
+    }
+    if (file.size > MAX_AGENT_SNAPSHOT_FILE_BYTES) {
+      setFileError("Snapshot exceeds the size limit.");
       return;
     }
     try {

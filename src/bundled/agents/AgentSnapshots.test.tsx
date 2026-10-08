@@ -19,6 +19,7 @@ import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
   legacyAgentFileError,
+  MAX_AGENT_SNAPSHOT_FILE_BYTES,
   parseAgentSnapshot,
   snapshotPngArtwork,
 } from "../../features/agents/snapshot";
@@ -137,7 +138,7 @@ it("rejects legacy beta filenames with snapshot migration guidance before parsin
     />,
   );
   const message =
-    "Legacy Buzz agent files are no longer supported. Export an .agent.json or .agent.png snapshot instead.";
+    "This is an agent file from old Buzz. Use Import from old Buzz on the Agents page to bring that agent over.";
   for (const [name, type] of [
     ["worker.persona.md", "text/markdown"],
     ["worker.PERSONA.JSON", "application/json"],
@@ -145,7 +146,11 @@ it("rejects legacy beta filenames with snapshot migration guidance before parsin
     ["worker.zip", "application/zip"],
   ] as const) {
     expect(legacyAgentFileError(name)).toBe(message);
-    choose(new File(["legacy"], name, { type }));
+    const contents =
+      name === "worker.zip"
+        ? new Uint8Array(MAX_AGENT_SNAPSHOT_FILE_BYTES + 1)
+        : "legacy";
+    choose(new File([contents], name, { type }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
     expect(h.create).not.toHaveBeenCalled();

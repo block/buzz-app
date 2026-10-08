@@ -120,7 +120,10 @@ it("opens the selected agent, requires explicit multi-session selection, and exp
       "Input",
     ),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Close" }));
+  const close = screen.getByRole("button", { name: "Close" });
+  close.focus();
+  await user.keyboard("{Enter}");
+  expect(document.activeElement).toBe(picker);
   expect(
     screen.queryByRole("region", { name: "Session usage details" }),
   ).toBeNull();

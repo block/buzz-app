@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { useListedChannel } from "../../features/relay/listed-channel";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
@@ -140,6 +140,7 @@ export function ChannelUsage({
     allowed,
   );
   const resolve = useChannelIdentityNames(session, channelId);
+  const agentPicker = useRef<HTMLDivElement>(null);
   const [agent, setAgent] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   if (!allowed || !session.agentActivity?.archive) return null;
@@ -155,7 +156,7 @@ export function ChannelUsage({
     <div className={styles.owner}>
       <fieldset className={styles.strip} aria-label="Channel session usage">
         <span>Channel session usage</span>
-        <div className={styles.agentPicker}>
+        <div className={styles.agentPicker} ref={agentPicker}>
           <Select
             label="Agent usage"
             variant="compact"
@@ -192,7 +193,14 @@ export function ChannelUsage({
         <section className={styles.details} aria-label="Session usage details">
           <div className={styles.heading}>
             <h2>Session usage · {label(activeAgent)}</h2>
-            <Button size="xs" variant="ghost" onClick={() => setAgent(null)}>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                agentPicker.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+                setAgent(null);
+              }}
+            >
               Close
             </Button>
           </div>

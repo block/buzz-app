@@ -29,7 +29,7 @@ it("retries the failed library and updates the picker when a second agent joins"
   const profiles = new Map([
     [viewer, { name: "Kenny" }],
     [agent, { name: "Helper" }],
-    [other, { name: "Second", isAgent: true as const }],
+    [other, { name: "Second", isAgent: true as const, ownerPubkey: viewer }],
   ]);
   let library = choices({
     status: "error",

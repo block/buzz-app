@@ -1,6 +1,15 @@
 import type { AgentLibrarySnapshot } from "../agents/library";
 import type { ChannelSummary, Profile } from "../relay/contracts";
 
+/**
+ * A profile agent counts only with an owner auth tag. Delegated workers
+ * declare is_agent without an owner; they stay mention-only so plain
+ * session messages still reach their supervisor.
+ */
+function ownedAgent(profile: Profile | undefined): boolean {
+  return !!profile?.isAgent && !!profile.ownerPubkey;
+}
+
 /** Classification never grants access: candidates must be in the current relay roster. */
 export function sessionAgents(
   channel: ChannelSummary | undefined,
@@ -13,12 +22,14 @@ export function sessionAgents(
   const members = [...new Set(channel.members)].filter((key) => key !== viewer);
   if (
     (library.status !== "ready" || library.complete === false) &&
-    members.some((key) => !known.has(key) && !profiles.get(key)?.isAgent)
+    members.some((key) => !known.has(key) && !ownedAgent(profiles.get(key)))
   )
     return;
   // Missing profiles can hide a second agent; never guess a sole recipient.
   if (members.some((key) => !known.has(key) && !profiles.has(key))) return;
-  return members.filter((key) => known.has(key) || profiles.get(key)?.isAgent);
+  return members.filter(
+    (key) => known.has(key) || ownedAgent(profiles.get(key)),
+  );
 }
 
 export function sessionRecipients(

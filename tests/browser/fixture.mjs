@@ -1131,7 +1131,24 @@ export const test = base.extend({
             .map((key) =>
               sign(
                 0,
-                [],
+                // Session routing counts profile agents only with an owner.
+                inboxSessionAgent
+                  ? [
+                      [
+                        "auth",
+                        viewer,
+                        "",
+                        bytesToHex(
+                          schnorr.sign(
+                            createHash("sha256")
+                              .update(`nostr:agent-auth:${getPublicKey(key)}:`)
+                              .digest(),
+                            userKey,
+                          ),
+                        ),
+                      ],
+                    ]
+                  : [],
                 JSON.stringify({
                   ...((agentPeers && key !== peerKey) || inboxSessionAgent
                     ? { is_agent: true }

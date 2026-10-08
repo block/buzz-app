@@ -216,7 +216,7 @@ test("rich choices retain their names and selected state while disabled choices 
   expect(unavailable).toHaveAttribute("aria-disabled", "true");
 });
 
-test("submenus open on hover without waiting for a delay", async () => {
+test("keyboard-opened menus ignore a stationary pointer and open submenus immediately on movement", async () => {
   const user = userEvent.setup();
   render(
     <MenuRoot>
@@ -231,11 +231,16 @@ test("submenus open on hover without waiting for a delay", async () => {
       </MenuPopup>
     </MenuRoot>,
   );
-  await user.click(screen.getByRole("button", { name: "Actions" }));
+  screen.getByRole("button", { name: "Actions" }).focus();
+  await user.keyboard("{ArrowDown}");
   const trigger = await screen.findByRole("menuitem", { name: "Sort" });
   vi.useFakeTimers();
   try {
     fireEvent.mouseEnter(trigger);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.mouseMove(trigger);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);

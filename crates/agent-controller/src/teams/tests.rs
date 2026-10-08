@@ -1115,6 +1115,38 @@ fn team_sync_binds_writes_and_clears_text_without_counting_empty_teams() {
 }
 
 #[test]
+fn team_sync_releases_deleted_teams_sent_as_empty_text() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);
+    let me = vec![agent.pubkey.clone()];
+    sync(
+        &mut control,
+        &[("crew", 1, me.clone()), ("pair", 1, me.clone())],
+        &[("crew", "SHARED"), ("pair", "SHARED")],
+    )
+    .unwrap();
+    // A deleted team arrives with the empty roster of its tombstone and no
+    // text. The surviving team with identical text keeps the copy.
+    let kept = sync(
+        &mut control,
+        &[("crew", 2, vec![]), ("pair", 1, me)],
+        &[("crew", ""), ("pair", "SHARED")],
+    )
+    .unwrap();
+    assert_eq!(kept.imported["teamBindings"], serde_json::json!(["pair"]));
+    assert_eq!(kept.imported["teamInstructions"], "SHARED");
+    // Deleting the last team with text clears it.
+    let cleared = sync(
+        &mut control,
+        &[("crew", 2, vec![]), ("pair", 2, vec![])],
+        &[("crew", ""), ("pair", "")],
+    )
+    .unwrap();
+    assert_eq!(cleared.imported["teamBindings"], serde_json::json!([]));
+    assert_eq!(cleared.imported["teamInstructions"], "");
+}
+
+#[test]
 fn team_sync_refuses_conflicts_and_keeps_unreadable_teams() {
     let root = tempfile::tempdir().unwrap();
     let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);

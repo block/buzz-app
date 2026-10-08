@@ -6,16 +6,21 @@ import type { Communities } from "../communities/service";
 
 export type TeamText = { team: Team; text: string };
 
-/** Current text of every live team. A portable team whose definition can't be
- * read is left out, so it counts as temporarily missing, never as removed. */
+/** Current text of every saved team. A deleted team has no members and no
+ * text, so the sync releases it. A live portable team whose definition can't
+ * be read is left out, so it counts as temporarily missing, never as removed. */
 export async function readTeamTexts(
   kit: ChannelKit,
   control: AgentControl,
 ): Promise<TeamText[]> {
   const texts: TeamText[] = [];
   for (const { record } of kit.snapshot().entries) {
-    if (record.deleted || record.value.type !== "team") continue;
+    if (record.value.type !== "team") continue;
     const team = record.value;
+    if (record.deleted) {
+      texts.push({ team: { ...team, agents: [] }, text: "" });
+      continue;
+    }
     if (!team.portable) {
       texts.push({ team, text: "" });
       continue;

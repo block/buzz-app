@@ -568,7 +568,8 @@ export function mountEmojiMart({
       value,
       options,
     );
-    if (!results) return results;
+    const limit = options?.maxResults || 90; // Mart's own default limit
+    if (!results || results.length >= limit) return results;
     const found = new Set(results.map(({ id }) => id));
     const emojis: Record<string, { id: string; search?: string }> = Data.emojis;
     const candidates = [
@@ -589,8 +590,7 @@ export function mountEmojiMart({
       ({ shortcode }) => shortcode,
     );
     const extra = new Set(fuzzy.map(({ item }) => item.emoji));
-    // 90 is Mart's own default limit.
-    return [...results, ...extra].slice(0, options?.maxResults || 90);
+    return [...results, ...extra].slice(0, limit);
   };
   // Search also caches results after deletion/replacement; recreate rather than update.
   SearchIndex.reset();

@@ -541,17 +541,27 @@ export function InboxView({
   }
   function archive(item: InboxItem, value: boolean) {
     cancelRetry();
+    const intent = intentRevision.current;
+    const generation = session.unread.generation();
     const valid = () => {
       const channel = session.channels
         .list()
         .channels.find((entry) => entry.id === item.channelId);
       return (
         active.current &&
+        intentRevision.current === intent &&
+        session.unread.generation() === generation &&
         !!channel &&
         !channel.cached &&
         !channel.archived &&
         !!channel.members?.includes(scope.viewer) &&
-        session.unread.inbox().items.includes(item)
+        session.unread
+          .inbox()
+          .items.some(
+            (current) =>
+              current.channelId === item.channelId &&
+              current.messageIds.includes(item.messageId),
+          )
       );
     };
     // Rows stay put in Inbox + archived; otherwise they leave this view, so

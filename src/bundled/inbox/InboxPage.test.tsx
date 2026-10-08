@@ -314,6 +314,113 @@ it("keeps the conversation visible and reports a failed archive save", async () 
     screen.getByRole("region", { name: "Inbox detail" }),
   ).toBeInTheDocument();
 });
+it.each(["reply", "unrelated", "mention"] as const)(
+  "archive Retry survives an intervening %s projection update",
+  async (update) => {
+    const h = fixture();
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const thread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    if (!thread || !h.root) throw new Error("Missing fixture thread");
+    const admitted = h.session.unread.inbox().items.find((item) => item.thread);
+    if (!admitted) throw new Error("Missing admitted conversation");
+    const save = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key.includes("inbox:archives")) throw new Error("disk full");
+        save.call(this, key, value);
+      });
+    fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not save the Inbox archive",
+    );
+    storage.mockRestore();
+    const incoming = message(
+      h.alice,
+      "room",
+      `Intervening ${update}`,
+      Math.floor(Date.now() / 1000) + 1,
+      update === "unrelated"
+        ? [["p", h.viewer.pubkey]]
+        : [
+            ["e", h.root.id, "", "reply"],
+            ...(update === "mention" ? [["p", h.viewer.pubkey]] : []),
+          ],
+    );
+    h.addEvent(incoming);
+    act(() => h.emit([incoming]));
+    await waitFor(() => {
+      const current = h.session.unread.inbox().items;
+      expect(current).not.toContain(admitted);
+      expect(
+        current.some((item) => item.messageIds.includes(incoming.id)),
+      ).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    if (update === "mention") {
+      await waitFor(() =>
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      );
+      expect(
+        rows().some((row) => row.textContent?.includes("A thread update")),
+      ).toBe(true);
+      await chooseFilter("Archived", "Show");
+      expect(rows()).toHaveLength(0);
+      return;
+    }
+    await waitFor(() =>
+      expect(
+        rows().some((row) => row.textContent?.includes("A thread update")),
+      ).toBe(false),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await chooseFilter("Archived", "Show");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("A thread update");
+    // The row preview describes its original activity, not the latest reply.
+    if (update === "reply")
+      expect(
+        h.session.unread.inbox().items.find((item) => item.thread),
+      ).toMatchObject({ latestMessageId: incoming.id });
+  },
+);
+
+it("archive Retry cannot survive access revoke and regrant", async () => {
+  const h = fixture();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const thread = rows().find((row) =>
+    row.textContent?.includes("A thread update"),
+  );
+  if (!thread) throw new Error("Missing fixture thread");
+  const save = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("inbox:archives")) throw new Error("disk full");
+      save.call(this, key, value);
+    });
+  fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not save the Inbox archive",
+  );
+  storage.mockRestore();
+  act(() => {
+    h.revokeRoom();
+    h.restoreRoom();
+  });
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Inbox action expired",
+  );
+  await chooseFilter("Archived", "Show");
+  expect(rows()).toHaveLength(0);
+});
+
 it("archive Retry advances detail and saves the next conversation's read frontier", async () => {
   const h = fixture();
   render(h.view);

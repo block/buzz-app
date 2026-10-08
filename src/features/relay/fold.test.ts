@@ -255,6 +255,48 @@ describe("message fold", () => {
       [bob.pubkey, "spoof"],
     ]);
   });
+  it("applies relay-authorized agent message deletes but not owner deletes of agent reactions", () => {
+    const agentMessage = message(alice, channel, "agent message", 10);
+    const agentReaction = signed(alice, {
+      kind: 7,
+      content: "👍",
+      created_at: 11,
+      tags: [["e", agentMessage.id]],
+    });
+    const ownerDeleteReaction = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 12,
+      tags: [
+        ["e", agentReaction.id],
+        ["k", "7"],
+      ],
+    });
+    const ownerDeleteMessage = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [
+        ["e", agentMessage.id],
+        ["k", "9"],
+      ],
+    });
+    expect(
+      foldMessages(channel, relay.pubkey, [
+        agentMessage,
+        agentReaction,
+        ownerDeleteReaction,
+      ])[0]?.reactions,
+    ).toHaveLength(1);
+    expect(
+      foldMessages(channel, relay.pubkey, [
+        agentMessage,
+        agentReaction,
+        ownerDeleteMessage,
+      ]),
+    ).toHaveLength(0);
+  });
+
   it("reads relay-signed thread summaries only and tolerates malformed ones", () => {
     const a = message(alice, channel, "a", 10),
       b = message(alice, channel, "b", 11),

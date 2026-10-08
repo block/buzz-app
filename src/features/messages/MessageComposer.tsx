@@ -1,4 +1,5 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
+import { parseSnapshotClipboard } from "../agents/snapshot-clipboard";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -1307,6 +1308,31 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
+          const snapshot = parseSnapshotClipboard(
+            event.clipboardData.getData?.("text/html") ?? "",
+            session,
+          );
+          if (
+            snapshot &&
+            permitted.current &&
+            !editingDisabled &&
+            !editing.target &&
+            canAttach
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+              attachments.store.addUploaded(snapshot);
+              setAttachmentError(undefined);
+            } catch (reason) {
+              setAttachmentError(
+                reason instanceof Error
+                  ? reason.message
+                  : "Could not attach files.",
+              );
+            }
+            return;
+          }
           const files = Array.from(event.clipboardData.items)
             .filter((item) => item.kind === "file")
             .map((item) => item.getAsFile())

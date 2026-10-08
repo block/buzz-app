@@ -1156,6 +1156,7 @@ it.each(["peer", "own"] as const)(
       viewer: author === "own" ? row.authorId : "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { report: vi.fn(async () => {}) },
+      profiles: { subscribe: () => () => {}, event: () => undefined },
       outbox: {
         supports: () => true,
         subscribe: () => () => {},

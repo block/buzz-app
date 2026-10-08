@@ -15,15 +15,20 @@ export function RecipientPicker({
   session,
   selected,
   disabled,
+  excludedPubkeys = [],
+  initiallyOpen = true,
   onChange,
 }: {
   session: RelaySession;
   selected: Recipient[];
   disabled: boolean;
+  excludedPubkeys?: readonly string[];
+  /** Share dialogs keep the people list closed until the To field is used. */
+  initiallyOpen?: boolean;
   onChange(people: Recipient[]): void;
 }) {
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initiallyOpen);
   const [highlight, setHighlight] = useState({ pubkey: "", keyboard: false });
   const input = useRef<HTMLInputElement>(null);
   const field = useRef<HTMLFieldSetElement>(null);
@@ -69,6 +74,7 @@ export function RecipientPicker({
   const eligible = directory.people.filter(
     (person) =>
       person.pubkey !== session.viewer &&
+      !excludedPubkeys.includes(person.pubkey) &&
       (!person.isAgent || controlled.has(person.pubkey)) &&
       !selected.some((item) => item.pubkey === person.pubkey),
   );
@@ -118,11 +124,11 @@ export function RecipientPicker({
   }, [directory.loading, directory.error, candidates.length]);
   const initiallyFocused = useRef(false);
   useEffect(() => {
-    if (!disabled && !initiallyFocused.current) {
+    if (initiallyOpen && !disabled && !initiallyFocused.current) {
       initiallyFocused.current = true;
       input.current?.focus();
     }
-  }, [disabled]);
+  }, [disabled, initiallyOpen]);
   useEffect(() => {
     if (open && highlight.keyboard)
       document
@@ -140,6 +146,7 @@ export function RecipientPicker({
       disabled ||
       selection.current.length >= 8 ||
       person.pubkey === session.viewer ||
+      excludedPubkeys.includes(person.pubkey) ||
       (person.isAgent && !controlled.has(person.pubkey)) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )

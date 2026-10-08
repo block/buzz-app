@@ -2008,7 +2008,7 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
 
 #[test]
 #[cfg(unix)]
-fn only_buzz_agent_receives_the_developer_mcp() {
+fn opted_in_harnesses_receive_the_developer_mcp() {
     for (selection, bundled, expects_mcp) in [
         ("buzz-agent", true, true),
         ("buzz-agent", false, true),
@@ -2019,7 +2019,10 @@ fn only_buzz_agent_receives_the_developer_mcp() {
         ("buzz-pi-acp", false, false),
         ("claude-agent-acp", false, false),
         ("codex-acp", false, false),
-        ("hermes-acp", false, false),
+        ("hermes-acp", false, true),
+        ("hermes-acp.exe", false, true),
+        ("hermes-acp.cmd", false, true),
+        ("hermes-acp.bat", false, true),
         ("custom-acp", false, false),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -2235,6 +2238,32 @@ fn pi_version_probe_times_out_and_retires_helpers() {
         }
         assert!(Instant::now() < deadline, "Helper still running: {state}");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn explicit_snapshot_worker_counts_reach_listener_without_imported_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.imported = serde_json::Value::Null;
+    let key = Secret::parse(KEY, PUB).unwrap();
+    fs::write(dir.path().join("exit-listener"), "").unwrap();
+    for count in [1, 4] {
+        a.environment
+            .insert("BUZZ_ACP_AGENTS".into(), count.to_string());
+        a.validate().unwrap();
+        let mut command = runtime
+            .command_with_defaults(&a, &key, &deployment_defaults())
+            .unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("worker-count")).unwrap(),
+            count.to_string()
+        );
     }
 }
 

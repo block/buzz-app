@@ -250,7 +250,7 @@ pub(crate) async fn relay_kit_decode(
         || serde_json::to_vec(&events)
             .map_err(|_| "Invalid channel recipe")?
             .len()
-            > 512 * 1024
+            > 1024 * 1024
     {
         return Err("Invalid channel recipe".into());
     }

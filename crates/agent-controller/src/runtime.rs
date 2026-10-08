@@ -1237,15 +1237,8 @@ fn model_context_with_defaults(
     })
 }
 
-// Buzz Agent relies on this MCP for developer tools. Other harnesses supply their
-// own tools; injecting it would expose competing shell and file-edit tools.
 fn uses_buzz_dev_mcp(command: &str) -> bool {
-    matches!(
-        Path::new(command)
-            .file_name()
-            .and_then(|name| name.to_str()),
-        Some("buzz-agent" | "buzz-agent.exe")
-    )
+    crate::HarnessConfigurationPolicy::for_command(command).include_buzz_dev_mcp
 }
 
 // Saved legacy Goose selections may still carry the CLI's ACP subcommand.

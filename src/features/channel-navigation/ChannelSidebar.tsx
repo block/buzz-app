@@ -19,7 +19,7 @@ import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
-import { Panel } from "../../shared/design-system/ui/Panel";
+import { SidebarFrame } from "./SidebarFrame";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuGroup,
@@ -114,28 +114,24 @@ export function ChannelSidebar(props: Props) {
         />
       ) : (
         <div className="shell-sidebar-default">
-          <Panel
-            as="aside"
-            aria-label="Channel sidebar"
-            data-buzz-launch-pending={
+          <SidebarFrame
+            label="Channel sidebar"
+            launchPending={
               connection.status === "connecting" ? "required" : undefined
             }
           >
-            <div className={styles.sidebar}>
-              <div className={styles.sidebarScroll}>
-                {navigation}
-                <p className={styles.empty}>
-                  {connection.status === "connecting"
-                    ? "Connecting to your relay…"
-                    : (connection.error ??
-                      "Choose a community to see channels.")}
-                </p>
-                {connection.status === "error" && (
-                  <Button onClick={props.relay.retry}>Retry channels</Button>
-                )}
-              </div>
+            <div className={styles.sidebarScroll}>
+              {navigation}
+              <p className={styles.empty}>
+                {connection.status === "connecting"
+                  ? "Connecting to your relay…"
+                  : (connection.error ?? "Choose a community to see channels.")}
+              </p>
+              {connection.status === "error" && (
+                <Button onClick={props.relay.retry}>Retry channels</Button>
+              )}
             </div>
-          </Panel>
+          </SidebarFrame>
         </div>
       )}
     </SidebarBoundary>
@@ -170,17 +166,15 @@ class SidebarBoundary extends Component<
   render() {
     return this.state.failed ? (
       <div className="shell-sidebar-default">
-        <Panel as="aside" aria-label="Channel sidebar">
-          <div className={styles.sidebar}>
-            <div className={styles.sidebarScroll}>
-              {this.props.fallback}
-              <p role="alert">Channels couldn’t open.</p>
-              <Button onClick={() => this.setState({ failed: false })}>
-                Retry channels
-              </Button>
-            </div>
+        <SidebarFrame label="Channel sidebar">
+          <div className={styles.sidebarScroll}>
+            {this.props.fallback}
+            <p role="alert">Channels couldn’t open.</p>
+            <Button onClick={() => this.setState({ failed: false })}>
+              Retry channels
+            </Button>
           </div>
-        </Panel>
+        </SidebarFrame>
       </div>
     ) : (
       this.props.children
@@ -982,10 +976,9 @@ function ReadySidebar({
         />
       )}
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
-        <Panel
-          as="aside"
-          aria-label="Channel sidebar"
-          data-buzz-launch-pending={
+        <SidebarFrame
+          label="Channel sidebar"
+          launchPending={
             connectionError
               ? undefined
               : !startup.ready ||
@@ -996,358 +989,350 @@ function ReadySidebar({
                   ? "settling"
                   : undefined
           }
-          aria-busy={
+          busy={
             preferences.status === "loading" || startup.updating || undefined
           }
         >
-          <div className={styles.sidebar}>
-            {kitState.status === "error" && (
-              <p role="alert">
-                {kitState.error}{" "}
-                <Button onClick={() => void queries.channelKit.refresh()}>
-                  Retry templates
-                </Button>
-              </p>
-            )}
-            {setupNotices.map((notice) => (
-              <ToastNotice
-                key={notice.id}
-                title={`Channel setup couldn’t finish: ${notice.name}`}
-                description={notice.error}
-                tone="warning"
+          {kitState.status === "error" && (
+            <p role="alert">
+              {kitState.error}{" "}
+              <Button onClick={() => void queries.channelKit.refresh()}>
+                Retry templates
+              </Button>
+            </p>
+          )}
+          {setupNotices.map((notice) => (
+            <ToastNotice
+              key={notice.id}
+              title={`Channel setup couldn’t finish: ${notice.name}`}
+              description={notice.error}
+              tone="warning"
+            >
+              <Button
+                size="sm"
+                onClick={() => queries.channelCreation.dismissNotice(notice.id)}
               >
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    queries.channelCreation.dismissNotice(notice.id)
+                Dismiss
+              </Button>
+            </ToastNotice>
+          ))}
+          {!cached && dmVisibility.status === "error" && (
+            <div role="alert">
+              Hidden conversations could not be refreshed.{" "}
+              <Button onClick={() => void lifecycle.refreshVisibility()}>
+                Retry hidden conversations
+              </Button>
+            </div>
+          )}
+          <SidebarUnread listRef={sidebar.list} dmPreviews={unreadDmPreviews}>
+            <SidebarNavigation>{children}</SidebarNavigation>
+            <ChannelSidebarDnd
+              writable={placementWritable}
+              onMove={(channelId, sectionKey) =>
+                assignGroup(
+                  channelId,
+                  sectionKey.startsWith("group:")
+                    ? sectionKey.slice("group:".length)
+                    : undefined,
+                )
+              }
+              overlay={(channelId) => {
+                const channel = sidebarChannels.find(
+                  ({ id }) => id === channelId,
+                );
+                if (!channel) return null;
+                const Icon = channelIcon(channel);
+                return (
+                  <div className={styles.channelDragOverlay}>
+                    <Icon size={16} />
+                    <span>{channel.name}</span>
+                  </div>
+                );
+              }}
+            >
+              {sections.map((section) => (
+                <DroppableSidebarSection
+                  key={section.key}
+                  disabled={
+                    !placementWritable || !isChannelSectionKey(section.key)
+                  }
+                  sectionKey={section.key}
+                  title={section.title}
+                  icon={section.icon}
+                  session={queries}
+                  open={!sidebar.collapsed.includes(section.key)}
+                  onToggle={(open) => sidebar.toggle(section.key, open)}
+                  createChannel={
+                    isChannelSectionKey(section.key)
+                      ? {
+                          available: queries.channelCreation.available,
+                          open: (trigger) => {
+                            createChannelTrigger.current = trigger;
+                            setInitialGroup(
+                              section.key.startsWith("group:")
+                                ? section.key.slice(6)
+                                : "",
+                            );
+                            setCreateChannelOpen(true);
+                          },
+                        }
+                      : undefined
+                  }
+                  newMessage={
+                    section.key === "dms"
+                      ? () => {
+                          if (viewer && relay.snapshot().session === queries)
+                            void navigator.open({
+                              version: 1,
+                              kind: "page",
+                              pluginId: "buzz.channels",
+                              pageId: "channels",
+                              scope: {
+                                viewer,
+                                communityOrigin: scope.slice(
+                                  0,
+                                  -(viewer.length + 1),
+                                ),
+                              },
+                              route: { version: 1, params: "new-message" },
+                            });
+                        }
+                      : undefined
+                  }
+                  sort={
+                    preferences.sortWritable
+                      ? {
+                          value:
+                            preferences.data?.sort?.[
+                              section.key.startsWith("group:")
+                                ? `section:${section.key.slice(6)}`
+                                : section.key
+                            ] ?? "alpha",
+                          change: (mode) => setSectionSort(section.key, mode),
+                        }
+                      : undefined
                   }
                 >
-                  Dismiss
-                </Button>
-              </ToastNotice>
-            ))}
-            {!cached && dmVisibility.status === "error" && (
-              <div role="alert">
-                Hidden conversations could not be refreshed.{" "}
-                <Button onClick={() => void lifecycle.refreshVisibility()}>
-                  Retry hidden conversations
-                </Button>
-              </div>
-            )}
-            <SidebarUnread listRef={sidebar.list} dmPreviews={unreadDmPreviews}>
-              <SidebarNavigation>{children}</SidebarNavigation>
-              <ChannelSidebarDnd
-                writable={placementWritable}
-                onMove={(channelId, sectionKey) =>
-                  assignGroup(
-                    channelId,
-                    sectionKey.startsWith("group:")
-                      ? sectionKey.slice("group:".length)
-                      : undefined,
-                  )
-                }
-                overlay={(channelId) => {
-                  const channel = sidebarChannels.find(
-                    ({ id }) => id === channelId,
-                  );
-                  if (!channel) return null;
-                  const Icon = channelIcon(channel);
-                  return (
-                    <div className={styles.channelDragOverlay}>
-                      <Icon size={16} />
-                      <span>{channel.name}</span>
-                    </div>
-                  );
-                }}
-              >
-                {sections.map((section) => (
-                  <DroppableSidebarSection
-                    key={section.key}
-                    disabled={
-                      !placementWritable || !isChannelSectionKey(section.key)
-                    }
-                    sectionKey={section.key}
-                    title={section.title}
-                    icon={section.icon}
-                    session={queries}
-                    open={!sidebar.collapsed.includes(section.key)}
-                    onToggle={(open) => sidebar.toggle(section.key, open)}
-                    createChannel={
-                      isChannelSectionKey(section.key)
-                        ? {
-                            available: queries.channelCreation.available,
-                            open: (trigger) => {
-                              createChannelTrigger.current = trigger;
-                              setInitialGroup(
-                                section.key.startsWith("group:")
-                                  ? section.key.slice(6)
-                                  : "",
-                              );
-                              setCreateChannelOpen(true);
-                            },
-                          }
-                        : undefined
-                    }
-                    newMessage={
-                      section.key === "dms"
-                        ? () => {
-                            if (viewer && relay.snapshot().session === queries)
-                              void navigator.open({
-                                version: 1,
-                                kind: "page",
-                                pluginId: "buzz.channels",
-                                pageId: "channels",
-                                scope: {
-                                  viewer,
-                                  communityOrigin: scope.slice(
-                                    0,
-                                    -(viewer.length + 1),
-                                  ),
-                                },
-                                route: { version: 1, params: "new-message" },
-                              });
-                          }
-                        : undefined
-                    }
-                    sort={
-                      preferences.sortWritable
-                        ? {
-                            value:
-                              preferences.data?.sort?.[
-                                section.key.startsWith("group:")
-                                  ? `section:${section.key.slice(6)}`
-                                  : section.key
-                              ] ?? "alpha",
-                            change: (mode) => setSectionSort(section.key, mode),
-                          }
-                        : undefined
-                    }
-                  >
-                    {section.rows.map((channel) => {
-                      const selected =
-                        current?.id === channel.id ? current.id : undefined;
-                      const actions = rowActions(channel, section.key);
-                      const menuEnabled = actions.length > 0;
-                      const menuOpen =
-                        menuEnabled &&
-                        rowMenu?.channelId === channel.id &&
-                        rowMenu.sectionKey === section.key;
-                      return (
-                        <ChannelSidebarItem
-                          profile={
-                            channel.channelType === "dm" &&
-                            channel.participants?.length === 1
-                              ? dmProfiles.get(channel.participants[0] ?? "")
-                              : undefined
-                          }
-                          key={channel.id}
-                          channel={channel}
-                          session={queries}
-                          working={workingChannels.has(channel.id)}
-                          selected={composingMessage ? undefined : selected}
-                          collapsed={sidebar.collapsed.includes(
-                            `session-children:${channel.id}`,
-                          )}
-                          onToggle={sidebar.toggle}
-                          draft={false}
-                          draftSelected={false}
-                          sessions={undefined}
-                          onSelect={select}
-                          onNewSession={noNestedSession}
-                          onOpenThread={openActivityThread}
-                          onOpenWorkingAgent={openWorkingAgent}
-                          onOpenAgentActivity={openAgentActivity}
-                          menuEnabled={menuEnabled}
-                          sectionKey={section.key}
-                          selectFrame={
-                            channel.channelType !== "dm" &&
-                            isChannelSectionKey(section.key)
-                              ? DraggableChannel
-                              : undefined
-                          }
-                          onOpenMenu={openRowMenu}
-                          menuOpen={menuOpen}
-                          menuAnchor={menuOpen ? rowMenu.anchor : undefined}
-                          menuContent={
-                            menuOpen ? (
-                              <>
-                                {actions}
-                                {readWrite?.pending && (
-                                  <p role="status">Saving…</p>
-                                )}
-                                {readWrite?.error && (
-                                  <p role="alert">{readWrite.error}</p>
-                                )}
-                              </>
-                            ) : undefined
-                          }
-                          onCloseMenu={closeRowMenu}
-                          onMenuClosed={rowMenuClosed}
-                          menuFinalFocus={rowMenuFinalFocus}
-                        />
-                      );
-                    })}
-                  </DroppableSidebarSection>
-                ))}
-              </ChannelSidebarDnd>
-              {!startup.ready && (
-                <p className={styles.empty} role="status">
-                  Loading your sidebar…
-                </p>
-              )}
-              {list.status === "error" && (
-                <p role="alert" className={styles.empty}>
-                  {list.error}
-                </p>
-              )}
-              {startup.ready && list.status === "ready" && !channels.length && (
-                <p className={styles.empty}>No channels yet.</p>
-              )}
-            </SidebarUnread>
-            {cached && connectionError && (
-              <p className={styles.preferenceNotice} role="status">
-                Offline · Showing saved conversations.
-                <Button onClick={relay.retry}>Retry connection</Button>
+                  {section.rows.map((channel) => {
+                    const selected =
+                      current?.id === channel.id ? current.id : undefined;
+                    const actions = rowActions(channel, section.key);
+                    const menuEnabled = actions.length > 0;
+                    const menuOpen =
+                      menuEnabled &&
+                      rowMenu?.channelId === channel.id &&
+                      rowMenu.sectionKey === section.key;
+                    return (
+                      <ChannelSidebarItem
+                        profile={
+                          channel.channelType === "dm" &&
+                          channel.participants?.length === 1
+                            ? dmProfiles.get(channel.participants[0] ?? "")
+                            : undefined
+                        }
+                        key={channel.id}
+                        channel={channel}
+                        session={queries}
+                        working={workingChannels.has(channel.id)}
+                        selected={composingMessage ? undefined : selected}
+                        collapsed={sidebar.collapsed.includes(
+                          `session-children:${channel.id}`,
+                        )}
+                        onToggle={sidebar.toggle}
+                        draft={false}
+                        draftSelected={false}
+                        sessions={undefined}
+                        onSelect={select}
+                        onNewSession={noNestedSession}
+                        onOpenThread={openActivityThread}
+                        onOpenWorkingAgent={openWorkingAgent}
+                        onOpenAgentActivity={openAgentActivity}
+                        menuEnabled={menuEnabled}
+                        sectionKey={section.key}
+                        selectFrame={
+                          channel.channelType !== "dm" &&
+                          isChannelSectionKey(section.key)
+                            ? DraggableChannel
+                            : undefined
+                        }
+                        onOpenMenu={openRowMenu}
+                        menuOpen={menuOpen}
+                        menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+                        menuContent={
+                          menuOpen ? (
+                            <>
+                              {actions}
+                              {readWrite?.pending && (
+                                <p role="status">Saving…</p>
+                              )}
+                              {readWrite?.error && (
+                                <p role="alert">{readWrite.error}</p>
+                              )}
+                            </>
+                          ) : undefined
+                        }
+                        onCloseMenu={closeRowMenu}
+                        onMenuClosed={rowMenuClosed}
+                        menuFinalFocus={rowMenuFinalFocus}
+                      />
+                    );
+                  })}
+                </DroppableSidebarSection>
+              ))}
+            </ChannelSidebarDnd>
+            {!startup.ready && (
+              <p className={styles.empty} role="status">
+                Loading your sidebar…
               </p>
             )}
-            {preferences.sortErrors?.map(({ group, mode, error }) => (
-              <div key={group} className={styles.preferenceNotice} role="alert">
-                <p>
-                  Couldn’t save the sort order for{" "}
-                  {sections.find(
-                    ({ key }) =>
-                      key ===
-                      (group.startsWith("section:")
-                        ? `group:${group.slice(8)}`
-                        : group),
-                  )?.title ?? "this section"}
-                  . {error}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setSectionSort(group, mode)}
-                >
-                  Retry sort
-                </button>
-                <button
-                  type="button"
-                  onClick={() => preferences.dismissSortError(group)}
-                >
-                  Dismiss
-                </button>
-              </div>
-            ))}
-            {[...mute.intents.values()]
-              .filter((intent) => !intent.pending)
-              .map((intent) => (
-                <ToastNotice
-                  key={intent.channelId}
-                  title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
-                  description={intent.error ?? "Please try again."}
-                  tone="warning"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() =>
-                      changeMute(intent.channelId, intent.name, intent.muted)
-                    }
-                  >
-                    Retry
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      mute.dismiss(intent.channelId);
-                      setRowFocus(intent.channelId);
-                    }}
-                  >
-                    Dismiss
-                  </Button>
-                </ToastNotice>
-              ))}
-            {preferences.moves
-              ?.filter((move) => !move.pending)
-              .map((move) => (
-                <div
-                  key={move.id}
-                  className={styles.preferenceNotice}
-                  role="alert"
-                >
-                  <p>
-                    Couldn’t save the move for{" "}
-                    {channels.find(({ id }) => id === move.channelId)?.name ??
-                      "this channel"}
-                    . {move.error}
-                  </p>
-                  <p>
-                    The previous placement is shown. A partial save may already
-                    exist on the relay.
-                  </p>
-                  {!preferences.writable && (
-                    <p>
-                      Refresh saved sidebar preferences before retrying this
-                      move.
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    disabled={!preferences.writable}
-                    onClick={() =>
-                      moveChannel(move.channelId, () =>
-                        preferences.retryMove(move.channelId),
-                      )
-                    }
-                  >
-                    Retry move
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      preferences.dismissMoveError(move.channelId);
-                      focusChannelPlacement(move.channelId);
-                    }}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              ))}
-            {!cached && startup.ready && preferences.status === "error" ? (
-              <ToastNotice
-                title="Saved sidebar preferences couldn’t refresh"
-                description="Your conversations are still available."
-                tone="warning"
-              >
-                <Button type="button" size="sm" onClick={preferences.reload}>
-                  Retry
-                </Button>
-              </ToastNotice>
-            ) : !cached &&
-              startup.ready &&
-              preferences.status === "unsupported" ? (
-              <p className={styles.preferenceNotice} role="status">
-                Saved groups and stars aren’t supported by this host yet.
+            {list.status === "error" && (
+              <p role="alert" className={styles.empty}>
+                {list.error}
               </p>
-            ) : null}
-            {list.activityStatus === "error" && !activityErrorDismissed && (
+            )}
+            {startup.ready && list.status === "ready" && !channels.length && (
+              <p className={styles.empty}>No channels yet.</p>
+            )}
+          </SidebarUnread>
+          {cached && connectionError && (
+            <p className={styles.preferenceNotice} role="status">
+              Offline · Showing saved conversations.
+              <Button onClick={relay.retry}>Retry connection</Button>
+            </p>
+          )}
+          {preferences.sortErrors?.map(({ group, mode, error }) => (
+            <div key={group} className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the sort order for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key ===
+                    (group.startsWith("section:")
+                      ? `group:${group.slice(8)}`
+                      : group),
+                )?.title ?? "this section"}
+                . {error}
+              </p>
+              <button type="button" onClick={() => setSectionSort(group, mode)}>
+                Retry sort
+              </button>
+              <button
+                type="button"
+                onClick={() => preferences.dismissSortError(group)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+          {[...mute.intents.values()]
+            .filter((intent) => !intent.pending)
+            .map((intent) => (
               <ToastNotice
-                title="Couldn’t refresh recent activity"
-                description="Sections sorted by Recent may be out of date."
+                key={intent.channelId}
+                title={`Couldn’t ${intent.muted ? "mute" : "unmute"} ${intent.name}`}
+                description={intent.error ?? "Please try again."}
                 tone="warning"
-                onDismiss={() => setActivityErrorDismissed(true)}
               >
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => queries.channels.refreshList?.()}
+                  onClick={() =>
+                    changeMute(intent.channelId, intent.name, intent.muted)
+                  }
                 >
                   Retry
                 </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    mute.dismiss(intent.channelId);
+                    setRowFocus(intent.channelId);
+                  }}
+                >
+                  Dismiss
+                </Button>
               </ToastNotice>
-            )}
-          </div>
-        </Panel>
+            ))}
+          {preferences.moves
+            ?.filter((move) => !move.pending)
+            .map((move) => (
+              <div
+                key={move.id}
+                className={styles.preferenceNotice}
+                role="alert"
+              >
+                <p>
+                  Couldn’t save the move for{" "}
+                  {channels.find(({ id }) => id === move.channelId)?.name ??
+                    "this channel"}
+                  . {move.error}
+                </p>
+                <p>
+                  The previous placement is shown. A partial save may already
+                  exist on the relay.
+                </p>
+                {!preferences.writable && (
+                  <p>
+                    Refresh saved sidebar preferences before retrying this move.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  disabled={!preferences.writable}
+                  onClick={() =>
+                    moveChannel(move.channelId, () =>
+                      preferences.retryMove(move.channelId),
+                    )
+                  }
+                >
+                  Retry move
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    preferences.dismissMoveError(move.channelId);
+                    focusChannelPlacement(move.channelId);
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ))}
+          {!cached && startup.ready && preferences.status === "error" ? (
+            <ToastNotice
+              title="Saved sidebar preferences couldn’t refresh"
+              description="Your conversations are still available."
+              tone="warning"
+            >
+              <Button type="button" size="sm" onClick={preferences.reload}>
+                Retry
+              </Button>
+            </ToastNotice>
+          ) : !cached &&
+            startup.ready &&
+            preferences.status === "unsupported" ? (
+            <p className={styles.preferenceNotice} role="status">
+              Saved groups and stars aren’t supported by this host yet.
+            </p>
+          ) : null}
+          {list.activityStatus === "error" && !activityErrorDismissed && (
+            <ToastNotice
+              title="Couldn’t refresh recent activity"
+              description="Sections sorted by Recent may be out of date."
+              tone="warning"
+              onDismiss={() => setActivityErrorDismissed(true)}
+            >
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => queries.channels.refreshList?.()}
+              >
+                Retry
+              </Button>
+            </ToastNotice>
+          )}
+        </SidebarFrame>
         <CreateChannelDialog
           open={createChannelOpen}
           onOpenChange={setCreateChannelOpen}

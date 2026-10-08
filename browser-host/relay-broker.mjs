@@ -1,3 +1,8 @@
+import {
+  isCatalogKind,
+  MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
+  validCatalogEnvelope,
+} from "../src/features/agents/catalog-envelope.ts";
 import { getLogger } from "../src/features/developer/logging.ts";
 import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 
@@ -1350,6 +1355,8 @@ export function relayBrokerPlugin({
                 9000,
                 9001,
                 30078,
+                30175,
+                30178,
                 40100,
                 1984,
                 45010,
@@ -1932,6 +1939,9 @@ export function relayBrokerPlugin({
             return json(res, 404, { error: "Unknown broker route" });
           const memory = route === "/api/relay/agent-memories";
           const presence = route === "/api/relay/presence-snapshot";
+          // Only NIP-AP catalog events may exceed the ordinary body bound.
+          const catalogWrite =
+            route === "/api/relay/sign" || route === "/api/relay/publish";
           let raw = "";
           const uploadDeadline = memory
             ? setTimeout(() => req.destroy(), 10000)
@@ -1942,7 +1952,7 @@ export function relayBrokerPlugin({
               if (
                 presence
                   ? Buffer.byteLength(raw) > 20 * 1024
-                  : raw.length > 65536
+                  : raw.length > (catalogWrite ? CATALOG_EVENT_BYTES : 65536)
               )
                 return json(res, 413, { error: "Filter body too large" });
             }
@@ -1955,6 +1965,12 @@ export function relayBrokerPlugin({
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
           }
+          if (
+            raw.length > 65536 &&
+            (!isCatalogKind(filters?.kind) ||
+              Buffer.byteLength(raw) > CATALOG_EVENT_BYTES)
+          )
+            return json(res, 413, { error: "Filter body too large" });
           let memoryAgent;
           if (memory) {
             try {
@@ -2479,6 +2495,12 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if ([30175, 30178].includes(filters?.kind)) {
+              if (!validCatalogEnvelope(filters))
+                return json(res, 400, {
+                  error: "Malformed catalog publication",
+                  sent: false,
+                });
             } else if (filters?.kind === 45010) {
               // NIP-AR artifacts; the relay enforces write permission.
             } else if (filters?.kind === 1984) {

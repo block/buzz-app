@@ -9,6 +9,8 @@ import {
 } from "./testing";
 import { createNameProvider } from "./directory";
 import { foldProfiles } from "../relay/profiles";
+import { createProfileDirectory } from "../relay/profile-directory";
+import { keypair, profile } from "../relay/testing";
 
 it("scopes native names to the session community and follows edits and disposal", () => {
   const key = "a".repeat(64);
@@ -424,5 +426,57 @@ it.each([
     expect(agentDirectory.scope(source)(key)?.name).toBe(
       content === '{"name":"aaaaaaaaaa"}' ? "aaaaaaaaaa" : "Saved Luna",
     );
+  },
+);
+
+it.each([false, true])(
+  "updates alias precedence when fallback provenance changes without changing display fields (initially named: %s)",
+  (initiallyNamed) => {
+    const agent = keypair();
+    const explicitName = agent.pubkey.slice(0, 10);
+    const directory = createProfileDirectory({ read: vi.fn(async () => []) });
+    const source: NameSource = {
+      profiles: directory.queries,
+      agentLibrary: {
+        snapshot: () => ({
+          status: "ready",
+          definitions: [],
+          identities: [{ pubkey: agent.pubkey, name: "Saved alias" }],
+        }),
+        subscribe: () => () => {},
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    };
+    const names = bindNames(source, {
+      snapshot: () => [agentDirectory],
+      subscribe: () => () => {},
+    });
+    try {
+      for (const [index, named] of [
+        initiallyNamed,
+        !initiallyNamed,
+      ].entries()) {
+        directory.accept([
+          profile(
+            agent,
+            { is_agent: true, ...(named ? { name: explicitName } : {}) },
+            index + 1,
+          ),
+        ]);
+        expect(directory.queries.snapshot().get(agent.pubkey)?.name).toBe(
+          explicitName,
+        );
+        expect(names.resolve(agent.pubkey)).toBe(
+          named ? explicitName : "Saved alias",
+        );
+        expect(
+          directory.queries.snapshot().get(agent.pubkey)?.nameIsFallback,
+        ).toBe(named ? undefined : true);
+      }
+    } finally {
+      names.dispose();
+      directory.dispose();
+    }
   },
 );

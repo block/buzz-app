@@ -56,6 +56,7 @@ export function createProfileDirectory(
       const old = snapshot.get(id);
       if (
         old?.name === value.name &&
+        old?.nameIsFallback === value.nameIsFallback &&
         old?.picture === value.picture &&
         old?.about === value.about &&
         old?.nip05 === value.nip05 &&

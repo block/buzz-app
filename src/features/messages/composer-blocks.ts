@@ -385,7 +385,8 @@ export const composerPrefixDelimiters: ReadonlySet<string> = new Set([" "]);
 // quote marker. Every form the timeline renders as a list converts, so `* `,
 // `+ ` and `1) ` open blocks although the serializer writes each bullet as `- `
 // and each number with a dot; the sent text renders the same either way.
-const PREFIX = /^(?:([-*+])|(\d{1,9})[.)]|>) $/;
+// A typed Unicode bullet is a convenience alias, serialized as Markdown `- `.
+const PREFIX = /^(?:([-*+•])|(\d{1,9})[.)]|>) $/;
 // Positions to read before the caret: the widest prefix and its space, plus the
 // character before them, so the cheap check sees whether the line starts there.
 const PREFIX_WINDOW = 12;

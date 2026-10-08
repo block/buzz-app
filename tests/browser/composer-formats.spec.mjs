@@ -96,8 +96,14 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   page,
 }) => {
   const input = await composer(page);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(1);
   await input.pressSequentially("3. ");
   await expect(input.locator("ol")).toHaveAttribute("start", "3");
+  await expect(input.locator("[data-placeholder]")).toHaveCount(0);
+  await input.press("Enter");
+  await expect(input.locator("ol")).toHaveCount(0);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(1);
+  await input.pressSequentially("3. ");
   await page.keyboard.press("ControlOrMeta+z");
   await expect(input.locator("ol")).toHaveCount(0);
   await expect.poll(() => input.evaluate((el) => el.value)).toBe("3. ");
@@ -115,7 +121,9 @@ test("typed lists use Enter to split and exit, preserve mentions and send by but
   await input.press("Enter");
   await input.press("Enter");
   await expect(input.locator(":scope > p")).toHaveCount(1);
-  await input.pressSequentially("- ");
+  await input.pressSequentially("• ");
+  await expect(input.locator("ul > li")).toHaveCount(1);
+  await expect(input.locator("[data-placeholder]")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close formatting", exact: true })
     .click();

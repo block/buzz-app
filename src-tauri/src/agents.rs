@@ -1710,6 +1710,24 @@ pub(crate) async fn agent_control_team_instructions(
     .await
 }
 
+/// Team Save and app-start sync. `teams` maps every readable team to its
+/// current text; a team left out is temporarily unreadable, not removed.
+#[tauri::command]
+pub(crate) async fn agent_control_team_sync(
+    state: tauri::State<'_, AgentHost>,
+    identity: tauri::State<'_, crate::identity::IdentityHost>,
+    community: String,
+    teams: std::collections::BTreeMap<String, String>,
+) -> Result<ControlSnapshot, String> {
+    let (owner, heads) = crate::relay::current_team_members(identity.inner(), &community).await?;
+    run(state.inner().clone(), move |host| {
+        host.controller
+            .sync_team_instructions(&community, &owner, &heads, &teams)?;
+        Ok(host.snapshot()?.data)
+    })
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn agent_control_team_capture(
     state: tauri::State<'_, AgentHost>,

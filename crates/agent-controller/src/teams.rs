@@ -248,6 +248,23 @@ impl Controller {
         }
         self.store.reconcile_team_bindings(&relay, owner, teams)
     }
+    /// Save and app-start sync: release obsolete bindings, then copy each
+    /// readable team's current text to its members. Never restarts an agent.
+    pub fn sync_team_instructions(
+        &mut self,
+        community: &str,
+        owner: &str,
+        heads: &std::collections::BTreeMap<String, TeamCatalogEntry>,
+        texts: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        if texts.len() > 500 || texts.keys().any(|team| team.is_empty() || team.len() > 120) {
+            return Err("Invalid team instructions".into());
+        }
+        self.reconcile_team_bindings(community, owner, heads)?;
+        let relay = crate::config::canonical_relay(community)?;
+        self.store
+            .sync_team_instructions(&relay, owner, heads, texts)
+    }
     pub fn apply_team_instructions(
         &mut self,
         id: &str,

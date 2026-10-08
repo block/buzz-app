@@ -1042,3 +1042,137 @@ fn merged_existing_profile_overflow_keeps_import_about_pending() {
         .contains("readable limit"));
     assert!(control.creation_profile(&prepared.id).is_ok());
 }
+
+fn synced_agent(
+    root: &std::path::Path,
+    imported: serde_json::Value,
+) -> (Controller, crate::config::Agent) {
+    let mut control = controller(root);
+    let mut agent = crate::store::tests::fixture();
+    agent.auth_tag = Some(crate::secret::test_attestation(&agent.pubkey));
+    agent.imported = imported;
+    control.store.insert(vec![agent.clone()]).unwrap();
+    (control, agent)
+}
+fn sync(
+    control: &mut Controller,
+    rosters: &[(&str, u64, Vec<String>)],
+    texts: &[(&str, &str)],
+) -> Result<crate::config::Agent> {
+    let heads = rosters
+        .iter()
+        .map(|(team, at, members)| (team.to_string(), catalog(*at, members.clone())))
+        .collect();
+    let texts = texts
+        .iter()
+        .map(|(team, text)| (team.to_string(), text.to_string()))
+        .collect();
+    control.sync_team_instructions("wss://relay.example", &owner(), &heads, &texts)?;
+    Ok(control.store.agents().unwrap().remove(0))
+}
+
+#[test]
+fn team_sync_binds_writes_and_clears_text_without_counting_empty_teams() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);
+    let me = vec![agent.pubkey.clone()];
+    // Link repair: the only team with text that lists the agent binds it.
+    let saved = sync(
+        &mut control,
+        &[("crew", 1, me.clone()), ("mentions", 1, me.clone())],
+        &[("crew", " SHARED\n"), ("mentions", "")],
+    )
+    .unwrap();
+    assert_eq!(saved.imported["teamBindings"], serde_json::json!(["crew"]));
+    assert_eq!(saved.imported["teamInstructions"], "SHARED");
+    assert_eq!(saved.revision, agent.revision + 1);
+    // Unchanged text and a second team with identical text write no revision.
+    let same = sync(
+        &mut control,
+        &[("crew", 1, me.clone()), ("pair", 1, me.clone())],
+        &[("crew", "SHARED"), ("pair", "SHARED")],
+    )
+    .unwrap();
+    assert_eq!(
+        same.imported["teamBindings"],
+        serde_json::json!(["crew", "pair"])
+    );
+    assert_eq!(same.revision, saved.revision);
+    // Removal from the last team with text clears the copy and the binding.
+    let cleared = sync(
+        &mut control,
+        &[
+            ("crew", 2, vec![]),
+            ("pair", 2, vec![]),
+            ("mentions", 1, me),
+        ],
+        &[("crew", "SHARED"), ("pair", "SHARED"), ("mentions", "")],
+    )
+    .unwrap();
+    assert_eq!(cleared.imported["teamBindings"], serde_json::json!([]));
+    assert_eq!(cleared.imported["teamInstructions"], "");
+    assert_eq!(cleared.revision, same.revision + 1);
+}
+
+#[test]
+fn team_sync_refuses_conflicts_and_keeps_unreadable_teams() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(root.path(), serde_json::Value::Null);
+    let me = vec![agent.pubkey.clone()];
+    let saved = sync(
+        &mut control,
+        &[("crew", 1, me.clone())],
+        &[("crew", "SHARED")],
+    )
+    .unwrap();
+    let error = sync(
+        &mut control,
+        &[("crew", 1, me.clone()), ("other", 1, me.clone())],
+        &[("crew", "SHARED"), ("other", "DIFFERENT")],
+    )
+    .err()
+    .unwrap();
+    assert!(error.contains("crew") && error.contains("other"), "{error}");
+    assert_eq!(control.store.agents().unwrap()[0].revision, saved.revision);
+    // A team the app could not read is left out: binding and text survive.
+    let kept = sync(&mut control, &[("crew", 1, me)], &[]).unwrap();
+    assert_eq!(kept.imported["teamBindings"], serde_json::json!(["crew"]));
+    assert_eq!(kept.imported["teamInstructions"], "SHARED");
+}
+
+#[test]
+fn team_sync_keeps_unbound_legacy_text_until_a_team_with_text_claims_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(
+        root.path(),
+        serde_json::json!({"teamInstructions": "LEGACY"}),
+    );
+    let me = vec![agent.pubkey.clone()];
+    let untouched = sync(
+        &mut control,
+        &[("mentions", 1, me.clone())],
+        &[("mentions", "")],
+    )
+    .unwrap();
+    assert_eq!(untouched.imported, agent.imported);
+    let adopted = sync(
+        &mut control,
+        &[("crew", 1, me.clone())],
+        &[("crew", " LEGACY ")],
+    )
+    .unwrap();
+    assert_eq!(
+        adopted.imported["teamBindings"],
+        serde_json::json!(["crew"])
+    );
+    assert_eq!(adopted.revision, agent.revision);
+    // A team with different text replaces the imported copy.
+    let other = tempfile::tempdir().unwrap();
+    let (mut control, agent) = synced_agent(
+        other.path(),
+        serde_json::json!({"teamInstructions": "LEGACY"}),
+    );
+    let replaced = sync(&mut control, &[("crew", 1, me)], &[("crew", "NEW")]).unwrap();
+    assert_eq!(replaced.imported["teamInstructions"], "NEW");
+    assert_eq!(replaced.revision, agent.revision + 1);
+}

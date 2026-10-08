@@ -552,6 +552,97 @@ impl Store {
         );
         self.write(&doc)
     }
+    /// Copy each team's current text to the owner's agents in `relay`. A team
+    /// with text binds the agents its roster lists; a team without text never
+    /// counts. Teams absent from `texts` are unreadable, not removed, so their
+    /// bindings and the copied text stay. Refuses, without writing, when one
+    /// agent would receive two different texts.
+    pub(crate) fn sync_team_instructions(
+        &mut self,
+        relay: &str,
+        owner: &str,
+        heads: &std::collections::BTreeMap<String, crate::TeamCatalogEntry>,
+        texts: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        for raw in texts.values() {
+            crate::import::team_text(&json!(raw))?;
+        }
+        let mut doc = self.read()?;
+        let mut changed = false;
+        for agent in &mut doc.agents {
+            let authorized = agent
+                .auth_tag
+                .as_deref()
+                .and_then(|tag| serde_json::from_str::<Vec<String>>(tag).ok())
+                .is_some_and(|tag| tag.get(1).map(String::as_str) == Some(owner));
+            if agent.relay_url != relay || !authorized {
+                continue;
+            }
+            let saved: Vec<String> = match agent.imported.get("teamBindings") {
+                Some(raw) => serde_json::from_value(raw.clone())
+                    .map_err(|_| "Invalid saved team bindings")?,
+                None => Vec::new(),
+            };
+            let current = crate::import::team_text(&agent.imported["teamInstructions"])?.to_owned();
+            let mut bindings: Vec<String> = saved
+                .iter()
+                .filter(|team| !texts.contains_key(*team) || !heads.contains_key(*team))
+                .cloned()
+                .collect();
+            let unknown = !bindings.is_empty();
+            let mut text: Option<(&str, &str)> = None;
+            for (team, raw) in texts {
+                let team_text = raw.trim();
+                if team_text.is_empty()
+                    || !heads
+                        .get(team)
+                        .is_some_and(|head| head.members.contains(&agent.pubkey))
+                {
+                    continue;
+                }
+                match text {
+                    Some((other, chosen)) if chosen != team_text => {
+                        return Err(format!(
+                            "{} is on teams \"{other}\" and \"{team}\", which have different instructions. Give both teams the same instructions or remove the agent from one",
+                            agent.name
+                        ));
+                    }
+                    _ => text = Some((team, team_text)),
+                }
+                bindings.push(team.clone());
+            }
+            // Text imported from old Buzz has no team binding. It stays until a
+            // team with text claims the agent; that team's text then replaces it.
+            let legacy = agent.imported.get("teamBindings").is_none();
+            let next = match text {
+                Some((_, chosen)) => chosen.to_owned(),
+                None if unknown || legacy => current.clone(),
+                None => String::new(),
+            };
+            if bindings.len() > 100 {
+                return Err("Too many team bindings for this agent".into());
+            }
+            if bindings == saved && next == current {
+                continue;
+            }
+            if agent.imported.is_null() {
+                agent.imported = json!({});
+            }
+            agent.imported["teamBindings"] = json!(bindings);
+            if next != current {
+                agent.imported["teamInstructions"] = json!(next);
+                agent.revision = agent
+                    .revision
+                    .checked_add(1)
+                    .ok_or("Agent revision exhausted")?;
+            }
+            changed = true;
+        }
+        if changed {
+            self.write(&doc)?;
+        }
+        Ok(())
+    }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
         let agent = doc

@@ -75,3 +75,21 @@ fn diff_itemizes_changes_and_redacts_arguments_prompt_and_environment() {
     );
     assert!(wire.contains(r#""kind":"text","beforeChars""#), "{wire}");
 }
+
+#[test]
+fn team_instruction_changes_need_a_restart_and_show_only_lengths() {
+    let before = crate::store::tests::fixture();
+    let mut after = before.clone();
+    after.imported = serde_json::json!({"teamInstructions": "PRIVATE TEAM"});
+    let entries = diff(&spawn_config(&before), &spawn_config(&after));
+    assert_eq!(
+        entries,
+        vec![entry(
+            "team_instructions".into(),
+            RestartChange::Text {
+                before_chars: Some(0),
+                after_chars: Some(12)
+            }
+        )]
+    );
+}

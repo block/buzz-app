@@ -136,6 +136,7 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_control_team_capture",
         "agent_control_team_export",
         "agent_control_team_instructions",
+        "agent_control_team_sync",
         "agent_control_snapshot",
         "agent_control_log_challenge",
         "agent_control_read_log",

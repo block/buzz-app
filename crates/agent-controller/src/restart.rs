@@ -72,6 +72,7 @@ pub(crate) fn spawn_config(agent: &Agent) -> Value {
     json!({
         "name": agent.name,
         "system_prompt": agent.system_prompt,
+        "team_instructions": crate::import::team_text(&agent.imported["teamInstructions"]).unwrap_or(""),
         "workspace": agent.workspace,
         "command": harness.command,
         "args": harness.args,
@@ -137,7 +138,7 @@ fn walk(
         return;
     }
     let change = match path {
-        "system_prompt" => RestartChange::Text {
+        "system_prompt" | "team_instructions" => RestartChange::Text {
             before_chars: before.as_str().map(|s| s.chars().count()),
             after_chars: after.as_str().map(|s| s.chars().count()),
         },

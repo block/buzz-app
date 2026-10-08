@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import type { StaffRequest } from "../../features/relay-staff/contract";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Header } from "../../shared/design-system/ui/Header";
@@ -27,13 +20,13 @@ export function RelayStaff({
   active(): boolean;
 }) {
   useSyncExternalStore(staff.subscribe, () => staff.visible());
+  const contextKey = useSyncExternalStore(staff.subscribe, staff.contextKey);
   const context = staff.context();
   const access = useSyncExternalStore(staff.subscribe, () =>
     context ? staff.access(context) : null,
   );
-  const contextKey = context && `${context.signer} ${context.origin}`;
   // Opening the card is what sends the first signed request.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by identity and host
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by identity, host and relay
   useEffect(() => {
     if (context && active()) void staff.probe(context);
   }, [staff, contextKey]);
@@ -78,12 +71,9 @@ function Authorized({
   access: Extract<Access, { state: "authorized" }>;
 }) {
   const context = staff.context();
-  const frozen = useRef(new Map<string, StaffRequest>());
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the panel is keyed by identity and host; only the role changes here
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the panel is keyed by identity, host and relay; only the role changes here
   const session = useMemo(
-    () =>
-      context && createSession(staff, context, access.probe, frozen.current),
-    // The panel is keyed by identity and host; only the role can change here.
+    () => context && createSession(staff, context, access.probe),
     [staff, access.probe],
   );
   if (!session) return null;

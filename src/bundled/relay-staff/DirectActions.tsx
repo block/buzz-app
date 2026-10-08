@@ -92,6 +92,10 @@ type Frozen = {
   preview: EventPreviewDto | null;
 };
 
+type Held = { frozen: Frozen | null; pending: boolean; error: string | null };
+const IDLE: Held = { frozen: null, pending: false, error: null };
+const DIRECT = "direct action";
+
 type Controller = {
   draftFor(host: string): Draft;
   setDraft(draft: Draft): void;
@@ -118,16 +122,25 @@ function useController() {
 
 /**
  * Owns the draft and the reviewed action for every community page. Mounted
- * above the tabs, so leaving a page mid-action keeps the same request; the
- * console is keyed by identity and admin host, so a switch starts over.
+ * above the tabs, so leaving a page mid-action keeps the same request. The
+ * reviewed action is held per identity, admin host and relay (`Staff.held`),
+ * so it also survives closing the card and losing then regaining access.
  */
 export function DirectActionsProvider({ children }: { children: ReactNode }) {
-  const { request } = useSession();
+  const { request, frozen: store } = useSession();
   const notify = useToastNotification();
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [frozen, setFrozen] = useState<Frozen | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // The reviewed action lives in the session's held writes, so closing the
+  // card or losing and regaining access brings back the same request.
+  const [held, setHeld] = useState(
+    () => (store.get(DIRECT) as Held | undefined) ?? IDLE,
+  );
+  const hold = (next: Held) => {
+    if (next.frozen) store.set(DIRECT, next);
+    else store.delete(DIRECT);
+    setHeld(next);
+  };
+  const { frozen, pending, error } = held;
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
   const shownHost = useRef<string | null>(null);
@@ -136,26 +149,26 @@ export function DirectActionsProvider({ children }: { children: ReactNode }) {
     if (!frozen || inFlight.current) return;
     inFlight.current = true;
     setSubmitting(true);
-    setError(null);
+    hold({ ...held, error: null });
     const { intent } = frozen;
     const outcome = await request(intent);
     inFlight.current = false;
     setSubmitting(false);
     if (outcome.ok && outcome.value.state === "succeeded") {
       notify(`${LABELS[intent.action]}: done`, "success");
-      setFrozen(null);
-      setPending(false);
+      hold(IDLE);
       setDraft(emptyDraft(intent.communityHost));
       return;
     }
     // Unresolved (pending, or the write may have landed): keep the same
     // request for a retry. Anything else is final for this request id.
-    setPending(outcome.ok);
-    if (!unresolved(outcome)) setFrozen(null);
-    if (outcome.ok) return;
-    const message = directFailure(outcome.failure);
-    setError(message);
-    if (shownHost.current !== intent.communityHost)
+    const message = outcome.ok ? null : directFailure(outcome.failure);
+    hold({
+      frozen: unresolved(outcome) ? frozen : null,
+      pending: outcome.ok,
+      error: message,
+    });
+    if (message && shownHost.current !== intent.communityHost)
       notify(
         `${LABELS[intent.action]} in ${intent.communityHost} failed: ${message}`,
         "error",
@@ -171,23 +184,21 @@ export function DirectActionsProvider({ children }: { children: ReactNode }) {
     submitting,
     review(lookup, intent) {
       if (frozen) return;
-      setError(null);
-      setPending(false);
-      setFrozen({
-        ...lookup,
-        intent: {
-          route: "directAction",
-          ...intent,
-          requestId: crypto.randomUUID(),
+      hold({
+        frozen: {
+          ...lookup,
+          intent: {
+            route: "directAction",
+            ...intent,
+            requestId: crypto.randomUUID(),
+          },
         },
+        pending: false,
+        error: null,
       });
     },
     confirm,
-    discard() {
-      setFrozen(null);
-      setError(null);
-      setPending(false);
-    },
+    discard: () => hold(IDLE),
     shownHost,
   };
   return (

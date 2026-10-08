@@ -225,7 +225,7 @@ function FeedbackBody({
 
 /** Images preview inline; every attachment can be saved. */
 function AttachmentView({ attachment }: { attachment: AttachmentRef }) {
-  const { staff, context } = useSession();
+  const session = useSession();
   const notify = useToastNotification();
   const image = attachment.mime.startsWith("image/");
   const [preview, setPreview] = useState<
@@ -238,7 +238,7 @@ function AttachmentView({ attachment }: { attachment: AttachmentRef }) {
     if (!image) return;
     let url: string | null = null;
     let current = true;
-    void staff.backend.attachment(context, attachment).then((outcome) => {
+    void session.attachment(attachment).then((outcome) => {
       if (!current) return;
       if (!outcome.ok) return setPreview({ failure: outcome.failure });
       url = URL.createObjectURL(
@@ -251,11 +251,11 @@ function AttachmentView({ attachment }: { attachment: AttachmentRef }) {
       current = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [staff, context, attachment.feedbackId, attachment.sha256, image]);
+  }, [session, attachment.feedbackId, attachment.sha256, image]);
 
   const save = async () => {
     setSaving(true);
-    const result = await staff.backend.saveAttachment(context, attachment);
+    const result = await session.saveAttachment(attachment);
     setSaving(false);
     if (result.state === "saved") notify("Attachment saved", "success");
     if (result.state === "failed") notify(describe(result.failure), "error");

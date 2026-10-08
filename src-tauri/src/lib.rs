@@ -42,12 +42,12 @@ use identity::{
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_copy_image, media_download, relay_agent_library, relay_agent_log_proof,
-    relay_agent_memories_read, relay_agent_observer, relay_agent_resolve, relay_channel_publish,
-    relay_channel_sign, relay_decode_read_state, relay_decode_sidebar, relay_direct_message,
-    relay_git_authorization, relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign,
-    relay_project_git, relay_project_git_cancel, relay_publish_read_state, relay_sign,
-    relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_begin,
+    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
+    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_sidebar,
+    relay_direct_message, relay_git_authorization, relay_http, relay_kit_decode, relay_kit_prepare,
+    relay_kit_sign, relay_project_git, relay_project_git_cancel, relay_publish_read_state,
+    relay_sign, relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_begin,
     relay_upload_cancel, relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
@@ -447,6 +447,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         media_download,
         media_copy_image,
+        media_stream_base,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -553,6 +554,14 @@ pub fn run() {
                         .reap(&handle.state::<relay::Uploads>());
                 }
             });
+            // Relay `<video>` and `<audio>` load from this listener; without it
+            // they show as unavailable.
+            match relay::MediaStream::start(app.state::<IdentityHost>().inner().clone()) {
+                Ok(stream) => {
+                    app.manage(stream);
+                }
+                Err(error) => eprintln!("Could not start the media listener: {error}"),
+            }
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {

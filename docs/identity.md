@@ -67,11 +67,14 @@ command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
 
-Settings → Profile → **Sign out of Buzz** removes this identity from this device
-only; the npub and its history stay on relays. The dialog embeds the private-key
-controls above. Confirm stays disabled until the user reveals or copies the key
-and ticks "I have my key". **Also wipe this device** requires typing
-`wipe all my data`; **Also remove my agents** appears only with wipe. Wipe clears
+Settings → Profile → **Sign out of Buzz** removes the private key from this
+device only; the npub and its history stay on relays. The dialog presents two
+layers: the key always goes, and settings, agents and other Buzz data stay unless
+the user erases them. It embeds the private-key controls above. Confirm stays
+disabled until the user reveals or copies the key and ticks "I have my key".
+**Also erase everything else Buzz stores on this device** (internally, wipe)
+requires typing `erase all my data`; **Also remove my agents** appears only with
+it; the button then reads **Sign out and erase**. Wipe clears
 this app's data, local data, WebView storage, caches and plugin storage. It cannot
 reach the clipboard, exported keys or relay data, and the dialog says so. Sign out
 is unavailable with the development broker (`BUZZ_DEV_VIEWER`). Development

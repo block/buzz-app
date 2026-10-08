@@ -16,17 +16,17 @@ use tauri::Manager;
 const FAILED: &str = "Sign out of Buzz didn't finish. Open Buzz again to retry.";
 const BUSY: &str = "Another Buzz window using this sign-in is still open. Quit it, then open Buzz again to finish signing out.";
 const BUSY_ALL: &str =
-    "Another Buzz window is still open. Quit every Buzz window, then open Buzz again to finish wiping.";
+    "Another Buzz window is still open. Quit every Buzz window, then open Buzz again to finish erasing.";
 const OTHERS: &str =
     "Quit every other Buzz window using this sign-in, then sign out again. Nothing was removed.";
 const OTHERS_ALL: &str =
-    "Quit every other Buzz window, then sign out and wipe again. Nothing was removed.";
+    "Quit every other Buzz window, then sign out and erase again. Nothing was removed.";
 const SIGNING_OUT: &str = "Buzz is signing out in another window. Open Buzz again in a moment.";
 const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try again.";
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
 const ALREADY: &str = "Buzz is already signing out.";
-const LINKED: &str = "Wipe is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
-const DEV_WIPE: &str = "Wipe is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
+const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
+const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
 const KEPT: &str = "agent-controller";
 /// What a kept agent needs to be identified and start again: the agent list
 /// with each agent's settings, and the shared agent defaults. Its keys live in
@@ -583,13 +583,13 @@ fn refusal(
     if dev_viewer {
         Some("Sign out is unavailable while the development broker supplies your identity")
     } else if remove_agents && !wipe {
-        Some("Removing agents is part of wiping this device")
+        Some("Removing agents is part of erasing this device")
     } else if wipe && debug {
         // Debug builds have their own human key, but share agent keys and plugin
         // storage with the installed app, so only plain sign-out is safe.
         Some(DEV_WIPE)
     } else if wipe && plugin_home {
-        Some("Wipe is unavailable while BUZZODZ_HOME moves plugin storage")
+        Some("Erasing is unavailable while BUZZODZ_HOME moves plugin storage")
     } else {
         None
     }

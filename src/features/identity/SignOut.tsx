@@ -6,7 +6,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { PrivateKey } from "./PrivateKey";
 import type { Identity } from "./service";
 
-export const WIPE_PHRASE = "wipe all my data";
+export const WIPE_PHRASE = "erase all my data";
 
 /** Confirm only after the key was revealed or copied and the user says they have it. */
 export function signOutReady(state: {
@@ -59,7 +59,7 @@ export function SignOutDialog({
     let current = true;
     identity
       .wipeRefusal()
-      .catch(() => "Couldn’t check whether wipe is available")
+      .catch(() => "Couldn’t check whether erasing is available")
       .then((reason) => {
         if (current) setWipeRefusal(reason ?? null);
       });
@@ -83,7 +83,7 @@ export function SignOutDialog({
   return (
     <AlertDialog
       title="Sign out of Buzz?"
-      description="Buzz restarts and removes your private key from this device. Without your key you can’t sign back in as this identity, so save it first."
+      description="Signing out removes your private key from this device. Your key is how you sign in, so save it before you continue. You’ll need it to sign back in as this identity."
       onClose={onClose}
       pending={pending && !reopen}
       actions={
@@ -96,7 +96,7 @@ export function SignOutDialog({
             disabled={!ready || pending || reopen}
             onClick={() => void confirm()}
           >
-            {wipe ? "Sign out and wipe" : "Sign out"}
+            {wipe ? "Sign out and erase" : "Sign out"}
           </Button>
         </>
       }
@@ -110,7 +110,7 @@ export function SignOutDialog({
           onCheckedChange={setHaveKey}
         />
         <Checkbox
-          label="Also wipe this device’s Buzz data"
+          label="Also erase everything else Buzz stores on this device"
           checked={wipe}
           disabled={pending || wipeRefusal !== null}
           onCheckedChange={(checked) => {
@@ -143,20 +143,20 @@ export function SignOutDialog({
               onChange={(event) => setPhrase(event.currentTarget.value)}
             />
             <p className="text-body-sm text-muted">
-              Wipe clears this app’s data, local storage, caches and plugin
+              Erasing clears this app’s data, local storage, caches and plugin
               storage on this device only. It can’t reach your clipboard, keys
               you exported, or relay data; your npub and its history stay on the
               relays.
               {!removeAgents &&
-                " Kept agents keep their list, settings (including any API keys entered there) and keys; their saved logins and logs are wiped. Kept Databricks agents need reconnecting through Browse models."}
+                " Kept agents keep their list, settings (including any API keys entered there) and keys; their saved logins and logs are erased. Kept Databricks agents need reconnecting through Browse models."}
             </p>
           </>
         )}
         {!wipe && (
           <p className="text-body-sm text-muted">
-            Your local data stays on this device, so signing back in with the
-            same key finds it. Agents are kept and start again only for this
-            key.
+            Your settings, agents and other Buzz data stay on this device. Sign
+            back in with this key and they’ll be here. Agents start only for
+            this key.
           </p>
         )}
       </div>

@@ -320,7 +320,9 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   await user.click(haveKey);
   expect(confirm()).toBeEnabled();
   await user.click(
-    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
   );
   expect(confirm()).toBeDisabled();
   await user.click(
@@ -342,15 +344,17 @@ it("disables wipe with the native reason when the build can't wipe", async () =>
   const identity = createIdentity();
   await identity.ready;
   vi.mocked(invoke).mockResolvedValueOnce(
-    "Wipe is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz",
+    "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz",
   );
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   expect(
-    await screen.findByText(/Wipe is unavailable in development builds/),
+    await screen.findByText(/Erasing is unavailable in development builds/),
   ).toBeVisible();
   expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
   expect(
-    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
   ).toHaveAttribute("aria-disabled", "true");
   identity.dispose();
 });
@@ -362,12 +366,12 @@ it("offers wipe once the native side says it's available", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   const wipe = screen.getByRole("checkbox", {
-    name: "Also wipe this device’s Buzz data",
+    name: "Also erase everything else Buzz stores on this device",
   });
   await waitFor(() =>
     expect(wipe).not.toHaveAttribute("aria-disabled", "true"),
   );
-  expect(screen.queryByText(/Wipe is unavailable/)).toBeNull();
+  expect(screen.queryByText(/Erasing is unavailable/)).toBeNull();
   identity.dispose();
 });
 
@@ -379,7 +383,7 @@ it("keeps wipe disabled while the native answer is pending", async () => {
   vi.mocked(invoke).mockReturnValueOnce(answer.promise);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   const wipe = screen.getByRole("checkbox", {
-    name: "Also wipe this device’s Buzz data",
+    name: "Also erase everything else Buzz stores on this device",
   });
   try {
     expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
@@ -400,10 +404,12 @@ it("keeps wipe disabled when the native check fails", async () => {
   vi.mocked(invoke).mockRejectedValueOnce(new Error("ipc failed"));
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   expect(
-    await screen.findByText(/Couldn’t check whether wipe is available/),
+    await screen.findByText(/Couldn’t check whether erasing is available/),
   ).toBeVisible();
   expect(
-    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+    screen.getByRole("checkbox", {
+      name: "Also erase everything else Buzz stores on this device",
+    }),
   ).toHaveAttribute("aria-disabled", "true");
   identity.dispose();
 });

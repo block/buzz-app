@@ -1016,7 +1016,7 @@ fn production_acl_lets_sign_out_reach_native_validation() {
     assert_eq!(
         error,
         serde_json::json!({
-            "message": "Removing agents is part of wiping this device",
+            "message": "Removing agents is part of erasing this device",
             "reopen": false
         })
     );

@@ -419,29 +419,6 @@ async fn decode_team_members(
         .collect())
 }
 
-#[tauri::command]
-pub(crate) async fn relay_kit_reconcile_teams(
-    identity: tauri::State<'_, IdentityHost>,
-    agents: tauri::State<'_, crate::agents::AgentHost>,
-    community: String,
-) -> Result<()> {
-    reconcile_teams(identity.inner(), agents.inner(), &community).await
-}
-
-pub(crate) async fn reconcile_teams(
-    identity: &IdentityHost,
-    agents: &crate::agents::AgentHost,
-    community: &str,
-) -> Result<()> {
-    let (owner, teams) = current_team_members(identity, community).await?;
-    let community = community.to_owned();
-    crate::agents::run(agents.clone(), move |host| {
-        host.controller
-            .reconcile_team_bindings(&community, &owner, &teams)
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

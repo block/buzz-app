@@ -339,3 +339,66 @@ it.each(["claude", "hermes", "pi"])(
     expect(create).not.toHaveBeenCalled();
   },
 );
+
+it("strips optional memories before creation preflight and preserves the source", async () => {
+  const fixture = controlFixture();
+  const source = structuredClone(snapshot);
+  const member = source.members[0];
+  if (!member) throw new Error("Missing fixture member");
+  member.memory = {
+    level: "everything",
+    entries: Array.from({ length: 256 }, (_, index) => ({
+      slug: `memory-${index}`,
+      body: "Optional memory",
+    })),
+  };
+  const create = vi.fn<NonNullable<import("./control").AgentControl["create"]>>(
+    async () => fixture.agent,
+  );
+  const control = {
+    refresh: vi.fn(async () => {}),
+    snapshot: () => ({ data: fixture.data }),
+    create,
+  } as unknown as import("./control").AgentControl;
+  await importTeamMembers(
+    control,
+    source,
+    ["one", "two"],
+    "https://relay.example",
+    "ef".repeat(32),
+    false,
+    "team-a",
+  );
+  expect(create.mock.calls[0]?.[4]).toEqual(
+    expect.objectContaining({
+      member: { ...member, memory: { level: "none", entries: [] } },
+    }),
+  );
+  expect(member.memory.entries).toHaveLength(256);
+});
+
+it("preflights every member before creating a valid first member", async () => {
+  const fixture = controlFixture();
+  const source = structuredClone(snapshot);
+  const second = source.members[1];
+  if (!second) throw new Error("Missing fixture member");
+  second.definition.runtime = "unsupported";
+  const create = vi.fn();
+  const control = {
+    refresh: vi.fn(async () => {}),
+    snapshot: () => ({ data: fixture.data }),
+    create,
+  } as unknown as import("./control").AgentControl;
+  await expect(
+    importTeamMembers(
+      control,
+      source,
+      ["one", "two"],
+      "https://relay.example",
+      "ef".repeat(32),
+      false,
+      "team-a",
+    ),
+  ).rejects.toThrow();
+  expect(create).not.toHaveBeenCalled();
+});

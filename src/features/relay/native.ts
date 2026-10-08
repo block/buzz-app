@@ -475,11 +475,6 @@ export async function connectNativeTransport(
       return id;
     },
     channelKit: {
-      async reconcileTeams(signal) {
-        signal.throwIfAborted();
-        await invoke("relay_kit_reconcile_teams", { community: origin });
-        signal.throwIfAborted();
-      },
       async prepare(record: KitRecord | PayloadRecord, signal) {
         signal.throwIfAborted();
         const valid = parsePrivateRecord(record, origin);

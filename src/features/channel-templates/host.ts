@@ -1,7 +1,6 @@
 import type { RelayEvent } from "../relay/events";
 import type { KitRecord, PayloadRecord } from "./model";
 export interface ChannelKitHost {
-  reconcileTeams?(signal: AbortSignal): Promise<void>;
   prepare(
     record: KitRecord | PayloadRecord,
     signal: AbortSignal,

@@ -29,7 +29,6 @@
     "allow-relay-kit-sign",
     "allow-relay-kit-prepare",
     "allow-relay-kit-decode",
-    "allow-relay-kit-reconcile-teams",
     "allow-relay-direct-message",
     "allow-relay-decode-sidebar",
     "allow-relay-sign-sidebar",

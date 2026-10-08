@@ -59,7 +59,6 @@ fn main() {
             "relay_kit_sign",
             "relay_kit_prepare",
             "relay_kit_decode",
-            "relay_kit_reconcile_teams",
             "relay_direct_message",
             "relay_decode_sidebar",
             "relay_sign_sidebar",

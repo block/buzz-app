@@ -106,7 +106,10 @@ all-Buzz, released in reverse, and never waited for while one is held alone.
 Whenever an instance takes its locks shared again (after finishing a pending
 sign-out, or after a refused sign-out), it looks for the marker again: at launch
 a new marker is finished in turn; in a running instance it means another process
-committed a sign-out, and Buzz exits natively (see below). Retaking them
+committed a sign-out, and Buzz exits natively (see below). A running instance
+also exits if the sign-out record (`.<service>.sign-outs-finished`, kept forever
+and shared by every identifier using the key) changed since launch: another
+process finished a sign-out of its key while it let go. Retaking them
 shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
 same way. These locks
 coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
@@ -157,13 +160,13 @@ webview storage, service or identity read:
    were removed.
 3. The human item is deleted and a fresh read must find it absent.
 4. The renamed folders and anything recreated in place are deleted, then the
-   marker. Kept agents keep only what they need to be identified and start
-   again: the agent list with their settings (`agents.json`), the shared agent
-   defaults (`defaults.json`), including any API keys entered in their
-   settings, and their keys in the keychain. Everything else in
-   `agent-controller`, including saved Databricks logins, logs and anything
-   added there later, is deleted; a kept Databricks agent must reconnect through **Browse models**.
-   The dialog says both.
+   sign-out record advances, then the marker is removed. Kept agents keep only
+   what they need to be identified and start again: the agent list with their
+   settings (`agents.json`), the shared agent defaults (`defaults.json`),
+   including any API keys entered in their settings, and their keys in the
+   keychain. Everything else in `agent-controller`, including saved Databricks
+   logins, logs and anything added there later, is deleted; a kept Databricks
+   agent must reconnect through **Browse models**. The dialog says both.
 
 Every step is safe to repeat: deleting an absent key succeeds, and an agent
 registry confirmed absent means its keys are already gone; failing to check it

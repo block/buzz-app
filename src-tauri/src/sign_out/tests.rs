@@ -5,6 +5,7 @@ use std::future::Future;
 fn paths_for(root: &Path, service: &str) -> Paths {
     Paths {
         marker: root.join(marker_name("app", service)),
+        finished: root.join(finished_name(service)),
         lock: root.join(LOCK),
         key_lock: root.join(key_lock_name(service)),
         ownership: root.join(AGENT_OWNERSHIP),
@@ -57,8 +58,10 @@ fn data(root: &Path) -> Vec<String> {
         .filter(|path| !path.ends_with("instance.lock"))
         .collect()
 }
+/// Everything under `root` but the finished record, which is never removed.
 fn listing(root: &Path) -> Vec<String> {
     let mut found: Vec<String> = walk(root, root);
+    found.retain(|path| !path.ends_with("sign-outs-finished"));
     found.sort();
     found
 }
@@ -1107,4 +1110,83 @@ fn production_acl_lets_sign_out_reach_native_validation() {
     );
     // Refused before any agent was stopped.
     assert!(invoke(&view, "agent_control_snapshot", serde_json::json!({})).is_ok());
+}
+
+/// While this instance lets go of its locks, another sign-out is committed and
+/// a restarted launch finishes it, removing the marker. Returns the fenced attempt.
+/// `identifier` names the app that finishes it; it shares this instance's key.
+fn finished_in_the_gap(
+    dir: &Path,
+    paths: &Paths,
+    choices: Choices,
+    identifier: &str,
+) -> Result<(), Failure> {
+    let instance = boot(paths, no_agents, || panic!("no marker")).ok().unwrap();
+    // Plain: a copy sharing the key refuses the upgrade. Wipe: a copy with
+    // another key refuses the all-Buzz lock.
+    let running = if choices.wipe {
+        Child::running(dir, OTHER_KEY)
+    } else {
+        Child::running(dir, "identity")
+    };
+    let mut gap = paths_for(dir, "identity");
+    gap.marker = dir.join(marker_name(identifier, "identity"));
+    HANDOFF.set(Some(Box::new(move || {
+        running.finish();
+        mark(&gap, choices.wipe, false);
+        drop(boot(&gap, no_agents, || Ok(())).ok().unwrap());
+        assert!(!gap.marker.exists(), "the sign-out finished");
+    })));
+    let closes = Cell::new(0);
+    let result = run(attempt(
+        &instance,
+        paths,
+        choices,
+        || closes.set(closes.get() + 1),
+        || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
+        || {
+            assert_eq!(closes.get(), 1, "signing closes before the exit");
+            async { Err(refuse("exited")) }
+        },
+    ));
+    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
+    result
+}
+
+#[test]
+fn a_sign_out_finished_while_a_refused_one_lets_go_exits_natively() {
+    let (dir, paths) = fixture();
+    assert_eq!(
+        finished_in_the_gap(dir.path(), &paths, PLAIN, "app"),
+        Err(refuse("exited"))
+    );
+}
+
+#[test]
+fn a_wipe_finished_while_a_refused_one_lets_go_exits_natively() {
+    let (dir, paths) = fixture();
+    assert_eq!(
+        finished_in_the_gap(dir.path(), &paths, WIPE, "app"),
+        Err(refuse("exited"))
+    );
+}
+
+#[test]
+fn a_sign_out_finished_by_another_identifier_using_the_key_exits_natively() {
+    let (dir, paths) = fixture();
+    assert_eq!(
+        finished_in_the_gap(dir.path(), &paths, PLAIN, "other"),
+        Err(refuse("exited"))
+    );
+}
+
+#[test]
+fn a_sign_out_finished_before_launch_does_not_fence_a_later_refusal() {
+    let (dir, paths) = fixture();
+    mark(&paths, false, false);
+    let instance = boot(&paths, no_agents, || Ok(())).ok().unwrap();
+    assert!(paths.finished.exists());
+    let running = Child::running(dir.path(), "identity");
+    assert_eq!(instance.begin(PLAIN), Err(refuse(OTHERS)));
+    running.finish();
 }

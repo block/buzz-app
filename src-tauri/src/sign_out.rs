@@ -4,6 +4,8 @@
 //! agent keys (when asked), the wipe, then the human key. Each step is safe to
 //! repeat; any failure keeps the marker and Buzz exits, so the next launch retries.
 //! An erase also waits for every agent's supervisor to let go of its ownership lock.
+//! Finishing first advances a record beside the marker that is never removed, so
+//! a running copy can tell a sign-out finished while it let go of its locks.
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
@@ -60,6 +62,10 @@ struct Choices {
 /// The marker, the shared instance lock and the folders a wipe clears, resolved like Tauri's app paths.
 pub(crate) struct Paths {
     marker: PathBuf,
+    /// Grows by one byte each time a sign-out of this key store finishes. Named,
+    /// like the key lock, for the key store alone: copies with any identifier
+    /// share the key, and the record carries no choices.
+    finished: PathBuf,
     lock: PathBuf,
     /// Held shared by every Buzz using this human key store, alone to sign out of it.
     key_lock: PathBuf,
@@ -72,6 +78,16 @@ pub(crate) struct Paths {
 /// One marker per key store, so a debug launch never acts on a release sign-out.
 fn marker_name(identifier: &str, service: &str) -> String {
     format!(".{identifier}--{service}.sign-out-pending")
+}
+fn finished_name(service: &str) -> String {
+    format!(".{service}.sign-outs-finished")
+}
+/// How many sign-outs of this key store have finished; absent is none.
+fn finished(path: &Path) -> std::io::Result<u64> {
+    match fs::metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(0),
+        other => other.map(|meta| meta.len()),
+    }
 }
 /// Named for the key store alone: copies with different identifiers can share a key.
 fn key_lock_name(service: &str) -> String {
@@ -94,6 +110,7 @@ impl Paths {
                 identifier,
                 buzz_credential_store::HUMAN_SERVICE,
             )),
+            finished: data.join(finished_name(buzz_credential_store::HUMAN_SERVICE)),
             lock: data.join(LOCK),
             key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_SERVICE)),
             ownership: data.join(AGENT_OWNERSHIP),
@@ -149,10 +166,13 @@ fn real_dir(path: &Path) -> std::io::Result<bool> {
 /// alone, so no copy using shared storage runs. Locks are taken key first, then
 /// all-Buzz, and released in reverse, never waiting while holding one alone.
 /// `started` admits one sign-out per instance: after it commits, Buzz restarts
-/// or exits, so it is never cleared.
+/// or exits, so it is never cleared. `seen` is the finished record at launch: a
+/// change means a sign-out finished while this instance let go of its locks.
 pub(crate) struct Instance {
     locks: Mutex<Locks>,
     marker: PathBuf,
+    finished: PathBuf,
+    seen: u64,
     started: AtomicBool,
 }
 struct Locks {
@@ -204,8 +224,8 @@ impl Instance {
         }
     }
     /// Share the unlocked key lock again, and the all-Buzz lock when `all` was
-    /// let go too. Another process may have committed a sign-out meanwhile; only
-    /// with none pending can this instance carry on.
+    /// let go too. Another process may have committed, or even finished, a
+    /// sign-out meanwhile; only with neither can this instance carry on.
     fn share(&self, locks: &Locks, all: bool, message: &str) -> Failure {
         // Bounded: a stuck owner must not hang the refusal; not sharing again means exiting.
         if !wait_for(|| locks.key.try_lock_shared())
@@ -213,7 +233,11 @@ impl Instance {
         {
             return fenced();
         }
-        match self.marker.try_exists() {
+        let changed = self
+            .marker
+            .try_exists()
+            .and_then(|pending| Ok(pending || finished(&self.finished)? != self.seen));
+        match changed {
             Ok(false) => {
                 self.started.store(false, Ordering::SeqCst);
                 refuse(message)
@@ -349,6 +373,8 @@ pub(crate) fn boot(
     Ok(Instance {
         locks: Mutex::new(locks),
         marker: paths.marker.clone(),
+        finished: paths.finished.clone(),
+        seen: finished(&paths.finished).map_err(failed)?,
         started: AtomicBool::new(false),
     })
 }
@@ -571,6 +597,13 @@ fn finish(
             .and_then(|()| clear(path, kept))
             .map_err(|error| format!("delete wiped {}: {error}", path.display()))?;
     }
+    // Record it before the marker goes; a resumed attempt records it again.
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.finished)
+        .and_then(|mut record| std::io::Write::write_all(&mut record, b"."))
+        .map_err(|error| format!("record finished: {error}"))?;
     fs::remove_file(&paths.marker).map_err(|error| format!("remove marker: {error}"))
 }
 

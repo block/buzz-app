@@ -642,9 +642,16 @@
     color: var(--text-standard);
   }
 
+  /* The selection fills the tab box, so hover and selection are the same shape
+     in the same place. Inset top and bottom instead and a selected tab is drawn
+     8px shorter than the hover fill on the tab beside it: the two states stop
+     agreeing on where a tab is, and the pill reads as a smaller object floating
+     in padding rather than the tab itself turning solid. The container's own
+     `--space-1` is the only inset this control needs — that is how the glass
+     strip in the header read before it became a Tabs component. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
-    top: var(--space-1);
-    bottom: var(--space-1);
+    top: 0;
+    bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
     box-shadow: var(--shadow-xs);

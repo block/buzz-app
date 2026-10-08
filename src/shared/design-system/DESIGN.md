@@ -227,6 +227,11 @@ A chrome selection can blend into a white panel; choose the appropriate variant
 instead of retinting `--bg-chrome-selected` for one caller. Keep shared behavior
 in one component and show both surface variants in its examples.
 
+A selection and a hover describe the same object, so they occupy the same box.
+The chrome pill fills its tab rather than sitting inset within it; insetting the
+selection alone draws it shorter than the hover beside it, and the two states
+stop agreeing on where a tab is. The container's own padding is the frame.
+
 Panel tabs keep labels at intrinsic width and scroll within the Base UI tablist
 when space is limited. Keyboard navigation reveals the focused tab. The surrounding
 panel grid must have a shrinkable column so tabs do not widen other content.

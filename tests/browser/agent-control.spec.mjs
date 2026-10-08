@@ -394,10 +394,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     // The compact header action uses the approved subtle dark surface.
     await expect(
       page.getByRole("button", { name: "Add agent", exact: true }),
-    ).toHaveCSS(
-      "background-color",
-      "rgb(35, 35, 35)",
-    );
+    ).toHaveCSS("background-color", "rgb(35, 35, 35)");
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
       fullPage: true,

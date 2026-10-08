@@ -31,6 +31,10 @@ import { profileTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
@@ -257,14 +261,35 @@ export const MessageRow = memo(function MessageRow({
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
-  const reportActive = reporting !== undefined;
+  const registeredActions = useSyncExternalStore(
+    extensions?.actions?.subscribe ?? noSubscribe,
+    extensions?.actions?.snapshot ?? noActions,
+    extensions?.actions?.snapshot ?? noActions,
+  );
+  const actions = session
+    ? registeredActions.filter((action) => {
+        try {
+          return action.matches(row, session);
+        } catch {
+          return false; // A broken optional action leaves the menu usable.
+        }
+      })
+    : [];
+  // The instance, not its key: a reinstalled plugin must not reopen a dialog.
+  const [openAction, setOpenAction] = useState<(typeof actions)[number]>();
+  const opened =
+    openAction && actions.includes(openAction) ? openAction : undefined;
+  useEffect(() => {
+    if (openAction && !opened) setOpenAction(undefined);
+  }, [openAction, opened]);
+  const keepAlive = reporting !== undefined || !!opened;
   // The dialog, pending submit and notice live in this row; eviction loses them.
   useEffect(() => {
-    const release = reportActive ? keepMounted?.(row.id) : undefined;
+    const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
     // task later lets restored focus keep the row mounted instead.
     return release && (() => void setTimeout(release));
-  }, [reportActive, keepMounted, row.id]);
+  }, [keepAlive, keepMounted, row.id]);
   const keepRowMounted = useMemo(
     () => keepMounted && (() => keepMounted(row.id)),
     [keepMounted, row.id],
@@ -285,6 +310,18 @@ export const MessageRow = memo(function MessageRow({
       Report
     </MenuItem>
   );
+  const actionItems = actions.map((action) => (
+    <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
+      {action.icon && (
+        <MenuIcon>
+          <ContributionBoundary key={contributionKey(action)} fallback={null}>
+            <action.icon />
+          </ContributionBoundary>
+        </MenuIcon>
+      )}
+      {action.title}
+    </MenuItem>
+  ));
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
@@ -422,6 +459,15 @@ export const MessageRow = memo(function MessageRow({
           </span>
         )}
         <div className={styles.messageBody}>
+          {opened && session && (
+            <ContributionBoundary key={contributionKey(opened)} fallback={null}>
+              <opened.component
+                message={row}
+                session={session}
+                close={() => setOpenAction(undefined)}
+              />
+            </ContributionBoundary>
+          )}
           {report && reporting === "open" && (
             <ReportMessageDialog
               report={(type, note) => report(row.id, type, note)}
@@ -511,6 +557,7 @@ export const MessageRow = memo(function MessageRow({
                       (session ? (
                         <MessageManagementItems row={row} session={session} />
                       ) : undefined)}
+                    {actionItems}
                     {reportItem}
                   </>
                 }
@@ -539,6 +586,18 @@ export const MessageRow = memo(function MessageRow({
               {layout !== "continuation" && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}
+              {session &&
+                actions.map(
+                  (action) =>
+                    action.marker && (
+                      <ContributionBoundary
+                        key={contributionKey(action)}
+                        fallback={null}
+                      >
+                        <action.marker message={row} session={session} />
+                      </ContributionBoundary>
+                    ),
+                )}
             </div>
           </div>
           {row.sentFromThread && (
@@ -812,6 +871,8 @@ function useThreadUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 const noSubscribe = () => () => {};
+const none: readonly never[] = [];
+const noActions = () => none;
 const noLibrary = () => undefined;
 // App-managed agents publish typing, not observer telemetry, while they work.
 // A joined-key snapshot keeps unrelated typing from re-rendering the row. Like

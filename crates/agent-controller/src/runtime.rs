@@ -166,10 +166,16 @@ impl RuntimeBundle {
                 },
             )
         };
-        let path = std::env::join_paths(
-            std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
-        )
-        .map_err(|_| "Invalid runtime tools path")?;
+        let path = path::compose(
+            std::iter::once(self.directory.clone())
+                .chain(std::env::split_paths(&tools_path))
+                .chain(
+                    environment
+                        .get("PATH")
+                        .into_iter()
+                        .flat_map(std::env::split_paths),
+                ),
+        )?;
         command.envs(environment).env("PATH", &path);
         if let Some((_, Some(cli))) = &claude {
             if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
@@ -198,7 +204,14 @@ impl RuntimeBundle {
             )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
-            .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
+            .env(
+                "BUZZ_ACP_MCP_COMMAND",
+                if uses_buzz_dev_mcp(&harness.command) {
+                    self.executable("buzz-dev-mcp")?
+                } else {
+                    PathBuf::new()
+                },
+            )
             .env("BUZZ_ACP_RELAY_OBSERVER", "true");
         if defaults.owner_only {
             command
@@ -321,25 +334,9 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
-/// PATH after the runtime bundle for non-Pi harnesses. Windows keeps its native
-/// PATH, where Git Bash and user tools are installed; Unix uses a fixed floor
-/// plus, on Linux, common user-level install locations.
-fn tools_path() -> Result<std::ffi::OsString> {
-    if cfg!(windows) {
-        return Ok(std::env::var_os("PATH").unwrap_or_default());
-    }
-    let mut dirs = Vec::new();
-    if cfg!(target_os = "linux") {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        dirs.extend(
-            home.filter(|h| h.is_absolute())
-                .map(|h| h.join(".local/bin")),
-        );
-        dirs.push(PathBuf::from("/usr/local/bin"));
-    }
-    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
-}
+pub(crate) mod path;
+use path::tools_path;
+
 /// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
 /// An app-owned adapter keeps using its pinned Node, independently of global tools.
 fn claude_tools(
@@ -439,17 +436,20 @@ pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
 }
 
 fn installed_names(names: &[String]) -> Option<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    dirs.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    dirs.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
+    let dirs: Vec<_> = std::env::split_paths(&tools_path().ok()?).collect();
+    // Preserve Windows discovery; Unix discovery and launch share one PATH.
+    #[cfg(windows)]
+    let dirs = {
+        let mut dirs = dirs;
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.insert(0, PathBuf::from(home).join(".local/bin"));
+        }
+        dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+        dirs
+    };
     dirs.into_iter()
         .filter(|p| p.is_absolute())
         .flat_map(|p| names.iter().map(move |name| p.join(name)))
@@ -554,7 +554,11 @@ impl Controller {
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
-            agent.mcp_command.clone_from(&mcp_command);
+            agent.mcp_command = if uses_buzz_dev_mcp(&agent.harness.command) {
+                mcp_command.clone()
+            } else {
+                None
+            };
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
@@ -1231,6 +1235,17 @@ fn model_context_with_defaults(
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
         model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
     })
+}
+
+// Buzz Agent relies on this MCP for developer tools. Other harnesses supply their
+// own tools; injecting it would expose competing shell and file-edit tools.
+fn uses_buzz_dev_mcp(command: &str) -> bool {
+    matches!(
+        Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("buzz-agent" | "buzz-agent.exe")
+    )
 }
 
 // Saved legacy Goose selections may still carry the CLI's ACP subcommand.

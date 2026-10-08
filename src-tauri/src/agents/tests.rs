@@ -834,7 +834,7 @@ mod overlap {
     const REFUSAL: &str = "Synthetic credential refusal";
 
     // Verified manifest over inert scripts. Credential refusal precedes any spawn.
-    fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
+    pub(super) fn synthetic_bundle(directory: &std::path::Path) -> RuntimeBundle {
         use sha2::{Digest, Sha256};
         std::fs::create_dir_all(directory).unwrap();
         let source: Value =
@@ -1266,10 +1266,10 @@ mod overlap {
         assert_pending(stopping.as_mut()).await;
         drop(admission);
         let release = async {
-            assert_eq!(gate.entered().await, credential);
             let stopped = stopping.await;
-            // Always release the credential wait before asserting the result.
-            gate.release[&credential].send(()).unwrap();
+            // A Stop queued behind Start preparation cancels Start before
+            // credential access after tool discovery.
+            assert!(gate.idle(), "cancelled Start opened credentials");
             assert!(
                 !stopped
                     .unwrap()
@@ -1282,6 +1282,7 @@ mod overlap {
             );
         };
         let (started, ()) = tokio::join!(starting, release);
+        assert!(gate.idle(), "late credential read followed cancellation");
         assert_eq!(
             started.err().as_deref(),
             Some("Start cancelled by a newer action")
@@ -2791,4 +2792,157 @@ async fn claude_auth_check_exposes_only_confirmed_status() {
             expected
         );
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_auth_uses_the_discovered_node_path() {
+    const FIXTURE: &str = "BUZZ_CLAUDE_AUTH_PATH_FIXTURE";
+    if let Some(root) = std::env::var_os(FIXTURE) {
+        let root = PathBuf::from(root);
+        prepare_tools_path().await;
+        let setup = claude_setup(&root.join("app-data"));
+        assert_eq!(setup.status, "ready");
+        let cli = setup.cli.as_ref().unwrap();
+        assert_eq!(cli, &root.join("shell tools/claude"));
+        assert!(setup.node.is_none(), "global install became managed");
+        assert_eq!(
+            probe_claude_auth(cli, &claude_auth_path(&setup).unwrap()).await,
+            Some(true)
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let tools = root.path().join("shell tools");
+    std::fs::create_dir(&tools).unwrap();
+    // A real env-node shebang must resolve the shell-only interpreter.
+    crate::test_executable::write_executable(
+        &tools.join("node"),
+        "#!/bin/sh\nprintf '%s' '{\"loggedIn\":true}'\n",
+    );
+    crate::test_executable::write_executable(&tools.join("claude"), "#!/usr/bin/env node\n");
+    crate::test_executable::write_executable(
+        &tools.join("claude-agent-acp"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    let shell = root.path().join("shell");
+    crate::test_executable::write_executable(
+        &shell,
+        format!(
+            "#!/bin/sh\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n",
+            tools.display()
+        ),
+    );
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "agents::tests::claude_auth_uses_the_discovered_node_path",
+            "--nocapture",
+        ])
+        .env(FIXTURE, root.path())
+        .env("HOME", root.path())
+        .env("SHELL", shell)
+        .env("PATH", "/nonexistent-inherited-tools")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start() {
+    use tauri::Manager as _;
+    const FIXTURE: &str = "BUZZ_TOOL_PATH_QUEUE_FIXTURE";
+    if let Some(root) = std::env::var_os(FIXTURE) {
+        let root = PathBuf::from(root);
+        let (dir, host, app, _view) = fixture();
+        let id = seed(dir.path());
+        host.with(|h| {
+            // Retire the previous controller before claiming its store lock.
+            h.controller = Controller::new(
+                Store::open(dir.path().join("replacement"))?,
+                Arc::new(RejectingCredentials),
+                Err(RUNTIME_GATE.into()),
+                dir.path().join("ownership"),
+            );
+            h.controller = Controller::new(
+                Store::open(dir.path().join("store"))?,
+                Arc::new(RejectingCredentials),
+                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+                dir.path().join("ownership"),
+            );
+            h.legacy_check = || Ok(());
+            Ok(())
+        })
+        .unwrap();
+        buzz_agent_controller::warm_tools_path();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !root.join("entered").exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let handle = app.handle().clone();
+        let snapshot = tokio::spawn(async move { agent_control_snapshot(handle.state()).await });
+        let owner = host.clone();
+        let target = id.clone();
+        let starting =
+            tokio::spawn(
+                async move { start(owner, target, Action::Start, false, None, None).await },
+            );
+        // Start is admitted before the PATH wait, so recovery Stop owns cancellation.
+        let ticket = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if host.with(|h| Ok(h.starts.contains_key(&id))).unwrap() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let owner = host.clone();
+        let target = id.clone();
+        let stop = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            run(owner, move |h| h.action(&target, Action::Stop)),
+        )
+        .await;
+        let snapshot_pending = !snapshot.is_finished();
+        // Explicit FIFO release, never a sleep masquerading as synchronization.
+        std::fs::write(root.join("release"), "go\n").unwrap();
+        assert!(
+            ticket.is_ok(),
+            "Start did not establish cancellation ownership"
+        );
+        assert!(stop.unwrap().is_ok(), "Stop could not run during discovery");
+        assert!(snapshot_pending, "snapshot did not await discovered tools");
+        assert_eq!(starting.await.unwrap().err().unwrap(), START_CANCELLED);
+        assert!(snapshot.await.unwrap().is_ok());
+        assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
+        host.shutdown().unwrap();
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let release = root.path().join("release");
+    use std::os::unix::ffi::OsStrExt;
+    let fifo = std::ffi::CString::new(release.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let shell = root.path().join("shell");
+    crate::test_executable::write_executable(&shell, format!("#!/bin/sh\nprintf entered > '{}/entered'\nread ready < '{}/release'\n/bin/sh -c \"$2\"\n", root.path().display(), root.path().display()));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "agents::tests::shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start", "--nocapture"])
+        .env(FIXTURE, root.path()).env("HOME", root.path()).env("SHELL", shell).env("PATH", "/usr/bin:/bin")
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

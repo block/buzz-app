@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
-import { deferred } from "../test-helpers";
+import { createOAuthSession } from "../../../shared/oauth/session";
+import { deferred } from "../../../shared/test-helpers";
 import { createAgentClient } from "./client";
 
 beforeEach(() => {
@@ -29,7 +29,7 @@ const response = (value: unknown, status = 200): HostResponse => ({
   body: JSON.stringify(value),
 });
 async function fixture(subject = "user") {
-  const session = createOAuthSession(async () => ({
+  const session = createOAuthSession("Builderlab", async () => ({
     value: "secret",
     account: { subject, email: "a@example.com" },
   }));

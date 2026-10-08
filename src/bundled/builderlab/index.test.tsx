@@ -10,7 +10,7 @@ import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
-import { createOAuthSession } from "./oauth/session";
+import { createOAuthSession } from "../../shared/oauth/session";
 import { enrollmentFixture } from "./agents/enrollment-testing";
 import { createNameProvider } from "../../features/identity-names/directory";
 import { resolveIdentityNames } from "../../features/identity-names/policy";
@@ -45,7 +45,7 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
   new HostService(root);
   const cards = new SettingsCardsService(root);
   const community = enrollmentFixture(
-    createOAuthSession(async () => {
+    createOAuthSession("Builderlab", async () => {
       throw new Error("unused");
     }),
     null,
@@ -119,7 +119,7 @@ it("binds login, list and creation to the plugin host and clears the session on 
   new HostService(root);
   const cards = new SettingsCardsService(root);
   const community = enrollmentFixture(
-    createOAuthSession(async () => {
+    createOAuthSession("Builderlab", async () => {
       throw new Error("unused");
     }),
   );

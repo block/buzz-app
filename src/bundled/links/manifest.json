@@ -1,1 +1,11 @@
-{ "id": "buzz.links", "name": "Links", "apiVersion": 1 }
+{
+  "id": "buzz.links",
+  "name": "Links",
+  "apiVersion": 1,
+  "host": {
+    "networkOrigins": [
+      "https://oauth2.googleapis.com",
+      "https://www.googleapis.com"
+    ]
+  }
+}

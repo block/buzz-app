@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { Credential } from "./browser";
+import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import { createOAuthSession } from "./session";
 import { deferred } from "../test-helpers";
 
@@ -9,7 +9,7 @@ const credential: Credential = {
 };
 it("keeps a reusable credential outside UI snapshots and clears it on sign-out", async () => {
   const acquire = vi.fn(async () => credential);
-  const session = createOAuthSession(acquire);
+  const session = createOAuthSession("Builderlab", acquire);
   const listener = vi.fn();
   const unsubscribe = session.subscribe(listener);
   await session.signIn();
@@ -32,7 +32,7 @@ it.each(["cancel", "signOut", "dispose"] as const)(
   async (action) => {
     const release = deferred<Credential>();
     let signal: AbortSignal | undefined;
-    const session = createOAuthSession(async (current) => {
+    const session = createOAuthSession("Builderlab", async (current) => {
       signal = current;
       return release.promise;
     });
@@ -52,7 +52,7 @@ it("a stale failure cannot replace a new sign-in, and concurrent clicks start on
     .fn()
     .mockImplementationOnce(() => old.promise)
     .mockResolvedValueOnce(credential);
-  const session = createOAuthSession(acquire);
+  const session = createOAuthSession("Builderlab", acquire);
   const pending = session.signIn();
   await session.signIn();
   expect(acquire).toHaveBeenCalledTimes(1);
@@ -71,7 +71,7 @@ it("allows retry after a failed attempt but cannot restart after disposal", asyn
     .fn()
     .mockRejectedValueOnce(new Error("Try again."))
     .mockResolvedValueOnce(credential);
-  const session = createOAuthSession(acquire);
+  const session = createOAuthSession("Builderlab", acquire);
   await session.signIn();
   expect(session.snapshot()).toEqual({
     status: "signed-out",

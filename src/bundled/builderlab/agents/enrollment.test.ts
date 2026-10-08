@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createOAuthSession } from "../oauth/session";
-import { deferred } from "../test-helpers";
+import { createOAuthSession } from "../../../shared/oauth/session";
+import { deferred } from "../../../shared/test-helpers";
 import { createEnrollment } from "./enrollment";
 import { enrollmentFixture } from "./enrollment-testing";
 import type { RemoteAgent } from "./client";
@@ -30,7 +30,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 async function fixture(kinds?: readonly number[]) {
-  const login = createOAuthSession(async () => ({
+  const login = createOAuthSession("Builderlab", async () => ({
     value: "secret",
     account: { subject: "user", email: "a@example.com" },
   }));
@@ -203,7 +203,7 @@ it.each(["receipt dismissal", "intent removal"])(
 it("keeps enrollment and deletion intent scoped to the verified account", async () => {
   const h = await fixture();
   h.enrollment.remember(h.enrollment.capture(), agent);
-  const other = createOAuthSession(async () => ({
+  const other = createOAuthSession("Builderlab", async () => ({
     value: "other-secret",
     account: { subject: "other", email: "a@example.com" },
   }));

@@ -1,6 +1,6 @@
 import type { Host, HostResponse } from "../../../features/host/service";
 import { oauthTarget, type Credential } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import type { OAuthSession } from "../../../shared/oauth/session";
 import { clearRegistration, registrationIntent } from "./registration";
 
 export type RemoteAgent = Readonly<{
@@ -41,7 +41,7 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
 
 export function createAgentClient(
   host: Host,
-  session: OAuthSession,
+  session: OAuthSession<Credential>,
   communityUrl: () => string | undefined,
 ) {
   function check(credential: Credential, signal: AbortSignal) {

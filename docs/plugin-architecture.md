@@ -504,7 +504,8 @@ plugins while enabled bundled plugins remain usable.
 Builderlab's effective manifest derives its exact origin from the validated
 [`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
 Its source manifest contains no deployment origins; external plugin declarations
-remain fixed in their installed artifacts.
+remain fixed in their installed artifacts. Links declares Google's fixed token and
+Drive API origins in its source manifest; only its OAuth client comes from a build input.
 
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
@@ -750,7 +751,15 @@ The bundled Links plugin uses blue text, a blue fill only on hover, 2px padding
 Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets and
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
-It does not fetch titles. Messages currently recognize
+The one exception is opt-in: on desktop, Settings → Integrations → Google signs
+into a Google account through the shared native OAuth handoff, and Links then
+labels Docs, Sheets, Slides and Drive links with the file name read from the Drive
+metadata API over the plugin's declared `googleapis.com` origins. Names resolve
+once per file for the signed-in credential and are dropped on sign-out; files the
+account cannot read, other hosts and browsers without the desktop transport keep
+the ordinary label. The access token stays in memory. See the
+[Google OAuth client build inputs](configuration.md#google-oauth-client-build-inputs).
+Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back

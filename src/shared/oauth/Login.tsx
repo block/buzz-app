@@ -1,13 +1,17 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { Button } from "../../../shared/design-system/ui/Button";
-import type { OAuthSession } from "../oauth/session";
+import { Button } from "../design-system/ui/Button";
+import type { OAuthSession } from "./session";
 
 export function Login({
+  provider,
+  description,
   session,
   available,
   active,
-  unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
+  unavailableReason = `Open the Buzz desktop app to sign in with ${provider}.`,
 }: {
+  provider: string;
+  description: string;
   session: OAuthSession;
   available: boolean;
   active(): boolean;
@@ -27,11 +31,8 @@ export function Login({
   return (
     <div data-buzz-ui="" className="flex flex-col items-start gap-4">
       <div>
-        <h2 className="text-heading text-primary">Builderlab</h2>
-        <p className="mt-2 text-body-sm text-secondary">
-          Connect your Builderlab account. Your credential stays in memory until
-          you sign out or close Buzz.
-        </p>
+        <h2 className="text-heading text-primary">{provider}</h2>
+        <p className="mt-2 text-body-sm text-secondary">{description}</p>
       </div>
       {!available ? (
         <p role="status" className="text-body-sm text-secondary">
@@ -45,7 +46,7 @@ export function Login({
               : state.account
                 ? state.account.email
                   ? `Signed in as ${state.account.email}.`
-                  : "Signed in to Builderlab."
+                  : `Signed in to ${provider}.`
                 : "Sign in securely in your browser."}
           </p>
           {state.error && (
@@ -66,7 +67,7 @@ export function Login({
               ? "Cancel sign-in"
               : state.status === "signed-in"
                 ? "Sign out"
-                : "Sign in with Builderlab"}
+                : `Sign in with ${provider}`}
           </Button>
         </>
       )}

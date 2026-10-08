@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Host } from "../../../features/host/service";
 import { browserCredential, type BrowserBridge, oauthTarget } from "./browser";
-import { deferred } from "../test-helpers";
+import { deferred } from "../../../shared/test-helpers";
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
 );

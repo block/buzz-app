@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  exactName,
   extendsName,
   foldName,
   matchPerson,
@@ -54,5 +55,31 @@ describe("matchPerson", () => {
     expect(extendsName("Jose", "jose")).toBe(false);
     expect(extendsName("Jose ", "jose")).toBe(false);
     expect(extendsName("Anything", "")).toBe(false);
+  });
+});
+
+describe("exactName", () => {
+  const names = (item: { names: string[] }) => item.names;
+  const of = (...list: string[][]) => list.map((n) => ({ names: n }));
+
+  it("finds the one item whose name is the query, without accents or case", () => {
+    const people = of(["José"], ["Joseph"]);
+    expect(exactName(people, names, " jose ")).toBe(people[0]);
+  });
+
+  it("waits for a namesake or a longer name that continues the query", () => {
+    expect(exactName(of(["Avery"], ["Avery"]), names, "avery")).toBeUndefined();
+    expect(
+      exactName(of(["Avery"], ["Avery Chen"]), names, "avery"),
+    ).toBeUndefined();
+    expect(exactName(of(["Avery"]), names, "")).toBeUndefined();
+  });
+
+  it("lets items it cannot choose still block a completion", () => {
+    const people = of(["Avery"], ["Avery-Lee"], ["Sam"]);
+    const allowed = (item: { names: string[] }) => item !== people[1];
+    expect(exactName(people, names, "avery", allowed)).toBeUndefined();
+    expect(exactName(people, names, "avery-lee", allowed)).toBeUndefined();
+    expect(exactName(people, names, "sam", allowed)).toBe(people[2]);
   });
 });

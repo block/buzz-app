@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
-import { createNavigationController } from "../../features/navigation/controller";
-import { createMemoryHistory } from "../../features/navigation/history";
-import type { OpenTarget } from "../../features/navigation/targets";
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
+import type { OpenTarget } from "../navigation/targets";
 import { clearViewScope, writeView } from "../../shared/view-state";
 import {
   bindSearchUsage,
   HALF_LIFE_MS,
   MAX_BOOST,
+  pickerText,
   readSearchUsage,
   recordChoice,
   recordVisit,
+  searchOrder,
   usageScope,
-} from "./search-usage";
+} from "./usage";
 
 const viewer = "a".repeat(64);
 const scope = usageScope({
@@ -59,6 +61,35 @@ it("remembers the choice for typed text, its prefixes and its extensions", () =>
   expect(usage.boost("channel:workflows")).toBeGreaterThan(
     readSearchUsage(scope, now).boost("channel:opened"),
   );
+});
+
+it("replaces the earlier choice for the same text, and keeps pickers apart", () => {
+  recordChoice(scope, "wo", "channel:workflows", now - 3);
+  recordChoice(scope, "wo", "channel:work", now - 2);
+  // The replaced choice does not come back while its successor is missing.
+  const usage = readSearchUsage(scope, now);
+  expect(usage.pick("wo", new Set(["channel:workflows"]))).toBeUndefined();
+  expect(usage.pick("wo", new Set(["channel:work"]))).toBe("channel:work");
+  // A picker's text is its own: it neither replaces nor matches Command-K's.
+  recordChoice(scope, pickerText("dm", "wo"), "person:woody", now - 1);
+  const later = readSearchUsage(scope, now);
+  expect(later.pick("wo", new Set(["channel:work"]))).toBe("channel:work");
+  expect(later.pick("w", new Set(["person:woody"]))).toBeUndefined();
+  expect(later.pick(pickerText("dm", "w"), new Set(["person:woody"]))).toBe(
+    "person:woody",
+  );
+  expect(pickerText("dm", "")).toBe("");
+});
+
+it("scores a row by the sum of its keys", () => {
+  recordVisit(scope, "channel:dm", now);
+  recordChoice(scope, "", "person:logan", now);
+  const usage = readSearchUsage(scope, now);
+  expect(usage.boost("person:logan", "channel:dm")).toBeGreaterThan(
+    usage.boost("person:logan"),
+  );
+  expect(usage.boost("person:logan", "channel:dm")).toBeLessThan(MAX_BOOST);
+  expect(usage.boost()).toBe(0);
 });
 
 it("keeps each community apart, bounds its size and ignores malformed data", () => {
@@ -154,4 +185,27 @@ it("counts every completed open once, but not the destination restored at startu
     stop();
     host.dispose();
   }
+});
+
+it("orders an exact name, then the earlier choice, then lifted matches by band", () => {
+  for (let visit = 0; visit < 20; visit += 1)
+    recordVisit(scope, "person:used", now);
+  const usage = readSearchUsage(scope, now);
+  const order = (key: string, rank: number, band = 0) =>
+    searchOrder(usage, "person:picked", { key, rank, band });
+  // Exact and chosen rows lead every band.
+  expect(order("person:exact", 0, 4)).toBe(-2);
+  expect(order("person:picked", 3, 4)).toBe(-1);
+  // Usage lifts past one rank, never two, and never out of its band.
+  expect(order("person:used", 2)).toBeLessThan(order("person:other", 1));
+  expect(order("person:used", 3)).toBeGreaterThan(order("person:other", 1));
+  expect(order("person:used", 1, 1)).toBeGreaterThan(order("person:other", 3));
+  // Several keys for one row share one score.
+  expect(
+    searchOrder(usage, undefined, {
+      key: "person:dm",
+      rank: 2,
+      usageKeys: ["person:dm", "person:used"],
+    }),
+  ).toBe(order("person:used", 2));
 });

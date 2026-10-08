@@ -16,8 +16,14 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
-import { matchName, matchRank, SearchChoices } from "./SearchChoices";
-import { noSearchUsage, readSearchUsage, recordChoice } from "./search-usage";
+import { SearchChoices } from "./SearchChoices";
+import { matchName, matchRank } from "../../features/search/match";
+import {
+  noSearchUsage,
+  readSearchUsage,
+  recordChoice,
+  searchOrder,
+} from "../../features/search/usage";
 import { usePublicChannelSearch } from "./usePublicChannelSearch";
 import { useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
@@ -450,14 +456,11 @@ export function SearchResults({
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
   // The relay matches public channels itself; keep its matches, ranked last.
-  // Archived channels follow live ones of the same rank. An exact name leads,
-  // then the viewer's earlier choice for this text; otherwise usage lifts a
-  // match past a slightly better one, but never past a much better one.
+  // The shared search order, with archived channels half a step behind live
+  // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = matchRank(label, needle);
-    if (rank === 0) return archived ? -1.5 : -2;
-    if (key === picked) return -1;
-    return (rank ?? 6) + (archived ? 0.5 : 0) - usage.boost(key);
+    const rank = matchRank(label, needle) ?? 6;
+    return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows

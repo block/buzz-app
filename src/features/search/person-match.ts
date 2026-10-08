@@ -46,6 +46,32 @@ export function extendsName(name: string, query: string) {
   );
 }
 
+/**
+ * The one item whose name is exactly `query`, for Space to complete. There is
+ * none when two items have that name or any item has a longer name that
+ * continues it (`Avery` waits while `Avery Chen` exists). Only items that
+ * `canComplete` allows can be chosen, but every item's names can block one.
+ */
+export function exactName<T>(
+  items: readonly T[],
+  names: (item: T) => readonly string[],
+  query: string,
+  canComplete: (item: T) => boolean = () => true,
+): T | undefined {
+  const needle = normalizeName(query);
+  if (!needle) return undefined;
+  if (
+    items.some((item) => names(item).some((name) => extendsName(name, needle)))
+  )
+    return undefined;
+  const exact = items.filter(
+    (item) =>
+      canComplete(item) &&
+      names(item).some((name) => normalizeName(name) === needle),
+  );
+  return exact.length === 1 ? exact[0] : undefined;
+}
+
 export type PersonMatch = {
   /** 0 equal, 1 name starts with the query, 2 a word equals it, 3 a word starts with it. */
   tier: 0 | 1 | 2 | 3;

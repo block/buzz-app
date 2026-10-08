@@ -1209,8 +1209,9 @@ with local ephemeral signing keys; it does not contact the deployed relay.
 
 The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
-and search load only when opened. Search by name/shortcode (community shortcodes
-also match run-together words, such as `bufop` for `bufo-pray`), then choose an emoji
+and search load only when opened. Search by name/shortcode; after Emoji Mart's own
+matches, shortcodes match as fuzzily as in `:` completion (`bufop`, `bufo_pray` or
+`bfpray` for `bufo-pray`, `pointup` for `point_up`). Then choose an emoji
 to insert at the cursor; Enter selects a search result and Escape closes the picker
 and returns focus. You can also type `:shortcode:`: the closing colon after one
 exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with
@@ -1226,7 +1227,7 @@ follow the operating system.
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose
 Retry while leaving Unicode available and retaining drafts. Only one picker owns
-Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
+Emoji Mart's global dictionary and search at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
 existing reactions keep their signed emoji URLs after catalog changes.
 Emoji-only messages stay at the large 42px size regardless of count; normal text

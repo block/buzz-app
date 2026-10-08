@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SearchIndex } from "emoji-mart";
 import { afterEach, expect, it, vi } from "vitest";
 import { mountEmojiMart } from "./emoji-mart";
 
@@ -7,7 +8,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("finds custom emoji by run-together words from any word start", async () => {
+it("adds fuzzy shortcode matches after Mart's own results", async () => {
+  const martSearch = SearchIndex.search;
   for (const name of ["ResizeObserver", "IntersectionObserver"])
     vi.stubGlobal(
       name,
@@ -44,26 +46,37 @@ it("finds custom emoji by run-together words from any word start", async () => {
           ".category:not([data-id]) button[aria-posinset]",
         ) ?? []),
       ].map((button) => button.getAttribute("title"));
+    const input = await vi.waitFor(() => {
+      const element = root()?.querySelector<HTMLInputElement>("input");
+      if (!element) throw new Error("Search has not rendered");
+      return element;
+    });
+    const search = (query: string) => {
+      input.value = query;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
     for (const [query, expected] of [
       ["bufop", ":bufo-pray:"],
       ["bufopray", ":bufo-pray:"],
       [":bufop", ":bufo-pray:"],
+      ["bufo_pray", ":bufo-pray:"],
+      ["bfpray", ":bufo-pray:"],
       ["bufo p", ":bufo-pray:"],
       ["thumbsup", ":bufo-thumbs-up:"],
+      ["pointup", "Index Pointing Up"],
+      ["hearteyes", "Smiling Face with Heart-Eyes"],
+      ["thumbs up", "Thumbs Up"],
     ] as const) {
-      await vi.waitFor(() => {
-        const input = root()?.querySelector<HTMLInputElement>("input");
-        if (!input) throw new Error("Search has not rendered");
-        if (input.value !== query) {
-          input.value = query;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        expect(results()).toContain(expected);
-      });
-      // Joins start at word boundaries; `thumbsup` must not match `bufo-pray`.
-      if (query === "thumbsup") expect(results()).not.toContain(":bufo-pray:");
+      // Clear first so the previous query's rendered results cannot pass this one.
+      search("");
+      await vi.waitFor(() => expect(results()).toEqual([]));
+      search(query);
+      await vi.waitFor(() => expect(results(), query).toContain(expected));
+      // Mart's multi-word name match stays ahead of fuzzy fallbacks.
+      if (query === "thumbs up") expect(results()[0]).toBe("Thumbs Up");
     }
   } finally {
     dispose();
   }
+  expect(SearchIndex.search).toBe(martSearch);
 });

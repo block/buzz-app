@@ -6,7 +6,9 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
+import { rankShortcodes } from "./emoji-search";
 
+const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
@@ -74,16 +76,12 @@ export function mountEmojiMart({
     const id = `${prefix}${encodeURIComponent(scope)}/${shortcode}`;
     const literal = `:${shortcode}:`;
     values.set(id, { literal, shortcode });
-    // Match Mart's first-hyphen query normalization. Mart matches term prefixes,
-    // so joining from each word start also finds run-together words (`bufop`).
-    const terms = [shortcode, literal].flatMap((name) => {
-      const words = name.split(/[-_]+/);
-      return [
-        name,
-        ...name.replace(/(\w)-/, "$1 ").split(/[\s|,]+/),
-        ...words.map((_, index) => words.slice(index).join("")),
-      ];
-    });
+    // Match Mart's first-hyphen query normalization as well as individual words.
+    const terms = [shortcode, literal].flatMap((name) => [
+      name,
+      ...name.replace(/(\w)-/, "$1 ").split(/[\s|,]+/),
+      ...name.split(/[-_]+/),
+    ]);
     return [
       {
         id,
@@ -554,6 +552,7 @@ export function mountEmojiMart({
         (c: { id: string }) => c.id !== "buzz-custom",
       );
     }
+    SearchIndex.search = martSearch;
     SearchIndex.reset();
     if (active === dismiss) active = undefined;
   }
@@ -562,6 +561,30 @@ export function mountEmojiMart({
     close();
   }
   active = dismiss;
+  // Keep Mart's word-prefix results first, then fill its result limit with the
+  // composer's fuzzy shortcode matches (`pointup`, `bufo_pray`, `bfpray`).
+  SearchIndex.search = async (value, options) => {
+    const results: { id: string }[] | null | undefined = await martSearch(
+      value,
+      options,
+    );
+    if (!results) return results;
+    const found = new Set(results.map(({ id }) => id));
+    // Mart leaves unsupported emoji in its dictionary without search terms.
+    const pool = Object.values<{ id: string; search?: string }>(
+      Data.emojis,
+    ).filter((emoji) => emoji.search && !found.has(emoji.id));
+    const fuzzy = rankShortcodes(
+      String(value).replaceAll(":", ""),
+      pool,
+      (emoji) => values.get(emoji.id)?.shortcode ?? emoji.id,
+    );
+    // 90 is Mart's own default limit.
+    return [...results, ...fuzzy.map(({ item }) => item)].slice(
+      0,
+      options?.maxResults || 90,
+    );
+  };
   // Search also caches results after deletion/replacement; recreate rather than update.
   SearchIndex.reset();
   return dispose;

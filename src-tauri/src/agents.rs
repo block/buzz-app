@@ -1602,7 +1602,7 @@ pub(crate) async fn agent_control_snapshot_memory_write(
 pub(crate) use snapshot_memory::{MemoryWriteResult, SnapshotMemoryEntry};
 mod snapshot_memory;
 
-mod profile_http;
+pub(crate) mod profile_http;
 
 #[cfg(test)]
 pub(crate) mod tests;

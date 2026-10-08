@@ -4,7 +4,7 @@ use buzz_agent_controller::{CreationProfile, Secret};
 use serde_json::Value;
 
 type Result<T> = std::result::Result<T, String>;
-fn authorization(event: Value) -> Result<String> {
+pub(crate) fn authorization(event: Value) -> Result<String> {
     Ok(format!(
         "Nostr {}",
         base64::engine::general_purpose::STANDARD

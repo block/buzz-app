@@ -82,23 +82,35 @@ development build, which share the debug key, and leaves the installed app
 signed in. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data.
 
-Every running instance, debug or release under any identifier, takes one fixed
-shared lock in the user data folder (`.dev.local.buzz.foundation.instance.lock`)
-before it looks for a pending sign-out. The lock is named for the storage all
-builds share, the default plugin folder and the agent key service, not for the
-app identifier. Whenever an instance takes the lock shared again (after finishing
-a pending sign-out, or after a refused sign-out), it looks for the marker again:
-at launch a new marker is finished in turn; in a running instance it means
-another process committed a sign-out, and the user is asked to reopen Buzz. The native `sign_out` command deletes nothing: it admits one
-sign-out per instance, refuses unless it can hold the lock alone (no other Buzz
-window is open), writes a marker beside (not inside) app data recording the wipe
-and agent choices, stops agents as Quit does, and restarts. The marker is named
-for the exact human key store (debug or release), so another build never acts on
-it. If the marker can't be written nothing has changed; if agents can't be
-stopped, the user is asked to reopen Buzz, which finishes the sign-out.
+Every running instance, debug or release under any identifier, holds two locks
+shared in the user data folder before it looks for a pending sign-out:
 
-A launch that finds the marker switches to the lock alone, waiting briefly for
-the exiting instance, reads the marker again, and finishes before any window,
+- a **key lock** named for its human key store (`.<service>.instance.lock`), shared
+  by every copy using that key whatever its identifier; and
+- the **all-Buzz lock** (`.dev.local.buzz.foundation.instance.lock`), named for
+  the storage all builds share (the default plugin folder and the agent key
+  service), not for the app identifier.
+
+A sign-out needs its key lock alone, so every other copy using that key must be
+closed. A wipe also needs the all-Buzz lock alone, so every other Buzz must be
+closed. A development-build sign-out therefore needs only other development
+worktrees closed, not the installed app, and the installed app's plain sign-out
+doesn't need development builds closed. Locks are taken key first, then
+all-Buzz, released in reverse, and never waited for while one is held alone.
+Whenever an instance takes its locks shared again (after finishing a pending
+sign-out, or after a refused sign-out), it looks for the marker again: at launch
+a new marker is finished in turn; in a running instance it means another process
+committed a sign-out, and the user is asked to reopen Buzz. The native
+`sign_out` command deletes nothing: it admits one sign-out per instance, refuses
+unless it can hold the locks it needs alone, writes a marker beside (not inside)
+app data recording the wipe and agent choices, stops agents as Quit does, and
+restarts. The marker is named for the exact human key store (debug or release),
+so another build never acts on it. If the marker can't be written nothing has
+changed; if agents can't be stopped, the user is asked to reopen Buzz, which
+finishes the sign-out.
+
+A launch that finds the marker takes its key lock alone, and for a wipe the
+all-Buzz lock too, waiting briefly for the exiting instance, reads the marker again, and finishes before any window,
 webview storage, service or identity read:
 
 1. With remove agents, every local agent's key is deleted, read from the agent

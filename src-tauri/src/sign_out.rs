@@ -1,6 +1,6 @@
 //! Sign out of Buzz. The command only records intent in a marker outside app
-//! data, stops agents and restarts. The next launch, holding the shared instance
-//! lock alone, does every deletion before any window, service or identity read:
+//! data, stops agents and restarts. The next launch, holding alone the lock for
+//! its key (and, for a wipe, the lock every Buzz shares), does every deletion before any window, service or identity read:
 //! agent keys (when asked), the wipe, then the human key. Each step is safe to
 //! repeat; any failure keeps the marker and Buzz exits, so the next launch retries.
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,13 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 
 const FAILED: &str = "Sign out of Buzz didn't finish. Open Buzz again to retry.";
-const BUSY: &str =
-    "Another Buzz window is still open. Quit it, then open Buzz again to finish signing out.";
+const BUSY: &str = "Another Buzz window using this sign-in is still open. Quit it, then open Buzz again to finish signing out.";
+const BUSY_ALL: &str =
+    "Another Buzz window is still open. Quit every Buzz window, then open Buzz again to finish wiping.";
+const OTHERS: &str =
+    "Quit every other Buzz window using this sign-in, then sign out again. Nothing was removed.";
+const OTHERS_ALL: &str =
+    "Quit every other Buzz window, then sign out and wipe again. Nothing was removed.";
 const SIGNING_OUT: &str = "Buzz is signing out in another window. Open Buzz again in a moment.";
 const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try again.";
 const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
@@ -28,8 +33,9 @@ const KEPT: &str = "agent-controller";
 /// the keychain. Anything else in `KEPT` (saved logins, logs, run folders, and
 /// whatever is added later) is wiped.
 const KEPT_FILES: [&str; 2] = ["agents.json", "defaults.json"];
-/// Named for the storage every Buzz shares whatever its identifier: the default
-/// plugin folder and the fixed agent key service. It is the release app's name too.
+/// Held shared by every Buzz and alone only to wipe. Named for the storage every
+/// Buzz shares whatever its identifier: the default plugin folder and the fixed
+/// agent key service. It is the release app's name too.
 const LOCK: &str = ".dev.local.buzz.foundation.instance.lock";
 /// How long a launch waits for an exiting or signing-out instance to let go.
 const WAIT: Duration = if cfg!(test) {
@@ -49,6 +55,8 @@ struct Choices {
 pub(crate) struct Paths {
     marker: PathBuf,
     lock: PathBuf,
+    /// Held shared by every Buzz using this human key store, alone to sign out of it.
+    key_lock: PathBuf,
     app_data: PathBuf,
     /// Other app-owned folders: local data and WebView storage, caches.
     others: Vec<PathBuf>,
@@ -56,6 +64,10 @@ pub(crate) struct Paths {
 /// One marker per key store, so a debug launch never acts on a release sign-out.
 fn marker_name(identifier: &str, service: &str) -> String {
     format!(".{identifier}--{service}.sign-out-pending")
+}
+/// Named for the key store alone: copies with different identifiers can share a key.
+fn key_lock_name(service: &str) -> String {
+    format!(".{service}.instance.lock")
 }
 impl Paths {
     pub(crate) fn resolve(identifier: &str) -> Option<Self> {
@@ -75,6 +87,7 @@ impl Paths {
                 buzz_credential_store::HUMAN_SERVICE,
             )),
             lock: data.join(LOCK),
+            key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_SERVICE)),
             app_data,
             others,
         })
@@ -122,48 +135,80 @@ fn real_dir(path: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Every running Buzz holds the lock shared; signing out and finishing a pending
-/// sign-out need it exclusively, so no other instance can hold the key or data.
+/// Every running Buzz holds both locks shared. Signing out needs this key's lock
+/// alone, so no copy using the key runs; a wipe also needs the all-Buzz lock
+/// alone, so no copy using shared storage runs. Locks are taken key first, then
+/// all-Buzz, and released in reverse, never waiting while holding one alone.
 /// `started` admits one sign-out per instance: after it commits, Buzz restarts
 /// or must be reopened, so it is never cleared.
 pub(crate) struct Instance {
-    lock: Mutex<File>,
+    locks: Mutex<Locks>,
     marker: PathBuf,
     started: AtomicBool,
+}
+struct Locks {
+    key: File,
+    all: File,
 }
 // `File` locking is Rust 1.89; credential-store and plugin-manager already need it.
 #[allow(clippy::incompatible_msrv)]
 impl Instance {
-    /// Admit this instance's one sign-out, holding the lock alone.
-    fn begin(&self) -> Result<(), Failure> {
+    /// Admit this instance's one sign-out, holding the locks it needs alone.
+    fn begin(&self, choices: Choices) -> Result<(), Failure> {
         if self.started.swap(true, Ordering::SeqCst) {
             return Err(refuse(ALREADY));
         }
-        let file = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(error) = file.unlock() {
+        let locks = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(error) = locks.key.unlock() {
             return Err(lost(error));
         }
-        if file.try_lock().is_ok() {
+        if locks.key.try_lock().is_err() {
+            handoff();
+            return Err(self.share(&locks, false, OTHERS));
+        }
+        if !choices.wipe {
             return Ok(());
         }
+        if let Err(error) = locks.all.unlock() {
+            return Err(lost(error));
+        }
+        if locks.all.try_lock().is_ok() {
+            return Ok(());
+        }
+        if let Err(error) = locks.key.unlock() {
+            return Err(lost(error));
+        }
         handoff();
-        Err(self.share(
-            &file,
-            "Quit every other Buzz window, then sign out again. Nothing was removed.",
-        ))
+        Err(self.share(&locks, true, OTHERS_ALL))
     }
     /// Withdraw a sign-out that committed nothing, returning why.
-    fn abort(&self, failure: Failure) -> Failure {
-        let file = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        match file.unlock() {
-            Ok(()) => self.share(&file, &failure.message),
+    fn abort(&self, choices: Choices, failure: Failure) -> Failure {
+        let locks = self.locks.lock().unwrap_or_else(|e| e.into_inner());
+        let released = if choices.wipe {
+            locks.all.unlock()
+        } else {
+            Ok(())
+        };
+        match released.and_then(|()| locks.key.unlock()) {
+            Ok(()) => self.share(&locks, choices.wipe, &failure.message),
             Err(error) => lost(error),
         }
     }
-    /// Share the unlocked lock again. Another process may have committed a
-    /// sign-out meanwhile; only with none pending can this instance carry on.
-    fn share(&self, file: &File, message: &str) -> Failure {
-        match file.lock_shared().and_then(|()| self.marker.try_exists()) {
+    /// Share the unlocked key lock again, and the all-Buzz lock when `all` was
+    /// let go too. Another process may have committed a sign-out meanwhile; only
+    /// with none pending can this instance carry on.
+    fn share(&self, locks: &Locks, all: bool, message: &str) -> Failure {
+        let shared =
+            locks.key.lock_shared().and_then(
+                |()| {
+                    if all {
+                        locks.all.lock_shared()
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+        match shared.and_then(|()| self.marker.try_exists()) {
             Ok(false) => {
                 self.started.store(false, Ordering::SeqCst);
                 refuse(message)
@@ -209,43 +254,76 @@ pub(crate) fn boot(
     mut remove_agent_keys: impl FnMut(&Path) -> Result<(), String>,
     mut remove_key: impl FnMut() -> Result<(), String>,
 ) -> Result<Instance, String> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&paths.lock)
-        .map_err(|error| {
-            eprintln!("buzz: could not open instance lock: {error}");
-            FAILED.to_owned()
-        })?;
+    let open = |path: &Path| {
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+            .map_err(|error| {
+                eprintln!("buzz: could not open instance lock: {error}");
+                FAILED.to_owned()
+            })
+    };
+    let locks = Locks {
+        key: open(&paths.key_lock)?,
+        all: open(&paths.lock)?,
+    };
     let failed = |error: std::io::Error| {
         eprintln!("buzz: instance lock: {error}");
         FAILED.to_owned()
     };
-    // Shared first, then look: a sign-out that commits after this sees our lock.
-    // Every time it is taken again, look again.
+    // Shared first, then look: a sign-out that commits after this sees our locks.
+    // Every time they are taken again, look again.
     loop {
-        if !wait_for(|| file.try_lock_shared()) {
+        if !wait_for(|| locks.key.try_lock_shared()) || !wait_for(|| locks.all.try_lock_shared()) {
             return Err(SIGNING_OUT.into());
         }
-        if !paths.marker.try_exists().map_err(failed)? {
+        let Some(wipe) = pending_wipe(&paths.marker).map_err(failed)? else {
             break;
-        }
+        };
         // A restarting instance may still be exiting; wait for it to let go.
-        file.unlock().map_err(failed)?;
-        if !wait_for(|| file.try_lock()) {
-            return Err(BUSY.into());
+        locks.all.unlock().map_err(failed)?;
+        locks.key.unlock().map_err(failed)?;
+        let mut busy = BUSY;
+        let taken = wait_for(|| {
+            busy = BUSY;
+            locks.key.try_lock().map_err(drop)?;
+            if wipe && locks.all.try_lock().is_err() {
+                busy = BUSY_ALL;
+                // Never wait holding the key lock alone; an unlock error just retries.
+                return locks.key.unlock().map_err(drop).and(Err(()));
+            }
+            Ok(())
+        });
+        if !taken {
+            return Err(busy.into());
         }
         // Read again under exclusive ownership; another launch may have finished it.
         finish_pending(paths, &mut remove_agent_keys, &mut remove_key)?;
-        file.unlock().map_err(failed)?;
+        if wipe {
+            locks.all.unlock().map_err(failed)?;
+        }
+        locks.key.unlock().map_err(failed)?;
         handoff();
     }
     Ok(Instance {
-        lock: Mutex::new(file),
+        locks: Mutex::new(locks),
         marker: paths.marker.clone(),
         started: AtomicBool::new(false),
     })
+}
+
+/// Whether a pending sign-out wipes; `None` when none is pending. An unreadable
+/// marker counts as a wipe, taking every lock before `finish_pending` reports it.
+fn pending_wipe(marker: &Path) -> std::io::Result<Option<bool>> {
+    match fs::read(marker) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+        Ok(raw) => Ok(Some(
+            serde_json::from_slice::<Choices>(&raw).map_or(true, |choices| choices.wipe),
+        )),
+    }
 }
 
 /// Shown when `boot` fails: no window opens, so nothing recreates wiped storage.
@@ -514,26 +592,23 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
             "Couldn't find this app's local storage; nothing was removed",
         ));
     };
-    instance.begin()?;
+    let choices = Choices {
+        wipe,
+        remove_agents,
+    };
+    instance.begin(choices)?;
     let stop = app.clone();
-    let result = prepare(
-        &paths,
-        Choices {
-            wipe,
-            remove_agents,
-        },
-        || async move {
-            tauri::async_runtime::spawn_blocking(move || {
-                stop.state::<crate::agent_models::ModelHost>().shutdown();
-                stop.state::<crate::AgentHost>().shutdown()
-            })
-            .await
-            .map_err(|error| error.to_string())?
-        },
-    )
+    let result = prepare(&paths, choices, || async move {
+        tauri::async_runtime::spawn_blocking(move || {
+            stop.state::<crate::agent_models::ModelHost>().shutdown();
+            stop.state::<crate::AgentHost>().shutdown()
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    })
     .await;
     match result {
-        Err(failure) if !failure.reopen => Err(instance.abort(failure)),
+        Err(failure) if !failure.reopen => Err(instance.abort(choices, failure)),
         Err(failure) => Err(failure),
         Ok(()) => {
             app.request_restart();

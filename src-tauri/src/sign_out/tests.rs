@@ -6,6 +6,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
     Paths {
         marker: root.join(marker_name("app", service)),
         lock: root.join(LOCK),
+        key_lock: root.join(key_lock_name(service)),
         app_data: root.join("app"),
         others: vec![root.join("webkit")],
     }
@@ -218,9 +219,17 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
 
 /// A child process another test is spawning holds inherited lock handles until
 /// it execs, so a dropped instance's lock can take a moment to free.
-fn admitted_once_free(instance: &Instance) -> bool {
-    wait_for(|| instance.begin())
+fn admitted_once_free(instance: &Instance, choices: Choices) -> bool {
+    wait_for(|| instance.begin(choices))
 }
+const PLAIN: Choices = Choices {
+    wipe: false,
+    remove_agents: false,
+};
+const WIPE: Choices = Choices {
+    wipe: true,
+    remove_agents: false,
+};
 #[test]
 fn instances_share_the_lock_and_sign_out_needs_it_alone() {
     let (_dir, paths) = fixture();
@@ -230,15 +239,15 @@ fn instances_share_the_lock_and_sign_out_needs_it_alone() {
     let second = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert!(first.begin().is_err());
+    assert!(first.begin(WIPE).is_err());
     drop(second);
-    assert!(admitted_once_free(&first));
+    assert!(admitted_once_free(&first, WIPE));
     // While one instance signs out, a new launch neither runs nor waits forever.
     assert_eq!(
         boot(&paths, no_agents, || panic!("no marker")).err(),
         Some(SIGNING_OUT.into())
     );
-    assert_eq!(first.abort(refuse("withdrawn")), refuse("withdrawn"));
+    assert_eq!(first.abort(WIPE, refuse("withdrawn")), refuse("withdrawn"));
     assert!(boot(&paths, no_agents, || panic!("no marker")).is_ok());
 }
 
@@ -248,13 +257,13 @@ fn a_second_sign_out_in_the_same_instance_is_refused() {
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    instance.begin().unwrap();
-    assert_eq!(instance.begin(), Err(refuse(ALREADY)));
+    instance.begin(WIPE).unwrap();
+    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
     // Concurrent calls race for the same guard; exactly one is admitted.
-    instance.abort(refuse("withdrawn"));
+    instance.abort(WIPE, refuse("withdrawn"));
     let admitted = std::thread::scope(|scope| {
         let calls: Vec<_> = (0..8)
-            .map(|_| scope.spawn(|| instance.begin().is_ok()))
+            .map(|_| scope.spawn(|| instance.begin(WIPE).is_ok()))
             .collect();
         calls
             .into_iter()
@@ -271,7 +280,7 @@ fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
     let exiting = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    exiting.begin().unwrap();
+    exiting.begin(WIPE).unwrap();
     mark(&paths, false, false);
     let release = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(30));
@@ -291,6 +300,8 @@ fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
 }
 
 const CHILD: &str = "BUZZ_SIGN_OUT_TEST_CHILD";
+/// Set when the child signs out without wiping.
+const CHILD_PLAIN: &str = "BUZZ_SIGN_OUT_TEST_CHILD_PLAIN";
 /// Another Buzz process: boots, then on "go" tries to sign out and, if admitted,
 /// holds on until the parent says (or closes its input).
 #[test]
@@ -305,8 +316,13 @@ fn child_instance() {
     println!("child: booted");
     let mut input = std::io::stdin().lines();
     input.next();
-    if admitted_once_free(&instance) {
-        mark(&paths, true, false);
+    let choices = if std::env::var_os(CHILD_PLAIN).is_some() {
+        PLAIN
+    } else {
+        WIPE
+    };
+    if admitted_once_free(&instance, choices) {
+        mark(&paths, choices.wipe, false);
         println!("child: signing out");
         input.next();
     } else {
@@ -321,8 +337,15 @@ struct Child {
 }
 impl Child {
     fn spawn(root: &Path) -> Self {
+        Self::spawn_with(root, WIPE)
+    }
+    fn spawn_with(root: &Path, choices: Choices) -> Self {
         use std::io::BufRead;
-        let mut process = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        if !choices.wipe {
+            command.env(CHILD_PLAIN, "1");
+        }
+        let mut process = command
             .args(["sign_out::tests::child_instance", "--exact", "--nocapture"])
             .env(CHILD, root)
             .stdin(std::process::Stdio::piped())
@@ -432,16 +455,16 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_requires_reopening() {
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let mut child = Child::spawn(dir.path());
+    let mut child = Child::spawn_with(dir.path(), PLAIN);
     // Our upgrade is refused (the child shares); while we let go, it commits.
     HANDOFF.set(Some(Box::new(move || {
         assert_eq!(child.go(), "child: signing out");
         child.finish();
     })));
-    assert_eq!(instance.begin(), Err(reopen()));
+    assert_eq!(instance.begin(PLAIN), Err(reopen()));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
-    assert_eq!(instance.begin(), Err(refuse(ALREADY)));
+    assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
 }
 
 /// Reading the kept registry's details fails while traversing and deleting it
@@ -481,30 +504,72 @@ fn an_uninspectable_kept_registry_stops_the_wipe_and_the_retry_keeps_it() {
 }
 
 #[test]
-fn one_lock_covers_every_identifier() {
+fn every_identifier_shares_the_all_buzz_lock_and_each_key_has_its_own() {
     let (debug, release) = (
         Paths::resolve("dev.local.buzz.custom").unwrap(),
         Paths::resolve("dev.local.buzz.foundation").unwrap(),
     );
     assert_eq!(debug.lock, release.lock);
+    assert_eq!(debug.key_lock, release.key_lock);
     assert_ne!(debug.marker, release.marker);
+    assert_ne!(key_lock_name("identity"), key_lock_name("identity.debug"));
+}
 
-    let (dir, release) = fixture();
-    let other = Paths {
-        marker: dir.path().join(marker_name("custom", "identity.debug")),
-        lock: release.lock.clone(),
-        app_data: dir.path().join("custom"),
-        others: Vec::new(),
-    };
-    let running = boot(&other, no_agents, || panic!("no marker"))
+/// Another build signed in with a different key, e.g. a dev build beside the installed app.
+fn other_key(dir: &Path) -> Instance {
+    let other = paths_for(dir, "identity.debug");
+    boot(&other, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap()
+}
+
+#[test]
+fn plain_sign_out_needs_only_copies_using_the_same_key_closed() {
+    let (dir, paths) = fixture();
+    let _other = other_key(dir.path());
+    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let signing_out = boot(&release, no_agents, || panic!("no marker"))
+    assert_eq!(signing_out.begin(PLAIN), Ok(()));
+}
+
+#[test]
+fn plain_sign_out_is_refused_while_a_copy_using_the_same_key_runs() {
+    let (_dir, paths) = fixture();
+    let _same = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert!(signing_out.begin().is_err());
-    drop(running);
-    assert!(admitted_once_free(&signing_out));
+    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    assert_eq!(signing_out.begin(PLAIN), Err(refuse(OTHERS)));
+    // A pending plain sign-out waits for that copy too.
+    mark(&paths, false, false);
+    assert_eq!(
+        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        Some(BUSY.into())
+    );
+}
+
+#[test]
+fn wipe_is_refused_while_any_copy_runs() {
+    let (dir, paths) = fixture();
+    let other = other_key(dir.path());
+    let signing_out = boot(&paths, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    assert_eq!(signing_out.begin(WIPE), Err(refuse(OTHERS_ALL)));
+    drop(signing_out);
+    // A pending wipe waits for every copy; a pending plain sign-out doesn't.
+    mark(&paths, true, false);
+    assert_eq!(
+        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        Some(BUSY_ALL.into())
+    );
+    mark(&paths, false, false);
+    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(!paths.marker.exists());
+    drop(other);
 }
 
 #[cfg(unix)]

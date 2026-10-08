@@ -353,6 +353,8 @@ export function AgentSnapshotImport({
   const [snapshot, setSnapshot] = useState<AgentSnapshot>();
   const [restoreMemory, setRestoreMemory] = useState(false);
   const [fileError, setFileError] = useState("");
+  const [memoryError, setMemoryError] = useState("");
+  const [profileResult, setProfileResult] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
   const [createdId, setCreatedId] = useState<string>();
@@ -413,16 +415,16 @@ export function AgentSnapshotImport({
         outcome.errors.length
       ) {
         setMemoryRetry({ id, entries });
-        setFileError(
+        setMemoryError(
           `Memory partially restored: ${outcome.written} of ${expected} entries confirmed. The agent exists but some memory entries were not confirmed. ${outcome.errors.join("; ")}`,
         );
       } else {
         setMemoryRetry(undefined);
-        setFileError("");
+        setMemoryError("");
       }
     } catch (error) {
       setMemoryRetry({ id, entries });
-      setFileError(
+      setMemoryError(
         `Memory restoration unconfirmed for ${entries.length} entries. The agent exists; check its memories before retrying. ${error instanceof Error ? error.message : ""}`,
       );
     }
@@ -432,7 +434,20 @@ export function AgentSnapshotImport({
       return;
     setBusy(true);
     try {
+      if (control.snapshot().status !== "ready") {
+        await control.refresh();
+        if (control.snapshot().status !== "ready") {
+          setMemoryError(
+            "Could not confirm local agent status. Check your connection and retry memory restore for this agent.",
+          );
+          return;
+        }
+      }
       await restore(memoryRetry.id, memoryRetry.entries);
+    } catch {
+      setMemoryError(
+        "Could not refresh local agent status. Check your connection and retry memory restore for this agent.",
+      );
     } finally {
       setBusy(false);
     }
@@ -557,10 +572,10 @@ export function AgentSnapshotImport({
                   .then(
                     () => {
                       setProfilePublished(true);
-                      setFileError("Profile published.");
+                      setProfileResult("Profile published.");
                     },
                     () =>
-                      setFileError(
+                      setProfileResult(
                         "Profile publication unconfirmed. Review agent status and retry from Manage.",
                       ),
                   )
@@ -571,6 +586,10 @@ export function AgentSnapshotImport({
             </Button>
           )}
           {fileError && <p role="alert">{fileError}</p>}
+          {memoryError && <p role="alert">{memoryError}</p>}
+          {profileResult && (
+            <p role={profilePublished ? "status" : "alert"}>{profileResult}</p>
+          )}
         </>
       ) : (
         <div className="space-y-4">

@@ -10,7 +10,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { controlFixture } from "../../features/agents/control-testing";
-import type { AgentControl } from "../../features/agents/control";
+import {
+  createAgentControl,
+  type AgentControl,
+} from "../../features/agents/control";
 import {
   buildAgentSnapshot,
   encodeAgentSnapshot,
@@ -21,6 +24,10 @@ import { uploadAvatar } from "../../features/profiles/avatar-upload";
 
 vi.mock("../../features/profiles/avatar-upload", () => ({
   uploadAvatar: vi.fn(),
+}));
+vi.mock("../../features/communities/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/communities/api")>()),
+  communityRequest: vi.fn(async () => ({ auth: [] })),
 }));
 
 const portableAgent = () => {
@@ -68,6 +75,7 @@ function importControl() {
     writeSnapshotMemory,
     refresh,
     snapshot: () => ({
+      status: "ready",
       data: {
         harnessOptions: [
           { command: "buzz-agent", defaultArgs: [], available: true },
@@ -384,6 +392,165 @@ it("keeps the memory retry available after another incomplete confirmation", asy
   expect(screen.getByRole("alert")).toHaveTextContent(
     "1 of 1 entries confirmed",
   );
+  expect(h.create).toHaveBeenCalledOnce();
+});
+
+it("recovers controller error before retrying memory on the same identity", async () => {
+  const fixture = controlFixture();
+  const agent = { ...portableAgent(), id: "new-id", pubkey: "cd".repeat(32) };
+  const hostCreate = vi.fn(async () => {
+    fixture.data.agents.push(agent);
+    return structuredClone(fixture.data);
+  });
+  const hostWrite = vi
+    .fn()
+    .mockRejectedValueOnce("relay unavailable")
+    .mockResolvedValueOnce({ written: 1, total: 1, errors: [] });
+  const control = createAgentControl({
+    ...fixture.host,
+    prepareCreate: vi.fn(async () => ({ id: agent.id, pubkey: agent.pubkey })),
+    commitCreate: hostCreate,
+    writeSnapshotMemory: hostWrite,
+  });
+  await control.refresh();
+  render(
+    <AgentSnapshotImport
+      control={control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(file("core"));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const retry = await screen.findByRole("button", {
+    name: "Retry memory restore",
+  });
+  expect(control.snapshot().status).toBe("error");
+  fireEvent.click(retry);
+  await waitFor(() => expect(hostWrite).toHaveBeenCalledTimes(2));
+  expect(hostCreate).toHaveBeenCalledOnce();
+  expect(hostWrite).toHaveBeenNthCalledWith(2, agent.id, [
+    { slug: "core", body: "private fixture memory" },
+  ]);
+  await waitFor(() => expect(retry).not.toBeInTheDocument());
+  expect(control.snapshot().status).toBe("ready");
+  control.dispose();
+});
+
+it("does not write when controller recovery cannot confirm status", async () => {
+  const h = importControl();
+  let status: "ready" | "error" = "ready";
+  const control = {
+    ...h.control,
+    snapshot: () => ({ status, data: h.control.snapshot().data }),
+    writeSnapshotMemory: vi.fn(
+      async (...args: Parameters<typeof h.writeSnapshotMemory>) => {
+        status = "error";
+        return h.writeSnapshotMemory(...args);
+      },
+    ),
+    refresh: vi.fn(async () => {}),
+  } as unknown as AgentControl;
+  h.writeSnapshotMemory.mockRejectedValueOnce(new Error("relay unavailable"));
+  render(
+    <AgentSnapshotImport
+      control={control}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(file("core"));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Retry memory restore" }),
+  );
+  await waitFor(() => expect(control.refresh).toHaveBeenCalledOnce());
+  expect(h.writeSnapshotMemory).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: "Retry memory restore" }),
+  ).toBeEnabled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not confirm local agent status",
+  );
+  expect(h.create).toHaveBeenCalledOnce();
+});
+
+it("keeps memory failure visible after profile publication succeeds", async () => {
+  const h = importControl();
+  const publishProfile = vi.fn(async () => controlFixture().data);
+  render(
+    <AgentSnapshotImport
+      control={{ ...h.control, publishProfile } as AgentControl}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  h.writeSnapshotMemory.mockResolvedValueOnce({
+    written: 0,
+    total: 1,
+    errors: [],
+  });
+  choose(file("core"));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await screen.findByRole("button", { name: "Retry memory restore" });
+  fireEvent.click(screen.getByRole("button", { name: "Publish profile" }));
+  await waitFor(() => expect(publishProfile).toHaveBeenCalledOnce());
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Profile published",
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Memory partially restored",
+  );
+});
+
+it("keeps profile failure visible after memory retry succeeds", async () => {
+  const h = importControl();
+  const publishProfile = vi.fn(async () => {
+    throw new Error("publication failed");
+  });
+  h.writeSnapshotMemory.mockResolvedValueOnce({
+    written: 0,
+    total: 1,
+    errors: [],
+  });
+  render(
+    <AgentSnapshotImport
+      control={{ ...h.control, publishProfile } as AgentControl}
+      destination="https://relay.example.test"
+      owner={"ef".repeat(32)}
+      onClose={() => {}}
+    />,
+  );
+  choose(file("core"));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Restore memory/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await screen.findByRole("button", { name: "Retry memory restore" });
+  fireEvent.click(screen.getByRole("button", { name: "Publish profile" }));
+  expect(
+    await screen.findByText(/Profile publication unconfirmed/),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry memory restore" }));
+  await waitFor(() => expect(h.writeSnapshotMemory).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Profile publication unconfirmed",
+  );
+  expect(
+    screen.queryByText(/Memory partially restored/),
+  ).not.toBeInTheDocument();
   expect(h.create).toHaveBeenCalledOnce();
 });
 

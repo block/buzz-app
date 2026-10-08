@@ -3036,6 +3036,93 @@ it("finds the channels of marked messages that are not loaded, then drops the co
   ).toHaveLength(2);
 });
 
+it("a loaded message in a channel too long to save does not block other reads", async () => {
+  const long = "c".repeat(257);
+  const author = keypair();
+  const odd = message(author, long, "odd", 11);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // A mark synced from another client, for a channel this one cannot save.
+    state: { frontiers: { [`msg:${odd.id}`]: 11 }, overrides: {} },
+  }));
+  h.grant(long);
+  h.grant("room");
+  h.emit([odd]);
+  const read = message(author, "room", "read", 12);
+  h.emit([read]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([read.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toMatchObject({
+    [`msg:${odd.id}`]: 11,
+    [`msg:${read.id}`]: 12,
+  });
+  expect(h.journal()?.homes).toEqual({ [read.id]: "room" });
+});
+
+it("one found message in a channel too long to save does not block the rest of its lookup", async () => {
+  const author = keypair();
+  const long = "c".repeat(257);
+  const covered = message(author, "room", "covered", 11);
+  const odd = message(author, long, "odd", 12);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { room: 30 }, overrides: {} },
+    reserve: { [`msg:${covered.id}`]: 11, [`msg:${odd.id}`]: 12 },
+  }));
+  h.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.ids)
+      ? [covered, odd].filter((event) =>
+          filters.some((filter) => filter.ids?.includes(event.id)),
+        )
+      : [],
+  );
+  h.grant("room");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect(h.journal()?.reserve).toEqual({ [`msg:${odd.id}`]: 12 }),
+  );
+  expect(h.journal()?.homes).toEqual({});
+});
+
+it("a channel lookup discarded by an access change is asked again in the same session", async () => {
+  const author = keypair();
+  const covered = message(author, "room", "covered", 11);
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { room: 30 }, overrides: {} },
+    reserve: { [`msg:${covered.id}`]: 11 },
+  }));
+  let answer: () => void = () => {};
+  let held = true;
+  h.query.mockImplementation(async (filters) => {
+    if (!filters.some((filter) => filter.ids)) return [];
+    if (held) {
+      held = false;
+      await new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+    }
+    return [covered];
+  });
+  h.grant("room");
+  h.grant("other");
+  await h.session.unread.ensure();
+  await vi.waitFor(() =>
+    expect(h.query.mock.calls.some(([f]) => f.some((x) => x.ids))).toBe(true),
+  );
+  // Revoking another channel bumps the access epoch while the lookup waits.
+  h.emit([roster(h.relay, "other", [], 20)]);
+  answer();
+  await flush();
+  await h.session.unread.refresh();
+  await vi.waitFor(() => expect(h.journal()?.reserve).toEqual({}));
+  const asked = h.query.mock.calls.flatMap(([filters]) =>
+    filters.flatMap((filter) => filter.ids ?? []),
+  );
+  expect(asked).toEqual([covered.id, covered.id]);
+});
+
 it("evicted DM receipts survive pressure while unseen messages and manual unread keep their meaning", async () => {
   const read = message(keypair(), "dm", "read", 12);
   // Fill the journal directly: owner tests cover bulk pressure/publication/restart.

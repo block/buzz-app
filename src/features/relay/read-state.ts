@@ -207,7 +207,9 @@ export function createReadState({
     ]) {
       const id = markMessage(key);
       const channel = id === undefined ? undefined : home(id);
-      if (id !== undefined && channel !== undefined) homes[id] = channel;
+      // A channel the saved record cannot hold is used for this save's
+      // pruning but not kept, so it cannot make the whole save fail.
+      if (id !== undefined && contextId(channel)) homes[id] = channel;
     }
     return { ...kept, homes: Object.freeze(homes) };
   }

@@ -1527,14 +1527,20 @@ export function createUnread({
   }
   // Marked messages already asked for this session, found or not.
   const askedHomes = new Set<string>();
-  let findingHomes: Promise<void> | undefined;
+  // The running lookup and the access epoch it serves.
+  let findingHomes: { generation: number; done: Promise<void> } | undefined;
   /** Asks the relay for marked messages whose channel is not known, so the
    * channel marks that cover them can replace their marks (see
    * `setCoverage`). Only marks that some channel mark could cover are asked
    * for, each once per session. A failure only keeps marks, which stay
    * correct; the next session asks again. Found messages are not evidence. */
   function findHomes(generation: number) {
-    findingHomes ??= (async () => {
+    if (findingHomes?.generation === generation) return findingHomes.done;
+    // A lookup for an older epoch first releases the IDs it did not use.
+    const previous = findingHomes?.done;
+    const running = (async () => {
+      await previous;
+      if (closed || generation !== epoch) return;
       indexEvidence();
       const { frontiers, overrides } = reads.state();
       // Overrides turn pruning off, so channels would not help.
@@ -1572,7 +1578,7 @@ export function createUnread({
             [{ ids: batch, kinds: contentKinds, limit: batch.length }],
             { signal, priority: "background" },
           );
-          if (closed || generation !== epoch) return;
+          if (closed || generation !== epoch) break;
           for (const event of rows) {
             const channel = channelOf(event);
             if (ids.has(event.id) && contentKind(event) && channel)
@@ -1582,12 +1588,18 @@ export function createUnread({
       } catch {
         // Keep what was found; the rest is asked for next session.
       }
-      if (!closed && generation === epoch && Object.keys(found).length)
+      if (generation !== epoch) {
+        // An access change discarded this answer; the new epoch asks again.
+        for (const id of ids) askedHomes.delete(id);
+        return;
+      }
+      if (!closed && Object.keys(found).length)
         await reads.learnHomes(found).catch(() => {});
     })().finally(() => {
-      findingHomes = undefined;
+      if (findingHomes?.done === running) findingHomes = undefined;
     });
-    return findingHomes;
+    findingHomes = { generation, done: running };
+    return running;
   }
   /** The viewer's deletions end lookup memberships they were evidence for,
    * including ones decided before the deletion, and even when the deletion

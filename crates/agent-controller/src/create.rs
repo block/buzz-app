@@ -27,7 +27,7 @@ impl NewAgent {
     pub fn matches(&self, destination: &str, owner: &str) -> Result<bool> {
         Ok(self.relay == canonical_relay(destination)? && self.owner == owner)
     }
-    fn agent(&self, edit: AgentEdit, auth: &str) -> Result<Agent> {
+    pub(crate) fn agent(&self, edit: AgentEdit, auth: &str) -> Result<Agent> {
         crate::secret::validate_attestation(auth, self.key.pubkey())?;
         let tag: Vec<String> =
             serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
@@ -103,6 +103,76 @@ impl Controller {
         }
         Ok(target)
     }
+    /// Persist the request receipt with the identity; retries survive renderer and host reloads.
+    pub fn created_request(
+        &self,
+        request: &str,
+        destination: &str,
+        owner: &str,
+    ) -> Result<Option<crate::AgentView>> {
+        let relay = canonical_relay(destination)?;
+        let defaults = self.store.defaults()?;
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.extra.get("bundleRequest").and_then(Value::as_str) == Some(request));
+        if let Some(agent) = &agent {
+            let tag: Vec<String> = serde_json::from_str(
+                agent
+                    .auth_tag
+                    .as_deref()
+                    .ok_or("Missing owner authorization")?,
+            )
+            .map_err(|_| "Invalid owner authorization")?;
+            if agent.relay_url != relay || tag.get(1).map(String::as_str) != Some(owner) {
+                return Err("Create destination or owner changed".into());
+            }
+        }
+        Ok(agent.map(|a| a.view(&defaults)))
+    }
+    pub fn create_bundle_member(
+        &mut self,
+        prepared: &NewAgent,
+        edit: AgentEdit,
+        auth: &str,
+        request: &str,
+        bundle: &crate::teams::BundleMember,
+    ) -> Result<()> {
+        bundle.validate()?;
+        if self
+            .created_request(request, &prepared.relay, &prepared.owner)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let mut agent = prepared.agent(edit, auth)?;
+        let instructions =
+            crate::import::team_text(&serde_json::json!(bundle.instructions))?.to_owned();
+        let keep_allowlist = bundle.keep_allowlist;
+        let d = &bundle.member.definition;
+        let policy = if d.respond_to.as_deref() == Some("allowlist") && !keep_allowlist {
+            "owner-only"
+        } else {
+            d.respond_to.as_deref().unwrap_or("owner-only")
+        };
+        agent.imported = serde_json::json!({"teamInstructions": instructions, "teamBindings": [bundle.team], "record": {
+            "respond_to": policy, "respond_to_allowlist": if keep_allowlist { d.respond_to_allowlist.clone() } else { vec![] },
+            "parallelism": d.parallelism, "name_pool": d.name_pool, "idle_timeout_seconds": d.idle_timeout_seconds,
+            "source_is_builtin": d.source_is_builtin, "profile": bundle.member.profile,
+            "max_turn_duration_seconds": d.max_turn_duration_seconds,
+        }});
+        agent
+            .extra
+            .insert("bundleRequest".into(), Value::String(request.into()));
+        agent
+            .extra
+            .insert("profilePending".into(), Value::Bool(true));
+        agent
+            .extra
+            .insert("importAboutPending".into(), Value::Bool(true));
+        self.store.insert(vec![agent])
+    }
     pub fn creation_profile(&self, id: &str) -> Result<CreationProfile> {
         self.profile_target(id, true)
     }
@@ -128,6 +198,13 @@ impl Controller {
             auth,
             name: agent.name,
             picture: agent.picture,
+            about: if agent.extra.get("importAboutPending") == Some(&Value::Bool(true)) {
+                agent.imported["record"]["profile"]["about"]
+                    .as_str()
+                    .map(str::to_owned)
+            } else {
+                None
+            },
             revision: agent.revision,
         })
     }
@@ -143,6 +220,7 @@ pub struct CreationProfile {
     pub auth: String,
     pub name: String,
     pub picture: Option<String>,
+    pub about: Option<String>,
     pub revision: u64,
 }
 impl CreationProfile {
@@ -150,7 +228,13 @@ impl CreationProfile {
         if key.pubkey() != self.pubkey {
             return Err("Profile identity changed".into());
         }
-        key.profile(&self.name, self.picture.as_deref(), &self.auth, existing)
+        key.profile(
+            &self.name,
+            self.picture.as_deref(),
+            self.about.as_deref(),
+            &self.auth,
+            existing,
+        )
     }
     pub fn confirm(&self, existing: &[Value], event_id: &str) -> Result<()> {
         let current = crate::profile::current(existing, &self.pubkey)?;

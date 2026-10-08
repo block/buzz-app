@@ -95,7 +95,11 @@ export function AgentsPage({
         {(entry, active) => {
           const Teams = entry.teams;
           return Teams ? (
-            <Teams session={connection.session} active={active} />
+            <Teams
+              session={connection.session}
+              control={control}
+              active={active}
+            />
           ) : null;
         }}
       </OwnedContribution>

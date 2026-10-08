@@ -612,7 +612,7 @@ pub(crate) fn validate_env_key(key: &str, command: &str) -> Result<()> {
     }
 }
 
-fn validate_picture(value: &str) -> Result<()> {
+pub(crate) fn validate_picture(value: &str) -> Result<()> {
     if value.is_empty() {
         return Ok(());
     }

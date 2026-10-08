@@ -45,6 +45,7 @@ impl Secret {
         &self,
         name: &str,
         picture: Option<&str>,
+        about: Option<&str>,
         auth: &str,
         existing: &[serde_json::Value],
     ) -> Result<serde_json::Value> {
@@ -59,6 +60,9 @@ impl Secret {
                 None,
             ),
         };
+        if let Some(about) = about {
+            content.insert("about".into(), json!(about));
+        }
         if let Some(picture) = picture {
             if picture.is_empty() {
                 content.remove("picture");
@@ -70,12 +74,7 @@ impl Secret {
             serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
         tags.retain(|tag| tag.first().map(String::as_str) != Some("auth"));
         tags.push(auth);
-        self.sign_event_after(
-            0,
-            serde_json::Value::Object(content).to_string(),
-            tags,
-            previous,
-        )
+        self.sign_event_after(0, crate::profile::bounded_content(content)?, tags, previous)
     }
     pub(crate) fn profile_auth(&self, url: &str, body: &[u8]) -> Result<serde_json::Value> {
         use sha2::{Digest, Sha256};

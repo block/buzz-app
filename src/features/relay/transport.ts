@@ -10,7 +10,7 @@ import { publicationRefusal } from "../developer/traffic";
 import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
-import type { KitRecord } from "../channel-templates/model";
+import type { KitRecord, PayloadRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import {
   communityGitRepository,
@@ -718,7 +718,10 @@ export async function connectBrokerTransport(
     ...(session.channelKit
       ? {
           channelKit: {
-            async prepare(record: KitRecord, signal: AbortSignal) {
+            async prepare(
+              record: KitRecord | PayloadRecord,
+              signal: AbortSignal,
+            ) {
               const response = await fetch(`${endpoint}/channel-kit-prepare`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -733,7 +736,7 @@ export async function connectBrokerTransport(
               const result = await response.json();
               if (
                 typeof result.content !== "string" ||
-                result.content.length > 24 * 1024
+                result.content.length > 64 * 1024
               )
                 throw new Error("Invalid encrypted recipe");
               return result.content as string;

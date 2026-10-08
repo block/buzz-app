@@ -89,6 +89,7 @@ fn profile(origin: &str) -> CreationProfile {
         auth: json!(["auth", "owner", "", "signature"]).to_string(),
         name: "Fixture".into(),
         picture: Some("https://images.example/a.png".into()),
+        about: None,
         revision: 1,
     }
 }

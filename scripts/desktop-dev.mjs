@@ -22,7 +22,10 @@ const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 if (!help) {
   const prepared = spawnSync(
     process.execPath,
-    [fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url))],
+    [
+      fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url)),
+      "--dev",
+    ],
     { stdio: "inherit" },
   );
   if (prepared.error) console.error(prepared.error.message);

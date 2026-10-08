@@ -1457,6 +1457,26 @@ fn bundle_rejects_source_revisions_different_from_the_runtime_spec() {
 
 #[test]
 #[cfg(unix)]
+fn debug_bundle_accepts_the_pinned_or_dev_goose_profile_only() {
+    let tools = tempfile::tempdir().unwrap();
+    bundle(tools.path());
+    let path = tools.path().join("manifest.json");
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../runtime/agent-runtime.json")).unwrap();
+    for (profile, accepted) in [
+        (source["gooseDevProfile"].clone(), true),
+        (json!("dev-other"), false),
+    ] {
+        let mut manifest = original.clone();
+        manifest["goose"]["profile"] = profile;
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert_eq!(RuntimeBundle::new(tools.path().into()).is_ok(), accepted);
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn snapshots_project_configured_paths_but_starts_reverify_each_executable() {
     for name in ["buzz-acp", "buzz-dev-mcp", "buzz-agent"] {
         for removed in [false, true] {

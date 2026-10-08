@@ -28,7 +28,7 @@ export function runtimeFixture(directory) {
 const fs = require("node:fs");
 const path = require("node:path");
 const fixture = ${JSON.stringify(directory)};
-fs.appendFileSync(path.join(fixture, "build-calls.jsonl"), JSON.stringify(process.argv.slice(2)) + "\\n");
+fs.appendFileSync(path.join(fixture, "build-calls.jsonl"), JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }) + "\\n");
 if (fs.existsSync(path.join(fixture, "fail-build"))) process.exit(17);
 // Shell compiler overrides must not reach a build whose bundle other worktrees reuse.
 if (["RUSTFLAGS", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_OPT_LEVEL"].some((key) => key in process.env)) process.exit(18);
@@ -43,7 +43,8 @@ const triple = flag >= 0 ? process.argv[flag + 1]
   : fs.existsSync(configured) ? fs.readFileSync(configured, "utf8") : "";
 const profileFlag = process.argv.indexOf("--profile");
 const output = path.join(process.env.CARGO_TARGET_DIR, triple,
-  profileFlag >= 0 ? process.argv[profileFlag + 1] : "release");
+  // Like Cargo, the dev profile writes to "debug".
+  profileFlag < 0 ? "release" : process.argv[profileFlag + 1] === "dev" ? "debug" : process.argv[profileFlag + 1]);
 fs.mkdirSync(output, { recursive: true });
 // Compilation progress that an interrupted build leaves for the next one.
 const progress = path.join(process.env.CARGO_TARGET_DIR, "progress");
@@ -70,6 +71,8 @@ for (const name of names) fs.writeFileSync(path.join(output,
 const fs = require("node:fs");
 const path = require("node:path");
 const common = path.join(${JSON.stringify(directory)}, "git-common-dir");
+// Stands in for a checkout an interrupted run left locked.
+if (fs.existsSync("broken-checkout")) process.exit(128);
 if (!process.argv.includes("rev-parse")) process.exit(0);
 if (!fs.existsSync(common)) process.exit(128);
 console.log(fs.readFileSync(common, "utf8"));

@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -110,6 +111,63 @@ test("runtime preparation builds missing resources, reuses verified files, and r
     assert.match(run(), /Agent runtime ready/);
     assert.equal(count(), before + 2);
   }
+});
+
+test("desktop dev builds Goose with the dev profile; packaged preparation keeps the pinned one", (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const spec = JSON.parse(
+    readFileSync(path.join(directory, "runtime/agent-runtime.json"), "utf8"),
+  );
+  const run = (...args) => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/build-agent-runtime.mjs", ...args],
+      { cwd: directory, encoding: "utf8", timeout: 10_000 },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  const calls = () =>
+    readFileSync(path.join(directory, "build-calls.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  const recorded = () =>
+    JSON.parse(
+      readFileSync(
+        path.join(directory, "src-tauri/resources/agent-runtime/manifest.json"),
+        "utf8",
+      ),
+    ).goose;
+  const sources = path.join(directory, "target/agent-runtime-src");
+  for (const [args, profile] of [
+    [["--dev"], spec.gooseDevProfile],
+    [[], spec.goose.profile],
+  ]) {
+    assert.match(run(...args), /Verified inputs staged/);
+    assert.deepEqual(recorded(), { ...spec.goose, profile });
+    const gooseBuild = calls().at(-1);
+    assert.equal(
+      gooseBuild.args[gooseBuild.args.indexOf("--profile") + 1],
+      profile,
+    );
+    assert.match(run(...args), /Agent runtime ready/);
+  }
+  assert.notEqual(spec.gooseDevProfile, spec.goose.profile);
+  // Rebuilds reuse stable source checkouts, so Cargo can skip unchanged crates.
+  assert.deepEqual(
+    [...new Set(calls().map((call) => call.cwd))],
+    [path.join(sources, "buzz"), path.join(sources, "goose")].map((dir) =>
+      realpathSync(dir),
+    ),
+  );
+  // A checkout an interrupted run left unusable is fetched again from scratch.
+  writeFileSync(path.join(sources, "goose/broken-checkout"), "");
+  assert.match(run("--dev"), /Verified inputs staged/);
+  assert.ok(!existsSync(path.join(sources, "goose/broken-checkout")));
 });
 
 test("runtime output ignores a user-level build target and survives an interrupted build", (t) => {

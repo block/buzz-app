@@ -123,11 +123,11 @@ finishes the sign-out.
 Once the marker is written, and before any native exit, the native signer is
 closed for the rest of the process: the cached key is dropped, and every key
 operation (signing, agent authorization, export, restore, import or create)
-refuses when it runs, including jobs submitted before it closed. Pairing closes
-at the same moment: the live attempt is cancelled before it can publish a
+refuses when it runs, including calls that started before it closed. Pairing
+closes in the same close step: the live attempt is cancelled before it can publish a
 payload it already prepared, and no new attempt starts. Work admitted before
-the close isn't recalled: a pairing payload already published may still reach
-the phone (and stays uncertain), and signatures and agent authorizations
+the close isn't recalled: a payload admitted before pairing closes may still be
+sent or delivered (an outcome not yet known is reported as uncertain), and signatures and agent authorizations
 already issued remain valid. A native exit runs the same best-effort teardown as Quit, then shows a native
 alert and exits however that went; the dialog never offers a retry or Cancel
 once this instance's locks or agents are in an unknown state. Agents don't

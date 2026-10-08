@@ -446,7 +446,7 @@ fn remove_key_deletes_then_confirms_absence() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn closing_refuses_every_key_operation_including_jobs_queued_before_it() {
+async fn closing_refuses_every_key_operation_including_a_sign_started_before_it() {
     let host = IdentityHost::fixture();
     let owner = host.viewer().await.unwrap();
     let agent = Key(Zeroizing::new([2; 32])).viewer().unwrap();
@@ -456,20 +456,19 @@ async fn closing_refuses_every_key_operation_including_jobs_queued_before_it() {
         }))
         .unwrap()
     };
-    // Queued while another operation holds the identity, run after it closes.
-    let queued = {
+    // Started while another operation holds the identity, run after it closes.
+    let started = {
         let mut running = host.0.lock().unwrap();
         let task = host.clone();
-        let queued = tokio::spawn(async move { task.sign(template()).await });
-        // `sign` takes its own handle as it submits the blocking job, which then
-        // holds it while waiting on this lock: the test's, the task's, and the job's.
+        let started = tokio::spawn(async move { task.sign(template()).await });
+        // The test's handle, the task's, and the one `sign` clones once it starts.
         while Arc::strong_count(&host.0) < 3 {
             std::thread::yield_now();
         }
         running.close();
-        queued
+        started
     };
-    assert!(queued.await.unwrap().is_err());
+    assert!(started.await.unwrap().is_err());
     host.close();
     assert!(host.sign(template()).await.is_err());
     assert!(host.viewer().await.is_err());

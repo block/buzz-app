@@ -26,6 +26,8 @@ pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_preparation;
 mod media_spool;
+mod reminders;
+pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};
 mod upload_spool;
 pub(crate) use upload_spool::Spools;
 mod media_stream;
@@ -664,6 +666,9 @@ pub(crate) async fn relay_http(
         }
         if kind == Some(30078) {
             admit_app_data(host.inner(), &event, &community).await?;
+        }
+        if kind == Some(30300) {
+            reminders::admit_reminder(host.inner(), &event).await?;
         }
         if kind == Some(9007) {
             verify_owned_event(host.inner(), &event).await?;

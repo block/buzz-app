@@ -74,3 +74,7 @@ pub(super) fn valid(event: &EventTemplate) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;

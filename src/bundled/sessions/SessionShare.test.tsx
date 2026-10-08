@@ -1,0 +1,488 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { createRelaySession } from "../../features/relay/session";
+import {
+  keypair,
+  metadata,
+  profile,
+  roster,
+  signed,
+} from "../../features/relay/testing";
+import { matchesEvent } from "../../features/relay/projection";
+import type { RelayEvent } from "../../features/relay/events";
+import { PublishRejected } from "../../features/relay/outbox";
+import {
+  beginSessionShare,
+  finishSessionShare,
+  sessionShareAttempt,
+} from "../../features/sessions/share-attempt";
+import { SessionShare } from "./SessionShare";
+
+const source = "11111111-1111-4111-8111-111111111111";
+const destination = "22222222-2222-4222-8222-222222222222";
+const owners: ReturnType<typeof createRelaySession>[] = [];
+afterEach(() => {
+  cleanup();
+  for (const owner of owners.splice(0)) owner.dispose();
+});
+function fixture() {
+  const viewer = keypair(),
+    relay = keypair(),
+    aria = keypair(),
+    dev = keypair();
+  const profiles = [
+    profile(aria, { name: "Aria" }),
+    profile(dev, { name: "Dev" }),
+  ];
+  let clock = 1_700_000_000;
+  const members = new Map([
+    [source, [viewer.pubkey]],
+    [destination, [viewer.pubkey]],
+  ]);
+  const metadataEvents = new Map([
+    [
+      source,
+      metadata(relay, source, "Work", clock, [
+        ["t", "stream"],
+        ["private"],
+        ["about", "Buzz session (buzz.sessions/v1)"],
+      ]),
+    ],
+    [
+      destination,
+      metadata(relay, destination, "Planning", clock, [
+        ["t", "stream"],
+        ["private"],
+      ]),
+    ],
+  ]);
+  const published: RelayEvent[] = [];
+  let failLink = false;
+  let holdLink: Promise<void> | undefined;
+  let failCreation = false;
+  let failGrant = false;
+  let records: readonly import("../../features/relay/outbox").OutgoingEvent[] =
+    [];
+  const publish = vi.fn(async (event: RelayEvent) => {
+    if (event.kind === 9) await holdLink;
+    if (event.kind === 9 && failLink) throw new PublishRejected("Post refused");
+    if (event.kind === 9000 && failGrant)
+      throw new PublishRejected("Session invite refused");
+    if (event.kind === 9007 && failCreation)
+      throw new PublishRejected("Create refused");
+    published.push(event);
+    if (event.kind === 9007) {
+      const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      members.set(id, [viewer.pubkey]);
+      metadataEvents.set(
+        id,
+        metadata(
+          relay,
+          id,
+          event.tags.find(([name]) => name === "name")?.[1] ?? "New",
+          ++clock,
+          [
+            ["t", "stream"],
+            [
+              event.tags.find(([name]) => name === "visibility")?.[1] ===
+              "private"
+                ? "private"
+                : "public",
+            ],
+          ],
+        ),
+      );
+    }
+    if (event.kind === 9000) {
+      const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      const key = event.tags.find(([name]) => name === "p")?.[1] ?? "";
+      members.set(id, [...new Set([...(members.get(id) ?? []), key])]);
+      clock++;
+    }
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://community.test",
+      media: () => undefined,
+      query: async (filters) => {
+        if (filters.some((filter) => filter.search))
+          return profiles.filter((item) =>
+            item.content
+              .toLowerCase()
+              .includes(filters[0]?.search?.toLowerCase() ?? ""),
+          );
+        const events = [
+          ...metadataEvents.values(),
+          ...[...members].map(([id, keys]) => roster(relay, id, keys, clock)),
+          ...published,
+          ...profiles,
+        ];
+        return events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      },
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (event) => signed(viewer, event),
+        publish: async (event) => {
+          await publish(event);
+        },
+      },
+    },
+    {
+      outboxStorage: {
+        load: () => records,
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  owners.push(owner);
+  const channel = () =>
+    owner.session.channels.list().channels.find((item) => item.id === source);
+  return {
+    session: owner.session,
+    viewer,
+    aria,
+    dev,
+    members,
+    published,
+    publish,
+    channel,
+    failLink(value: boolean) {
+      failLink = value;
+    },
+    holdLink(value: Promise<void> | undefined) {
+      holdLink = value;
+    },
+    failCreation(value: boolean) {
+      failCreation = value;
+    },
+    failGrant(value: boolean) {
+      failGrant = value;
+    },
+    addDestination(key: string) {
+      members.set(destination, [
+        ...new Set([...(members.get(destination) ?? []), key]),
+      ]);
+      clock++;
+    },
+    async ready() {
+      owner.session.channels.ensureList();
+      await waitFor(() => expect(channel()?.channelType).toBe("session"));
+    },
+    mount() {
+      const initial = channel();
+      if (!initial) throw new Error("Session not loaded");
+      return render(<SessionShare session={owner.session} channel={initial} />);
+    },
+  };
+}
+
+async function chooseDestination(
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+  option: "Planning" | "Create new channel…" = "Planning",
+) {
+  await user.click(within(dialog).getByRole("combobox", { name: "Share to" }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
+it("Copy alone neither saves selections nor grants access", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  const clipboard = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockResolvedValue();
+  await chooseDestination(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Copy link" }));
+  expect(clipboard).toHaveBeenCalledWith(`buzz://channel/${source}`);
+  expect(t.publish).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Share session" })).getByRole(
+      "combobox",
+      { name: "Share to" },
+    ),
+  ).toHaveTextContent("Choose a channel");
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("defaults Everyone to confirmed destination members, reports one actionable grant error, and freezes the retry audience", async () => {
+  const t = fixture();
+  await t.ready();
+  t.addDestination(t.aria.pubkey);
+  t.failGrant(true);
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  expect(
+    within(dialog).getByRole("radio", { name: "Everyone in this channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await chooseDestination(user, dialog);
+  expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Session invite refused",
+  );
+  expect(within(dialog).getAllByRole("alert")).toHaveLength(1);
+  expect(within(dialog).queryByText(/Retry to Planning/)).toBeNull();
+  expect(t.published).toHaveLength(0);
+  expect(sessionShareAttempt(t.session, source)?.audienceKeys).toEqual([
+    t.aria.pubkey,
+  ]);
+  t.addDestination(t.dev.pubkey);
+  t.failGrant(false);
+  await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.members.get(source)).toContain(t.aria.pubkey);
+  expect(t.members.get(source)).not.toContain(t.dev.pubkey);
+  expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
+});
+
+it("keeps exact selected session recipients over close/reopen after posting fails", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  const view = t.mount();
+  t.failLink(true);
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  await user.click(
+    within(dialog).getByRole("radio", { name: "Selected people" }),
+  );
+  await user.type(
+    within(dialog).getByRole("combobox", { name: "Find people" }),
+    "Aria",
+  );
+  await user.click(await within(dialog).findByRole("option", { name: /Aria/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Post refused",
+  );
+  expect(t.members.get(source)).toContain(t.aria.pubkey);
+  expect(t.members.get(destination)).not.toContain(t.aria.pubkey);
+  expect(t.published.map((item) => item.kind)).toEqual([9000]);
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  view.unmount();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const reopened = screen.getByRole("dialog", { name: "Share session" });
+  expect(reopened).toHaveTextContent("1 selected for session access");
+  t.failLink(false);
+  await user.click(
+    within(reopened).getByRole("button", { name: "Retry share" }),
+  );
+  await waitFor(() => expect(reopened).not.toBeInTheDocument());
+  expect(t.published.map((item) => item.kind)).toEqual([9000, 9]);
+});
+
+it("serializes the same submitted attempt across two mounted entry points", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  const initial = t.channel();
+  if (!initial) throw new Error("Session not loaded");
+  const first = render(<SessionShare session={t.session} channel={initial} />);
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.holdLink(held);
+  try {
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
+    await waitFor(() =>
+      expect(t.publish.mock.calls.some(([event]) => event.kind === 9)).toBe(
+        true,
+      ),
+    );
+    // Remount while the first attempt awaits the host; the shared attempt stays locked.
+    first.unmount();
+    const otherView = t.mount();
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    const other = screen.getByRole("dialog", { name: "Share session" });
+    await user.click(
+      within(other).getByRole("button", { name: "Retry share" }),
+    );
+    expect(within(other).getByRole("alert")).toHaveTextContent(
+      "already in progress",
+    );
+    expect(
+      t.publish.mock.calls.filter(([event]) => event.kind === 9),
+    ).toHaveLength(1);
+    release();
+    t.holdLink(undefined);
+    await waitFor(() =>
+      expect(sessionShareAttempt(t.session, source)).toBeUndefined(),
+    );
+    expect(t.published.filter((event) => event.kind === 9)).toHaveLength(1);
+    await user.click(
+      within(other).getByRole("button", { name: "Retry share" }),
+    );
+    expect(sessionShareAttempt(t.session, source)).toBeUndefined();
+    expect(
+      t.publish.mock.calls.filter(([event]) => event.kind === 9),
+    ).toHaveLength(1);
+    expect(within(other).getByRole("alert")).toHaveTextContent(
+      "finished or changed",
+    );
+    // Closing the settled dialog is separate from deliberately starting over.
+    await user.click(within(other).getByRole("button", { name: "Close" }));
+    await user.click(
+      within(otherView.container).getByRole("button", { name: "Share" }),
+    );
+    const fresh = screen.getByRole("dialog", { name: "Share session" });
+    expect(within(fresh).getByRole("button", { name: "Share" })).toBeDisabled();
+    await chooseDestination(user, fresh);
+    expect(within(fresh).getByRole("button", { name: "Share" })).toBeEnabled();
+  } finally {
+    release();
+    t.holdLink(undefined);
+  }
+});
+
+it("does not let a stale dialog resume a replacement attempt", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  const original = beginSessionShare(t.session, source, {
+    destination,
+    audience: "selected",
+    channelPeople: [],
+    sessionPeople: [],
+  });
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  expect(
+    within(dialog).getByRole("button", { name: "Retry share" }),
+  ).toBeEnabled();
+  finishSessionShare(t.session, source);
+  const replacement = beginSessionShare(t.session, source, {
+    destination,
+    audience: "selected",
+    channelPeople: [],
+    sessionPeople: [],
+  });
+  expect(replacement).not.toBe(original);
+  await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
+  expect(sessionShareAttempt(t.session, source)).toBe(replacement);
+  expect(t.publish).not.toHaveBeenCalled();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "finished or changed",
+  );
+});
+
+it("uses a searched new-channel invitee in the default Everyone roster, without session selection", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  t.mount();
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog, "Create new channel…");
+  expect(
+    within(dialog).getByRole("radio", { name: "Everyone in this channel" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Project room",
+  );
+  await user.type(
+    within(dialog).getByRole("combobox", {
+      name: "Find people to add to new channel",
+    }),
+    "Aria",
+  );
+  await user.click(await within(dialog).findByRole("option", { name: /Aria/ }));
+  expect(
+    within(dialog).queryByRole("group", {
+      name: "People to share session with",
+    }),
+  ).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  const created = t.published
+    .find((item) => item.kind === 9007)
+    ?.tags.find(([name]) => name === "h")?.[1];
+  expect(created).toBeDefined();
+  expect(t.members.get(created ?? "")).toContain(t.aria.pubkey);
+  expect(t.members.get(source)).toContain(t.aria.pubkey);
+  expect(t.published.map((item) => item.kind)).toEqual([9007, 9000, 9000, 9]);
+  expect(
+    t.published
+      .filter((item) => item.kind === 9000)
+      .map((item) => item.tags.find(([name]) => name === "h")?.[1]),
+  ).toEqual([created, source]);
+});
+
+it("creates one channel, separately adds its chosen people, grants the session audience and posts once on retry", async () => {
+  const t = fixture();
+  await t.ready();
+  const user = userEvent.setup();
+  t.mount();
+  t.failLink(true);
+  await user.click(screen.getByRole("button", { name: "Share" }));
+  const dialog = screen.getByRole("dialog", { name: "Share session" });
+  await chooseDestination(user, dialog, "Create new channel…");
+  await user.click(
+    within(dialog).getByRole("radio", { name: "Selected people" }),
+  );
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Project room",
+  );
+  await user.type(
+    within(dialog).getByRole("combobox", {
+      name: "Find people to add to new channel",
+    }),
+    "Aria",
+  );
+  await user.click(await screen.findByRole("option", { name: /Aria/ }));
+  await user.type(
+    within(dialog).getByRole("combobox", {
+      name: "Find people for session access",
+    }),
+    "Dev",
+  );
+  await user.click(await screen.findByRole("option", { name: /Dev/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Share" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Post refused",
+  );
+  const created = t.published
+    .find((item) => item.kind === 9007)
+    ?.tags.find(([name]) => name === "h")?.[1];
+  expect(created).toBeDefined();
+  expect(t.members.get(created ?? "")).toContain(t.aria.pubkey);
+  expect(t.members.get(source)).toContain(t.dev.pubkey);
+  expect(t.members.get(source)).not.toContain(t.aria.pubkey);
+  expect(t.members.get(created ?? "")).not.toContain(t.dev.pubkey);
+  t.failLink(false);
+  await user.click(within(dialog).getByRole("button", { name: "Retry share" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.published.map((item) => item.kind)).toEqual([9007, 9000, 9000, 9]);
+  expect(t.published.filter((item) => item.kind === 9007)).toHaveLength(1);
+});

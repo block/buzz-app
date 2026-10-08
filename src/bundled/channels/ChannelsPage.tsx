@@ -39,8 +39,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import {
   buzzLinkTarget,
   isBuzzLink,
+  parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
+import { SessionShare } from "../sessions/SessionShare";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
   NewSessionView,
@@ -993,6 +995,34 @@ function ChannelWorkspace({
         navigation?.signal.aborted
       )
         return false;
+      const parsed = parseBuzzLink(url);
+      const linkedSession =
+        parsed?.format === "legacy" &&
+        !parsed.messageId &&
+        queries.channels
+          .list()
+          .channels.find(
+            (item) =>
+              item.id === parsed.channelId &&
+              item.channelType === "session" &&
+              !item.cached &&
+              !item.readOnly &&
+              !item.archived &&
+              item.members?.includes(queries.viewer ?? ""),
+          );
+      if (linkedSession && linkedSession.id !== current?.id) {
+        const id = `conversation:${linkedSession.id}`;
+        tabState.setTabs((tabs) =>
+          tabs.some((tab) => tab.id === id)
+            ? tabs
+            : [
+                ...tabs,
+                { id, kind: "conversation", channelId: linkedSession.id },
+              ],
+        );
+        tabState.select(id);
+        return true;
+      }
       if (isBuzzLink(url) && navigator && viewer) {
         const target = buzzLinkTarget(url, {
           viewer,
@@ -1049,6 +1079,7 @@ function ChannelWorkspace({
       scope,
       setSettings,
       setThread,
+      tabState,
     ],
   );
   const openThreadLink = useCallback(
@@ -1232,6 +1263,8 @@ function ChannelWorkspace({
       target.cached ||
       target.readOnly ||
       target.archived ||
+      (target.channelType === "session" &&
+        !target.members?.includes(queries.viewer ?? "")) ||
       channelId === currentId
     )
       return;
@@ -1280,6 +1313,18 @@ function ChannelWorkspace({
     const connection = relay.snapshot();
     if (connection.status !== "ready" || connection.session !== queries)
       return false;
+    const parsed = parseBuzzLink(url);
+    if (
+      parsed?.format === "legacy" &&
+      !parsed.messageId &&
+      queries.channels
+        .list()
+        .channels.some(
+          (item) =>
+            item.id === parsed.channelId && item.channelType === "session",
+        )
+    )
+      return openLink(url, true);
     const candidate = panels.resolve(url);
     if (candidate) {
       panelTrigger.current =
@@ -1526,7 +1571,9 @@ function ChannelWorkspace({
                       (parent) => parent.id === current.parentChannelId,
                     )?.name
                   }
-                />
+                >
+                  <SessionShare session={queries} channel={current} />
+                </SessionHeading>
               ) : (
                 <PanelHeader
                   title={
@@ -1871,7 +1918,13 @@ function ChannelWorkspace({
                             : channels.find(
                                 (item) => item.id === tab.channelId,
                               );
-                        const usable = target && !target.readOnly;
+                        const usable =
+                          target &&
+                          !target.readOnly &&
+                          !target.archived &&
+                          !target.cached &&
+                          (target.channelType !== "session" ||
+                            target.members?.includes(queries.viewer ?? ""));
                         return {
                           id: tab.id,
                           label:

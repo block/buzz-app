@@ -67,6 +67,28 @@ test("identity menus preserve modal focus and addition returns focus only to its
     await search.fill("Morgan");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
     await expect(add).toBeEnabled();
+    if (!moved) {
+      // The Enter row uses the dialog's floating selection, not the panel's.
+      const fills = await dialog
+        .locator("[data-highlighted]")
+        .evaluate((row) => {
+          const probe = (token) => {
+            const element = document.createElement("div");
+            element.style.background = `var(${token})`;
+            row.parentElement.append(element);
+            const color = getComputedStyle(element).backgroundColor;
+            element.remove();
+            return color;
+          };
+          return {
+            row: getComputedStyle(row).backgroundColor,
+            floating: probe("--affordance-floating-selected"),
+            panel: probe("--affordance-selected"),
+          };
+        });
+      expect(fills.floating).not.toBe(fills.panel);
+      expect(fills.row).toBe(fills.floating);
+    }
     const identity = dialog.getByRole("button", {
       name: /Open profile for Morgan/,
     });

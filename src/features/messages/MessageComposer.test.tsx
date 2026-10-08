@@ -5029,7 +5029,7 @@ describe("project resource picker", () => {
     );
   });
 
-  it("puts titles with a word starting with the text first, newest first", async () => {
+  it("orders titles by match: prefix, then word start, then the rest", async () => {
     const issue = (id: string, title: string, created_at: number) => ({
       ...item,
       id: id.repeat(64),
@@ -5053,10 +5053,10 @@ describe("project resource picker", () => {
     expect(await titles()).toEqual(["Relogin bug", "Fix login", "Login page"]);
     const search = screen.getByRole("searchbox");
     await p.h.user.type(search, "login");
-    expect(await titles()).toEqual(["Fix login", "Login page", "Relogin bug"]);
-    const choice = screen.getByRole("button", { name: row });
+    expect(await titles()).toEqual(["Login page", "Fix login", "Relogin bug"]);
+    const choice = screen.getByRole("button", { name: /^Login page,/ });
     expect(search).toHaveAttribute("aria-activedescendant", choice.id);
-    expect(choice.querySelector("mark")).toHaveTextContent(/^login$/);
+    expect(choice.querySelector("mark")).toHaveTextContent(/^login$/i);
     // Up wraps to the last row; Shift+Enter is not a choice.
     await p.h.user.keyboard("{ArrowUp}");
     expect(search).toHaveAttribute(
@@ -5102,6 +5102,70 @@ describe("project resource picker", () => {
     expect(
       screen.getByText("Login page. Press Enter to add.", { exact: true }),
     ).toBeInTheDocument();
+  });
+
+  it("puts an exact title before a newer title that starts with it", async () => {
+    const p = picker(undefined, [
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: item.created_at + 1,
+        content: "Fix login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Fix login page"],
+        ],
+      },
+      item,
+    ]);
+    await p.open();
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "fix login");
+    const choice = screen.getByRole("button", { name: row });
+    expect(
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((option) => option.getAttribute("aria-label")?.split(",")[0]),
+    ).toEqual(["Fix login", "Fix login page"]);
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+  });
+
+  it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+    const p = picker(undefined, [
+      item,
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: 1,
+        content: "Login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Login page"],
+        ],
+      },
+    ]);
+    await p.open();
+    const first = await screen.findByRole("button", { name: row });
+    const second = screen.getByRole("button", { name: /^Login page,/ });
+    for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+      await p.h.user.tab();
+    expect(first).toHaveFocus();
+    // Down on a focused row moves the highlight and focus together.
+    await p.h.user.keyboard("{ArrowDown}");
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("data-selected");
+    expect(first).not.toHaveAttribute("data-selected");
+    // A pointer highlight moves focus too, so Enter adds the highlighted row.
+    fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+    fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+    expect(first).toHaveAttribute("data-selected");
+    expect(first).toHaveFocus();
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(first).toHaveTextContent("Checking…");
   });
 
   it("keeps focus in the popover while a clicked row is checked", async () => {

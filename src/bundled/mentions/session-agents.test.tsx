@@ -323,6 +323,49 @@ it("navigates namesakes with arrows and selects the highlighted exact identity w
   test.library.dispose();
 });
 
+it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  test.profiles.set(test.member, { name: "Outside agent" });
+  render(
+    <MentionPicker
+      scope="scope"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const first = await screen.findByRole("button", {
+    name: `Outside agent ${test.member}`,
+  });
+  const last = await screen.findByRole("button", {
+    name: `Outside agent ${test.key}`,
+  });
+  for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+    await user.tab();
+  expect(first).toHaveFocus();
+  // Down on a focused row moves the highlight and focus together.
+  await user.keyboard("{ArrowDown}");
+  expect(last).toHaveFocus();
+  expect(last).toHaveAttribute("data-selected");
+  expect(first).not.toHaveAttribute("data-selected");
+  // A pointer highlight moves focus too, so Enter chooses the highlighted row.
+  fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+  fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+  expect(first).toHaveAttribute("data-selected");
+  expect(first).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith({
+    pubkey: test.member,
+    name: "Outside agent",
+  });
+  test.library.dispose();
+});
+
 it("selects filtered results from search, ignores IME Enter, and keeps rejected selections open", async () => {
   const test = setup(),
     user = userEvent.setup(),

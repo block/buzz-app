@@ -146,8 +146,9 @@ export function ResourcePicker({
     setOpen(false);
   }, [disabled]);
   const query = search.trim().toLowerCase();
-  // The same items as before match; titles with a word that starts with the
-  // text come first, newest first within each group.
+  // The same items as before match. Order by how well the title matches,
+  // as the other pickers do: exact, then prefix, then word start, then the
+  // rest, newest first within each rank. A repository-only match comes last.
   const shown =
     items.status === "ready"
       ? items.items
@@ -158,11 +159,9 @@ export function ResourcePicker({
           )
           .map((item) => {
             const match = matchName(item.label, query);
-            // Rank 2 or better: the whole title, its start or a word start.
-            const group = match && match.rank <= 2 ? 0 : 1;
-            return { item, match, group };
+            return { item, match, rank: match?.rank ?? Number.MAX_VALUE };
           })
-          .sort((a, b) => a.group - b.group)
+          .sort((a, b) => a.rank - b.rank)
       : [];
   const busy = !!checking && !checking.failed;
   const highlight = useSearchHighlight({

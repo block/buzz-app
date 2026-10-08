@@ -370,7 +370,7 @@ fn source_definition<'a>(data: &'a Source, record: &'a Value) -> Result<&'a Valu
 /// suffix would reach the agent twice. Byte-exact: a bare `---` or a heading
 /// elsewhere is the author's own content. Applied to the imported copy only.
 const BAKED_TEAM_DELIMITER: &str = "\n\n---\n# Team Instructions\n";
-fn imported_prompt(prompt: &str) -> &str {
+pub(crate) fn imported_prompt(prompt: &str) -> &str {
     prompt
         .rfind(BAKED_TEAM_DELIMITER)
         .map_or(prompt, |at| &prompt[..at])

@@ -832,3 +832,42 @@ fn existing_agent_save_accepts_international_text_and_crlf_but_rejects_hidden_co
     invalid.system_prompt = "hidden\u{202e} instructions".into();
     assert!(store.save(&agent.id, saved.revision, invalid).is_err());
 }
+#[test]
+fn reopen_strips_baked_team_suffix_from_beta_imports_only_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let baked = "role\n\n---\n# Team Instructions\nold team";
+    let agent = |key: &str, prompt: &str, imported: serde_json::Value| {
+        let mut agent = fixture();
+        agent.pubkey = key.repeat(32);
+        agent.id = agent_id(&agent.pubkey, &agent.relay_url);
+        agent.system_prompt = prompt.into();
+        agent.imported = imported;
+        agent
+    };
+    let beta = serde_json::json!({"record": {}, "global": {}});
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    store
+        .insert(vec![
+            agent("01", baked, beta.clone()),
+            agent("02", baked, serde_json::json!({"record": {}})),
+            agent("03", "role only", beta),
+        ])
+        .unwrap();
+    let before = store.agents().unwrap();
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    let after = store.agents().unwrap();
+    assert_eq!(after[0].system_prompt, "role");
+    assert_eq!(after[0].revision, before[0].revision + 1);
+    for i in [1, 2] {
+        assert_eq!(after[i].system_prompt, before[i].system_prompt);
+        assert_eq!(after[i].revision, before[i].revision);
+    }
+    drop(store);
+    let again = Store::open(dir.path().to_owned())
+        .unwrap()
+        .agents()
+        .unwrap();
+    assert_eq!(again[0].system_prompt, "role");
+    assert_eq!(again[0].revision, after[0].revision);
+}

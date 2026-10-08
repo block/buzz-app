@@ -136,8 +136,34 @@ impl Store {
             _lock: lock,
             importing: Arc::default(),
         };
-        store.read()?;
+        store.strip_imported_team_suffixes()?;
         Ok(store)
+    }
+    /// Imports made before the import-time cut kept old Buzz's baked team
+    /// section in their saved prompt. Only beta imports carry `imported.global`,
+    /// so prompts written in this app are never touched. Idempotent.
+    fn strip_imported_team_suffixes(&self) -> Result<()> {
+        let mut doc = self.read()?;
+        let mut changed = false;
+        for agent in &mut doc.agents {
+            if agent.imported.get("global").is_none() {
+                continue;
+            }
+            let prompt = crate::import::imported_prompt(&agent.system_prompt);
+            if prompt.len() == agent.system_prompt.len() {
+                continue;
+            }
+            agent.system_prompt = prompt.to_owned();
+            agent.revision = agent
+                .revision
+                .checked_add(1)
+                .ok_or("Agent revision exhausted")?;
+            changed = true;
+        }
+        if changed {
+            self.write(&doc)?;
+        }
+        Ok(())
     }
     pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {
         self.importing

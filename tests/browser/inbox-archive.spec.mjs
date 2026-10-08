@@ -98,7 +98,7 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   ).toBeChecked();
 });
 
-test("Inbox archive survives reload, restores, and reopens on a new mention", async ({
+test("Inbox archive survives reload and reopens Threads before fresh Mentions", async ({
   page,
   app,
 }) => {
@@ -143,11 +143,26 @@ test("Inbox archive survives reload, restores, and reopens on a new mention", as
   });
   app.histories.get(`primary/${channel}`).push(seed);
   app.relay.publish("primary", seed);
+  await choose(page, inbox, "Activity type", "Mentions");
   app.append("primary", channel, "Agent progress", true, false, root.id);
-  await choose(page, inbox, "Show", "Archived");
+  // Threads becoming visible proves the incoming reply was admitted before the
+  // negative Mentions assertion; older tags must not resurface in that filter.
+  await choose(page, inbox, "Activity type", "Threads");
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Archive room");
+  await choose(page, inbox, "Activity type", "All activity");
+  await expect(rows).toHaveCount(1);
+  await choose(page, inbox, "Show", "Archived");
+  await expect(rows).toHaveCount(0);
   await choose(page, inbox, "Show", "Inbox");
+  await choose(page, inbox, "Activity type", "Mentions");
+  await expect(rows).toHaveCount(0);
+  await page.reload();
+  await openPage(page, "Inbox");
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  await choose(page, inbox, "Activity type", "Threads");
+  await expect(rows).toHaveCount(1);
+  await choose(page, inbox, "Activity type", "Mentions");
   await expect(rows).toHaveCount(0);
   app.append(
     "primary",
@@ -308,7 +323,7 @@ test("detail archive advances to next conversation then closes", async ({
   await expect(rows).toHaveCount(0);
   await expect(detail).toHaveCount(0);
 });
-test("fresh mention reopens archived row without replacing composer draft", async ({
+test("reply and fresh mention reopen their filters without replacing composer draft", async ({
   page,
   app,
 }) => {
@@ -351,8 +366,23 @@ test("fresh mention reopens archived row without replacing composer draft", asyn
   await expect(
     inbox.getByRole("region", { name: "Inbox detail" }),
   ).toContainText("Ordinary peer reply");
+  await expect(rows).toHaveCount(0);
+  await expect(editor).toHaveText("Unsent mention retention draft");
+  await expect(editor).toHaveAttribute(
+    "data-retention-marker",
+    "original-composer",
+  );
+  // Changing Show deliberately closes a visit; keep the Archived view open
+  // while Activity type changes and incoming events update its membership.
+  await choose(page, inbox, "Activity type", "Threads");
+  await expect(rows).toHaveCount(0);
+  await choose(page, inbox, "Activity type", "Mentions");
   await expect(rows).toHaveCount(1);
   await expect(editor).toHaveText("Unsent mention retention draft");
+  await expect(editor).toHaveAttribute(
+    "data-retention-marker",
+    "original-composer",
+  );
   app.append(
     "primary",
     channel,
@@ -366,7 +396,7 @@ test("fresh mention reopens archived row without replacing composer draft", asyn
   await expect(rows).toHaveCount(0);
   await expect(
     inbox.getByRole("region", { name: "Inbox detail" }),
-  ).toBeVisible();
+  ).toContainText("Fresh peer explicit mention");
   await expect(editor).toHaveText("Unsent mention retention draft");
   await expect(editor).toHaveAttribute(
     "data-retention-marker",

@@ -50,7 +50,7 @@ function fixture() {
   return { viewer, alice, events, item, scope, archived };
 }
 
-it("keeps observed mentions and ordinary replies archived, but reopens for a same-second new tag", () => {
+it("keeps non-participating replies and older mentions archived, but reopens for a same-second new tag", () => {
   const h = fixture();
   updateArchive(h.scope, h.item, true);
   expect(h.archived()).toBe(true);
@@ -81,6 +81,96 @@ it("keeps observed mentions and ordinary replies archived, but reopens for a sam
   reopenArchives(h.scope, [reopened]);
   expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([]);
   expect(h.archived()).toBe(false);
+});
+
+it("reopens participating replies durably without resurfacing an old mention", () => {
+  const h = fixture();
+  const thread = { ...h.item, thread: true };
+  updateArchive(h.scope, thread, true);
+  const original = viewRevision(h.scope, archiveKey);
+  const observed = {
+    ...thread,
+    messages: thread.messages.map((event) => ({ ...event, createdAt: 40 })),
+  };
+  const delayed = {
+    ...thread,
+    messageIds: [...thread.messageIds, "d".repeat(64)],
+    messages: [
+      ...thread.messages,
+      { id: "d".repeat(64), createdAt: 29, mentioned: false },
+    ],
+  };
+  expect(h.archived(observed)).toBe(true);
+  expect(h.archived(delayed)).toBe(true);
+  reopenArchives(h.scope, [observed, delayed]);
+  expect(viewRevision(h.scope, archiveKey)).toBe(original);
+  const replyId = "b".repeat(64);
+  const reply = {
+    ...thread,
+    messageIds: [...thread.messageIds, replyId],
+    messages: [
+      ...thread.messages,
+      { id: replyId, createdAt: 30, mentioned: false },
+    ],
+  };
+  const archivedMention = (item: InboxItem) =>
+    isArchived(
+      archiveIndex(readArchives(viewRevision(h.scope, archiveKey))),
+      item,
+      true,
+    );
+  expect(h.archived(reply)).toBe(false);
+  expect(archivedMention(reply)).toBe(true);
+  reopenArchives(h.scope, [reply]);
+  expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([
+    {
+      id: thread.id,
+      channelId: thread.channelId,
+      through: 30,
+      messageIds: thread.messageIds,
+      reopened: true,
+    },
+  ]);
+  expect(h.archived(thread)).toBe(false);
+  expect(archivedMention(thread)).toBe(true);
+  const writes = vi.spyOn(Storage.prototype, "setItem");
+  reopenArchives(h.scope, [reply, thread]);
+  expect(writes).not.toHaveBeenCalled();
+  const freshMention = {
+    ...reply,
+    messageIds: [...reply.messageIds, "c".repeat(64)],
+    messages: [
+      ...reply.messages,
+      { id: "c".repeat(64), createdAt: 31, mentioned: true },
+    ],
+  };
+  expect(archivedMention(freshMention)).toBe(false);
+  reopenArchives(h.scope, [freshMention]);
+  expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([]);
+  expect(h.archived(thread)).toBe(false);
+  expect(archivedMention(thread)).toBe(false);
+});
+
+it("rearchiving replaces the reply reopening cutoff and manual Restore clears mention intent", () => {
+  const h = fixture();
+  const thread = { ...h.item, thread: true };
+  updateArchive(h.scope, thread, true);
+  const reply = {
+    ...thread,
+    messageIds: [...thread.messageIds, "b".repeat(64)],
+    messages: [
+      ...thread.messages,
+      { id: "b".repeat(64), createdAt: 30, mentioned: false },
+    ],
+  };
+  reopenArchives(h.scope, [reply]);
+  updateArchive(h.scope, reply, true, 31);
+  expect(h.archived(reply)).toBe(true);
+  expect(
+    readArchives(viewRevision(h.scope, archiveKey))[0]?.reopened,
+  ).toBeUndefined();
+  updateArchive(h.scope, reply, false);
+  expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([]);
 });
 
 it("preserves archive intent when exact conversation evidence regroups and restores it", () => {
@@ -126,8 +216,8 @@ it("persists a regrouped archive coordinate after its original evidence is repla
     messageId: "c".repeat(64),
     latestMessageId: "c".repeat(64),
     messageIds: ["c".repeat(64)],
-    createdAt: 40,
-    messages: [{ id: "c".repeat(64), createdAt: 40, mentioned: false }],
+    createdAt: 29,
+    messages: [{ id: "c".repeat(64), createdAt: 29, mentioned: false }],
   };
   expect(h.archived(laterReplies)).toBe(true);
 

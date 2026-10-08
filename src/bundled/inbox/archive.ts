@@ -7,6 +7,7 @@ type Archive = Readonly<{
   channelId: string;
   through: number;
   messageIds: readonly string[];
+  reopened?: boolean;
 }>;
 const maxBytes = 512 * 1024;
 
@@ -24,6 +25,7 @@ export function readArchives(
         typeof entry.channelId === "string" &&
         Number.isSafeInteger(entry.through) &&
         entry.through >= 0 &&
+        (entry.reopened === undefined || typeof entry.reopened === "boolean") &&
         Array.isArray(entry.messageIds) &&
         entry.messageIds.length <= 4096 &&
         entry.messageIds.every(
@@ -67,19 +69,30 @@ function matches(index: ArchiveIndex, item: InboxItem) {
   ];
 }
 
-function renewed(archive: Archive, item: InboxItem) {
+function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   const observed = new Set(archive.messageIds);
   return item.messages.some(
     ({ id, createdAt, mentioned }) =>
-      mentioned && !observed.has(id) && createdAt >= archive.through,
+      (mentioned || (!mentionsOnly && item.thread)) &&
+      !observed.has(id) &&
+      createdAt >= archive.through,
   );
 }
 
-export function isArchived(index: ArchiveIndex, item: InboxItem) {
+export function isArchived(
+  index: ArchiveIndex,
+  item: InboxItem,
+  mentionsOnly = false,
+) {
   if (!index.size) return false;
   const entries = matches(index, item);
   return (
-    entries.length > 0 && !entries.some((archive) => renewed(archive, item))
+    entries.length > 0 &&
+    !entries.some(
+      (archive) =>
+        (!mentionsOnly && archive.reopened) ||
+        renewed(archive, item, mentionsOnly),
+    )
   );
 }
 
@@ -111,7 +124,7 @@ export function updateArchive(
     );
 }
 
-/** Retire reopened entries so bounded evidence cannot hide the conversation again. */
+/** Persist reopening while retaining the mention cutoff until a fresh explicit tag. */
 export function reopenArchives(
   scope: string,
   items: readonly InboxItem[],
@@ -121,18 +134,22 @@ export function reopenArchives(
   if (!archives.length) return;
   const index = archiveIndex(archives);
   const reopened = new Set<Archive>();
+  const retired = new Set<Archive>();
   const regrouped = new Map<Archive, InboxItem | null>();
   for (const item of items)
     for (const archive of matches(index, item)) {
-      if (renewed(archive, item)) reopened.add(archive);
+      if (renewed(archive, item, true)) retired.add(archive);
+      else if (!archive.reopened && renewed(archive, item))
+        reopened.add(archive);
       // Count every match, including the saved coordinate: split evidence does
       // not identify a replacement conversation, regardless of row order.
       regrouped.set(archive, regrouped.has(archive) ? null : item);
     }
   const retained = archives
-    .filter((archive) => !reopened.has(archive))
+    .filter((archive) => !retired.has(archive))
     .map((archive) => {
       const item = regrouped.get(archive);
+      if (reopened.has(archive)) archive = { ...archive, reopened: true };
       // Never downgrade a verified root to an unresolved singleton reply.
       return item?.rootId && archive.id !== item.id
         ? { ...archive, id: item.id }
@@ -140,6 +157,7 @@ export function reopenArchives(
     });
   if (
     !reopened.size &&
+    !retired.size &&
     retained.every((archive, index) => archive === archives[index])
   )
     return;

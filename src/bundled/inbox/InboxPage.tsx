@@ -320,7 +320,8 @@ export function InboxView({
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const items = inbox.items;
-  const archived = (item: InboxItem) => isArchived(archives, item);
+  const archived = (item: InboxItem) =>
+    isArchived(archives, item, activity === "mentions");
   const viewItems =
     show === "all"
       ? items
@@ -838,7 +839,9 @@ export function InboxView({
                     </h3>
                     <p className="text-body text-subtle">
                       {show === "archived"
-                        ? "Archived conversations stay here until you restore them or receive a new mention."
+                        ? activity === "mentions"
+                          ? "Archived mentions stay here until you restore them or receive a new mention."
+                          : "Archived conversations stay here until you restore them, receive a new participating-thread reply, or receive a new mention."
                         : "Mentions, direct messages, and replies in threads you participate in appear here."}
                     </p>
                     {show === "archived" && unreadOnly && (

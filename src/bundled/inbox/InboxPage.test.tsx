@@ -58,7 +58,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("archives a conversation durably, restores it, and reopens only for a new mention", async () => {
+it("archives a conversation durably, restores it, and reopens for participating replies", async () => {
   const h = fixture();
   const view = render(h.view);
   const rows = () =>
@@ -165,12 +165,79 @@ it("archives a conversation durably, restores it, and reopens only for a new men
         ),
     ).toBe(true),
   );
-  expect(rows().getAllByRole("button", { name: /^Open / })).toHaveLength(1);
+  await waitFor(() =>
+    expect(rows().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
   post("John, please decide", now + 2, true);
   await waitFor(() =>
     expect(rows().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
   );
 });
+
+it.each(["Threads", "Mentions"])(
+  "ordinary participating replies reopen Threads and All activity but not old Mentions (arrival in %s)",
+  async (activity) => {
+    const h = fixture();
+    if (!h.root) throw new Error("Missing fixture root");
+    const root = h.root;
+    let view = render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const post = (content: string, at: number, mentioned = false) => {
+      const event = message(h.alice, "room", content, at, [
+        ["e", root.id, "", "reply"],
+        ...(mentioned ? [["p", h.viewer.pubkey]] : []),
+      ]);
+      h.addEvent(event);
+      act(() => h.emit([event]));
+      return event;
+    };
+    post("Earlier thread mention", 23, true);
+    await chooseFilter("Threads");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    const threadRow = rows()[0];
+    if (!threadRow) throw new Error("Missing participating thread row");
+    fireEvent.click(
+      within(threadRow).getByRole("button", { name: /^Archive / }),
+    );
+    await waitFor(() => expect(rows()).toHaveLength(0));
+    await chooseFilter(activity);
+    const fresh = post(
+      "New ordinary participating reply",
+      Math.floor(Date.now() / 1000) + 1,
+    );
+    await waitFor(() =>
+      expect(
+        h.session.unread
+          .inbox()
+          .items.some((item) => item.messageIds.includes(fresh.id)),
+      ).toBe(true),
+    );
+    await chooseFilter("Threads");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await chooseFilter("All activity");
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    await chooseFilter("Mentions");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Please review");
+    view.unmount();
+    view = render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Please review");
+    await chooseFilter("Threads");
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    await chooseFilter("Mentions");
+    post(
+      "Fresh explicit thread mention",
+      Math.floor(Date.now() / 1000) + 2,
+      true,
+    );
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+  },
+);
 
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
@@ -405,7 +472,7 @@ it.each(["reply", "unrelated", "mention"] as const)(
     });
     vi.setSystemTime(new Date("2030-01-01T00:00:05Z"));
     fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
-    if (update === "mention") {
+    if (update !== "unrelated") {
       await waitFor(() =>
         expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
       );
@@ -425,11 +492,6 @@ it.each(["reply", "unrelated", "mention"] as const)(
     await chooseFilter("Archived", "Show");
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toHaveTextContent("A thread update");
-    // The row preview describes its original activity, not the latest reply.
-    if (update === "reply")
-      expect(
-        h.session.unread.inbox().items.find((item) => item.thread),
-      ).toMatchObject({ latestMessageId: incoming.id });
   },
 );
 

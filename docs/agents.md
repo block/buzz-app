@@ -731,22 +731,25 @@ No keys, config, memory, membership, or runtime state are changed by discovery.
 
 ### Channel session usage
 
-The thread pane reads saved kind-44200 metrics from the current account/community's
-host archive. The strip and in-pane detail are **channel-associated session**
+The Usage tab reads saved kind-44200 metrics from the current account/community's
+host archive. Its strip and detail are **channel-associated session**
 usage, not thread attribution or context-window capacity. Each signed agent key
 and reported harness session remains separate; missing session IDs are individual
 unidentified records. The latest cumulative snapshot is selected by turn sequence;
 turn deltas are shown only when reliable. Unknown counters are not zero and cache
 counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
 
-The first archive page loads when a positively accessible thread opens and the
-Settings → Agents → Show channel session usage preference is on (the default).
-Turning the preference off unmounts the display and stops reads in open threads;
-it does not change metric capture or retention. Later
+The channel's **Channel actions → View channel usage** item opens a dedicated
+**Usage** tab in the channel's side pane. It is available only while this
+account has positive access to the current channel and Settings → Agents →
+Show channel session usage is on (the default). Closing the tab unmounts its
+archive reader; turning the preference off removes the tab and stops reads. It
+does not change metric capture or retention. The first archive page loads when
+the Usage tab opens. Later
 pages require **Load more**; a page without channel matches does not prove the
 archive has none. **Refresh** re-reads the newest page; neither action fetches
-relay history. The client retains at most 2,000 decoded records while this thread
-view lives and fences late reads on channel/access changes. Saved metrics remain
+relay history. The client retains at most 2,000 decoded records while this tab
+lives and fences late reads on channel/access changes. Saved metrics remain
 subject to the independent 90-day/byte eviction policy above, so loaded history
 is never a completeness guarantee. Restored usage is display-only and cannot
 establish working, typing, or online status.

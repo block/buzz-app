@@ -39,6 +39,7 @@ export function ChannelHeaderMenu({
   trigger,
   openDetails,
   openCanvas,
+  openUsage,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
@@ -48,6 +49,7 @@ export function ChannelHeaderMenu({
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
   openCanvas(trigger: HTMLButtonElement): void;
+  openUsage?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [prepared, setPrepared] = useState(false);
@@ -100,6 +102,14 @@ export function ChannelHeaderMenu({
             <FileTextIcon size={16} />
           </MenuIcon>
           View canvas
+        </MenuItem>
+      )}
+      {openUsage && (
+        <MenuItem onClick={openUsage}>
+          <MenuIcon>
+            <InfoIcon size={16} />
+          </MenuIcon>
+          View channel usage
         </MenuItem>
       )}
       {saveAs}

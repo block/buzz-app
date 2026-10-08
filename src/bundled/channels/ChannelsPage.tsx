@@ -61,6 +61,7 @@ import {
 } from "react";
 import {
   SidebarRightIcon,
+  InfoIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
@@ -523,6 +524,21 @@ function ChannelWorkspace({
   const closeSettings = () => {
     setSettings(undefined);
     afterClose("settings");
+  };
+  const usageAvailable =
+    showUsage &&
+    !!current &&
+    !current.cached &&
+    !current.readOnly &&
+    !!current.members?.includes(queries.viewer ?? "") &&
+    !!queries.agentActivity?.archive;
+  const showingUsage = usageAvailable && tabState.usage;
+  useEffect(() => {
+    if (!usageAvailable && tabState.usage) tabState.setUsage(false);
+  }, [usageAvailable, tabState.usage, tabState.setUsage]);
+  const closeUsage = () => {
+    tabState.setUsage(false);
+    afterClose("usage");
   };
   const canStartSession =
     !!current &&
@@ -1176,6 +1192,7 @@ function ChannelWorkspace({
   };
   const rootTabIds = [
     ...(settings ? ["settings"] : []),
+    ...(showingUsage ? ["usage"] : []),
     ...(showingThread ? ["thread"] : []),
     ...tabState.tabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
@@ -1280,6 +1297,7 @@ function ChannelWorkspace({
   const hasChannelPanel =
     !composingMessage &&
     (settings ||
+      showingUsage ||
       tabState.tabs.length > 0 ||
       panelTabs.length > 0 ||
       showingThread ||
@@ -1565,6 +1583,14 @@ function ChannelWorkspace({
                           setSettings({ channelId: currentId });
                         }}
                         openCanvas={openCanvas}
+                        openUsage={
+                          usageAvailable
+                            ? () => {
+                                drawer.close();
+                                tabState.setUsage(true);
+                              }
+                            : undefined
+                        }
                       />
                       {current && (
                         <IconButton
@@ -1727,6 +1753,7 @@ function ChannelWorkspace({
             {hasChannelPanel &&
               (settings ||
                 showingThread ||
+                showingUsage ||
                 panelTabs.length > 0 ||
                 tabState.tabs.length > 0) && (
                 <div
@@ -1757,6 +1784,23 @@ function ChannelWorkspace({
                             },
                           ]
                         : []),
+                      ...(showingUsage && current
+                        ? [
+                            {
+                              id: "usage",
+                              label: "Usage",
+                              icon: <InfoIcon size="1rem" />,
+                              close: closeUsage,
+                              content: (
+                                <ChannelUsage
+                                  key={`${scope}:${current.id}`}
+                                  session={queries}
+                                  channelId={current.id}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
                       ...(showingThread
                         ? [
                             {
@@ -1777,15 +1821,6 @@ function ChannelWorkspace({
                                 <ThreadPanel
                                   sessionConversation={
                                     current?.channelType === "session"
-                                  }
-                                  aboveHistory={
-                                    showUsage ? (
-                                      <ChannelUsage
-                                        key={`${scope}:${showingThread.channelId}`}
-                                        session={queries}
-                                        channelId={showingThread.channelId}
-                                      />
-                                    ) : null
                                   }
                                   extensions={extensions}
                                   session={queries}

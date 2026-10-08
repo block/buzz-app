@@ -11,8 +11,6 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import { ChannelUsage } from "./ChannelUsage";
-import { useChannelUsagePreference } from "../../features/agents/channel-usage-preference";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
@@ -45,7 +43,6 @@ export function ConversationTab({
   openThread(messageId: string, rootId: string, intent?: "reply"): void;
   close(): void;
 }) {
-  const showUsage = useChannelUsagePreference();
   // A saved reply intent belongs to the previous visit, not this restoration.
   const restoredTab = useRef(focusOnMount ? undefined : tab);
   const [sent, setSent] = useState<string>();
@@ -80,15 +77,6 @@ export function ConversationTab({
         <MessageManagementStatus />
         {tab.kind === "thread" ? (
           <ThreadPanel
-            aboveHistory={
-              showUsage ? (
-                <ChannelUsage
-                  key={`${scope}:${channel.id}`}
-                  session={session}
-                  channelId={channel.id}
-                />
-              ) : null
-            }
             active={active}
             session={session}
             scope={scope}

@@ -535,7 +535,7 @@ export function AgentSettings({
         <SettingsGroup>
           <SwitchPreferenceRow
             label="Show channel session usage"
-            description="Show saved token and cost metrics in channel threads. Hiding this display does not stop recording metrics; use Saved agent activity to change capture."
+            description="Show a Usage tab for saved token and cost metrics in channel actions. Hiding this display does not stop recording metrics; use Saved agent activity to change capture."
             checked={showUsage}
             onCheckedChange={(enabled) =>
               setUsageError(setChannelUsagePreference(enabled))

@@ -1,12 +1,10 @@
 .owner {
   display: flex;
   flex-direction: column;
-  flex: none;
-  max-height: 35%;
+  height: 100%;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
-  border-bottom: 1px solid var(--border-subtle);
   font-size: var(--text-caption);
 }
 .strip {
@@ -17,8 +15,6 @@
   flex-wrap: wrap;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-panel-inset);
-  max-height: 5rem;
-  overflow-y: auto;
 }
 .strip > span:first-child {
   color: var(--text-subtle);
@@ -26,7 +22,6 @@
 }
 .details {
   min-height: 0;
-  overflow-y: auto;
   padding: var(--space-2) var(--space-panel-inset);
   overflow-wrap: anywhere;
 }
@@ -59,8 +54,6 @@
   font-variant-numeric: tabular-nums;
 }
 .turnList {
-  max-height: 15rem;
-  overflow-y: auto;
   overscroll-behavior: contain;
 }
 .turn {
@@ -73,19 +66,6 @@
 }
 .turnHead time {
   color: var(--text-subtle);
-}
-@media (max-height: 500px) {
-  .owner {
-    max-height: 26%;
-  }
-  .strip {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    overflow-x: auto;
-  }
-  .strip > span:first-child {
-    display: none;
-  }
 }
 @media (max-width: 440px) {
   .turnHead {

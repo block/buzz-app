@@ -16,13 +16,13 @@ test.use({
   viewport: { width: 1200, height: 800 },
 });
 
-test("expanded channel usage leaves thread history usable in the default window", async ({
+test("channel usage opens a separate tab and leaves thread history usable", async ({
   page,
   app,
 }) => {
   await open(page, app);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  // Three agents force a wrapped third row at 800px and horizontal overflow at 400px.
+  // Three agents exercise the full-height usage tab with multiple sessions.
   for (let agentIndex = 0; agentIndex < 3; agentIndex++) {
     const key = generateSecretKey();
     const agent = getPublicKey(key);
@@ -59,6 +59,35 @@ test("expanded channel usage leaves thread history usable in the default window"
       app.relay.observer("primary", event);
     }
   }
+  const actions = page.getByRole("button", { name: "Channel actions" });
+  await actions.click();
+  await page.getByRole("menuitem", { name: "View channel usage" }).click();
+  const pane = page.getByRole("tabpanel", { name: "Usage" });
+  const usage = pane.getByRole("group", { name: "Channel session usage" });
+  const agentPills = usage.getByRole("button", { name: /sessions/ });
+  await expect(agentPills).toHaveCount(3);
+  await agentPills.first().click();
+  const sessions = pane.getByRole("group", { name: "Select session" });
+  await sessions.getByRole("button", { name: "Session 2" }).click();
+  await expect(
+    sessions.getByRole("button", { name: "Session 2" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const details = pane.getByRole("region", { name: "Session usage details" });
+  await expect(details).toBeVisible();
+  await page.setViewportSize({ width: 1200, height: 400 });
+  const owner = usage.locator("..");
+  for (const index of [1, 2, 0]) {
+    await agentPills.nth(index).click();
+    await expect(agentPills.nth(index)).toBeInViewport();
+    expect(
+      await owner.evaluate((element) => element.scrollWidth),
+    ).toBeLessThanOrEqual(
+      (await owner.evaluate((element) => element.clientWidth)) + 1,
+    );
+  }
+  await expect(usage.getByRole("button", { name: "Refresh" })).toBeInViewport();
+  await usage.getByRole("button", { name: "Refresh" }).click();
+  await page.setViewportSize({ width: 1200, height: 800 });
   const root = app.histories
     .get("primary/alpha")
     .find((row) => row.content.startsWith("Thread root"));
@@ -67,80 +96,35 @@ test("expanded channel usage leaves thread history usable in the default window"
   );
   await row.hover();
   await row.getByRole("button", { name: /^View thread:/ }).click();
+  await expect(page.getByRole("tabpanel", { name: "Usage" })).not.toBeVisible();
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
   });
-  const usage = thread.getByRole("group", { name: "Channel session usage" });
-  const agentPills = usage.getByRole("button", { name: /sessions/ });
-  await expect(agentPills).toHaveCount(3);
-  const strip = usage;
-  // The 5rem cap must retain access to controls on wrapped rows.
-  await strip.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  expect(await strip.evaluate((element) => element.scrollTop)).toBeGreaterThan(
-    0,
-  );
-  await expect(agentPills.last()).toBeInViewport();
-  await agentPills.last().click();
-  await expect(usage.getByRole("button", { name: "Refresh" })).toBeInViewport();
-  await usage.getByRole("button", { name: "Refresh" }).click();
-  await agentPills.first().click();
-  const sessions = thread.getByRole("group", { name: "Select session" });
-  await sessions.getByRole("button", { name: "Session 2" }).click();
   await expect(
-    sessions.getByRole("button", { name: "Session 2" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  const details = thread.getByRole("region", { name: "Session usage details" });
-  const history = thread.getByRole("region", { name: "Thread messages" });
-  await expect(details).toBeVisible();
-  await expect(history).toBeVisible();
-  const dimensions = await history.evaluate((element) => ({
-    height: element.getBoundingClientRect().height,
-    scrollHeight: element.scrollHeight,
-    clientHeight: element.clientHeight,
-  }));
-  expect(dimensions.height).toBeGreaterThanOrEqual(120);
-  expect(dimensions.clientHeight).toBeGreaterThanOrEqual(120);
-  await expect(
-    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    thread.getByRole("region", { name: "Thread messages" }),
   ).toBeVisible();
-  await page.setViewportSize({ width: 1200, height: 400 });
-  const owner = strip.locator("..");
-  const detailsX = await details.evaluate(
-    (element) => element.getBoundingClientRect().x,
-  );
-  for (const index of [1, 2, 0]) {
-    await agentPills.nth(index).click();
-    await expect(agentPills.nth(index)).toBeInViewport();
-    expect(await owner.evaluate((element) => element.scrollLeft)).toBe(0);
-    expect(
-      await details.evaluate((element) => element.getBoundingClientRect().x),
-    ).toBe(detailsX);
-  }
-  const overflow = await strip.evaluate((element) => ({
-    width: element.clientWidth,
-    content: element.scrollWidth,
-  }));
-  expect(overflow.content).toBeGreaterThan(overflow.width);
-  await strip.evaluate((element) => {
-    element.scrollLeft = element.scrollWidth;
-  });
-  expect(await strip.evaluate((element) => element.scrollLeft)).toBeGreaterThan(
-    0,
-  );
-  await expect(usage.getByRole("button", { name: "Refresh" })).toBeInViewport();
-  await usage.getByRole("button", { name: "Refresh" }).click();
-  expect(await owner.evaluate((element) => element.scrollLeft)).toBe(0);
-  // The first pill is active after the loop; preserve its details for the Close check.
-  await expect(details.getByRole("button", { name: "Close" })).toBeInViewport();
-  const shortHistory = await history.evaluate(
-    (element) => element.clientHeight,
-  );
-  expect(shortHistory).toBeGreaterThanOrEqual(60);
-  await details.getByRole("button", { name: "Close" }).click();
   await expect(
     thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeInViewport();
+  await page.getByRole("tab", { name: "Usage" }).click();
+  await expect(details).toBeVisible();
+  await expect(
+    pane.getByRole("textbox", { name: "Reply to thread" }),
+  ).toHaveCount(0);
+  // A hidden display removes the tab and prevents reopening it from the menu.
+  await page.evaluate(() => {
+    localStorage.setItem("buzz-show-channel-session-usage.v1", "off");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "buzz-show-channel-session-usage.v1",
+      }),
+    );
+  });
+  await expect(page.getByRole("tab", { name: "Usage" })).toHaveCount(0);
+  await actions.click();
+  await expect(
+    page.getByRole("menuitem", { name: "View channel usage" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
 });

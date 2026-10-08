@@ -64,6 +64,24 @@ test("Inbox Show filter is separate from attention filters and preserves them", 
   await expect(
     inbox.getByRole("checkbox", { name: "Unread only" }),
   ).toBeChecked();
+  await page.reload();
+  await openPage(page, "Inbox");
+  await expect(rows).toHaveCount(1);
+  await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
+    "Archived",
+  );
+  await expect(
+    inbox.getByRole("combobox", { name: "Activity type" }),
+  ).toContainText("Mentions");
+  await expect(inbox.getByRole("combobox", { name: "Sender" })).toContainText(
+    "Agents",
+  );
+  await expect(
+    inbox.getByRole("checkbox", { name: "Unread only" }),
+  ).toBeChecked();
+  await expect(inbox.getByRole("region", { name: "Inbox detail" })).toHaveCount(
+    0,
+  );
   await choose(page, inbox, "Show", "Inbox + archived");
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Archived");
@@ -253,6 +271,19 @@ test("fresh mention reopens archived row without replacing composer draft", asyn
   app.append(
     "primary",
     channel,
+    "Ordinary peer reply",
+    true,
+    false,
+    app.inboxWindow.root.id,
+  );
+  await expect(
+    inbox.getByRole("region", { name: "Inbox detail" }),
+  ).toContainText("Ordinary peer reply");
+  await expect(rows).toHaveCount(1);
+  await expect(editor).toHaveText("Unsent mention retention draft");
+  app.append(
+    "primary",
+    channel,
     "Fresh peer explicit mention",
     true,
     false,
@@ -269,4 +300,62 @@ test("fresh mention reopens archived row without replacing composer draft", asyn
     "data-retention-marker",
     "original-composer",
   );
+});
+
+// Browser-only: real same-origin storage events must reconcile two mounted windows.
+test("same-account windows reconcile filters and archive intent without reload", async ({
+  page,
+  context,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Inbox");
+  const other = await context.newPage();
+  app.watchPageErrors(other);
+  try {
+    await other.goto(app.origin);
+    await openPage(other, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    const sibling = other.getByRole("region", { name: "Inbox", exact: true });
+    const rows = inbox
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem");
+    const siblingRows = sibling
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem");
+    await expect(rows).toHaveCount(1);
+    await expect(siblingRows).toHaveCount(1);
+    await choose(page, inbox, "Activity type", "Mentions");
+    await choose(page, inbox, "Sender", "Agents");
+    await inbox.getByRole("checkbox", { name: "Unread only" }).check();
+    await expect(
+      sibling.getByRole("combobox", { name: "Activity type" }),
+    ).toContainText("Mentions");
+    await expect(
+      sibling.getByRole("combobox", { name: "Sender" }),
+    ).toContainText("Agents");
+    await expect(
+      sibling.getByRole("checkbox", { name: "Unread only" }),
+    ).toBeChecked();
+    await rows.getByRole("button", { name: /^Archive / }).click();
+    await expect(rows).toHaveCount(0);
+    await expect(siblingRows).toHaveCount(0);
+    await choose(other, sibling, "Show", "Archived");
+    await expect(inbox.getByRole("combobox", { name: "Show" })).toContainText(
+      "Archived",
+    );
+    await expect(rows).toHaveCount(1);
+    await expect(siblingRows).toHaveCount(1);
+    await siblingRows.getByRole("button", { name: /^Restore / }).click();
+    await expect(rows).toHaveCount(0);
+    await expect(siblingRows).toHaveCount(0);
+    await choose(page, inbox, "Show", "Inbox");
+    await expect(sibling.getByRole("combobox", { name: "Show" })).toContainText(
+      "Inbox",
+    );
+    await expect(rows).toHaveCount(1);
+    await expect(siblingRows).toHaveCount(1);
+  } finally {
+    await other.close();
+  }
 });

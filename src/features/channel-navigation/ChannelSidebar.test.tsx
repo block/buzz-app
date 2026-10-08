@@ -182,56 +182,7 @@ function fixture(
   return { view, navigator, snapshot, list, session, publish };
 }
 
-it("hides session disclosure and children while the Sessions plugin is disabled", async () => {
-  const h = fixture();
-  const channels: ChannelList["channels"] = [
-    ...h.list.channels,
-    {
-      id: "child",
-      name: "Plan",
-      channelType: "session",
-      parentChannelId: "alpha",
-    },
-  ];
-  vi.spyOn(h.session.channels, "list").mockReturnValue({ ...h.list, channels });
-  const mounted = render(h.view("alpha", false));
-  await screen.findByRole("button", { name: "alpha" });
-  expect(
-    screen.queryByRole("button", { name: /sessions in alpha/ }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeNull();
-
-  mounted.rerender(h.view("alpha", true));
-  expect(
-    screen.getByRole("button", { name: /sessions in alpha/ }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeInTheDocument();
-
-  mounted.rerender(h.view("alpha", false));
-  expect(
-    screen.queryByRole("button", { name: /sessions in alpha/ }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("button", {
-      name: "Plan, session in alpha",
-      hidden: true,
-    }),
-  ).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "alpha" }));
-  expect(h.navigator.open).toHaveBeenCalled();
-});
-
-it("does not rebuild unchanged rows on channel switches and refreshes session action eligibility", async () => {
+it("does not rebuild unchanged rows on channel switches or plugin toggles", async () => {
   const h = fixture();
   const mounted = render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
@@ -261,14 +212,10 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
     ([props]) => props.channel.id === "alpha",
   )?.[0];
   expect(alpha).toBeDefined();
-  // Disable session creation without changing selection: the callback must update.
+  // Plugin toggles cannot restore nested-session creation.
   rowRender.mockClear();
   mounted.rerender(h.view("beta", false));
-  const disabled = rowRender.mock.calls.find(
-    ([props]) => props.channel.id === "alpha",
-  )?.[0];
-  expect(disabled.onNewSession).not.toBe(alpha.onNewSession);
-  disabled.onNewSession("alpha");
+  alpha.onNewSession("alpha");
   expect(h.navigator.open).not.toHaveBeenCalled();
   // Ordinary selection still uses the current session and navigator.
   fireEvent.click(screen.getByRole("button", { name: "gamma" }));
@@ -277,7 +224,7 @@ it("does not rebuild unchanged rows on channel switches and refreshes session ac
   );
 });
 
-it("rebuilds only the changed row on a list publish and keeps session actions current", async () => {
+it("rebuilds only the changed row on a list publish and never starts nested sessions", async () => {
   const h = fixture();
   render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
@@ -294,12 +241,7 @@ it("rebuilds only the changed row on a list publish and keeps session actions cu
   alpha.onNewSession("gamma");
   expect(h.navigator.open).not.toHaveBeenCalled();
   alpha.onNewSession("beta");
-  expect(h.navigator.open).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: "page",
-      route: { version: 1, params: { kind: "new-session", parentId: "beta" } },
-    }),
-  );
+  expect(h.navigator.open).not.toHaveBeenCalled();
 });
 
 it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
@@ -639,3 +581,22 @@ it("rejects a deferred header Create section after its navigation origin retires
   expect(preferences.queries.snapshot().data?.sections).toEqual([]);
   preferences.dispose();
 });
+
+it.each([true, false])(
+  "does not nest existing sessions when plugin enabled=%s",
+  async (enabled) => {
+    const h = fixture();
+    h.publish("beta", { channelType: "session", parentChannelId: "alpha" });
+    render(h.view("alpha", enabled));
+    await screen.findByRole("button", { name: "gamma" });
+    expect(
+      screen.queryByRole("button", { name: /sessions in alpha/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /beta, session/ })).toBeNull();
+    expect(
+      rowRender.mock.calls.every(
+        ([props]) => !props.sessions.length && !props.draft,
+      ),
+    ).toBe(true);
+  },
+);

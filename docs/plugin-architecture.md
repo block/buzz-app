@@ -57,7 +57,9 @@ bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
-The host composes one channel sidebar beside independently mounted pages. It reuses
+The host composes the channel sidebar beside independently mounted pages, with
+Settings and Me supplying their own sidebar contents. Me currently has an empty
+sidebar sharing the channel sidebar's frame and saved width. The channel sidebar reuses
 session-owned roster, unread, creation and preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. Sidebar presentation helpers currently remain importable
@@ -78,18 +80,41 @@ source imports are not a versioned external SDK. See
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, icon?, component })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
-contribution when its Cordis scope ends. `primary: true` gives a page a row in the
-shell's page navigation. Pages without it are still listed in search and reachable
-by deep link or from another page; Channels is a bundled example.
+contribution when its Cordis scope ends. `primary: true` opts a page into shell
+navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
+(centered text destination), or `"toolbar"` (top-right full-page icon near search).
+Pages without `primary: true` remain search/deep-link-only even with a placement.
+The host owns ordering, active state, responsive overflow and navigation history;
+plugins do not supply header React or a second navigation stack. Placement is fixed
+for a registration's lifetime. An invalid value is dropped with a page-named warning,
+falling back to the sidebar without failing activation. Older hosts ignore placement
+and continue to show primary pages in their sidebar.
+
+```ts
+ctx.pages.register({
+  id: "dashboard",
+  title: "Dashboard",
+  primary: true,
+  placement: "toolbar",
+  component: Dashboard,
+});
+```
+
+Header entries move into the labelled More pages popover when they cannot fit,
+including at narrow widths. They use native-button navigation and `aria-current`,
+not tab/tabpanel semantics or companion-panel toggles. Every active page remains
+searchable, regardless of its placement.
 
 A primary page may also supply `badge`, a component the shell renders at the end
 of its navigation row, such as a count of due items. The plugin owns its data and
 re-rendering; the shell owns the row and placement. A badge that throws renders
-nothing and leaves the row usable. Pages without `primary` have no row, so their
-badge is not shown.
+nothing and leaves navigation usable. Toolbar badges are clipped to a compact
+2rem × 1rem corner mark; authors should use short counts or dots there, not rich
+content. The overflow popover uses ordinary labelled rows with trailing badges.
+Pages without `primary` have no navigation entry, so their badge is not shown.
 
 `notifications.register({ id, label })` adds a category with its own switch in
 Settings and returns `submit({ sourceKey, target, title?, body? })`. Submissions
@@ -129,11 +154,16 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 24 plugins are bundled. **Channels is the only required plugin.** Bestie,
+**Channels is the only required bundled plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Channel Usage, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Channel Usage, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Me, Inbox,
 Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
+
+Me is an empty, optional default-enabled page. Me and Channels request topbar
+placement; the shell presents Channels as Messages and orders Me before Messages.
+Messages remains the startup destination. Selecting Me changes neither community
+scope nor the legacy Home-to-Messages mapping.
 
 Saved enabled/disabled flags win over defaults (except required Channels). There
 is no migration or forced reset: a browser profile that previously saved its full
@@ -900,11 +930,27 @@ behavior remain host-owned; no new completion API or editor command is introduce
 This is the same host-matched preview as toolbar tools, not version negotiation or
 a sandbox. Inline mention pills remain outside this completion implementation.
 
-Formatting needs selection transforms. Attachments and voice need shared media
-capabilities, destination-bound asynchronous work and cancellation; accepted
-material belongs to the draft, not the optional tool. Add these contracts against
-real workflows rather than declaring the toolbar a universal editor API.
+The optional bundled `buzz.voice-notes` plugin registers a microphone tool and
+an attachment renderer. `capture(component)` gives the tool a revocable composer
+surface with `accept(recording)` and `cancel()` commands. Disabling the plugin,
+hiding the conversation, changing destinations or entering read-only mode stops
+unaccepted recording. Accepted recordings belong to the existing attachment draft,
+so navigation or plugin removal leaves them available with host fallback controls.
 
+The existing native and browser upload adapters prepare `voice-note-*.wav` files
+as the old Buzz H.264/AAC MP4 envelope. Voice Notes adds no uploader, signer or
+outbox. Files upload on Send, retain the shared progress/recovery behavior, and
+carry bounded duration and waveform metadata through ordinary `imeta` tags.
+Recordings stop at five minutes. Pending files have the same tab-local lifetime
+and limits as other attachment drafts; they do not survive app restart.
+
+The player loads audio on Play, supports seeking and playback speed, and pauses
+when its conversation is hidden. Existing voice notes are recognized from signed
+filename metadata even when their Markdown label differs. Notes without waveform
+metadata retain a neutral waveform. Disabling the plugin restores ordinary audio
+cards. The fixture at `/tests/fixtures/voice-notes.html` exercises the real recorder,
+composer and session with disposable local media; browser tests provide its local
+media response. Native microphone permissions were exercised in the staging app.
 
 ## Desktop browser
 

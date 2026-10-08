@@ -1303,13 +1303,12 @@ pub fn check_owner(attested: Option<&str>, signed_in: Option<&str>) -> Result<()
 
 /// Sign out's "Also remove my agents", run at launch before the wipe: delete every
 /// local agent's key from the registry at `root`. Repeatable, because deleting an
-/// absent key succeeds; the registry itself is left for the wipe. Deployed remote
-/// agents keep running remotely; the wipe drops their record.
+/// absent key succeeds; the registry itself is left for the wipe. Import keeps a
+/// local copy of every agent's key, deployed remote ones included, so each copy
+/// goes; the remote deployment itself is neither stopped nor deleted.
 pub fn delete_local_agent_keys(root: PathBuf, credentials: &dyn Credentials) -> Result<()> {
     for agent in Store::open(root)?.agents()? {
-        if !agent.deployed_remote() {
-            credentials.delete(&agent.credential_id, &agent.pubkey)?;
-        }
+        credentials.delete(&agent.credential_id, &agent.pubkey)?;
     }
     Ok(())
 }

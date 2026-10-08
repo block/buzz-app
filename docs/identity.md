@@ -125,8 +125,10 @@ become a wipe, the launch lets go and starts over to take every lock. A marker
 that can't be read or parsed fails closed. It finishes before any window,
 webview storage, service or identity read:
 
-1. With remove agents, every local agent's key is deleted, read from the agent
-   registry, which stays in place until all are gone.
+1. With remove agents, every agent's locally stored key is deleted, read from
+   the agent registry, which stays in place until all are gone. That includes
+   imported deployed-remote agents, whose import kept a local copy; the remote
+   deployment itself is not stopped or deleted.
 2. With wipe, app data, local data, WebView storage and caches are renamed
    aside. App data's agent folder (`agent-controller`) is put back unless agents
    were removed.

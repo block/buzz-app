@@ -130,6 +130,24 @@ fn sign_out_agent_key_removal_resumes_after_an_interruption() {
     assert_eq!(Store::open(root).unwrap().agents().unwrap().len(), 2);
 }
 #[test]
+fn sign_out_agent_key_removal_includes_imported_remote_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("config");
+    let mut remote = agent(dir.path());
+    remote.credential_id = "second".into();
+    remote.imported = serde_json::json!({"record": {"backend": {"type": "provider"}, "backend_agent_id": "deployed"}});
+    assert!(remote.deployed_remote());
+    Store::open(root.clone())
+        .unwrap()
+        .insert(vec![remote])
+        .unwrap();
+    let keychain = Keychain(std::sync::Mutex::new((vec!["second".into()], false)));
+    delete_local_agent_keys(root.clone(), &keychain).unwrap();
+    assert!(keychain.0.lock().unwrap().0.is_empty());
+    // Only the local key copy goes; the record (and its deployment) is the wipe's.
+    assert!(Store::open(root).unwrap().agents().unwrap()[0].deployed_remote());
+}
+#[test]
 fn delete_refuses_stale_revision_and_removes_stopped_agent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("config");

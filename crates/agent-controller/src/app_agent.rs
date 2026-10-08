@@ -152,7 +152,10 @@ impl AppAgents {
             owner: owner.into(),
         })
     }
-    /// Saves the key, then the identity. An attestation for another key or owner is refused.
+    /// Saves the identity, then the key, so a saved key always has an identity to
+    /// delete it by. If the key cannot be saved, the identity is withdrawn once
+    /// its key is known to be gone; otherwise it stays for `remove` to retry.
+    /// An attestation for another key or owner is refused.
     pub fn commit(
         &self,
         prepared: NewAppAgent,
@@ -173,29 +176,43 @@ impl AppAgents {
             auth,
         };
         let id = agent.credential_id();
-        credentials.add(&id, &prepared.key)?;
-        agent
-            .read_key(credentials)
-            .map_err(|_| "New agent key could not be verified")?;
         self.update(|agents| {
             agents.retain(|saved| saved.pubkey != agent.pubkey);
             agents.push(agent.clone());
             Ok(())
         })?;
+        let saved = credentials.add(&id, &prepared.key).and_then(|()| {
+            agent
+                .read_key(credentials)
+                .map(drop)
+                .map_err(|_| "New agent key could not be verified".into())
+        });
+        if let Err(error) = saved {
+            if credentials.delete(&id, &agent.pubkey).is_ok() {
+                let _ = self.forget(&agent.pubkey);
+            }
+            return Err(error);
+        }
         Ok(agent)
     }
-    /// Forgets the identity, then deletes its key. Absence is success.
+    /// Deletes the key, then forgets the identity, so a failed deletion can be
+    /// retried. Absence is success.
     pub fn remove(&self, pubkey: &str, credentials: &dyn Credentials) -> Result<()> {
-        let removed = self.update(|agents| {
-            Ok(agents
-                .iter()
-                .position(|agent| agent.pubkey == pubkey)
-                .map(|index| agents.remove(index)))
-        })?;
-        match removed {
-            Some(agent) => credentials.delete(&agent.credential_id(), &agent.pubkey),
-            None => Ok(()),
-        }
+        let Some(agent) = self
+            .list()?
+            .into_iter()
+            .find(|agent| agent.pubkey == pubkey)
+        else {
+            return Ok(());
+        };
+        credentials.delete(&agent.credential_id(), &agent.pubkey)?;
+        self.forget(pubkey)
+    }
+    fn forget(&self, pubkey: &str) -> Result<()> {
+        self.update(|agents| {
+            agents.retain(|agent| agent.pubkey != pubkey);
+            Ok(())
+        })
     }
 }
 

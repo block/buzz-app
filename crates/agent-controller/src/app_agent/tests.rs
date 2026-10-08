@@ -3,12 +3,30 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 #[derive(Default)]
-struct Memory(Mutex<BTreeMap<String, String>>);
+struct Memory(Mutex<BTreeMap<String, String>>, Faults);
+/// Credential-store operations to refuse, standing in for a denied or busy store.
+#[derive(Default)]
+struct Faults {
+    add: std::sync::atomic::AtomicBool,
+    read: std::sync::atomic::AtomicBool,
+    delete: std::sync::atomic::AtomicBool,
+}
+fn set(fault: &std::sync::atomic::AtomicBool, on: bool) {
+    fault.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+fn failing(fault: &std::sync::atomic::AtomicBool) -> Result<()> {
+    if fault.load(std::sync::atomic::Ordering::SeqCst) {
+        Err("Credential store refused".into())
+    } else {
+        Ok(())
+    }
+}
 impl Credentials for Memory {
     fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
         panic!("App agents never import")
     }
     fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>> {
+        failing(&self.1.read)?;
         self.0
             .lock()
             .unwrap()
@@ -17,6 +35,7 @@ impl Credentials for Memory {
             .transpose()
     }
     fn add(&self, id: &str, key: &Secret) -> Result<()> {
+        failing(&self.1.add)?;
         self.0
             .lock()
             .unwrap()
@@ -24,6 +43,7 @@ impl Credentials for Memory {
         Ok(())
     }
     fn delete(&self, id: &str, _: &str) -> Result<()> {
+        failing(&self.1.delete)?;
         self.0.lock().unwrap().remove(id);
         Ok(())
     }
@@ -59,6 +79,54 @@ fn creates_saves_and_removes_an_identity_with_its_key() {
     assert!(agent.read_key(&credentials).is_err());
     // Removing again is success.
     agents.remove(&agent.pubkey, &credentials).unwrap();
+}
+
+#[test]
+fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    set(&credentials.1.delete, true);
+    assert!(agents.remove(&agent.pubkey, &credentials).is_err());
+    assert_eq!(agents.list().unwrap(), std::slice::from_ref(&agent));
+    assert!(agent.read_key(&credentials).is_ok());
+    set(&credentials.1.delete, false);
+    agents.remove(&agent.pubkey, &credentials).unwrap();
+    assert!(agents.list().unwrap().is_empty());
+    assert!(credentials.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_failed_key_save_leaves_no_orphaned_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let agents = AppAgents::open(dir.path().join("identities.json"));
+    let commit = |credentials: &Memory| {
+        let prepared = AppAgents::prepare("wss://relay.example", &owner()).unwrap();
+        let auth: Vec<String> =
+            serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+        agents.commit(prepared, &auth, credentials)
+    };
+    // The store refuses the key: nothing is left behind.
+    set(&credentials.1.add, true);
+    assert!(commit(&credentials).is_err());
+    assert!(agents.list().unwrap().is_empty());
+    set(&credentials.1.add, false);
+    // The key is saved but cannot be read back: it is deleted with its identity.
+    set(&credentials.1.read, true);
+    assert!(commit(&credentials).is_err());
+    assert!(agents.list().unwrap().is_empty());
+    assert!(credentials.0.lock().unwrap().is_empty());
+    // ...and if it cannot be deleted either, its identity stays so `remove` can.
+    set(&credentials.1.delete, true);
+    assert!(commit(&credentials).is_err());
+    let [stranded] = agents.list().unwrap().try_into().unwrap();
+    set(&credentials.1.read, false);
+    set(&credentials.1.delete, false);
+    assert!(stranded.read_key(&credentials).is_ok());
+    agents.remove(&stranded.pubkey, &credentials).unwrap();
+    assert!(agents.list().unwrap().is_empty());
+    assert!(credentials.0.lock().unwrap().is_empty());
 }
 
 #[test]

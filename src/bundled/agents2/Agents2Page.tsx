@@ -118,7 +118,11 @@ export function Agents2Page({
         agents2={agents2}
         types={types}
         onClose={() => browse()}
-        onCreated={(agent) => build(agent.pubkey)}
+        // The community may have changed while it was created; the agent then
+        // lives in the one it was made for, so stay on this grid.
+        onCreated={(agent) =>
+          agents2.find(agent.pubkey) ? build(agent.pubkey) : browse()
+        }
       />
     ) : selected ? (
       <AgentPeek
@@ -585,8 +589,14 @@ function NameField({
 }) {
   const [draft, setDraft] = useState(name);
   const [error, setError] = useState("");
+  // Escape blurs too, and blur saves; this skips that one save.
+  const cancelled = useRef(false);
   useEffect(() => setDraft(name), [name]);
   const commit = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
     const next = draft.trim();
     if (!next) return setDraft(name);
     if (next === name) return;
@@ -605,8 +615,10 @@ function NameField({
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") {
+            cancelled.current = true;
             setDraft(name);
             event.currentTarget.blur();
+            cancelled.current = false;
           }
         }}
       />

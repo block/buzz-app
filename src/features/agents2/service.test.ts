@@ -376,6 +376,48 @@ it("keeps a created agent when its profile cannot be published", async () => {
   warn.mockRestore();
 });
 
+it("commits no identity when its record cannot be saved", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
+  const setItem = vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
+    throw new Error("QuotaExceededError");
+  });
+  await expect(
+    service.create({ type: "example/echo", name: "Echo" }),
+  ).rejects.toThrow("QuotaExceededError");
+  expect(native.commit).not.toHaveBeenCalled();
+  // Memory did not take the failed write, so a later save cannot expose it.
+  await service.create({ type: "example/echo", name: "Next" });
+  expect(storage.getItem("buzz.agents2.v1")).not.toContain(bot);
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Next",
+  ]);
+  setItem.mockRestore();
+});
+
+it("keeps the record of a create whose native commit fails, for the identity it may have left", async () => {
+  const storage = memoryStorage();
+  const { service, native } = await setup({ storage });
+  native.commit.mockRejectedValueOnce(new Error("Credential store refused"));
+  await expect(
+    service.create({ type: "example/echo", name: "Echo" }),
+  ).rejects.toThrow("Credential store refused");
+  // Not shown without an identity, but there to manage one by after a reload.
+  expect(service.find(bot)).toBeUndefined();
+  expect(storage.getItem("buzz.agents2.v1")).toContain(bot);
+});
+
+it("returns the created agent after the community changes mid-create", async () => {
+  const { service, native, connect } = await setup();
+  native.commit.mockImplementationOnce(async (pubkey: string) => {
+    connect(false);
+    return { pubkey, relay: "wss://relay.example.test", owner: viewer };
+  });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  expect(agent).toMatchObject({ pubkey: bot, name: "Echo" });
+  expect(service.find(bot)).toBeUndefined();
+});
+
 it("forgets records whose key is gone when identities load", async () => {
   const storage = memoryStorage();
   storage.setItem(

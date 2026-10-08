@@ -197,3 +197,31 @@ it("keeps an Interest in use, shows skipped objects, and rearms a spent timer", 
   ];
   expect(change.attention["watch/timer"]?.armed_at).toBeGreaterThan(100);
 });
+
+it("never names a new object after a skipped one it would replace", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn(async () => {});
+  render(
+    <AttentionPanel
+      agent={{
+        ...agent,
+        skipped: {
+          "watch/messages": {
+            slug: "watch/messages",
+            value: { type: "event" },
+            modifiedAt: 1,
+            problem: "Missing field: interest_id",
+          },
+        },
+      }}
+      save={save}
+      channels={[]}
+    />,
+  );
+  const group = screen.getByRole("region", { name: "Release triage" });
+  await user.click(within(group).getByRole("button", { name: "Add watch" }));
+  await user.click(screen.getByRole("button", { name: "Add watch" }));
+  expect(save).toHaveBeenLastCalledWith({
+    attention: { "watch/messages-2": expect.any(Object) },
+  });
+});

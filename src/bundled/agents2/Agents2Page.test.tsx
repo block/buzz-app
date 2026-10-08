@@ -48,7 +48,7 @@ const agent = (name: string, n: number): Agent => ({
   },
 });
 
-function setup(agents: Agent[]) {
+function setup(agents: Agent[], { shown = true } = {}) {
   let snapshot: AgentsSnapshot = { status: "ready", agents };
   const listeners = new Set<() => void>();
   const type = {
@@ -75,6 +75,8 @@ function setup(agents: Agent[]) {
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     register: vi.fn(),
     create: vi.fn(async () => {
+      // `shown: false`: it was made for a community no longer selected.
+      if (!shown) return created;
       snapshot = { ...snapshot, agents: [...snapshot.agents, created] };
       for (const listener of listeners) listener();
       return created;
@@ -148,4 +150,37 @@ it("makes a new agent in the side panel and goes straight to building it", async
   });
   expect(await screen.findByRole("tab", { name: "Attention" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
+});
+
+it("stays on the grid when the new agent belongs to a community no longer shown", async () => {
+  const user = userEvent.setup();
+  const { agents2 } = setup([agent("Ada", 1)], { shown: false });
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  const form = screen.getByRole("form", { name: "New agent" });
+  await user.type(within(form).getByLabelText("Name"), "Nova{Enter}");
+  await vi.waitFor(() => expect(agents2.create).toHaveBeenCalled());
+  expect(
+    await screen.findByRole("listbox", { name: "Agents" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "New agent" })).toBeNull();
+  expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
+});
+
+it("saves a rename on Enter and discards it on Escape", async () => {
+  const user = userEvent.setup();
+  const { agents2 } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("option", { name: /Ada/ }));
+  await user.keyboard("{Enter}");
+  const field = within(
+    screen.getByRole("complementary", { name: "Ada identity" }),
+  ).getByLabelText("Name");
+  await user.clear(field);
+  await user.type(field, "Discarded{Escape}");
+  expect(agents2.save).not.toHaveBeenCalled();
+  expect(field).toHaveValue("Ada");
+  await user.clear(field);
+  await user.type(field, "Kept{Enter}");
+  expect(agents2.save).toHaveBeenCalledExactlyOnceWith("1".repeat(64), {
+    name: "Kept",
+  });
 });

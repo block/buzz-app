@@ -317,17 +317,28 @@ export class Agents2Service extends Service implements Agents2 {
       relayOrigin(binding.origin),
       binding.viewer,
     );
-    const auth = await native.authorize(pubkey);
-    const identity = await native.commit(pubkey, auth);
+    // The record is saved before native commits, so every committed identity has
+    // one to manage it by. If authorizing or committing fails, the record stays:
+    // without an identity it is never shown, and the next load prunes it.
+    this.write({ ...record, pubkey });
+    const identity = await native.commit(
+      pubkey,
+      await native.authorize(pubkey),
+    );
     this.identities = [
       ...this.identities.filter((saved) => saved.pubkey !== pubkey),
       identity,
     ];
-    this.write({ ...record, pubkey });
+    this.update();
     // The agent exists from here on; a missing profile only leaves it unnamed
     // for others until its next rename.
     await this.publishProfile(pubkey);
-    return this.find(pubkey) as Agent;
+    // Not only `find`: the community shown may have changed meanwhile, and the
+    // agent belongs to the one it was made for.
+    return (
+      this.find(pubkey) ??
+      this.view(identity, this.records[pubkey] ?? { ...record, pubkey })
+    );
   }
 
   async save(pubkey: string, change: AgentChange) {
@@ -373,10 +384,25 @@ export class Agents2Service extends Service implements Agents2 {
     this.update();
   }
 
+  /** Saves one record; memory changes only once storage has taken it. */
   private write(record: AgentRecord) {
-    this.records = { ...this.records, [record.pubkey]: record };
-    writeRecords(this.storage, this.records);
+    const records = { ...this.records, [record.pubkey]: record };
+    writeRecords(this.storage, records);
+    this.records = records;
     this.update();
+  }
+  private view(identity: AgentIdentity, record: AgentRecord): Agent {
+    return Object.freeze({
+      pubkey: identity.pubkey,
+      name: record.name,
+      type: record.type,
+      owner: identity.owner,
+      relay: identity.relay,
+      attention: record.attention,
+      skipped: record.skipped ?? EMPTY,
+      timers: record.timers ?? EMPTY,
+      config: record.config,
+    });
   }
   private async publishProfile(pubkey: string) {
     const record = this.records[pubkey];
@@ -478,17 +504,7 @@ export class Agents2Service extends Service implements Agents2 {
           prior.timers === record.timers &&
           prior.config === record.config
           ? prior
-          : Object.freeze({
-              pubkey: identity.pubkey,
-              name: record.name,
-              type: record.type,
-              owner: identity.owner,
-              relay: identity.relay,
-              attention: record.attention,
-              skipped: record.skipped ?? EMPTY,
-              timers: record.timers ?? EMPTY,
-              config: record.config,
-            }),
+          : this.view(identity, record),
       );
     }
     const types = new Map(this.types().map((type) => [type.key, type]));

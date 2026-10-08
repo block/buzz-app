@@ -640,8 +640,11 @@ function freeSlug(space: "interest" | "watch", base: string, agent: Agent) {
       .toLowerCase()
       .replace(/[^!-~]+/g, "-")
       .slice(0, 56) || space;
+  // A skipped object still owns its slug until it is fixed or removed.
+  const taken = (slug: string) =>
+    slug in agent.attention || slug in agent.skipped;
   let id = stem;
-  for (let n = 2; `${space}/${id}` in agent.attention; n++) id = `${stem}-${n}`;
+  for (let n = 2; taken(`${space}/${id}`); n++) id = `${stem}-${n}`;
   return `${space}/${id}`;
 }
 const now = () => Math.floor(Date.now() / 1000);

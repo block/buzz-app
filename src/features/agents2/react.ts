@@ -21,7 +21,8 @@ export function useAgents2(agents2: Agents2) {
   return { snapshot, types };
 }
 
-/** The Agents2 agent at `pubkey` with its type, when both are present. */
+/** The Agents2 agent at `pubkey`, with its type when that is registered. A saved
+ * agent whose type plugin is disabled or reloading is still an Agents2 agent. */
 export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
   const subscribe = agents2?.subscribe ?? noSubscribe;
   const agent = useSyncExternalStore(
@@ -36,7 +37,7 @@ export function useAgent2(agents2: Agents2 | undefined, pubkey: string) {
       : none,
     none,
   );
-  return agent && type ? { agent, type } : undefined;
+  return agent ? { agent, type } : undefined;
 }
 
 const noList = () => undefined;

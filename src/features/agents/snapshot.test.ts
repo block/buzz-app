@@ -296,6 +296,69 @@ it("validates full team members at native collection and memory budgets without 
   ).toThrow("Invalid snapshot manifest");
 });
 
+it("accepts native team prompt and about byte bounds without relaxing standalone snapshots", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const team = (systemPrompt: string, about: string) => ({
+    ...source,
+    definition: { ...source.definition, systemPrompt },
+    profile: { ...source.profile, about },
+  });
+  for (const prompt of ["x".repeat(128 * 1024), "é".repeat(64 * 1024)]) {
+    const about = "é".repeat(1025);
+    const bytes = utf8.encode(JSON.stringify(team(prompt, about)));
+    expect(() => parseAgentSnapshot(bytes)).toThrow(
+      "Invalid snapshot manifest",
+    );
+    const parsed = parseAgentSnapshot(bytes, { teamMember: true });
+    expect(parsed.definition.systemPrompt).toBe(prompt);
+    expect(parsed.profile.about).toBe(about);
+    expect(
+      snapshotImportEdit(parsed, { ...destination, teamMember: true })
+        .systemPrompt,
+    ).toBe(prompt);
+  }
+  expect(() =>
+    parseAgentSnapshot(
+      utf8.encode(JSON.stringify(team("é".repeat(65537), ""))),
+      {
+        teamMember: true,
+      },
+    ),
+  ).toThrow("Invalid snapshot manifest");
+  const about = "é".repeat(5000);
+  expect(
+    parseAgentSnapshot(utf8.encode(JSON.stringify(team("", about))), {
+      teamMember: true,
+    }).profile.about,
+  ).toBe(about);
+});
+
+it("uses native team avatar URL rules without relaxing standalone parsing", () => {
+  const source = buildAgentSnapshot(portableAgent());
+  const team = (avatarUrl: string) =>
+    utf8.encode(
+      JSON.stringify({
+        ...source,
+        profile: { ...source.profile, avatarUrl },
+      }),
+    );
+  const url = "https://example.test/a.png?size=2#image";
+  expect(() => parseAgentSnapshot(team(url))).toThrow(
+    "Invalid snapshot manifest",
+  );
+  expect(
+    parseAgentSnapshot(team(url), { teamMember: true }).profile.avatarUrl,
+  ).toBe(url);
+  for (const invalid of [
+    "https://name:pass@example.test/a",
+    "http://example.test/a",
+  ]) {
+    expect(() =>
+      parseAgentSnapshot(team(invalid), { teamMember: true }),
+    ).toThrow("Invalid snapshot manifest");
+  }
+});
+
 it("rejects unsupported explicit values instead of silently downgrading", () => {
   const source = buildAgentSnapshot(portableAgent());
   for (const definition of [

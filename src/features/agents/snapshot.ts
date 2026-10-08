@@ -107,6 +107,20 @@ const credentialLike = (value: string) =>
   );
 const optionalText = (value: unknown, max: number) =>
   value === undefined || text(value, max);
+/** Native URL parsing accepts paths, queries, fragments and UTF-8 hosts but no credentials. */
+const validTeamAvatarUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !!url.hostname &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+};
 const keys = (record: Record<string, unknown>, allowed: string[]) =>
   Object.keys(record).every((key) => allowed.includes(key));
 
@@ -200,7 +214,7 @@ export function parseAgentSnapshot(
     !(p.displayName as string).trim() ||
     (d.sourceIsBuiltin !== undefined &&
       typeof d.sourceIsBuiltin !== "boolean") ||
-    !optionalText(d.systemPrompt, 64 * 1024) ||
+    !optionalText(d.systemPrompt, (options.teamMember ? 128 : 64) * 1024) ||
     (typeof d.systemPrompt === "string" &&
       !visibleSnapshotText(d.systemPrompt, true)) ||
     !visibleSnapshotText(d.name as string) ||
@@ -243,7 +257,7 @@ export function parseAgentSnapshot(
     (d.maxTurnDurationSeconds !== undefined &&
       (!Number.isSafeInteger(d.maxTurnDurationSeconds) ||
         (d.maxTurnDurationSeconds as number) < 0)) ||
-    !optionalText(p.about, 2048) ||
+    !optionalText(p.about, options.teamMember ? 8 * 1024 * 1024 : 2048) ||
     (typeof p.about === "string" && !visibleSnapshotText(p.about, true)) ||
     (p.avatarDataUrl !== undefined &&
       (typeof p.avatarDataUrl !== "string" ||
@@ -253,8 +267,10 @@ export function parseAgentSnapshot(
         p.avatarDataUrl.length > 2_800_000)) ||
     (p.avatarUrl !== undefined &&
       (typeof p.avatarUrl !== "string" ||
-        !/^https:\/\/[^\s@?#]+$/.test(p.avatarUrl) ||
-        p.avatarUrl.length > 2048)) ||
+        !(options.teamMember
+          ? validTeamAvatarUrl(p.avatarUrl)
+          : /^https:\/\/[^\s@?#]+$/.test(p.avatarUrl)) ||
+        encoder.encode(p.avatarUrl).length > 2048)) ||
     !["none", "core", "everything"].includes(m.level as string) ||
     (m.entries !== undefined && !Array.isArray(m.entries)) ||
     (Array.isArray(m.entries) &&

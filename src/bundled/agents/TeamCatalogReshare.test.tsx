@@ -103,7 +103,9 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
     { id: copy.id, pubkey: copy.pubkey, name: copy.name },
   ] as never);
   const control = {
-    snapshot: () => ({ data: { agents: [copy] } }),
+    snapshot: () => ({
+      data: { agents: [copy], defaultSettings: { sessionPolicy: "thread" } },
+    }),
     previewTeam: async (content: string) => JSON.parse(content) as TeamSnapshot,
   } as unknown as AgentControl;
   let saved: { team: Team; snapshot: TeamSnapshot } | undefined;
@@ -183,7 +185,7 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
 });
 
 /** A portable team whose saved definition loads only when the test says so. */
-function pendingShare() {
+function pendingShare(defaultSessionPolicy: "channel" | "thread" = "channel") {
   const owner = keypair();
   const server = catalogRelay();
   const member = {
@@ -207,7 +209,12 @@ function pendingShare() {
     return JSON.parse(content) as TeamSnapshot;
   });
   const control = {
-    snapshot: () => ({ data: { agents: [member] } }),
+    snapshot: () => ({
+      data: {
+        agents: [member],
+        defaultSettings: { sessionPolicy: defaultSessionPolicy },
+      },
+    }),
     previewTeam,
   } as unknown as AgentControl;
   const writes = createOutbox(
@@ -294,6 +301,20 @@ it("keeps the share dialog open until a pending portable read publishes", async 
   await waitFor(() => expect(close).toBeEnabled());
   await user.click(close);
   expect(test.onClose).toHaveBeenCalledTimes(1);
+});
+
+it("shares an inheriting member with the agent defaults it runs with", async () => {
+  const test = pendingShare("thread");
+  render(test.dialog);
+  await startShare(test.loadTeam);
+  test.settle().resolve({ team: { name: "Crew" } });
+  await waitFor(async () => {
+    const [own] = await test.published();
+    if (!own) throw new Error("share not published yet");
+    expect(parsePublication(own)).toMatchObject({
+      members: [{ displayName: "Mate", sessionPolicy: "thread" }],
+    });
+  });
 });
 
 it("shows a failed portable read and lets the dialog close without publishing", async () => {

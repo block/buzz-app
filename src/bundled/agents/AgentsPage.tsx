@@ -508,6 +508,9 @@ function ManagedAgents({
                   session={connection.session}
                   agent={agent}
                   name={label(agent)}
+                  defaultSessionPolicy={
+                    state.data?.defaultSettings?.sessionPolicy
+                  }
                 />
               )}
               <ManagedAgentActions

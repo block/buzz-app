@@ -2,6 +2,7 @@ import { avatarSource } from "../../shared/avatar-source.ts";
 import type { RelayEvent } from "../relay/events.ts";
 import type { AgentView } from "./control.ts";
 import { harnessKind } from "./harness-presets.ts";
+import { effectiveSessionPolicy } from "./snapshot.ts";
 import {
   AGENT_CATALOG_KIND,
   type Body,
@@ -146,8 +147,15 @@ export async function memberKey(id: string): Promise<string> {
     .join("");
 }
 
-/** Field order is the wire order; keys absent here can never leak. */
-function persona(agent: AgentView) {
+/** Field order is the wire order; keys absent here can never leak. An agent
+ * that inherits its conversation context shares the defaults it runs with,
+ * as snapshot export does. */
+function persona(agent: AgentView, defaultSessionPolicy?: SessionPolicy) {
+  const sessionPolicy = effectiveSessionPolicy(agent, defaultSessionPolicy);
+  if (!sessionPolicy)
+    throw new Error(
+      `Agent defaults for '${agent.name}' are unavailable. Refresh agents and try again.`,
+    );
   // The bundled transport is a local path; only its portable alias travels.
   const acp =
     agent.acpCommand
@@ -173,7 +181,7 @@ function persona(agent: AgentView) {
             agent.respondTo === "allowlist" ? "owner-only" : agent.respondTo,
         }
       : {}),
-    session_policy: agent.sessionPolicy ?? "channel",
+    session_policy: sessionPolicy,
   };
 }
 
@@ -193,9 +201,12 @@ function checkDefinition(name: string, prompt: string, label = "Agent") {
     );
 }
 
-export function agentCatalogContent(agent: AgentView): string {
+export function agentCatalogContent(
+  agent: AgentView,
+  defaultSessionPolicy?: SessionPolicy,
+): string {
   checkDefinition(agent.name, agent.systemPrompt);
-  const content = JSON.stringify(persona(agent));
+  const content = JSON.stringify(persona(agent, defaultSessionPolicy));
   if (bytes(content) > MAX_CONTENT_BYTES)
     throw new Error("Agent definition is too large to share");
   return content;
@@ -213,6 +224,7 @@ export interface CatalogTeamSource {
 export async function teamCatalogContent(
   team: CatalogTeamSource,
   members: readonly AgentView[],
+  defaultSessionPolicy?: SessionPolicy,
 ): Promise<string> {
   const fail = (reason: string) => {
     throw new Error(reason);
@@ -257,7 +269,7 @@ export async function teamCatalogContent(
       fail(
         `team too large to share: the system prompt for '${agent.name}' is ${bytes(agent.systemPrompt)} bytes (limit ${MAX_MEMBER_PROMPT_BYTES})`,
       );
-    const { session_policy, ...fields } = persona(agent);
+    const { session_policy, ...fields } = persona(agent, defaultSessionPolicy);
     projected.push({
       member_key: await memberKey(pubkey),
       ...fields,

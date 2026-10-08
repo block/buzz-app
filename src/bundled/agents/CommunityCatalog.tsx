@@ -198,10 +198,13 @@ export function AgentShareSwitch({
   session,
   agent,
   name,
+  defaultSessionPolicy,
 }: {
   session: RelaySession;
   agent: AgentView;
   name: string;
+  /** The agent defaults an inheriting agent runs with. */
+  defaultSessionPolicy: "channel" | "thread" | undefined;
 }) {
   if (!sameCommunityAgents([agent], session.scope).length) return null;
   return (
@@ -211,7 +214,7 @@ export function AgentShareSwitch({
       d={catalogSlug(agent.pubkey)}
       name={name}
       description={agentShareDescription}
-      content={() => agentCatalogContent(agent)}
+      content={() => agentCatalogContent(agent, defaultSessionPolicy)}
     />
   );
 }
@@ -265,15 +268,15 @@ export function TeamShareDialog({
         d={team.id}
         name={team.name}
         description={teamShareDescription}
-        content={async () =>
-          teamCatalogContent(
-            { ...team, ...(await portableTeamText(kit, control, team)) },
-            sameCommunityAgents(
-              control.snapshot().data?.agents ?? [],
-              session.scope,
-            ),
-          )
-        }
+        content={async () => {
+          const text = await portableTeamText(kit, control, team);
+          const data = control.snapshot().data;
+          return teamCatalogContent(
+            { ...team, ...text },
+            sameCommunityAgents(data?.agents ?? [], session.scope),
+            data?.defaultSettings?.sessionPolicy,
+          );
+        }}
       />
     </Dialog>
   );

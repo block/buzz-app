@@ -15,7 +15,11 @@ import type { AgentView } from "./control.ts";
 
 const owner = "cd".repeat(32);
 function agent(overrides: Partial<AgentView> = {}): AgentView {
-  return { ...controlFixture().agent, ...overrides };
+  return {
+    ...controlFixture().agent,
+    sessionPolicy: "channel",
+    ...overrides,
+  };
 }
 let serial = 0;
 function event(
@@ -39,7 +43,11 @@ function event(
 describe("agent projection", () => {
   it("emits only portable public fields in wire order", () => {
     const content = agentCatalogContent(
-      agent({ respondTo: "allowlist", picture: "data:image/png;base64,AA" }),
+      agent({
+        respondTo: "allowlist",
+        picture: "data:image/png;base64,AA",
+        sessionPolicy: "channel",
+      }),
     );
     expect(content).toBe(
       JSON.stringify({
@@ -59,6 +67,26 @@ describe("agent projection", () => {
       "workspace",
     ])
       expect(content).not.toContain(secret);
+  });
+
+  it("shares the conversation context an inheriting agent runs with", () => {
+    const policy = (defaults?: "channel" | "thread") =>
+      JSON.parse(agentCatalogContent(agent({ sessionPolicy: null }), defaults))
+        .session_policy;
+    expect(policy("channel")).toBe("channel");
+    expect(policy("thread")).toBe("thread");
+    expect(() => policy()).toThrow(/Agent defaults .* are unavailable/);
+  });
+
+  it("shares an explicit conversation context over the agent defaults", () => {
+    const policy = (
+      own: "channel" | "thread",
+      defaults: "channel" | "thread",
+    ) =>
+      JSON.parse(agentCatalogContent(agent({ sessionPolicy: own }), defaults))
+        .session_policy;
+    expect(policy("channel", "thread")).toBe("channel");
+    expect(policy("thread", "channel")).toBe("thread");
   });
 
   it("omits a machine-local transport that has no portable alias", () => {
@@ -91,10 +119,40 @@ describe("team projection", () => {
     expect(body.members[0].session_policy).toBe("thread");
     const plain = JSON.parse(
       await teamCatalogContent({ id: "t1", name: "Crew", agents: [owner] }, [
-        { ...member, sessionPolicy: null },
+        { ...member, sessionPolicy: "channel" },
       ]),
     );
     expect(plain.members[0]).not.toHaveProperty("session_policy");
+  });
+
+  it("projects an inheriting member with the agent defaults", async () => {
+    const policy = async (defaults?: "channel" | "thread") =>
+      JSON.parse(
+        await teamCatalogContent(
+          { id: "t1", name: "Crew", agents: [owner] },
+          [{ ...member, sessionPolicy: null }],
+          defaults,
+        ),
+      ).members[0].session_policy;
+    expect(await policy("channel")).toBeUndefined();
+    expect(await policy("thread")).toBe("thread");
+    await expect(policy()).rejects.toThrow(/Agent defaults .* are unavailable/);
+  });
+
+  it("projects an explicit member context over the agent defaults", async () => {
+    const policy = async (
+      own: "channel" | "thread",
+      defaults: "channel" | "thread",
+    ) =>
+      JSON.parse(
+        await teamCatalogContent(
+          { id: "t1", name: "Crew", agents: [owner] },
+          [{ ...member, sessionPolicy: own }],
+          defaults,
+        ),
+      ).members[0].session_policy;
+    expect(await policy("channel", "thread")).toBeUndefined();
+    expect(await policy("thread", "channel")).toBe("thread");
   });
 
   it("carries saved team text and refuses text the parser would reject", async () => {
@@ -221,7 +279,7 @@ describe("catalog reads", () => {
     });
     const team = await teamCatalogContent(
       { id: "t1", name: "Crew", agents: [owner] },
-      [agent({ pubkey: owner })],
+      [agent({ pubkey: owner, sessionPolicy: "channel" })],
     );
     const parsed = parsePublication(
       event(

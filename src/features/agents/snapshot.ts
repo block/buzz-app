@@ -123,8 +123,7 @@ export function visibleSnapshotText(value: string, prompt = false): boolean {
       /[\u0D15-\u0D39]/u.test(chars[i - 2] ?? "") &&
       chars[i - 1] === "\u0D4D" &&
       (chars[i + 1] === undefined ||
-        /\s/u.test(chars[i + 1] ?? "") ||
-        /[!-/:-@[-`{-~]/u.test(chars[i + 1] ?? ""))
+        /\s|\p{Punctuation}/u.test(chars[i + 1] ?? ""))
     )
       continue;
     if (char === "\u200D" && pictographic(chars[i + 1] ?? "")) {

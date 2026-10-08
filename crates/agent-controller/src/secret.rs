@@ -403,7 +403,7 @@ mod snapshot_memory_visibility_tests {
         ] {
             assert!(validate_snapshot_memory_envelope("core", hidden).is_err());
         }
-        for body in ["അവന്‍", "അവന്‍ വന്നു\r\nفارسی‌زبان 👩‍💻"]
+        for body in ["അവന്‍", "“അവന്‍” അവന്‍।", "അവന്‍ വന്നു\r\nفارسی‌زبان 👩‍💻"]
         {
             assert!(validate_snapshot_memory_envelope("core", body).is_ok());
         }

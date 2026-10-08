@@ -225,11 +225,15 @@ impl Agent {
                 {
                     limits.push("effort level");
                 }
-                if effective
-                    .environment
-                    .keys()
-                    .any(|key| key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
-                {
+                if effective.environment.keys().any(|key| {
+                    (key.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
+                        || (crate::agent_defaults::harness_kind(&effective.harness.command)
+                            == Some("buzz-agent")
+                            && matches!(
+                                key.as_str(),
+                                "BUZZ_AGENT_SYSTEM_PROMPT" | "BUZZ_AGENT_MAX_CONTEXT_TOKENS"
+                            ))
+                }) {
                     limits.push("behavioral environment overrides");
                 }
                 limits
@@ -436,6 +440,8 @@ pub(crate) fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
     static SCRIPT: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"^[\p{L}\p{M}]$").expect("Unicode property is supported")
     });
+    static PUNCTUATION: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^\p{P}$").expect("Unicode property is supported"));
     let chars: Vec<char> = value.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
         let code = ch as u32;
@@ -459,9 +465,11 @@ pub(crate) fn visible_agent_text(value: &str, prompt: bool) -> Result<()> {
                 if i >= 2
                     && chars[i - 1] == '\u{0d4d}'
                     && matches!(chars[i - 2] as u32, 0x0d15..=0x0d39)
-                    && chars
-                        .get(i + 1)
-                        .is_none_or(|c| c.is_whitespace() || c.is_ascii_punctuation()) =>
+                    && chars.get(i + 1).is_none_or(|c| {
+                        c.is_whitespace()
+                            || c.is_ascii_punctuation()
+                            || PUNCTUATION.is_match(&c.to_string())
+                    }) =>
             {
                 true
             }
@@ -606,7 +614,8 @@ mod snapshot_visible_text_tests {
             assert!(visible_agent_text(&format!("Review{ch} code"), true).is_err());
             assert!(visible_agent_text(&format!("Reviewer{ch}"), false).is_err());
         }
-        for value in ["Review 👩‍💻", "Review ❤️", "Review 🧑🏽‍💻"] {
+        for value in ["Review 👩‍💻", "Review ❤️", "Review 🧑🏽‍💻", "“അവന്‍” അവന്‍।"]
+        {
             assert!(visible_agent_text(value, true).is_ok());
         }
         assert!(visible_agent_text("Review\n\tcode", true).is_ok());

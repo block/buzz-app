@@ -10,8 +10,7 @@ import type {
   StaffRoleSource,
 } from "../../features/relay-staff/contract";
 import { describe, useRead, useSession, useWrite } from "./session";
-import { publicKeyLabels } from "../../shared/identity/public-key";
-import { Person, useNames } from "./people";
+import { NamesSource, Person, PeopleScope, usePeople } from "./people";
 import { containsSecretKey, Loaded, publicKeyInput } from "./ui";
 
 type OperatorWrite = Extract<
@@ -56,8 +55,7 @@ export function Operators() {
   const pubkey = publicKeyInput(input);
   const secret = containsSecretKey(input);
   const keys = list.state === "ok" ? list.value.map((o) => o.pubkey) : [];
-  const names = useNames(keys);
-  const labels = publicKeyLabels(keys);
+  const names = usePeople(keys);
 
   const after = (change: OperatorWrite) => {
     setError("");
@@ -120,69 +118,73 @@ export function Operators() {
           {operators.length === 0 ? (
             <p className="text-body-sm text-secondary">No staff configured.</p>
           ) : (
-            <ul className="flex flex-col gap-1">
-              {operators.map((operator) => {
-                const fixed = configBacked(operator);
-                const name = names.text(operator.pubkey);
-                return (
-                  <li
-                    key={operator.pubkey}
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <Person
-                        pubkey={operator.pubkey}
-                        keyLabel={labels.get(operator.pubkey)}
-                        detail={
-                          operator.pubkey === context.signer ? "you" : undefined
-                        }
-                      />
-                    </span>
-                    <span className="text-caption text-secondary">
-                      {operator.sources
-                        .map((source) => SOURCES[source])
-                        .join(", ")}
-                    </span>
-                    {fixed || !canMutate ? (
-                      <span className="text-caption">
-                        {operator.effectiveRole}
+            <PeopleScope people={names}>
+              <NamesSource />
+              <ul className="flex flex-col gap-1">
+                {operators.map((operator) => {
+                  const fixed = configBacked(operator);
+                  const name = names.text(operator.pubkey);
+                  return (
+                    <li
+                      key={operator.pubkey}
+                      className="flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <Person
+                          pubkey={operator.pubkey}
+                          detail={
+                            operator.pubkey === context.signer
+                              ? "you"
+                              : undefined
+                          }
+                        />
                       </span>
-                    ) : (
-                      <Select
-                        label={`Role for ${name}`}
-                        variant="compact"
-                        value={operator.effectiveRole}
-                        groups={ROLES}
-                        disabled={working === operator.pubkey}
-                        onValueChange={(value) =>
-                          value !== operator.effectiveRole &&
-                          after({
-                            route: "putOperator",
-                            pubkey: operator.pubkey,
-                            role: value as StaffRole,
-                          })
-                        }
-                      />
-                    )}
-                    {canMutate && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={fixed || working === operator.pubkey}
-                        title={
-                          fixed
-                            ? "Set in relay configuration; cannot be removed here"
-                            : undefined
-                        }
-                        onClick={() => setRemoving(operator)}
-                      >
-                        Remove
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                      <span className="text-caption text-secondary">
+                        {operator.sources
+                          .map((source) => SOURCES[source])
+                          .join(", ")}
+                      </span>
+                      {fixed || !canMutate ? (
+                        <span className="text-caption">
+                          {operator.effectiveRole}
+                        </span>
+                      ) : (
+                        <Select
+                          label={`Role for ${name}`}
+                          variant="compact"
+                          value={operator.effectiveRole}
+                          groups={ROLES}
+                          disabled={working === operator.pubkey}
+                          onValueChange={(value) =>
+                            value !== operator.effectiveRole &&
+                            after({
+                              route: "putOperator",
+                              pubkey: operator.pubkey,
+                              role: value as StaffRole,
+                            })
+                          }
+                        />
+                      )}
+                      {canMutate && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={fixed || working === operator.pubkey}
+                          title={
+                            fixed
+                              ? "Set in relay configuration; cannot be removed here"
+                              : undefined
+                          }
+                          onClick={() => setRemoving(operator)}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </PeopleScope>
           )}
           {removing && (
             <AlertDialog

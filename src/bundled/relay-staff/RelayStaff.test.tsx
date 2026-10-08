@@ -22,7 +22,11 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { RelayStaff } from "./RelayStaff";
 import { ProfilesContext } from "./people";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
-import { formatPublicKey } from "../../shared/identity/public-key";
+import {
+  formatPublicKey,
+  publicKeyLabels,
+} from "../../shared/identity/public-key";
+import { foldProfiles } from "../../features/relay/profiles";
 import { StrictMode } from "react";
 import { createSession, SessionProvider, useWrite } from "./session";
 import { createStaff, type StaffTarget } from "./staff";
@@ -1800,4 +1804,222 @@ it("report cards show when the report was made", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+/** Two people named Bob whose keys share the same three-character suffix. */
+const bobA = `${"e".repeat(56)}000008c5`;
+const bobB = `${"e".repeat(56)}00004000`;
+const twinLabels = publicKeyLabels([bobA, bobB]);
+const short = formatPublicKey(bobA) as string;
+const longA = twinLabels.get(bobA) as string;
+const longB = twinLabels.get(bobB) as string;
+
+function mountWithProfiles(
+  known: ReadonlyMap<string, { name: string }>,
+  ensured: string[][] = [],
+) {
+  const profiles: ProfileQueries = {
+    snapshot: () => known,
+    subscribe: () => () => {},
+    ensure: async (ids) => {
+      ensured.push([...ids]);
+    },
+  };
+  const staff = createStaff(backend, () => ({ relay, signer }));
+  staff.ensure();
+  return render(
+    <ToastProvider>
+      <ProfilesContext.Provider value={profiles}>
+        <RelayStaff staff={staff} active={() => true} />
+      </ProfilesContext.Provider>
+    </ToastProvider>,
+  );
+}
+const twins = new Map([
+  [bobA, { name: "Bob" }],
+  [bobB, { name: "Bob" }],
+]);
+
+it("two people with the same name and short key stay distinct everywhere", async () => {
+  expect(formatPublicKey(bobB)).toBe(short);
+  expect(longA).not.toBe(longB);
+  const byA = { ...report, reporterPubkey: bobA, target: bobA };
+  const byB = { ...report, id: "r2", reporterPubkey: bobB, target: bobB };
+  routes.listReports = () => ok([byA, byB]);
+  routes.getReport = () =>
+    ok({
+      ...byA,
+      message: {
+        authorPubkey: bobB,
+        content: "hi",
+        createdAt: report.createdAt,
+        deletedAt: null,
+      },
+    });
+  routes.searchMembers = () =>
+    ok({
+      items: [bobA, bobB].map((pubkey) => ({
+        pubkey,
+        displayName: "Bob",
+        nip05: null,
+        avatarUrl: null,
+      })),
+    });
+  routes.getMember = () =>
+    ok({
+      pubkey: bobB,
+      profile: null,
+      role: "member",
+      banned: false,
+      mutedUntil: null,
+      isStaff: false,
+    });
+  mountWithProfiles(twins);
+
+  // Reports list and detail.
+  const cards = await screen.findAllByRole("button", { name: /spam/ });
+  expect(cards[0]).toHaveTextContent(`reporter: Bob (${longA})`);
+  expect(cards[1]).toHaveTextContent(`reporter: Bob (${longB})`);
+  fireEvent.click(cards[0] as HTMLElement);
+  await screen.findAllByRole("button", { name: "Preview Bob identity" });
+  expect(screen.getAllByText(longA).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(longB).length).toBeGreaterThan(0);
+  expect(screen.queryByText(short)).toBeNull();
+
+  // Member search, the picked member and the confirm step keep the label.
+  cleanup();
+  mountWithProfiles(twins);
+  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /team\.example\.com/ }),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+  fireEvent.change(screen.getByLabelText("Member"), {
+    target: { value: "Bob" },
+  });
+  const results = within(await screen.findByRole("list", { name: "Members" }));
+  expect(results.getByRole("button", { name: `Bob (${longA})` })).toBeVisible();
+  fireEvent.click(results.getByRole("button", { name: `Bob (${longB})` }));
+  await screen.findByText("Role: member");
+  expect(screen.getByText(`(${longB})`)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Review" }));
+  expect(
+    await screen.findByRole("button", { name: "Confirm" }),
+  ).toBeInTheDocument();
+  // The picked member and the confirm step both carry the longer label.
+  expect(screen.getAllByText(`(${longB})`)).toHaveLength(2);
+  expect(screen.queryByText(`(${short})`)).toBeNull();
+});
+
+it("operator and restriction dialogs repeat the row's distinct label", async () => {
+  routes.probe = () => probe({ role: "operator", canStaff: true });
+  routes.listOperators = () =>
+    ok(
+      [bobA, bobB].map((pubkey) => ({
+        pubkey,
+        effectiveRole: "moderator",
+        sources: ["db"],
+      })),
+    );
+  mountWithProfiles(twins);
+  fireEvent.click(await screen.findByRole("tab", { name: "Operators" }));
+  expect(
+    await screen.findByLabelText(`Role for Bob (${longA})`),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Remove" })[1] as HTMLElement,
+  );
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    `Bob (${longB}) (moderator) loses relay staff access.`,
+  );
+
+  cleanup();
+  routes.listRestrictions = () =>
+    ok({
+      items: [bobA, bobB].map((pubkey) => ({
+        pubkey,
+        banned: true,
+        banExpiresAt: null,
+        mutedUntil: null,
+      })),
+      nextCursor: null,
+    });
+  mountWithProfiles(twins);
+  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /team\.example\.com/ }),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Restrictions" }));
+  const lifts = await screen.findAllByRole("button", { name: "Lift ban" });
+  fireEvent.click(lifts[0] as HTMLElement);
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    `Bob (${longA}) will be able to post`,
+  );
+});
+
+it("a profile without a usable name shows only the short key", async () => {
+  const malformed = "c".repeat(64);
+  const kind0 = (pubkey: string, content: string) => ({
+    id: pubkey,
+    pubkey,
+    created_at: 1,
+    kind: 0,
+    content,
+    tags: [],
+  });
+  const known = foldProfiles([
+    kind0(member, JSON.stringify({ about: "hello" })),
+    kind0(malformed, "{not json"),
+  ]);
+  routes.listReports = () =>
+    ok([{ ...report, target: malformed, targetKind: "pubkey" }]);
+  routes.getReport = () =>
+    ok({ ...report, target: malformed, targetKind: "pubkey" });
+  mountWithProfiles(known);
+  const card = await screen.findByRole("button", { name: /spam/ });
+  expect(card).toHaveTextContent(
+    `reporter: ${formatPublicKey(member)} · target: ${formatPublicKey(malformed)}`,
+  );
+  fireEvent.click(card);
+  expect(
+    await screen.findByRole("button", {
+      name: `Preview ${formatPublicKey(member)} identity`,
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", {
+      name: `Preview ${formatPublicKey(malformed)} identity`,
+    }),
+  ).toBeInTheDocument();
+  expect(document.body.textContent).not.toContain(member.slice(0, 10));
+  expect(document.body.textContent).not.toContain(malformed.slice(0, 10));
+});
+
+it("names say which community's profiles they come from", async () => {
+  routes.listReports = () => ok([report]);
+  mount();
+  expect(
+    await screen.findByText("Names come from profiles in team.example.com."),
+  ).toBeInTheDocument();
+});
+
+it("a list fetches every unknown profile in one batch", async () => {
+  const keys = Array.from({ length: 150 }, (_, i) =>
+    i.toString(16).padStart(64, "f"),
+  );
+  routes.listReports = () =>
+    ok(
+      keys.map((key, i) => ({
+        ...report,
+        id: `r${i}`,
+        reporterPubkey: key,
+        target: key,
+      })),
+    );
+  const ensured: string[][] = [];
+  mountWithProfiles(new Map(), ensured);
+  await screen.findAllByRole("button", { name: /spam/ });
+  await waitFor(() => expect(ensured.length).toBeGreaterThan(0));
+  expect(ensured).toHaveLength(1);
+  expect(new Set(ensured[0])).toEqual(new Set(keys));
 });

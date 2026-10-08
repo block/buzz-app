@@ -15,7 +15,13 @@ import type {
   ReportResolution,
   StaffRequest,
 } from "../../features/relay-staff/contract";
-import { Person, PersonName } from "./people";
+import {
+  NamesSource,
+  Person,
+  PeopleScope,
+  PersonName,
+  usePeople,
+} from "./people";
 import { describe, useWrite, useRead, useSession } from "./session";
 import {
   CommunityBadge,
@@ -109,6 +115,15 @@ export function Reports({ communityId }: { communityId?: string }) {
     },
     [context, communityId, status],
   );
+  const people = usePeople(
+    list.state === "ok"
+      ? list.value.flatMap((report) => [
+          report.reporterPubkey,
+          report.targetKind.toLowerCase() === "pubkey" ? report.target : null,
+          report.targetAuthorPubkey,
+        ])
+      : [],
+  );
 
   if (selected)
     return (
@@ -144,37 +159,40 @@ export function Reports({ communityId }: { communityId?: string }) {
           reports.length === 0 ? (
             <p className="text-body-sm text-secondary">No reports found.</p>
           ) : (
-            <GroupedList
-              items={reports}
-              limit={REPORT_LIMIT}
-              headings={!communityId}
-              render={(report) => (
-                <li key={report.id}>
-                  <button
-                    type="button"
-                    className={listButton}
-                    onClick={() => setSelected(report.id)}
-                  >
-                    <span className="block font-medium">
-                      {report.reportType || "Report"}
-                    </span>
-                    <span className="block truncate text-caption text-secondary">
-                      reporter: <PersonName pubkey={report.reporterPubkey} /> ·
-                      target: <Target report={report} />
-                    </span>
-                    <span className="flex items-center gap-1.5 text-caption text-secondary">
-                      {report.status}
-                      {report.status === "processing" && (
-                        <CircleNotchIcon className="animate-spin" />
-                      )}
-                    </span>
-                    <span className="block text-caption text-secondary">
-                      {time(report.createdAt)}
-                    </span>
-                  </button>
-                </li>
-              )}
-            />
+            <PeopleScope people={people}>
+              <NamesSource />
+              <GroupedList
+                items={reports}
+                limit={REPORT_LIMIT}
+                headings={!communityId}
+                render={(report) => (
+                  <li key={report.id}>
+                    <button
+                      type="button"
+                      className={listButton}
+                      onClick={() => setSelected(report.id)}
+                    >
+                      <span className="block font-medium">
+                        {report.reportType || "Report"}
+                      </span>
+                      <span className="block truncate text-caption text-secondary">
+                        reporter: <PersonName pubkey={report.reporterPubkey} />{" "}
+                        · target: <Target report={report} />
+                      </span>
+                      <span className="flex items-center gap-1.5 text-caption text-secondary">
+                        {report.status}
+                        {report.status === "processing" && (
+                          <CircleNotchIcon className="animate-spin" />
+                        )}
+                      </span>
+                      <span className="block text-caption text-secondary">
+                        {time(report.createdAt)}
+                      </span>
+                    </button>
+                  </li>
+                )}
+              />
+            </PeopleScope>
           )
         }
       </Loaded>
@@ -257,61 +275,71 @@ function ReportDetail({
 }
 
 function ReportFields({ report }: { report: ReportDetailDto }) {
+  const people = usePeople([
+    report.reporterPubkey,
+    report.targetKind.toLowerCase() === "pubkey" ? report.target : null,
+    report.targetAuthorPubkey,
+    report.resolvedBy,
+    report.message?.authorPubkey,
+  ]);
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
-      <p className="mb-2 text-body-sm font-medium">
-        {report.reportType} · {report.status}
-      </p>
-      <Row label="ID" mono>
-        {report.id}
-      </Row>
-      <Row label="Community">
-        <CommunityBadge id={report.communityId} host={report.communityHost} />
-      </Row>
-      <Row label="Event ID" mono>
-        {report.reportEventId}
-      </Row>
-      <Row label="Reporter">
-        <Person pubkey={report.reporterPubkey} />
-      </Row>
-      <Row label="Target kind">{report.targetKind}</Row>
-      {report.targetKind.toLowerCase() === "pubkey" ? (
-        <Row label="Target">
-          <Person pubkey={report.target} />
+    <PeopleScope people={people}>
+      <div className="flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
+        <p className="mb-2 text-body-sm font-medium">
+          {report.reportType} · {report.status}
+        </p>
+        <Row label="ID" mono>
+          {report.id}
         </Row>
-      ) : (
-        <Row label="Target" mono>
-          {report.target}
+        <Row label="Community">
+          <CommunityBadge id={report.communityId} host={report.communityHost} />
         </Row>
-      )}
-      <Row label="Channel" mono>
-        {report.channelId}
-      </Row>
-      <Row label="Note">{report.note}</Row>
-      <Row label="Resolved by">
-        {report.resolvedBy && <Person pubkey={report.resolvedBy} />}
-      </Row>
-      <Row label="Resolved at">{time(report.resolvedAt)}</Row>
-      <Row label="Action ID" mono>
-        {report.actionId}
-      </Row>
-      <Row label="Created">{time(report.createdAt)}</Row>
-      {report.message && (
-        <div className="mt-3 flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
-          <p className="text-caption font-semibold text-secondary">
-            Reported message
-            {report.message.deletedAt && (
-              <span className="ml-1.5 text-danger">(deleted)</span>
-            )}
-          </p>
-          <Row label="Author">
-            <Person pubkey={report.message.authorPubkey} />
+        <Row label="Event ID" mono>
+          {report.reportEventId}
+        </Row>
+        <Row label="Reporter">
+          <Person pubkey={report.reporterPubkey} />
+        </Row>
+        <Row label="Target kind">{report.targetKind}</Row>
+        {report.targetKind.toLowerCase() === "pubkey" ? (
+          <Row label="Target">
+            <Person pubkey={report.target} />
           </Row>
-          <Row label="Content">{report.message.content}</Row>
-          <Row label="Sent">{time(report.message.createdAt)}</Row>
-        </div>
-      )}
-    </div>
+        ) : (
+          <Row label="Target" mono>
+            {report.target}
+          </Row>
+        )}
+        <Row label="Channel" mono>
+          {report.channelId}
+        </Row>
+        <Row label="Note">{report.note}</Row>
+        <Row label="Resolved by">
+          {report.resolvedBy && <Person pubkey={report.resolvedBy} />}
+        </Row>
+        <Row label="Resolved at">{time(report.resolvedAt)}</Row>
+        <Row label="Action ID" mono>
+          {report.actionId}
+        </Row>
+        <Row label="Created">{time(report.createdAt)}</Row>
+        {report.message && (
+          <div className="mt-3 flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
+            <p className="text-caption font-semibold text-secondary">
+              Reported message
+              {report.message.deletedAt && (
+                <span className="ml-1.5 text-danger">(deleted)</span>
+              )}
+            </p>
+            <Row label="Author">
+              <Person pubkey={report.message.authorPubkey} />
+            </Row>
+            <Row label="Content">{report.message.content}</Row>
+            <Row label="Sent">{time(report.message.createdAt)}</Row>
+          </div>
+        )}
+        <NamesSource />
+      </div>
+    </PeopleScope>
   );
 }
 

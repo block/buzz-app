@@ -37,7 +37,7 @@ impl AgentHost {
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
-            crate::identity::IdentityHost::fixture_owner(),
+            owner::Owner::Native(crate::identity::IdentityHost::fixture_owner()),
         )
     }
 }
@@ -1243,6 +1243,164 @@ mod overlap {
                 .as_deref(),
             Some(REFUSAL)
         );
+    }
+
+    #[tokio::test]
+    async fn broker_owner_gates_restore_manual_restart_and_wake_before_credentials() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for lane in ["restore", "manual", "restart", "wake", "wrong-owner"] {
+            let (dir, mut host, _app, _view) = fixture();
+            let id = seed_pair(dir.path())[0].clone();
+            let gate = Gate::install(&host, dir.path(), &[&credential(&id)]);
+            let expected = crate::identity::IdentityHost::fixture_owner()
+                .viewer()
+                .await
+                .unwrap();
+            let attested = if lane == "wrong-owner" {
+                crate::identity::IdentityHost::fixture()
+                    .viewer()
+                    .await
+                    .unwrap()
+            } else {
+                expected.clone()
+            };
+            let path = dir.path().join("store/agents.json");
+            let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            saved["agents"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|a| a["id"] == id);
+            saved["agents"][0]["authTag"] = json!(json!(["auth", attested, "", "sig"]).to_string());
+            std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap())
+                .parse()
+                .unwrap();
+            host.3 = owner::Owner::select(
+                crate::identity::IdentityHost::fixture(),
+                true,
+                Some(&expected),
+                Some(&url),
+            );
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                stream.read(&mut request).await.unwrap();
+                let body = json!({"viewer":expected}).to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            });
+            gate.release[&credential(&id)].send(()).unwrap();
+            let result = if lane == "restore" {
+                host.restore().await;
+                host.with(|h| h.snapshot()).unwrap()
+            } else {
+                start(
+                    host.clone(),
+                    id.clone(),
+                    if lane == "restart" {
+                        Action::Restart
+                    } else {
+                        Action::Start
+                    },
+                    false,
+                    (lane == "wake").then_some(1),
+                    None,
+                )
+                .await
+                .unwrap()
+            };
+            server.await.unwrap();
+            let error = result
+                .data
+                .agents
+                .iter()
+                .find(|a| a.id == id)
+                .unwrap()
+                .error
+                .as_deref()
+                .unwrap();
+            if lane == "wrong-owner" {
+                assert!(error.contains("different Buzz identity"), "{error}");
+                assert!(gate.idle());
+            } else {
+                assert_eq!(
+                    error, REFUSAL,
+                    "{lane}: matching broker passes ownership, not unrelated native key"
+                );
+                assert_eq!(gate.entered().await, credential(&id));
+            }
+            assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_during_broker_read_prevents_agent_key_access() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (dir, mut host, _app, _view) = fixture();
+        let id = seed_pair(dir.path())[0].clone();
+        let gate = Gate::install(&host, dir.path(), &[&credential(&id)]);
+        let expected = crate::identity::IdentityHost::fixture_owner()
+            .viewer()
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        host.3 = owner::Owner::select(
+            crate::identity::IdentityHost::fixture(),
+            true,
+            Some(&expected),
+            Some(&url),
+        );
+        let (entered, entry) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            entered.send(()).unwrap();
+            released.await.unwrap();
+            let body = json!({"viewer":expected}).to_string();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let starting = tokio::spawn({
+            let (host, id) = (host.clone(), id.clone());
+            async move { start(host, id, Action::Start, false, None, None).await }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), entry)
+            .await
+            .unwrap()
+            .unwrap();
+        let stopped = run(host.clone(), move |h| h.action(&id, Action::Stop))
+            .await
+            .unwrap();
+        assert!(stopped.data.agents.iter().any(|a| !a.enabled));
+        assert!(gate.idle());
+        // Release credential gate too so a regressed implementation fails rather than hangs.
+        for release in gate.release.values() {
+            release.send(()).unwrap();
+        }
+        release.send(()).unwrap();
+        assert_eq!(
+            starting.await.unwrap().err().as_deref(),
+            Some(START_CANCELLED)
+        );
+        server.await.unwrap();
+        assert!(
+            gate.idle(),
+            "Stop must prevent agent-key access after broker read"
+        );
+        assert!(host.with(|h| Ok(h.starts.is_empty())).unwrap());
     }
 
     #[tokio::test]
@@ -2590,8 +2748,9 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let (release, held) = std::sync::mpsc::channel();
-    let host =
-        AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+    let host = AgentHost::initialize_with(
+        owner::Owner::Native(crate::identity::IdentityHost::fixture_owner()),
+        move || {
             held.recv().map_err(|_| "Initialization gate closed")?;
             Host::open(
                 root.join("store"),
@@ -2600,7 +2759,8 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
                 Err(RUNTIME_GATE.into()),
                 Arc::new(RejectingCredentials),
             )
-        });
+        },
+    );
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let executable = dir.path().join("launcher");
@@ -2628,11 +2788,13 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
 async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     for shutdown in [false, true] {
         let (release, held) = std::sync::mpsc::channel();
-        let host =
-            AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+        let host = AgentHost::initialize_with(
+            owner::Owner::Native(crate::identity::IdentityHost::fixture_owner()),
+            move || {
                 held.recv().map_err(|_| "Initialization gate closed")?;
                 Err("Synthetic initialization failure".into())
-            });
+            },
+        );
         let mut registration = std::pin::pin!(run::<()>(host.clone(), |_| {
             panic!("registration must not execute without a usable host")
         }));
@@ -2999,13 +3161,14 @@ fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
         mismatched.contains("different Buzz identity"),
         "{mismatched}"
     );
-    // No signed-in human (test OsStore is unreadable) is refused the same way.
+    // A native read failure remains a custody error, not an owner mismatch.
     let signed_out = AgentHost(
         host.0.clone(),
         host.1.clone(),
         host.2.clone(),
-        crate::identity::IdentityHost::default(),
+        owner::Owner::Native(crate::identity::IdentityHost::default()),
     );
     let missing = start(signed_out);
-    assert!(missing.contains("different Buzz identity"), "{missing}");
+    assert!(!missing.contains("different Buzz identity"), "{missing}");
+    assert_ne!(missing, IMPORT_GATE);
 }

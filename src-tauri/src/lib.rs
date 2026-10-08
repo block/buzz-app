@@ -646,7 +646,13 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources, agent_identity));
+            let agent_owner = agents::owner::Owner::select(
+                agent_identity,
+                tauri::is_dev(),
+                std::env::var("BUZZ_DEV_VIEWER").ok().as_deref(),
+                app.config().build.dev_url.as_ref(),
+            );
+            app.manage(AgentHost::initialize(paths, resources, agent_owner));
             Ok(())
         });
     #[cfg(target_os = "macos")]

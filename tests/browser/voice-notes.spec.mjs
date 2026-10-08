@@ -129,9 +129,9 @@ async function record(page) {
     page.getByRole("button", { name: "Remove voice note", exact: true }),
   ).toBeVisible();
 }
-test("record, preview, send and play the chat card with speed and seeking", async ({
-  page,
-}) => {
+test("record, preview, send and play the chat card with speed and seeking", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
   const errors = watchPageErrors(page);
   await record(page);
   const composer = page.getByRole("form", {
@@ -234,9 +234,9 @@ test("record, preview, send and play the chat card with speed and seeking", asyn
   ).toHaveCount(2);
   expect(errors.unexplained()).toEqual([]);
 });
-test("permission cancellation, denial and plugin removal release microphones", async ({
-  page,
-}) => {
+test("permission cancellation, denial and plugin removal release microphones", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
   await page.evaluate(() => {
     window.voiceMic.mode = "delay";
   });
@@ -279,9 +279,9 @@ test("permission cancellation, denial and plugin removal release microphones", a
     0,
   );
 });
-test("failed upload survives disabling the plugin and switching conversations", async ({
-  page,
-}) => {
+test("failed upload survives disabling the plugin and switching conversations", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
   await page.evaluate(() => {
     window.voiceFixture.report.failUpload = true;
   });
@@ -331,9 +331,9 @@ test("failed upload survives disabling the plugin and switching conversations", 
   ).toBeEnabled();
 });
 
-test("rejected voice messages retry through the outbox without reuploading", async ({
-  page,
-}) => {
+test("rejected voice messages retry through the outbox without reuploading", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
   await record(page);
   await page.evaluate(() => {
     window.voiceFixture.report.failSend = true;

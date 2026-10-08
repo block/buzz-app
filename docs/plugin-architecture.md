@@ -81,7 +81,7 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -146,6 +146,8 @@ presentation retires. This is not a global navigation API or an access grant.
 ### Resolution order
 
 Panels and link renderers share one rule when several match the same target.
+It covers only those two: message renderers (`registerMessage`, rendered by
+`MessageBody`) keep first-active-match semantics and accept no `order`.
 `order` is optional and defaults to `0`; lower wins, and equal orders fall to
 ascending contribution key (`pluginId/contributionId`), so activation, load
 latency and disable/re-enable never decide the winner. `matches` stays boolean,

@@ -241,6 +241,11 @@ it("validates and freezes launcher metadata without changing target resolution",
         ctx.panels.register({ ...base, channelMenu } as never),
       ).toThrow("channel menu");
     }
+    for (const order of [null, "100", {}, true]) {
+      expect(() => ctx.panels.register({ ...base, order } as never)).toThrow(
+        "order",
+      );
+    }
     const launcher = { icon: "/icon.png", target: "" };
     const channelMenu = { label: "Usage", eligible: () => true };
     ctx.panels.register({ ...base, launcher, channelMenu });

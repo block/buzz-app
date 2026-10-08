@@ -96,6 +96,12 @@ export class PanelsService extends Service implements Panels {
       throw new Error("A panel needs an id, title, matcher, and component");
     }
     if (
+      panel.order !== undefined &&
+      typeof panel.order !== "number" &&
+      typeof panel.order !== "function"
+    )
+      throw new Error("A panel order must be a number or function");
+    if (
       panel.launcher !== undefined &&
       (!panel.launcher ||
         typeof panel.launcher.icon !== "string" ||

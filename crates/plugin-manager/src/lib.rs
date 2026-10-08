@@ -189,6 +189,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/moderation/manifest.json"
         ))
         .expect("moderation manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/relay-staff/manifest.json"
+        ))
+        .expect("relay staff manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -217,6 +221,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
+            | "buzz.relay-staff"
     )
 }
 fn is_bundled(id: &str) -> bool {

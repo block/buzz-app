@@ -930,11 +930,27 @@ behavior remain host-owned; no new completion API or editor command is introduce
 This is the same host-matched preview as toolbar tools, not version negotiation or
 a sandbox. Inline mention pills remain outside this completion implementation.
 
-Formatting needs selection transforms. Attachments and voice need shared media
-capabilities, destination-bound asynchronous work and cancellation; accepted
-material belongs to the draft, not the optional tool. Add these contracts against
-real workflows rather than declaring the toolbar a universal editor API.
+The optional bundled `buzz.voice-notes` plugin registers a microphone tool and
+an attachment renderer. `capture(component)` gives the tool a revocable composer
+surface with `accept(recording)` and `cancel()` commands. Disabling the plugin,
+hiding the conversation, changing destinations or entering read-only mode stops
+unaccepted recording. Accepted recordings belong to the existing attachment draft,
+so navigation or plugin removal leaves them available with host fallback controls.
 
+The existing native and browser upload adapters prepare `voice-note-*.wav` files
+as the old Buzz H.264/AAC MP4 envelope. Voice Notes adds no uploader, signer or
+outbox. Files upload on Send, retain the shared progress/recovery behavior, and
+carry bounded duration and waveform metadata through ordinary `imeta` tags.
+Recordings stop at five minutes. Pending files have the same tab-local lifetime
+and limits as other attachment drafts; they do not survive app restart.
+
+The player loads audio on Play, supports seeking and playback speed, and pauses
+when its conversation is hidden. Existing voice notes are recognized from signed
+filename metadata even when their Markdown label differs. Notes without waveform
+metadata retain a neutral waveform. Disabling the plugin restores ordinary audio
+cards. The fixture at `/tests/fixtures/voice-notes.html` exercises the real recorder,
+composer and session with disposable local media; browser tests provide its local
+media response. Native microphone permissions were exercised in the staging app.
 
 ## Desktop browser
 

@@ -40,6 +40,7 @@ import {
   PencilSimpleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
+import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
 import {
@@ -492,16 +493,27 @@ function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const canAttach = !submission && !!session.attachments;
+  const voice = useVoiceCapture(
+    attachments.store,
+    !active || editingDisabled || !!editing.target || !canAttach,
+    setAttachmentError,
+  );
   useEffect(() => {
     if (disabled) attachments.store.cancel();
   }, [disabled, attachments.store]);
   const dragging = useFileDrop(
     form,
-    canAttach && !editingDisabled && !editing.target,
+    canAttach && !editingDisabled && !editing.target && !voice.capturing,
     attachFiles,
   );
   function attachFiles(files: readonly File[]) {
-    if (!permitted.current || editingDisabled || !files.length) return;
+    if (
+      !permitted.current ||
+      editingDisabled ||
+      voice.isCapturing() ||
+      !files.length
+    )
+      return;
     if (editing.target) {
       setAttachmentError("Finish editing before attaching new files.");
       return;
@@ -947,7 +959,7 @@ function Composer({
       );
   }
   async function send() {
-    if (!permitted.current) return;
+    if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if (!valueRef.current.text.trim()) {
@@ -1211,18 +1223,16 @@ function Composer({
   }
   const readingOnly = !outbox?.supports(9) && !cached;
   const context = (
-    <div
-      className={styles.composerContext}
-      data-reserve-typing={!submission || readingOnly || undefined}
-    >
-      {readingOnly || (!disabled && !submission && !editing.target) ? (
+    <div className={styles.composerContext}>
+      {!cached && !submission && (
         <TypingIndicator
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
           canOpenActivity={canOpenLink}
+          openActivity={onOpenLink}
         />
-      ) : null}
+      )}
       {extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}
@@ -1317,6 +1327,7 @@ function Composer({
             permitted.current &&
             !editingDisabled &&
             !editing.target &&
+            !voice.isCapturing() &&
             canAttach
           ) {
             event.preventDefault();
@@ -1398,6 +1409,7 @@ function Composer({
           {!editing.target && (
             <ComposerAttachments
               media={session.media}
+              renderers={extensions?.attachments}
               items={attachments.items}
               disabled={editingDisabled}
               remove={(id) => {
@@ -1537,7 +1549,8 @@ function Composer({
               />
             </div>
           )}
-        <div className={styles.composerActions}>
+        {voice.element}
+        <div className={styles.composerActions} hidden={voice.capturing}>
           {active && (
             <ComposerFormattingTools
               disabled={editingDisabled}
@@ -1551,6 +1564,7 @@ function Composer({
               {extensions ? (
                 <ComposerTools
                   registry={extensions.tools}
+                  capture={voice.begin}
                   renderLeading={renderLeadingTools}
                   session={session}
                   scope={scope}

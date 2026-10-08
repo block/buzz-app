@@ -218,8 +218,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("disable", "buzz.channel-templates");
 
     await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 3),
+      assert.equal(services.conversation.tools.snapshot().length, 4),
     );
+    assert.equal(services.conversation.attachments.snapshot().length, 1);
+    await services.plugins.change("disable", "buzz.voice-notes");
+    assert.equal(services.conversation.attachments.snapshot().length, 0);
     assert.equal(services.conversation.inline.snapshot().length, 1);
     await vi.waitFor(() =>
       assert.equal(services.conversation.links.snapshot().length, 1),
@@ -299,11 +302,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .find((panel) => panel.pluginId === "buzz.agent-activity");
     assert.equal(activity.title, "Agent Activity");
     assert.equal(activity.launcher, undefined);
-    assert.equal(services.conversation.accessories.snapshot().length, 1);
-    assert.equal(
-      services.conversation.accessories.snapshot()[0].pluginId,
-      "buzz.agent-activity",
-    );
+    assert.equal(services.conversation.accessories.snapshot().length, 0);
     assert.match(
       renderToStaticMarkup(createElement(activity.component)),
       /Connect to a community/,

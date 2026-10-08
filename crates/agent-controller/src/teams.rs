@@ -203,6 +203,17 @@ impl TeamSnapshot {
             {
                 crate::config::validate_picture(picture)?;
             }
+            // Import prefers embedded artwork for team members, then a URL.
+            let picture = member
+                .profile
+                .avatar_data_url
+                .as_deref()
+                .or(member.profile.avatar_url.as_deref());
+            crate::profile::initial_content(
+                &member.profile.display_name,
+                member.profile.about.as_deref(),
+                picture,
+            )?;
         }
         Ok(())
     }
@@ -323,8 +334,17 @@ fn snapshot_member(
     agent: &Agent,
     defaults: &crate::agent_defaults::AgentDefaults,
 ) -> Result<MemberSnapshot> {
-    let workers = agent.view(defaults).launch_parallelism;
+    let view = agent.view(defaults);
+    let workers = view.launch_parallelism;
     let effective = crate::agent_defaults::effective(agent, defaults);
+    let runtime = crate::agent_defaults::harness_kind(&effective.harness.command)
+        .ok_or("Team member harness is not portable")?;
+    if crate::agent_defaults::effort(&effective).is_some_and(|effort| !effort.is_empty()) {
+        return Err("Team member effort is not portable".into());
+    }
+    if view.launch_model_env.is_some() || view.launch_provider_env.is_some() {
+        return Err("Team member environment-selected model or provider is not portable".into());
+    }
     let agent = &effective;
     let record = &agent.imported["record"];
     Ok(MemberSnapshot {
@@ -335,7 +355,7 @@ fn snapshot_member(
             source_is_builtin: record["source_is_builtin"].as_bool().unwrap_or(false),
             name_pool: serde_json::from_value(record["name_pool"].clone()).unwrap_or_default(),
             system_prompt: Some(agent.system_prompt.clone()),
-            runtime: crate::agent_defaults::harness_kind(&agent.harness.command).map(str::to_owned),
+            runtime: Some(runtime.to_owned()),
             model: Some(agent.harness.model.clone()),
             provider: Some(agent.harness.provider.clone()),
             session_policy: agent.selected_session_policy().unwrap_or_default(),

@@ -50,14 +50,38 @@ function source() {
   };
 }
 
-// Count the complete JSON, including escaping and all other fields, not about alone.
+// Fill across bounded portable fields; no individual profile may exceed kind-0's
+// readable content limit. Preserve exact serialized UTF-8 and escape accounting.
 function fillEnvelope(snapshot, token, extra = 0) {
-  snapshot.members[0].profile.about = "";
-  const remaining =
-    envelopeLimit - Buffer.byteLength(JSON.stringify(snapshot)) + extra;
-  const cost = Buffer.byteLength(JSON.stringify(token)) - 2;
-  snapshot.members[0].profile.about =
-    token.repeat(Math.floor(remaining / cost)) + "a".repeat(remaining % cost);
+  snapshot.members = Array.from({ length: 32 }, () =>
+    structuredClone(snapshot.members[0]),
+  );
+  for (const member of snapshot.members) {
+    member.profile.about = "";
+    member.definition.systemPrompt = "";
+    member.memory.entries[0].body = "";
+  }
+  const fields = snapshot.members.flatMap((member) => [
+    [member.definition, "systemPrompt", promptLimit],
+    [member.profile, "about", 64 * 1024],
+    [member.memory.entries[0], "body", 64 * 1024],
+  ]);
+  for (const [object, field, maxBytes] of fields) {
+    const remaining =
+      envelopeLimit + extra - Buffer.byteLength(JSON.stringify(snapshot));
+    if (remaining <= 0) break;
+    const cost = Buffer.byteLength(JSON.stringify(token)) - 2;
+    const count = Math.min(
+      Math.floor(remaining / cost),
+      Math.floor(maxBytes / Buffer.byteLength(token)),
+    );
+    object[field] = token.repeat(count);
+    const residual =
+      envelopeLimit + extra - Buffer.byteLength(JSON.stringify(snapshot));
+    object[field] += "a".repeat(
+      Math.min(residual, maxBytes - Buffer.byteLength(object[field])),
+    );
+  }
   assert.equal(
     Buffer.byteLength(JSON.stringify(snapshot)),
     envelopeLimit + extra,
@@ -264,6 +288,15 @@ test("native-validated team boundaries survive the shared parser and real import
     }
   }
   for (const restoreMemory of [false, true]) {
+    await t.test(
+      `oversized second profile creates no members restore=${restoreMemory}`,
+      async () => {
+        const snapshot = source();
+        snapshot.members.push(structuredClone(snapshot.members[0]));
+        snapshot.members[1].profile.about = '"'.repeat(70 * 1024);
+        await check(snapshot, false, restoreMemory);
+      },
+    );
     await t.test(
       `about beyond former 2048-byte cap restore=${restoreMemory}`,
       async () => {

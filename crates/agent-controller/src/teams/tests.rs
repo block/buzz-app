@@ -806,3 +806,209 @@ fn maximal_native_member_settings_survive_the_creation_receipt_and_reopen() {
     assert!(!agent.enabled);
     assert!(!agent.starts_on_launch());
 }
+
+#[test]
+fn profile_content_bound_preflights_every_member_and_roundtrips_at_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let mut snapshot = TeamSnapshot {
+        format: "buzz-team-snapshot".into(),
+        version: 1,
+        team: TeamMeta {
+            name: "Boundary".into(),
+            description: None,
+            instructions: None,
+        },
+        members: vec![member(), member()],
+    };
+    let name = snapshot.members[1].profile.display_name.clone();
+    let empty_bytes = crate::profile::initial_content(&name, None, None)
+        .unwrap()
+        .len();
+    // Escaped quotes cost two bytes each, unlike the raw about length.
+    let about = format!(
+        "{}a",
+        "\"".repeat((crate::profile::MAX_PROFILE_CONTENT_BYTES - empty_bytes - 11) / 2)
+    );
+    snapshot.members[1].profile.about = Some(about);
+    let content =
+        crate::profile::initial_content(&name, snapshot.members[1].profile.about.as_deref(), None)
+            .unwrap();
+    assert_eq!(content.len(), crate::profile::MAX_PROFILE_CONTENT_BYTES);
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    let decoded = TeamSnapshot::decode(&bytes).unwrap();
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    let mut mapped = edit(root.path());
+    mapped.name = name.clone();
+    control
+        .create_bundle_member(
+            &prepared,
+            mapped,
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "boundary",
+            &BundleMember {
+                team: "boundary".into(),
+                member: decoded.members[1].clone(),
+                instructions: String::new(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let target = control.creation_profile(&prepared.id).unwrap();
+    let event = target.event(&prepared.key, &[]).unwrap();
+    assert_eq!(
+        event["content"].as_str().unwrap().len(),
+        crate::profile::MAX_PROFILE_CONTENT_BYTES
+    );
+    target
+        .confirm(std::slice::from_ref(&event), event["id"].as_str().unwrap())
+        .unwrap();
+    control
+        .profile_published(&prepared.id, target.revision)
+        .unwrap();
+    assert!(control.creation_profile(&prepared.id).is_err());
+
+    snapshot.members[1]
+        .profile
+        .about
+        .as_mut()
+        .unwrap()
+        .push('"');
+    assert!(TeamSnapshot::decode(&serde_json::to_vec(&snapshot).unwrap()).is_err());
+    let clean_root = tempfile::tempdir().unwrap();
+    assert!(controller(clean_root.path())
+        .store
+        .agents()
+        .unwrap()
+        .is_empty());
+    // Even a direct bundle create refuses the oversized member before insertion.
+    let mut clean_control = controller(clean_root.path());
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    assert!(clean_control
+        .create_bundle_member(
+            &prepared,
+            edit(clean_root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "rejected",
+            &BundleMember {
+                team: "boundary".into(),
+                member: snapshot.members[1].clone(),
+                instructions: String::new(),
+                keep_allowlist: false,
+            },
+        )
+        .is_err());
+    assert!(clean_control.store.agents().unwrap().is_empty());
+}
+
+#[test]
+fn native_export_rejects_unrepresentable_runtime_settings_without_leaking_values() {
+    let mut agent = crate::store::tests::fixture();
+    let defaults = crate::agent_defaults::AgentDefaults::default();
+    let exported = snapshot_member(&agent, &defaults).unwrap();
+    let decoded = TeamSnapshot::decode(
+        &serde_json::to_vec(&TeamSnapshot {
+            format: "buzz-team-snapshot".into(),
+            version: 1,
+            team: TeamMeta {
+                name: "Safe".into(),
+                description: None,
+                instructions: None,
+            },
+            members: vec![exported.clone()],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        decoded.members[0].definition.runtime.as_deref(),
+        Some("buzz-agent")
+    );
+    assert_eq!(
+        decoded.members[0].definition.model.as_deref(),
+        Some("test-model")
+    );
+    agent.harness.command = "/opt/private/buzz-agent.exe".into();
+    assert_eq!(
+        snapshot_member(&agent, &defaults)
+            .unwrap()
+            .definition
+            .runtime
+            .as_deref(),
+        Some("buzz-agent")
+    );
+    agent.harness.command = "/opt/private/local-worker".into();
+    assert!(snapshot_member(&agent, &defaults)
+        .unwrap_err()
+        .contains("harness"));
+    agent.harness.command = "buzz-agent".into();
+    agent.imported["record"]["effort_level"] = json!("high");
+    assert!(snapshot_member(&agent, &defaults)
+        .unwrap_err()
+        .contains("effort"));
+    agent.imported["record"]["effort_level"] = serde_json::Value::Null;
+    let mut inherited = defaults.clone();
+    inherited.effort = "high".into();
+    assert!(snapshot_member(&agent, &inherited)
+        .unwrap_err()
+        .contains("effort"));
+    agent
+        .environment
+        .insert("BUZZ_AGENT_MODEL".into(), "synthetic-secret-model".into());
+    let error = snapshot_member(&agent, &defaults).err().unwrap();
+    assert!(error.contains("environment-selected"));
+    assert!(!error.contains("synthetic-secret-model"));
+    agent.environment.clear();
+    agent.environment.insert(
+        "BUZZ_AGENT_PROVIDER".into(),
+        "synthetic-secret-provider".into(),
+    );
+    assert!(snapshot_member(&agent, &defaults)
+        .unwrap_err()
+        .contains("environment-selected"));
+}
+
+#[test]
+fn merged_existing_profile_overflow_keeps_import_about_pending() {
+    let root = tempfile::tempdir().unwrap();
+    let mut control = controller(root.path());
+    let prepared = NewAgent::prepare("https://relay.example", &owner()).unwrap();
+    let mut snapshot = member();
+    snapshot.profile.about = Some("new about".into());
+    control
+        .create_bundle_member(
+            &prepared,
+            edit(root.path()),
+            &crate::secret::test_attestation(prepared.key.pubkey()),
+            "merged",
+            &BundleMember {
+                team: "merged".into(),
+                member: snapshot,
+                instructions: String::new(),
+                keep_allowlist: false,
+            },
+        )
+        .unwrap();
+    let target = control.creation_profile(&prepared.id).unwrap();
+    let existing = prepared
+        .key
+        .profile(
+            "Fixture",
+            None,
+            Some(&"x".repeat(crate::profile::MAX_PROFILE_CONTENT_BYTES - 160)),
+            &target.auth,
+            &[],
+        )
+        .unwrap();
+    // Updating about with escaped characters grows the full merged map while
+    // retaining the verified existing profile's other fields.
+    let target = crate::CreationProfile {
+        about: Some("\"".repeat(crate::profile::MAX_PROFILE_CONTENT_BYTES / 2)),
+        ..target
+    };
+    assert!(target
+        .event(&prepared.key, &[existing])
+        .unwrap_err()
+        .contains("readable limit"));
+    assert!(control.creation_profile(&prepared.id).is_ok());
+}

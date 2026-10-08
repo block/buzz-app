@@ -1002,3 +1002,20 @@ it("a gateway 401 after a sent write re-checks access and keeps the write", asyn
   fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
   await expectIdenticalRetry("directAction");
 });
+
+it("a gateway 401 on a write re-probes once, even when the probe is refused too", async () => {
+  routes.directAction = () =>
+    fail({ category: "ambiguous", status: 401, authLost: true });
+  const { staff } = mountSwitchable();
+  await openCommunityActions();
+  routes.probe = () =>
+    fail({ category: "ambiguous", status: 401, authLost: true });
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await screen.findByText("Access denied");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(sent("probe")).toHaveLength(2);
+  const context = staff.context();
+  expect(
+    context && staff.writes(context).get("direct action")?.request,
+  ).toEqual(sent("directAction")[0]);
+});

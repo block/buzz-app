@@ -22,7 +22,7 @@ connection" section of [identity.md](identity.md) for the address rules.
    identity; changing either one, including an identity switch on the same
    relay, replaces the console and probes for the new identity unless its role
    is already remembered.
-3. A 401 or 403 from any signed request the console sends (reads, writes,
+3. A 401 or 403, from the relay or a gateway in front of it, on any signed request the console sends (reads, writes,
    attachment previews and Save) re-probes in the background. An unchanged
    result keeps the current session so open views do not reload and the
    re-probe cannot repeat itself.

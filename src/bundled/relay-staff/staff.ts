@@ -150,8 +150,7 @@ function toAccess(
   if (outcome.ok)
     return { state: "authorized", probe: outcome.value as ProbeDto };
   const failure = outcome.failure;
-  if (failure.category === "unauthorized" || failure.category === "forbidden")
-    return { state: "denied" };
+  if (failure.authLost) return { state: "denied" };
   if (unsupported(failure)) return { state: "notAdminApi" };
   return { state: "unreachable", failure };
 }

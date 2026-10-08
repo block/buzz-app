@@ -54,12 +54,11 @@ export function nativeRelayStaff(): RelayStaffBackend {
         ? { ok: true, value: Uint8Array.from(result.value) }
         : result;
     },
-    saveAttachment: async (context, ref, suggestedName) => {
+    saveAttachment: async (context, ref) => {
       try {
         return await invoke<SaveResult>("relay_admin_save_attachment", {
           context,
           attachment: ref,
-          suggestedName,
         });
       } catch (error) {
         return { state: "failed", failure: notSent(error) };

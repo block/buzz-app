@@ -437,7 +437,8 @@ test("PR conversation hierarchy and disclosures survive themes, narrow panes and
       await expect(trigger).toHaveAttribute("aria-expanded", "true");
       await expect.poll(caretPosition).toEqual(collapsed);
       await expect.poll(baseline).toEqual(collapsedBaseline);
-      await trigger.click();
+      // At enlarged text the header's center can land on the author link.
+      await trigger.locator(":scope > svg").click();
       await expect(trigger).toHaveAttribute("aria-expanded", "false");
       await expect.poll(caretPosition).toEqual(collapsed);
     }

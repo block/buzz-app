@@ -552,7 +552,7 @@ function AgentBuild({
         open={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}
-        description="This removes its key from this device. It can't be undone."
+        description="This removes it from every channel, archives it so it no longer appears in member lists or mention suggestions, and deletes its key from this device. It can't be undone."
         preventClose={removing}
         actions={
           <>

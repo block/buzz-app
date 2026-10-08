@@ -10,11 +10,13 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import { removeAgentFromChannels } from "../agents/relay-removal";
 import { relayOrigin } from "../communities/destination";
 import type { RelayEvent } from "../relay/events";
 import type { LiveBatch } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
 import type { RelayData } from "../relay/service";
+import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -167,6 +169,8 @@ declare module "@deepseek-ai/cordis" {
 const QUEUE_LIMIT = 32;
 /** The spec asks for at least the agent's 2,048 most recent events. */
 const SEEN_LIMIT = 2_048;
+/** Bounds Delete's relay steps, which otherwise wait on the outbox. */
+const REMOVE_TIMEOUT_MS = 60_000;
 /** Runs per agent per minute; bounds two agents that answer each other. */
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
@@ -184,7 +188,7 @@ type Binding = {
   scope: string;
   origin: string;
   viewer: string;
-  session: unknown;
+  session: RelaySession;
 };
 type Job = { trigger: Trigger; channelId?: string };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
@@ -372,8 +376,30 @@ export class Agents2Service extends Service implements Agents2 {
     if (renamed) await this.publishProfile(pubkey);
   }
 
+  /** As harness Delete does: leave every channel, then archive the identity so
+   * it drops out of member lists and mention suggestions, then delete the key.
+   * Each relay step is confirmed first; the key is the only irreversible step,
+   * so any earlier failure leaves Delete retryable. */
   async remove(pubkey: string) {
     if (!this.native) throw new Error("Agents run only in the desktop app");
+    const session = this.binding?.session;
+    if (!this.find(pubkey) || !session)
+      throw new Error("Open this agent's community to delete it");
+    const signal = AbortSignal.timeout(REMOVE_TIMEOUT_MS);
+    await removeAgentFromChannels(session, pubkey, signal);
+    // The archive cache is not live; Delete needs a read started now.
+    const { archives } = session;
+    await archives.ensure();
+    await archives.refresh();
+    signal.throwIfAborted();
+    if (archives.state(pubkey) !== "archived") {
+      // Without an owner-attested profile the agent is not in the directory, so
+      // there is nothing to hide (and no consent path to archive it with).
+      const consent = archives.writable
+        ? await archives.consent(pubkey, signal)
+        : null;
+      if (consent) await archives.request("archive", pubkey, signal);
+    }
     await this.native.remove(pubkey);
     this.identities = this.identities.filter(
       (saved) => saved.pubkey !== pubkey,

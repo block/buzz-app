@@ -8,6 +8,14 @@ import type { AgentIdentity, AgentsNative } from "./native";
 import { Agents2Service, type AgentType, type Delivery } from "./service";
 import { memoryStorage } from "./test-fakes";
 
+// Delete's channel step has its own coverage (relay-removal); here only its
+// place in the order matters.
+const steps: string[] = [];
+const leaveChannels = vi.hoisted(() => vi.fn());
+vi.mock("../agents/relay-removal", () => ({
+  removeAgentFromChannels: leaveChannels,
+}));
+
 const viewer = "a".repeat(64);
 const other = "b".repeat(64);
 const bot = "c".repeat(64);
@@ -28,7 +36,24 @@ const event = (id: string, patch: Partial<RelayEvent> = {}) =>
 function fakeRelay() {
   const live = new Set<LiveListener>();
   const changes = new Set<() => void>();
+  const archived = new Set<string>();
+  const archives = {
+    archived,
+    consent: vi.fn(
+      async () => ({ auth: ["auth"] }) as { auth: string[] } | null,
+    ),
+    ensure: vi.fn(async () => {}),
+    refresh: vi.fn(async () => {}),
+    state: (pubkey: string) =>
+      archived.has(pubkey) ? "archived" : "not-archived",
+    writable: true,
+    request: vi.fn(async (_: string, pubkey: string) => {
+      steps.push("archive");
+      archived.add(pubkey);
+    }),
+  };
   const session = {
+    archives,
     subscribeLive(listener: LiveListener) {
       live.add(listener);
       return () => live.delete(listener);
@@ -61,6 +86,7 @@ function fakeRelay() {
     emit: (batch: LiveBatch) => {
       for (const listener of live) listener(batch);
     },
+    archives,
   };
 }
 
@@ -80,7 +106,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
       identities.push(identity);
       return identity;
     }),
-    remove: vi.fn(async () => {}),
+    remove: vi.fn(async () => void steps.push("key")),
     publish: vi.fn(async (pubkey: string, template: { kind: number }) =>
       event(`p${++published}`, { pubkey, kind: template.kind }),
     ),
@@ -134,6 +160,7 @@ async function setup({
     run,
     emit: fake.emit,
     connect: fake.connect,
+    archives: fake.archives,
     ctx,
   };
 }
@@ -142,7 +169,12 @@ async function setup({
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-beforeEach(() => vi.useRealTimers());
+beforeEach(() => {
+  vi.useRealTimers();
+  steps.length = 0;
+  leaveChannels.mockReset();
+  leaveChannels.mockImplementation(async () => void steps.push("channels"));
+});
 afterEach(() => vi.useRealTimers());
 
 it("creates an agent with the community's attestation and its type's defaults", async () => {
@@ -536,13 +568,60 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   expect(Object.keys(stored().timers)).toEqual(["watch/stale"]);
 });
 
-it("removes the agent's key and record", async () => {
-  const { service, native, storage } = await setup();
+it("leaves its channels and archives it before removing the agent's key and record", async () => {
+  const { service, native, storage, archives } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.remove(bot);
+  expect(steps).toEqual(["channels", "archive", "key"]);
+  expect(leaveChannels).toHaveBeenCalledWith(
+    expect.objectContaining({ archives }),
+    bot,
+    expect.any(AbortSignal),
+  );
+  expect(archives.request).toHaveBeenCalledWith(
+    "archive",
+    bot,
+    expect.any(AbortSignal),
+  );
   expect(native.remove).toHaveBeenCalledWith(bot);
   expect(service.snapshot().agents).toEqual([]);
   expect(storage.getItem("buzz.agents2.v1")).not.toContain(bot);
+});
+
+it("keeps the key when a relay step of Delete fails, and retries without archiving twice", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  leaveChannels.mockRejectedValueOnce(new Error("Channel removal refused"));
+  await expect(service.remove(bot)).rejects.toThrow("Channel removal refused");
+  archives.request.mockRejectedValueOnce(new Error("Archive refused"));
+  await expect(service.remove(bot)).rejects.toThrow("Archive refused");
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(service.find(bot)).toBeDefined();
+  archives.request.mockClear();
+  archives.archived.add(bot);
+  await service.remove(bot);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(native.remove).toHaveBeenCalledWith(bot);
+});
+
+it("deletes an agent with no owner-attested profile without archiving it", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  archives.consent.mockResolvedValueOnce(null);
+  await service.remove(bot);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(native.remove).toHaveBeenCalledWith(bot);
+});
+
+it("refuses Delete outside the agent's community", async () => {
+  const { service, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  connect(false);
+  await expect(service.remove(bot)).rejects.toThrow(
+    "Open this agent's community to delete it",
+  );
+  expect(leaveChannels).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
 });
 
 it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {

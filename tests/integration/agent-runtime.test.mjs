@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +171,122 @@ test("desktop dev builds Goose with the dev profile; packaged preparation keeps 
   writeFileSync(path.join(sources, "goose/broken-checkout"), "");
   assert.match(run("--dev"), /Verified inputs staged/);
   assert.ok(!existsSync(path.join(sources, "goose/broken-checkout")));
+});
+
+test("overlapping preparation cannot replace another build's source checkout", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  runtimeFixture(directory);
+  const server = createServer();
+  const started = once(server, "connection");
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  writeFileSync(
+    path.join(directory, "hold-build"),
+    String(server.address().port),
+  );
+  const child = spawn(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs", "--dev"],
+    {
+      cwd: directory,
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completed = once(child, "close");
+  let socket;
+  const marker = path.join(
+    directory,
+    "target/agent-runtime-src/buzz/broken-checkout",
+  );
+  try {
+    [socket] = await Promise.race([
+      started,
+      completed.then(([code]) => {
+        throw new Error(
+          `Preparation exited before reaching the compiler (${code}): ${stderr}`,
+        );
+      }),
+    ]);
+    writeFileSync(marker, "owned by the first preparation");
+    const competing = spawnSync(
+      process.execPath,
+      ["scripts/build-agent-runtime.mjs"],
+      {
+        cwd: directory,
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
+    assert.ifError(competing.error);
+    assert.notEqual(
+      competing.status,
+      0,
+      "overlapping preparation must be rejected",
+    );
+    assert.match(competing.stderr, /Runtime preparation already in progress/);
+    assert.equal(
+      readFileSync(marker, "utf8"),
+      "owned by the first preparation",
+    );
+    assert.equal(
+      readFileSync(path.join(directory, "build-calls.jsonl"), "utf8")
+        .trim()
+        .split("\n").length,
+      1,
+    );
+  } finally {
+    socket?.end("release");
+    if (!socket) child.kill();
+    server.close();
+    const [code] = await completed;
+    assert.equal(code, 0, stderr);
+  }
+  // An abandoned lock is retained until the operator explicitly clears it.
+  const lock = path.join(directory, "target/agent-runtime-prepare.lock");
+  mkdirSync(lock);
+  const abandoned = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  assert.ifError(abandoned.error);
+  assert.notEqual(abandoned.status, 0);
+  assert.match(
+    abandoned.stderr,
+    /stop its Git\/Cargo processes before removing this lock/,
+  );
+  assert.ok(existsSync(marker));
+  rmSync(lock, { recursive: true });
+  const next = spawnSync(
+    process.execPath,
+    ["scripts/build-agent-runtime.mjs"],
+    {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  assert.equal(next.status, 0, next.stderr);
+  const manifest = JSON.parse(
+    readFileSync(
+      path.join(directory, "src-tauri/resources/agent-runtime/manifest.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(manifest.goose.profile, "lean");
+  assert.ok(
+    !existsSync(marker),
+    "the later preparation can repair its own checkout",
+  );
 });
 
 test("runtime output ignores a user-level build target and survives an interrupted build", (t) => {

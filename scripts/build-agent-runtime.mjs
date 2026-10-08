@@ -168,106 +168,128 @@ async function publish(source, directory) {
   );
   return manifest;
 }
-if (await verifiedBundle(destination)) {
-  console.log(`Agent runtime ready (${spec.revision}, ${target})`);
-  process.exit(0);
-}
-const cache = cachedBundle();
-const existing = cache && (await lstat(cache).catch(() => undefined));
-const cached = existing && (await verifiedBundle(cache));
-if (cached) {
-  // A copy that fails (e.g. the entry was removed mid-copy) rebuilds below.
-  const restored = await publish(cache, destination).catch(() => undefined);
-  if (restored) {
-    console.log(
-      `Verified inputs restored from ${cache} (${spec.revision}, ${target})`,
-    );
-    process.exit(0);
+async function prepare() {
+  if (await verifiedBundle(destination)) {
+    console.log(`Agent runtime ready (${spec.revision}, ${target})`);
+    return;
   }
-} else if (existing) {
-  // Seen before verifying: entries appear whole by rename, so this one was
-  // edited. A key missing at check time is never removed, since a concurrent
-  // build may publish it.
-  await rm(cache, { recursive: true, force: true });
-}
-console.log(
-  "Preparing the agent runtime; the first build can take several minutes.",
-);
-// Sources persist at stable paths beside the build target, so after a pin bump
-// Cargo recompiles only crates whose files changed, and an interrupted build
-// resumes. This checkout's Cargo config applies but only sets the target
-// directory, which CARGO_TARGET_DIR overrides.
-const sources = join(root, "target/agent-runtime-src");
-async function checkout(directory, repository, revision) {
-  // A checkout interrupted mid-command can leave Git locks behind; start over once.
-  for (const retry of [false, true]) {
-    try {
-      await mkdir(directory, { recursive: true });
-      await run("git", ["init", "--quiet"], false, directory);
-      await run(
-        "git",
-        ["fetch", "--quiet", "--depth", "1", repository, revision],
-        false,
-        directory,
-      );
-      await run(
-        "git",
-        ["checkout", "--quiet", "--force", "--detach", revision],
-        false,
-        directory,
+  const cache = cachedBundle();
+  const existing = cache && (await lstat(cache).catch(() => undefined));
+  const cached = existing && (await verifiedBundle(cache));
+  if (cached) {
+    // A copy that fails (e.g. the entry was removed mid-copy) rebuilds below.
+    const restored = await publish(cache, destination).catch(() => undefined);
+    if (restored) {
+      console.log(
+        `Verified inputs restored from ${cache} (${spec.revision}, ${target})`,
       );
       return;
-    } catch (error) {
-      if (retry) throw error;
-      await rm(directory, { recursive: true, force: true });
+    }
+  } else if (existing) {
+    // Seen before verifying: entries appear whole by rename, so this one was
+    // edited. A key missing at check time is never removed, since a concurrent
+    // build may publish it.
+    await rm(cache, { recursive: true, force: true });
+  }
+  console.log(
+    "Preparing the agent runtime; the first build can take several minutes.",
+  );
+  // Sources persist at stable paths beside the build target, so after a pin bump
+  // Cargo recompiles only crates whose files changed, and an interrupted build
+  // resumes. This checkout's Cargo config applies but only sets the target
+  // directory, which CARGO_TARGET_DIR overrides.
+  const sources = join(root, "target/agent-runtime-src");
+  async function checkout(directory, repository, revision) {
+    // A checkout interrupted mid-command can leave Git locks behind; start over once.
+    for (const retry of [false, true]) {
+      try {
+        await mkdir(directory, { recursive: true });
+        await run("git", ["init", "--quiet"], false, directory);
+        await run(
+          "git",
+          ["fetch", "--quiet", "--depth", "1", repository, revision],
+          false,
+          directory,
+        );
+        await run(
+          "git",
+          ["checkout", "--quiet", "--force", "--detach", revision],
+          false,
+          directory,
+        );
+        return;
+      } catch (error) {
+        if (retry) throw error;
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  }
+  const source = join(sources, "buzz");
+  await checkout(source, spec.repository, spec.revision);
+  await run(cargo, buildArgs, false, source);
+  // Goose is an independent upstream pin, built with the same locked toolchain.
+  const gooseSource = join(sources, "goose");
+  await checkout(gooseSource, goose.repository, goose.revision);
+  await run(cargo, gooseBuildArgs, false, gooseSource, {
+    ...env,
+    OPENSSL_STATIC: "1",
+    OPENSSL_NO_VENDOR: "0",
+  });
+  const output = join(env.CARGO_TARGET_DIR, target, "release");
+  const gooseBinary = join(
+    env.CARGO_TARGET_DIR,
+    target,
+    // Cargo names the dev profile's output directory "debug".
+    goose.profile === "dev" ? "debug" : goose.profile,
+    process.platform === "win32" ? "goose-acp.exe" : "goose-acp",
+  );
+  if (process.platform === "darwin") {
+    const libraries = await run("otool", ["-L", gooseBinary], true);
+    for (const line of libraries.trim().split("\n").slice(1)) {
+      const library = line.trim().split(" (compatibility version")[0];
+      if (
+        !library.startsWith("/usr/lib/") &&
+        !library.startsWith("/System/Library/")
+      )
+        throw new Error(`Unbundled Goose dependency: ${library}`);
+    }
+  }
+  await copyFile(gooseBinary, join(output, basename(gooseBinary)));
+  await publish(output, destination);
+  console.log(
+    `Verified inputs staged at ${destination} (${spec.revision}, ${target})`,
+  );
+  // Entries are published whole by rename; caching is best-effort.
+  if (cache && !cached) {
+    const entry = `${cache}.${process.pid}.new`;
+    try {
+      await publish(destination, entry);
+      // Renaming onto an existing entry fails: a concurrent build published first.
+      await rename(entry, cache);
+    } catch {
+      // Keep the other build's entry.
+    } finally {
+      await rm(entry, { recursive: true, force: true });
     }
   }
 }
-const source = join(sources, "buzz");
-await checkout(source, spec.repository, spec.revision);
-await run(cargo, buildArgs, false, source);
-// Goose is an independent upstream pin, built with the same locked toolchain.
-const gooseSource = join(sources, "goose");
-await checkout(gooseSource, goose.repository, goose.revision);
-await run(cargo, gooseBuildArgs, false, gooseSource, {
-  ...env,
-  OPENSSL_STATIC: "1",
-  OPENSSL_NO_VENDOR: "0",
-});
-const output = join(env.CARGO_TARGET_DIR, target, "release");
-const gooseBinary = join(
-  env.CARGO_TARGET_DIR,
-  target,
-  // Cargo names the dev profile's output directory "debug".
-  goose.profile === "dev" ? "debug" : goose.profile,
-  process.platform === "win32" ? "goose-acp.exe" : "goose-acp",
-);
-if (process.platform === "darwin") {
-  const libraries = await run("otool", ["-L", gooseBinary], true);
-  for (const line of libraries.trim().split("\n").slice(1)) {
-    const library = line.trim().split(" (compatibility version")[0];
-    if (
-      !library.startsWith("/usr/lib/") &&
-      !library.startsWith("/System/Library/")
-    )
-      throw new Error(`Unbundled Goose dependency: ${library}`);
-  }
+
+// Fail closed on overlap or interruption: never remove another process's Git
+// checkout or staging files. A killed process can leave Cargo/Git children alive,
+// so stale locks require explicit cleanup after those processes have stopped.
+const preparationLock = join(root, "target/agent-runtime-prepare.lock");
+await mkdir(dirname(preparationLock), { recursive: true });
+try {
+  await mkdir(preparationLock);
+} catch (error) {
+  if (error.code !== "EEXIST") throw error;
+  throw new Error(
+    `Runtime preparation already in progress: ${preparationLock}. Retry after it finishes. If interrupted, stop its Git/Cargo processes before removing this lock.`,
+  );
 }
-await copyFile(gooseBinary, join(output, basename(gooseBinary)));
-await publish(output, destination);
-console.log(
-  `Verified inputs staged at ${destination} (${spec.revision}, ${target})`,
-);
-// Entries are published whole by rename; caching is best-effort.
-if (cache && !cached) {
-  const entry = `${cache}.${process.pid}.new`;
-  try {
-    await publish(destination, entry);
-    // Renaming onto an existing entry fails: a concurrent build published first.
-    await rename(entry, cache);
-  } catch {
-    // Keep the other build's entry.
-  } finally {
-    await rm(entry, { recursive: true, force: true });
-  }
+try {
+  await writeFile(join(preparationLock, "owner"), `${process.pid}\n`);
+  await prepare();
+} finally {
+  await rm(preparationLock, { recursive: true, force: true });
 }

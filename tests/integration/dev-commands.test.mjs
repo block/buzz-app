@@ -84,7 +84,14 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.in
     // The fixture is not a Git checkout, so the launcher hashes its own root for
     // its port; Node resolves that through symlinks when loading the script.
     const root = realpathSync(directory);
-    return { ...result, calls, built, port: portForPath(root) };
+    const manifestPath = path.join(
+      directory,
+      "src-tauri/resources/agent-runtime/manifest.json",
+    );
+    const gooseProfile = existsSync(manifestPath)
+      ? JSON.parse(readFileSync(manifestPath, "utf8")).goose.profile
+      : undefined;
+    return { ...result, calls, built, gooseProfile, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -144,6 +151,30 @@ test("desktop derives a port from the worktree path and leaves the OS scheme alo
   assert.deepEqual(config, overlay(port));
   assert.match(stdout, announced(port));
   assert.doesNotMatch(stdout, /deep links open as/);
+});
+
+test("desktop preparation follows Tauri's build mode across runner boundaries", () => {
+  for (const [args, profile] of [
+    [[], "dev"],
+    [["--features", "", "--release"], "lean"],
+    [["--release"], "lean"],
+    [["--runner", "echo", "--release"], "lean"],
+    [["--config", "custom.json", "--release"], "lean"],
+    [["--features", "one", "two", "--release"], "lean"],
+    [["--features=one", "two", "--release"], "dev"],
+    [["-vf", "one", "two", "--release"], "lean"],
+    [["-fone", "two", "--release"], "dev"],
+    [["-vr", "echo", "--release"], "lean"],
+    [["-cconfig.json", "--release"], "lean"],
+    [["--", "--release"], "dev"],
+    [["--runner", "echo", "hello", "--release"], "dev"],
+    [["--runner=echo", "hello", "--release"], "dev"],
+    [["--release", "--", "--", "--release"], "lean"],
+  ]) {
+    const result = launched("desktop", ...args);
+    assert.equal(result.gooseProfile, profile, JSON.stringify(args));
+    assert.deepEqual(result.call.slice(4), args);
+  }
 });
 
 test("stock tauri.conf.json starts Vite on its own devUrl port without the launcher", () => {

@@ -16,6 +16,32 @@ if (
 }
 const port = values.port === undefined ? undefined : Number(values.port);
 
+// Tauri's first positional argument starts implicit runner arguments too.
+let release = false;
+for (let index = 0; index < forwarded.length; index++) {
+  const arg = forwarded[index];
+  // Short value options may follow boolean flags, e.g. `-vr echo` or `-vf a b`.
+  const shortValue = arg.match(/^-[vheV]*([rtcf])(.*)$/);
+  if (arg === "--release") release = true;
+  else if (
+    ["--runner", "--target", "--config", "--additional-watch-folders"].includes(
+      arg,
+    ) ||
+    (shortValue && shortValue[1] !== "f" && !shortValue[2])
+  )
+    index++;
+  else if (
+    arg === "--features" ||
+    (shortValue?.[1] === "f" && !shortValue[2])
+  ) {
+    while (
+      index + 1 < forwarded.length &&
+      !forwarded[index + 1].startsWith("-")
+    )
+      index++;
+  } else if (!arg.startsWith("-")) break;
+}
+
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 // Prepare resources before Tauri can compile or observe an already-running Vite.
 // Its dev-server readiness timeout must not include a cold runtime build.
@@ -24,7 +50,7 @@ if (!help) {
     process.execPath,
     [
       fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url)),
-      "--dev",
+      ...(release ? [] : ["--dev"]),
     ],
     { stdio: "inherit" },
   );

@@ -25,10 +25,21 @@ export function runtimeFixture(directory) {
   tool(
     "cargo",
     `
+(async () => {
 const fs = require("node:fs");
 const path = require("node:path");
 const fixture = ${JSON.stringify(directory)};
 fs.appendFileSync(path.join(fixture, "build-calls.jsonl"), JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }) + "\\n");
+const hold = path.join(fixture, "hold-build");
+if (fs.existsSync(hold)) {
+  const port = Number(fs.readFileSync(hold, "utf8"));
+  fs.unlinkSync(hold);
+  await new Promise((resolve, reject) => {
+    const socket = require("node:net").connect(port, "127.0.0.1");
+    socket.once("data", () => { socket.end(); resolve(); });
+    socket.once("error", reject);
+  });
+}
 if (fs.existsSync(path.join(fixture, "fail-build"))) process.exit(17);
 // Shell compiler overrides must not reach a build whose bundle other worktrees reuse.
 if (["RUSTFLAGS", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_OPT_LEVEL"].some((key) => key in process.env)) process.exit(18);
@@ -58,6 +69,7 @@ const names = binFlag >= 0 ? [process.argv[binFlag + 1]]
     ? [process.argv[index + 1] === "buzz-cli" ? "buzz" : process.argv[index + 1]] : []);
 for (const name of names) fs.writeFileSync(path.join(output,
   process.platform === "win32" ? name + ".exe" : name), "fixture " + name + " " + fixture, { mode: 0o755 });
+})().catch((error) => { console.error(error); process.exit(1); });
 `,
   );
   tool(

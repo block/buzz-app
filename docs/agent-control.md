@@ -63,7 +63,9 @@ listener into a shared live provider conversation across eligible public-channel
 turns. Thread queues, cancellation, typing and replies keep the triggering route;
 community context does not grant membership or extra access. Private and unknown
 channels keep thread histories; each DM keeps its own conversation. Visibility is
-refreshed before sharing and failed refreshes are not treated as public.
+refreshed before sharing. Sharing requires one exact `public` flag and one exact
+`t=stream` tag, with no hidden marker; missing, malformed, contradictory or failed
+reads remain isolated.
 
 This policy forces **one worker**, even with an imported or environment worker
 count, and disables idle-pool sleep. Overlapping turns wait for that worker;

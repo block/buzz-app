@@ -69,7 +69,8 @@ mod tests {
             fs::write(
                 directory.join("manifest.json"),
                 serde_json::to_vec(&json!({
-                    "version": 2, "revision": source.revision, "goose": source.goose,
+                    "version": 3, "patchSha256": crate::bundle::community_patch_sha256(),
+                    "revision": source.revision, "goose": source.goose,
                     "target": env!("BUZZ_RUNTIME_TARGET"), "files": files,
                 }))
                 .unwrap(),

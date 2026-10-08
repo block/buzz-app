@@ -398,6 +398,13 @@ export function createSidebarPreferencesStore(
         };
         project();
         return retained(confirmed);
+      })
+      .catch((error) => {
+        if (!closed && generation === writeGeneration) {
+          mutation++;
+          project();
+        }
+        throw error;
       });
     writeQueue = run.then(
       () => undefined,

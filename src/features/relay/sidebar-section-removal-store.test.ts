@@ -202,6 +202,98 @@ it("does not remove a section if its sort reset fails, and retries safely", asyn
   }
 });
 
+it.each(["success", "failure"] as const)(
+  "settles a stale refresh after removal sort reset fails (read: %s)",
+  async (outcome) => {
+    const entered = gate<void>();
+    const held = gate<SidebarPreferences>();
+    const read = vi.fn(async () => data);
+    const remove = vi
+      .fn<SidebarSectionRemovalMutator>()
+      .mockResolvedValue(removed);
+    const store = createSidebarPreferencesStore(
+      read,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => {
+        throw new Error("sort offline");
+      },
+      undefined,
+      remove,
+    );
+    try {
+      await store.queries.ensure();
+      read.mockImplementationOnce(async () => {
+        entered.resolve();
+        await held.promise;
+        if (outcome === "failure") throw new Error("stale read failed");
+        return { ...data, assignments: {} };
+      });
+      const refresh = store.queries.refresh();
+      await entered.promise;
+      expect(store.queries.snapshot().status).toBe("loading");
+      await expect(store.queries.removeSection("work")).rejects.toThrow(
+        "sort offline",
+      );
+      held.resolve(data);
+      await refresh;
+      expect(remove).not.toHaveBeenCalled();
+      expect(store.queries.snapshot()).toEqual({ status: "ready", data });
+      expect(store.queries.removeSectionWritable).toBe(true);
+    } finally {
+      held.resolve(data);
+      store.dispose();
+    }
+  },
+);
+
+it("failed removal settlement preserves a concurrent full-read failure", async () => {
+  const entered = gate<void>();
+  const held = gate<void>();
+  const read = vi.fn(async () => data);
+  const remove = vi
+    .fn<SidebarSectionRemovalMutator>()
+    .mockResolvedValue(removed);
+  const store = createSidebarPreferencesStore(
+    read,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      entered.resolve();
+      await held.promise;
+      throw new Error("sort offline");
+    },
+    undefined,
+    remove,
+  );
+  try {
+    await store.queries.ensure();
+    const removal = store.queries.removeSection("work");
+    const rejected = expect(removal).rejects.toThrow("sort offline");
+    await entered.promise;
+    read.mockRejectedValueOnce(new Error("full read failed"));
+    await store.queries.refresh();
+    held.resolve();
+    await rejected;
+    expect(remove).not.toHaveBeenCalled();
+    expect(store.queries.snapshot()).toEqual({
+      status: "error",
+      error: "full read failed",
+      data,
+    });
+    expect(store.queries.removeSectionWritable).toBe(false);
+  } finally {
+    held.resolve();
+    store.dispose();
+  }
+});
+
 it("retains a confirmed reset after section removal fails and resets again on retry", async () => {
   const sorted = {
     ...data,

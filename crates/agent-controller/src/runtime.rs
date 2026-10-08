@@ -198,7 +198,14 @@ impl RuntimeBundle {
             )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
-            .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
+            .env(
+                "BUZZ_ACP_MCP_COMMAND",
+                if uses_buzz_dev_mcp(&harness.command) {
+                    self.executable("buzz-dev-mcp")?
+                } else {
+                    PathBuf::new()
+                },
+            )
             .env("BUZZ_ACP_RELAY_OBSERVER", "true");
         if defaults.owner_only {
             command
@@ -554,7 +561,11 @@ impl Controller {
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
-            agent.mcp_command.clone_from(&mcp_command);
+            agent.mcp_command = if uses_buzz_dev_mcp(&agent.harness.command) {
+                mcp_command.clone()
+            } else {
+                None
+            };
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
@@ -1231,6 +1242,17 @@ fn model_context_with_defaults(
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
         model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
     })
+}
+
+// Buzz Agent relies on this MCP for developer tools. Other harnesses supply their
+// own tools; injecting it would expose competing shell and file-edit tools.
+fn uses_buzz_dev_mcp(command: &str) -> bool {
+    matches!(
+        Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("buzz-agent" | "buzz-agent.exe")
+    )
 }
 
 // Saved legacy Goose selections may still carry the CLI's ACP subcommand.

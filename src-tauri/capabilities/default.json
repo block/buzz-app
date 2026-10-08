@@ -50,6 +50,7 @@
     "allow-media-stream-base",
     "allow-media-snapshot-read",
     "allow-get-os-idle-seconds",
+    "allow-workspace-pick-folder",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
     "allow-plugin-import-install",

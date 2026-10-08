@@ -831,7 +831,6 @@ fillSidebar(
       }),
       channel: sidebar.getByRole("button", { name: "Beta", exact: true }),
       dm: sidebar.getByRole("button", { name: "Alice Fixture", exact: true }),
-      session: sidebar.getByRole("button", { name: /Alpha, session in/ }),
     };
     const fillBounds = (row) =>
       row.evaluate((button) => {

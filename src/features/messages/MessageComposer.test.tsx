@@ -961,6 +961,7 @@ async function mountUploadComposer(
     emojiRead?: () => Promise<RelayEvent[]>;
     editable?: boolean;
     media?: (url: string) => string | undefined;
+    extensions?: MessageComposerProps["extensions"];
   } = {},
 ) {
   vi.stubGlobal(
@@ -1043,6 +1044,7 @@ async function mountUploadComposer(
       scope={scope}
       channelId="channel"
       channelName="General"
+      {...(options.extensions ? { extensions: options.extensions } : {})}
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
       {...(options.replyParentId
         ? { replyParentId: options.replyParentId }
@@ -3247,10 +3249,8 @@ it.each(
         screen.getByRole("button", { name: "Choose an agent" }),
       );
       await view.user.click(
-        await screen.findByRole("menuitemradio", {
-          name: parent
-            ? "Honey Adds to session and channel"
-            : "Honey Adds to session",
+        await screen.findByRole("button", {
+          name: parent ? "Honey — adds to session and channel" : "Honey",
         }),
       );
     }
@@ -3399,9 +3399,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   await view.user.click(
     screen.getByRole("button", { name: "Choose an agent" }),
   );
-  await view.user.click(
-    await screen.findByRole("menuitemradio", { name: "Fizz" }),
-  );
+  await view.user.click(await screen.findByRole("button", { name: "Fizz" }));
   await view.user.type(view.input(), "Hello");
   await view.user.keyboard("{Enter}");
   expect(view.messages.send).toHaveBeenLastCalledWith(
@@ -5779,6 +5777,126 @@ it.each(["disabled", "retarget", "unmount"])(
     expect(h.messages.send).not.toHaveBeenCalled();
   },
 );
+
+it("rechecks session setup before publishing after a background upload", async () => {
+  const channelId = "22222222-2222-4222-8222-222222222222";
+  const h = mount({ channelId });
+  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => gate.promise);
+  h.rerender(
+    <ToastProvider>
+      <MessageComposer
+        session={{ ...h.session, attachments: { upload } }}
+        scope="scope"
+        channelId={channelId}
+        channelName="General"
+      />
+    </ToastProvider>,
+  );
+  h.fill("Keep this draft");
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: { files: [new NodeFile(["notes"], "notes.txt")] },
+  });
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Send a message to General" }),
+  );
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  writeView("scope", "sessions:section:work:pending", {
+    id: channelId,
+    text: "Original start",
+    creationId: "c".repeat(64),
+    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
+  });
+  await act(async () => gate.resolve(uploadDescriptor()));
+  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.messages.reply).not.toHaveBeenCalled();
+  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
+});
+
+it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) => (
+        <button
+          type="button"
+          onClick={() =>
+            capture?.(({ accept }) => (
+              <button
+                type="button"
+                onClick={() =>
+                  accept({
+                    file: new File([new Uint8Array(100)], "voice-note.wav", {
+                      type: "audio/wav",
+                    }),
+                    duration: 1,
+                    waveform: [0.5],
+                  })
+                }
+              >
+                Finish recording
+              </button>
+            ))
+          }
+        >
+          Start recording
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      completions: { snapshot: () => empty, subscribe: () => () => {} },
+    },
+  });
+  const picker =
+    h.container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing file picker");
+  fireEvent.change(picker, {
+    target: {
+      files: Array.from(
+        { length: 9 },
+        (_, i) => new File(["draft"], `draft-${i}.txt`, { type: "text/plain" }),
+      ),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  const finish = screen.getByRole("button", { name: "Finish recording" });
+  const descriptor = {
+    name: "helper.agent.png",
+    url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+    type: "image/png",
+    size: 2048,
+    sha256: "a".repeat(64),
+  };
+  fireEvent.paste(finish, {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html"
+          ? snapshotClipboardHtml(descriptor, "Helper")
+          : descriptor.url,
+    },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Remove helper.agent.png" }),
+  ).toBeNull();
+  fireEvent.click(finish);
+  expect(
+    await screen.findByRole("button", { name: "Remove voice-note.wav" }),
+  ).toBeVisible();
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.publish).not.toHaveBeenCalled();
+});
 
 it.each(["agent", "team"])(
   "pastes a copied %s snapshot as an attachment and sends only on Send",

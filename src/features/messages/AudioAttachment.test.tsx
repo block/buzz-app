@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { VoiceNoteCard } from "../../bundled/voice-notes/VoiceNoteCard";
 import { AudioAttachment } from "./AudioAttachment";
 
 // No media listener: `media_stream_base` reports none.
@@ -792,3 +793,44 @@ it.each([false, true])(
     }
   },
 );
+
+it("shares playback ownership with voice-note plugin cards in both directions", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  try {
+    const { container } = render(
+      <>
+        <AudioAttachment
+          attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
+          source={source}
+        />
+        <VoiceNoteCard source="https://fixture.test/voice.wav" duration={5} />
+      </>,
+    );
+    const [regular, voice] = container.querySelectorAll("audio");
+    if (!regular || !voice) throw new Error("Missing audio players");
+    await act(async () => {
+      await regular.play();
+    });
+    expect(regular.paused).toBe(false);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Play voice note" }));
+    });
+    expect(regular.paused).toBe(true);
+    expect(voice.paused).toBe(false);
+    await act(async () => {
+      await regular.play();
+    });
+    expect(voice.paused).toBe(true);
+    expect(regular.paused).toBe(false);
+    cleanup();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

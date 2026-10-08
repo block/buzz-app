@@ -124,6 +124,8 @@ export type ChannelTimelineProps = {
   continuityKey?: string | undefined;
   window: ChannelWindow;
   launchPending?: boolean | undefined;
+  /** Sessions page history on scroll; retain an explicit button for errors. */
+  historyControl?: "button" | "scroll";
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -168,6 +170,7 @@ function Timeline({
   queries,
   window,
   launchPending,
+  historyControl = "button",
   onOpenLink,
   canOpenLink,
   revealMessageId,
@@ -735,7 +738,7 @@ function Timeline({
         {window.error && <span role="alert">{window.error}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
-        ) : window.hasMore ? (
+        ) : window.hasMore && (historyControl === "button" || window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}
@@ -746,8 +749,14 @@ function Timeline({
                 olderDemand.current = false;
             }}
           >
-            {window.loadingOlder ? "Loading older…" : "Load older messages"}
+            {window.loadingOlder
+              ? "Loading older…"
+              : window.error
+                ? "Retry older messages"
+                : "Load older messages"}
           </Button>
+        ) : window.loadingOlder ? (
+          <span role="status">Loading older…</span>
         ) : null}
       </div>
       <JumpToLatestButton

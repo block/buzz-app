@@ -153,6 +153,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("valid bundled Profiles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/links/manifest.json"))
             .expect("links manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/voice-notes/manifest.json"
+        ))
+        .expect("voice notes manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
             .expect("mentions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
@@ -207,6 +211,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.profiles"
             | "buzz.links"
             | "buzz.mentions"
+            | "buzz.voice-notes"
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"

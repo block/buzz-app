@@ -43,9 +43,7 @@ import {
 } from "../../features/navigation/buzz-links";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
 import { SessionShare } from "../sessions/SessionShare";
-import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
-  NewSessionView,
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
@@ -181,7 +179,6 @@ function ChannelWorkspace({
   cached,
   relay,
   panels,
-  sessionsEnabled,
   scope,
   companion,
   navigation,
@@ -530,36 +527,10 @@ function ChannelWorkspace({
     setSettings(undefined);
     afterClose("settings");
   };
-  const canStartSession =
-    !!current &&
-    sessionsEnabled &&
-    !current.readOnly &&
-    !current.archived &&
-    current.channelType !== "dm" &&
-    current.channelType !== "session";
-  const drafting =
-    canStartSession &&
-    !!draftParent &&
-    draftParent === currentId &&
-    !requestedMessage;
   useEffect(() => {
-    if (drafting && navigation?.target.kind === "page")
-      navigation.complete({ status: "opened" });
-    if (
-      !cached &&
-      draftParent &&
-      (!sessionsEnabled || (current && !canStartSession))
-    )
+    if (draftParent)
       navigation?.complete({ status: "failed", reason: "unavailable" });
-  }, [
-    cached,
-    drafting,
-    navigation,
-    draftParent,
-    sessionsEnabled,
-    current,
-    canStartSession,
-  ]);
+  }, [draftParent, navigation]);
   const flatSession = current?.channelType === "session";
   const onComposerSend = useComposerSent(
     currentId,
@@ -1541,25 +1512,10 @@ function ChannelWorkspace({
                 select(channelId);
               }}
             />
-          ) : drafting && current ? (
-            <NewSessionView parentName={current.name}>
-              <NewSessionComposer
-                extensions={extensions}
-                key={current.id}
-                session={queries}
-                scope={scope}
-                parent={current}
-                onStarted={(id) => {
-                  handoff?.updateDraftParents((previous) =>
-                    previous.filter((parent) => parent !== current.id),
-                  );
-                  select(id);
-                }}
-              />
-            </NewSessionView>
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Checking session parent access…
+              Start new sessions from Sessions. Channel-nested sessions are no
+              longer available.
             </p>
           ) : (
             <>

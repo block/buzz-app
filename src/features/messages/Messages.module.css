@@ -38,7 +38,6 @@
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
 .threadHistory::-webkit-scrollbar {
   width: 8px;
@@ -49,7 +48,7 @@
 .threadHistory::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 20%, transparent);
+  background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
 .feed ol {
@@ -683,7 +682,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
 /* Measure loaded rows without painting a scroll position we will replace. */
 .threadHistory[data-positioning] > [data-thread-rows] {

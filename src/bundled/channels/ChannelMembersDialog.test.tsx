@@ -7,6 +7,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { npubEncode } from "nostr-tools/nip19";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, profile, roster, signed } from "../../features/relay/testing";
 import { matchesEvent } from "../../features/relay/projection";
@@ -19,7 +20,30 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { profileTarget } from "../../features/profiles/target";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
 const stops: (() => void)[] = [];
-afterEach(() => {
+// Vitest globals are disabled; join owned tasks before this file's explicit cleanup.
+const tasks: {
+  controller: AbortController;
+  outcome: Promise<PromiseSettledResult<void>[]>;
+}[] = [];
+function ownedTask(
+  signal: AbortSignal,
+  work: (step: <T>(action: () => Promise<T>) => Promise<T>) => Promise<void>,
+) {
+  const controller = new AbortController();
+  const lifetime = AbortSignal.any([signal, controller.signal]);
+  const step = async <T,>(action: () => Promise<T>): Promise<T> => {
+    lifetime.throwIfAborted();
+    const result = await action();
+    lifetime.throwIfAborted();
+    return result;
+  };
+  const task = work(step);
+  tasks.push({ controller, outcome: Promise.allSettled([task]) });
+  return task;
+}
+afterEach(async () => {
+  for (const task of tasks) task.controller.abort();
+  await Promise.all(tasks.splice(0).map(({ outcome }) => outcome));
   cleanup();
   for (const stop of stops.splice(0)) stop();
 });
@@ -1143,87 +1167,107 @@ it("retries ownership admission and failed owner names through the shared refres
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("pages combined local and relay invitations without losing matches, and resets on query or refresh", async () => {
-  const t = await setup();
-  const remote = Array.from({ length: 30 }, (_, index) =>
-    profile(keypair(), { name: `Helper remote ${index}` }),
-  );
-  const lastRemote = profile(keypair(), { name: "Helper final" });
-  const local = Array.from({ length: 65 }, (_, index) => ({
-    pubkey: keypair().pubkey,
-    name: `Helper local ${index}`,
-  }));
-  const firstRemote = remote[0];
-  if (!firstRemote) throw new Error("Missing first remote fixture");
-  t.readAgentLibrary.mockResolvedValue({
-    definitions: [],
-    identities: [
-      ...local,
-      { pubkey: firstRemote.pubkey, name: "Helper remote 0" },
-    ],
-  });
-  await act(async () => {
-    await t.session.agentChoices.refresh();
-  });
-  const query = t.query.getMockImplementation();
-  if (!query) throw new Error("Missing query fixture");
-  t.query.mockImplementation(async (filters) => {
-    const search = filters.find((filter) => filter.search);
-    return search
-      ? search.page === 2
-        ? [lastRemote]
-        : remote
-      : query(filters);
-  });
-  const input = screen.getByRole("searchbox");
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  const rows = () =>
-    within(
-      screen.getByRole("region", { name: "Not in this channel" }),
-    ).getAllByRole("button", { name: /^Add / });
-  const pages = () =>
-    t.query.mock.calls
-      .flatMap(([filters]) => filters)
-      .filter((filter) => filter.search)
-      .map((filter) => filter.page);
-  await t.user.type(input, "Helper");
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(rows()).toHaveLength(30);
-  expect(
-    rows().every((row) =>
-      row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
-    ),
-  ).toBe(true);
-  expect(pages()).toEqual([1]);
-  for (const count of [60, 90, 95]) {
-    await t.user.click(
-      screen.getByRole("button", { name: "Show more results" }),
+it("pages combined local and relay invitations without losing matches, and resets on query or refresh", async ({
+  signal,
+}) => {
+  return ownedTask(signal, async (step) => {
+    const t = await step(() => setup());
+    const remote = Array.from({ length: 30 }, (_, index) =>
+      profile(keypair(), { name: `Helper remote ${index}` }),
     );
-    expect(rows()).toHaveLength(count);
+    const lastRemote = profile(keypair(), { name: "Helper final" });
+    const local = Array.from({ length: 65 }, (_, index) => ({
+      pubkey: keypair().pubkey,
+      name: `Helper local ${index}`,
+    }));
+    const firstRemote = remote[0];
+    if (!firstRemote) throw new Error("Missing first remote fixture");
+    t.readAgentLibrary.mockResolvedValue({
+      definitions: [],
+      identities: [
+        ...local,
+        { pubkey: firstRemote.pubkey, name: "Helper remote 0" },
+      ],
+    });
+    await step(() =>
+      act(async () => {
+        await t.session.agentChoices.refresh();
+      }),
+    );
+    const query = t.query.getMockImplementation();
+    if (!query) throw new Error("Missing query fixture");
+    t.query.mockImplementation(async (filters) => {
+      const search = filters.find((filter) => filter.search);
+      return search
+        ? search.page === 2
+          ? [lastRemote]
+          : remote
+        : query(filters);
+    });
+    const input = screen.getByRole("searchbox");
+    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    const rows = () =>
+      within(
+        screen.getByRole("region", { name: "Not in this channel" }),
+      ).getAllByRole("button", { name: /^Add / });
+    const pages = () =>
+      t.query.mock.calls
+        .flatMap(([filters]) => filters)
+        .filter((filter) => filter.search)
+        .map((filter) => filter.page);
+    await step(() => t.user.type(input, "Helper"));
+    await step(() =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+    );
+    expect(rows()).toHaveLength(30);
+    expect(
+      rows().every((row) =>
+        row.getAttribute("aria-label")?.startsWith("Add Helper remote"),
+      ),
+    ).toBe(true);
     expect(pages()).toEqual([1]);
-  }
-  await t.user.click(screen.getByRole("button", { name: "Show more results" }));
-  await screen.findByRole("button", { name: /^Add Helper final/ });
-  expect(rows()).toHaveLength(96);
-  expect(pages()).toEqual([1, 2]);
-  expect(
-    screen.queryByRole("button", { name: "Show more results" }),
-  ).toBeNull();
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(rows()).toHaveLength(30);
-  expect(pages()).toEqual([1, 2, 1]);
-  await t.user.click(screen.getByRole("button", { name: "Show more results" }));
-  expect(rows()).toHaveLength(60);
-  await t.user.type(input, " local");
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  expect(rows()).toHaveLength(30);
-  await t.user.clear(input);
-  expect(
-    screen.queryByRole("region", { name: "Not in this channel" }),
-  ).toBeNull();
-  expect(t.publish).not.toHaveBeenCalled();
+    for (const count of [60, 90, 95]) {
+      await step(() =>
+        t.user.click(screen.getByRole("button", { name: "Show more results" })),
+      );
+      expect(rows()).toHaveLength(count);
+      expect(pages()).toEqual([1]);
+    }
+    await step(() =>
+      t.user.click(screen.getByRole("button", { name: "Show more results" })),
+    );
+    await step(() =>
+      screen.findByRole("button", { name: /^Add Helper final/ }),
+    );
+    expect(rows()).toHaveLength(96);
+    expect(pages()).toEqual([1, 2]);
+    expect(
+      screen.queryByRole("button", { name: "Show more results" }),
+    ).toBeNull();
+    await step(() =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+    );
+    await step(() => t.user.click(refresh));
+    await step(() =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+    );
+    expect(rows()).toHaveLength(30);
+    expect(pages()).toEqual([1, 2, 1]);
+    await step(() =>
+      t.user.click(screen.getByRole("button", { name: "Show more results" })),
+    );
+    expect(rows()).toHaveLength(60);
+    await step(() => t.user.type(input, " local"));
+    await step(() =>
+      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false")),
+    );
+    expect(rows()).toHaveLength(30);
+    await step(() => t.user.clear(input));
+    expect(
+      screen.queryByRole("region", { name: "Not in this channel" }),
+    ).toBeNull();
+    expect(t.publish).not.toHaveBeenCalled();
+  });
 });
 
 it("controlled presentation restores the dialog without retaining its search or issuing writes", async () => {
@@ -1255,3 +1299,93 @@ it("controlled presentation restores the dialog without retaining its search or 
   expect(screen.getByRole("searchbox")).toHaveValue("");
   expect(t.publish).not.toHaveBeenCalled();
 });
+
+for (const mode of ["cancellation", "early assertion failure"] as const) {
+  it(`drains a gated action through the real teardown after ${mode}`, async ({
+    onTestFinished,
+  }) => {
+    const events: string[] = [];
+    let rejection: unknown;
+    let teardownReason: unknown;
+    const reason = new Error(mode);
+    onTestFinished(() => {
+      expect(events).toEqual([
+        "action:start",
+        ...(mode === "early assertion failure" ? ["assertion:rejected"] : []),
+        "teardown:abort",
+        "action:settled",
+        "task:settled",
+        "cleanup",
+        "dispose",
+      ]);
+      if (mode === "cancellation") expect(rejection).toBe(reason);
+      else expect(rejection).toBe(teardownReason);
+      expect(screen.queryByTestId("owned-action")).toBeNull();
+    });
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    function CleanupProbe() {
+      useEffect(
+        () => () => {
+          events.push("cleanup");
+        },
+        [],
+      );
+      return (
+        <button type="button" data-testid="owned-action">
+          Owned action
+        </button>
+      );
+    }
+    render(<CleanupProbe />);
+    stops.push(() => {
+      events.push("dispose");
+    });
+    const user = userEvent.setup();
+    const task = ownedTask(controller.signal, async (step) => {
+      await step(async () => {
+        events.push("action:start");
+        await gate;
+        await user.click(screen.getByTestId("owned-action"));
+        events.push("action:settled");
+      });
+      events.push("late-action");
+      screen.getByTestId("owned-action");
+    });
+    void Promise.allSettled([task]).then(([outcome]) => {
+      if (outcome?.status === "rejected") rejection = outcome.reason;
+      events.push("task:settled");
+    });
+    // Release from fixture abort during afterEach, not from callback finally.
+    const owned = tasks.at(-1);
+    if (!owned) throw new Error("Missing owned task");
+    owned.controller.signal.addEventListener("abort", () => {
+      teardownReason = owned.controller.signal.reason;
+      events.push(
+        screen.queryByTestId("owned-action")
+          ? "teardown:abort"
+          : "premature-cleanup",
+      );
+      release();
+    });
+    if (mode === "cancellation") {
+      controller.abort(reason);
+    } else {
+      let assertionReason: unknown;
+      const failed = ownedTask(new AbortController().signal, async () => {
+        expect("early failure").toBe("completed action");
+      });
+      await expect(failed).rejects.toThrow("early failure");
+      await Promise.allSettled([failed]).then(([outcome]) => {
+        if (outcome?.status === "rejected") assertionReason = outcome.reason;
+      });
+      expect(assertionReason).toMatchObject({ name: "AssertionError" });
+      events.push("assertion:rejected");
+    }
+    expect(events).not.toContain("cleanup");
+    expect(events).not.toContain("task:settled");
+  });
+}

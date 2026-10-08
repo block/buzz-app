@@ -42,7 +42,7 @@ use identity::{
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    media_copy_image, media_download, media_snapshot_read, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
@@ -67,7 +67,9 @@ use agents::{
     agent_control_creation_profile, agent_control_delete, agent_control_import_commit,
     agent_control_import_preview, agent_control_local_clone_settings, agent_control_log_challenge,
     agent_control_read_log, agent_control_save, agent_control_save_defaults,
-    agent_control_snapshot, agent_control_start_on_app_launch, agent_control_use_here, AgentHost,
+    agent_control_snapshot, agent_control_snapshot_memory_write, agent_control_start_on_app_launch,
+    agent_control_team_capture, agent_control_team_export, agent_control_team_instructions,
+    agent_control_team_preview, agent_control_use_here, AgentHost,
 };
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
@@ -451,6 +453,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_download,
         media_copy_image,
         media_stream_base,
+        media_snapshot_read,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -470,6 +473,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_create_authorize,
         agent_control_create_commit,
         agent_control_creation_profile,
+        agent_control_snapshot_memory_write,
+        agent_control_team_preview,
+        agent_control_team_instructions,
+        agent_control_team_capture,
+        agent_control_team_export,
         agent_control_snapshot,
         agent_control_log_challenge,
         agent_control_read_log,

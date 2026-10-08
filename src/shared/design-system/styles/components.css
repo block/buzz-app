@@ -910,6 +910,37 @@
     color: var(--text-standard);
   }
 
+  /* Route navigation shares chrome material, not Tabs' focus/tabpanel contract. */
+  .chrome-navigation {
+    @apply glass-primary;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    height: 2.5rem;
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"] {
+    width: auto;
+    min-height: 2rem;
+    height: 2rem;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+    @apply text-label;
+  }
+  .chrome-navigation
+    .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
+    background: var(--bg-glass-primary-hover);
+    color: var(--text-standard);
+  }
+  .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
+  .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
+    background: var(--bg-chrome-selected);
+    color: var(--text-standard);
+    box-shadow: var(--shadow-xs);
+  }
+
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;

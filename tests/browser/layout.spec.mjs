@@ -54,7 +54,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
-// Sidebar rows are the primary pages; Messages remains available through search.
+// Sidebar rows exclude header pages; Me and Messages remain available through search.
 const destinationTitles = [
   "Inbox",
   "Reminders",
@@ -1043,6 +1043,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   // collapses the sidebar; its Pages group must preserve plugin ordering.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
+    "Me",
     "Messages",
     "Inbox",
     "Reminders",
@@ -1125,6 +1126,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectPageOrder([
+    "Me",
     "Messages",
     "Inbox",
     "Reminders",

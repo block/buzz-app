@@ -147,7 +147,9 @@ function harness(
         }),
       channelKit: {
         prepare: async (value) => {
-          stored.set("fixture", value);
+          if (value.value.type === "team-payload")
+            throw new Error("Unexpected fixture payload");
+          stored.set("fixture", value as KitRecord);
           return "fixture";
         },
         decode: async (events) =>

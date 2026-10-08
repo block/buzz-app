@@ -1,3 +1,4 @@
+import { snapshotClipboardHtml } from "../agents/snapshot-link";
 // @vitest-environment jsdom
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -162,6 +163,7 @@ function mount(
   const outboxListeners = new Set<() => void>();
   let pending: readonly OutgoingEvent[] = [];
   let rows: readonly ChannelMessage[] = [];
+  const rowListeners = new Set<() => void>();
   const setPending = (next: readonly OutgoingEvent[]) => {
     pending = next;
     for (const listener of outboxListeners) listener();
@@ -256,6 +258,10 @@ function mount(
     },
     channels: {
       window: () => ({ rows }),
+      subscribeWindow(_id: string, listener: () => void) {
+        rowListeners.add(listener);
+        return () => rowListeners.delete(listener);
+      },
       list: () => channelList,
       subscribeList: () => () => {},
     },
@@ -344,7 +350,10 @@ function mount(
       view.rerender(tree());
     },
     setRows(next: readonly ChannelMessage[]) {
-      rows = next;
+      act(() => {
+        rows = next;
+        for (const listener of rowListeners) listener();
+      });
     },
     setDelivery(delivery: OutgoingEvent["delivery"]) {
       act(() =>
@@ -639,7 +648,7 @@ it("keeps unpublished completions invisible but lets Escape revoke pending work"
   const pending = h.completionRequests.length - 1;
   expect(pending).toBeGreaterThanOrEqual(0);
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status", { name: "" })).not.toBeInTheDocument();
   expect(input).not.toHaveAttribute("aria-controls");
   expect(input).not.toHaveAttribute("aria-haspopup");
   fireEvent.keyDown(input, { key: "Escape" });
@@ -663,7 +672,9 @@ it("shows provider-owned pending and retry states and hides an empty publication
   act(() => {
     publish({ items: [], status: "Searching fixture…" });
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Searching fixture…");
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    "Searching fixture…",
+  );
   const retry = vi.fn(() =>
     publish({
       items: [
@@ -949,6 +960,8 @@ async function mountUploadComposer(
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
     editable?: boolean;
+    media?: (url: string) => string | undefined;
+    extensions?: MessageComposerProps["extensions"];
   } = {},
 ) {
   vi.stubGlobal(
@@ -978,7 +991,7 @@ async function mountUploadComposer(
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
-      media: (url) => url,
+      media: options.media ?? ((url) => url),
       uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
         uploadCalls.push({ file, signal, progress, result });
@@ -1031,6 +1044,7 @@ async function mountUploadComposer(
       scope={scope}
       channelId="channel"
       channelName="General"
+      {...(options.extensions ? { extensions: options.extensions } : {})}
       {...(options.threadRootId ? { threadRootId: options.threadRootId } : {})}
       {...(options.replyParentId
         ? { replyParentId: options.replyParentId }
@@ -5765,5 +5779,133 @@ it.each(["disabled", "retarget", "unmount"])(
     else h.unmount();
     act(() => expect(insert([first, second])).toBe(false));
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) => (
+        <button
+          type="button"
+          onClick={() =>
+            capture?.(({ accept }) => (
+              <button
+                type="button"
+                onClick={() =>
+                  accept({
+                    file: new File([new Uint8Array(100)], "voice-note.wav", {
+                      type: "audio/wav",
+                    }),
+                    duration: 1,
+                    waveform: [0.5],
+                  })
+                }
+              >
+                Finish recording
+              </button>
+            ))
+          }
+        >
+          Start recording
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      completions: { snapshot: () => empty, subscribe: () => () => {} },
+    },
+  });
+  const picker =
+    h.container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing file picker");
+  fireEvent.change(picker, {
+    target: {
+      files: Array.from(
+        { length: 9 },
+        (_, i) => new File(["draft"], `draft-${i}.txt`, { type: "text/plain" }),
+      ),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  const finish = screen.getByRole("button", { name: "Finish recording" });
+  const descriptor = {
+    name: "helper.agent.png",
+    url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+    type: "image/png",
+    size: 2048,
+    sha256: "a".repeat(64),
+  };
+  fireEvent.paste(finish, {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html"
+          ? snapshotClipboardHtml(descriptor, "Helper")
+          : descriptor.url,
+    },
+  });
+  expect(
+    screen.queryByRole("button", { name: "Remove helper.agent.png" }),
+  ).toBeNull();
+  fireEvent.click(finish);
+  expect(
+    await screen.findByRole("button", { name: "Remove voice-note.wav" }),
+  ).toBeVisible();
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it.each(["agent", "team"])(
+  "pastes a copied %s snapshot as an attachment and sends only on Send",
+  async (kind) => {
+    const h = await mountUploadComposer({
+      media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    });
+    const descriptor = {
+      name: `helper.${kind}.png`,
+      url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+      type: "image/png",
+      size: 2048,
+      sha256: "a".repeat(64),
+    };
+    const html = snapshotClipboardHtml(descriptor, "Helper");
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/html" ? html : descriptor.url,
+      },
+    });
+    expect(
+      await within(h.form()).findByRole("button", {
+        name: `Remove ${descriptor.name}`,
+      }),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue("");
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.uploadCalls).toHaveLength(0);
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.uploadCalls).toHaveLength(0);
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.content).toContain(descriptor.url);
+    expect(event?.tags).toContainEqual(
+      expect.arrayContaining([
+        "imeta",
+        `filename ${descriptor.name}`,
+        `x ${descriptor.sha256}`,
+      ]),
+    );
   },
 );

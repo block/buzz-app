@@ -20,7 +20,7 @@ import {
   type StaffRequest,
 } from "../../features/relay-staff/contract";
 import { npubEncode } from "nostr-tools/nip19";
-import { Person, PersonName, usePeople } from "./people";
+import { PeopleScope, Person, PersonName, usePeople } from "./people";
 import { reasonAudience, SECRET_REASON } from "./Reports";
 import { describe, useRead, useSession, useWrite, type Read } from "./session";
 import {
@@ -528,31 +528,33 @@ export function MemberPicker({
         </p>
       )}
       {candidates.length > 0 && (
-        <ul className="flex flex-col rounded-md border" aria-label="Members">
-          {candidates.map((candidate) => (
-            <li key={candidate.pubkey}>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-body-sm hover:bg-secondary"
-                onClick={() => {
-                  onChange({
-                    ...candidate,
-                    keyLabel: people.label(candidate.pubkey),
-                  });
-                  setQuery("");
-                }}
-              >
-                <span className="flex-1 truncate">
-                  <PersonName
-                    pubkey={candidate.pubkey}
-                    name={candidate.name}
-                    label={people.label(candidate.pubkey)}
-                  />
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <PeopleScope people={people}>
+          <ul className="flex flex-col rounded-md border" aria-label="Members">
+            {candidates.map((candidate) => (
+              <li key={candidate.pubkey}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-body-sm hover:bg-secondary"
+                  onClick={() => {
+                    onChange({
+                      ...candidate,
+                      keyLabel: people.label(candidate.pubkey),
+                    });
+                    setQuery("");
+                  }}
+                >
+                  <span className="flex-1 truncate">
+                    <PersonName
+                      pubkey={candidate.pubkey}
+                      name={candidate.name}
+                      label={people.label(candidate.pubkey)}
+                    />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </PeopleScope>
       )}
     </div>
   );

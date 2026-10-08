@@ -43,11 +43,9 @@ export async function importTeamMembers(
   const state = control.snapshot().data;
   const edits = snapshot.members.map((member) =>
     snapshotImportEdit(
-      parseAgentSnapshot(
-        new TextEncoder().encode(
-          JSON.stringify({ ...member, memory: { level: "none", entries: [] } }),
-        ),
-      ),
+      parseAgentSnapshot(new TextEncoder().encode(JSON.stringify(member)), {
+        teamMember: true,
+      }),
       { ...state, teamMember: true },
     ),
   );

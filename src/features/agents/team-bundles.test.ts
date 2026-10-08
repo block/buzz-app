@@ -246,7 +246,7 @@ it.each([
       runtime,
       parallelism: 3,
       respondTo: "allowlist",
-      respondToAllowlist: ["source-owner"],
+      respondToAllowlist: ["ef".repeat(32)],
       namePool: ["One"],
       idleTimeoutSeconds: 30,
       maxTurnDurationSeconds: 60,
@@ -340,7 +340,7 @@ it.each(["claude", "hermes", "pi"])(
   },
 );
 
-it("strips optional memories before creation preflight and preserves the source", async () => {
+it("validates optional memories before stripping them for creation and preserves the source", async () => {
   const fixture = controlFixture();
   const source = structuredClone(snapshot);
   const member = source.members[0];
@@ -348,7 +348,7 @@ it("strips optional memories before creation preflight and preserves the source"
   member.memory = {
     level: "everything",
     entries: Array.from({ length: 256 }, (_, index) => ({
-      slug: `memory-${index}`,
+      slug: `mem/memory-${index}`,
       body: "Optional memory",
     })),
   };

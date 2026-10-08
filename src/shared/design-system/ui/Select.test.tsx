@@ -29,23 +29,27 @@ for (const variant of ["inline", "compact", "field"] as const) {
       IS_REACT_ACT_ENVIRONMENT?: boolean | undefined;
     };
     const previous = env.IS_REACT_ACT_ENVIRONMENT;
-    let named: boolean | undefined;
-    const observer = new MutationObserver(() => {
-      if (named !== undefined) return;
-      const trigger = screen.queryByRole("combobox");
-      if (trigger)
-        named = screen.queryByRole("combobox", { name: "Retention" }) !== null;
+    let observer: MutationObserver | undefined;
+    // Resolves in the first DOM change that contains the trigger, with
+    // whether it was already named at that moment.
+    const firstSeen = new Promise<boolean>((resolve) => {
+      observer = new MutationObserver(() => {
+        if (!screen.queryByRole("combobox")) return;
+        observer?.disconnect();
+        resolve(screen.queryByRole("combobox", { name: "Retention" }) !== null);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    let named: boolean;
     try {
       render(<Late variant={variant} />);
       // Outside act, React commits the late update and runs passive effects
       // in a later scheduler task, as it does when a host read resolves.
       env.IS_REACT_ACT_ENVIRONMENT = false;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      named = await firstSeen;
     } finally {
       env.IS_REACT_ACT_ENVIRONMENT = previous;
-      observer.disconnect();
+      observer?.disconnect();
     }
     expect(named).toBe(true);
     expect(screen.getByRole("combobox", { name: "Retention" })).toBeVisible();

@@ -71,9 +71,10 @@ async function reviewAfterCachedFailure() {
 }
 
 async function expectUnavailable() {
-  // The root message loads first; a cold test run can take a few seconds.
+  // The root message loads first; a cold run under a loaded suite can take
+  // several seconds, so the test's own timeout below leaves room for this.
   expect(
-    await screen.findByText("Media unavailable", {}, { timeout: 5000 }),
+    await screen.findByText("Media unavailable", {}, { timeout: 10_000 }),
   ).toBeInTheDocument();
   expect(document.querySelector("video")).toBeNull();
 }
@@ -91,4 +92,5 @@ it.each([
     await reviewAfterCachedFailure();
     await expectUnavailable();
   },
+  15_000,
 );

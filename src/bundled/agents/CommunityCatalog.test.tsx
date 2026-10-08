@@ -154,6 +154,46 @@ it("shows a relay rejection with a retry that succeeds", async () => {
   expect(checked()).toBe(true);
 });
 
+it("retries a failed confirmation read without publishing again", async () => {
+  const server = catalogRelay();
+  const writes = createOutbox(
+    alice.pubkey,
+    server.writer(alice),
+    memoryStorage(),
+    { timeoutMs: 1_000 },
+  );
+  const base = server.reader(alice);
+  let down = false;
+  const catalog = createCommunityCatalog({
+    reader: {
+      read: (...args: Parameters<typeof base.read>) =>
+        down ? Promise.reject(new Error("offline")) : base.read(...args),
+    },
+    viewer: alice.pubkey,
+    outbox: writes.outbox,
+    local: writes.local,
+  });
+  owners.push(catalog, { dispose: () => writes.dispose() });
+  renderSwitch(catalog.queries);
+  await waitFor(() => expect(enabled()).toBe(true));
+  const release = server.hold();
+  fireEvent.click(shareSwitch());
+  await screen.findByText(/Sharing Helper is queued/);
+  // The relay accepts the share, but the confirming head read fails.
+  down = true;
+  release();
+  await screen.findByText(
+    /The relay accepted the update, but the catalog could not confirm it\./,
+  );
+  expect(checked()).toBe(true);
+  down = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText("Published Helper to the community catalog.");
+  expect(
+    writes.local.snapshot().filter((item) => item.event.kind === 30175),
+  ).toHaveLength(1);
+});
+
 it("previews shared entries as plain text and adds an explicit copy", async () => {
   const server = catalogRelay();
   server.put(

@@ -144,6 +144,7 @@ export function CatalogShareSwitch({
               shared: change.shared,
               delivery: change.delivery,
             })}
+            {change.stalled && change.error && ` ${change.error}`}
           </p>
           {change.stalled && (
             <Button

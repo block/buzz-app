@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "../relay/budget.ts";
+import type { RelayEvent } from "../relay/events.ts";
 import { createOutbox } from "../relay/outbox.ts";
+import { createRelayReader } from "../relay/reader.ts";
+import type { ReadTransport } from "../relay/transport.ts";
 import { flush, keypair, signed, type Key } from "../relay/testing.ts";
 import { createCommunityCatalog } from "./catalog.ts";
 import { bytes, MAX_CONTENT_BYTES } from "./catalog-envelope.ts";
@@ -31,6 +34,7 @@ function client(
   server: ReturnType<typeof relay>,
   as: Key,
   storage = memoryStorage(),
+  replica?: (events: readonly RelayEvent[]) => readonly RelayEvent[],
 ) {
   const writes = createOutbox(as.pubkey, server.writer(as), storage, {
     timeoutMs: 1_000,
@@ -43,8 +47,13 @@ function client(
       async read(...args: Parameters<typeof base.read>) {
         if (link.down) throw new Error("offline");
         const events = await base.read(...args);
-        writes.observe(events);
-        return events;
+        // Only strong reads are writer-backed; others may hit a replica.
+        const result =
+          args[0][0]?.consistency === "strong"
+            ? events
+            : (replica?.(events) ?? events);
+        writes.observe(result);
+        return result;
       },
     },
     viewer: as.pubkey,
@@ -53,6 +62,49 @@ function client(
   });
   owners.push(catalog, { dispose: () => writes.dispose() });
   return { writes, catalog: catalog.queries, owner: catalog, link };
+}
+/** A client on the production reader, which shares equal in-flight reads.
+ * `holdNext` answers the next coordinate read with the relay state at the
+ * time it was issued, but only once released. */
+function coalescingClient(server: ReturnType<typeof relay>, as: Key) {
+  const writes = createOutbox(as.pubkey, server.writer(as), memoryStorage(), {
+    timeoutMs: 1_000,
+  });
+  const base = server.reader(as);
+  let gate: Promise<void> | undefined;
+  let issued = 0;
+  const transport: ReadTransport = {
+    viewer: as.pubkey,
+    relayAuthor: "relay",
+    media: () => undefined,
+    async query(filters) {
+      const events = await base.read(filters);
+      if (!filters[0]?.["#d"]) return events;
+      issued++;
+      const wait = gate;
+      gate = undefined;
+      await wait;
+      return events;
+    },
+  };
+  const owned = createRelayReader(transport);
+  const catalog = createCommunityCatalog({
+    reader: owned.reader,
+    viewer: as.pubkey,
+    outbox: writes.outbox,
+    local: writes.local,
+  });
+  owners.push(catalog, owned, { dispose: () => writes.dispose() });
+  return {
+    writes,
+    catalog: catalog.queries,
+    issued: () => issued,
+    holdNext() {
+      let release = () => {};
+      gate = new Promise((resolve) => (release = resolve));
+      return release;
+    },
+  };
 }
 async function settled(writes: ReturnType<typeof createOutbox>, id: string) {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -455,6 +507,93 @@ describe.each([30175, 30178] as const)("kind %i unsharing", (kind) => {
       shared: false,
       change: { shared: false, delivery: "accepted" },
     });
+  });
+
+  it("an unshare preflight never joins a confirmation read that predates it", async () => {
+    const server = relay();
+    const a = coalescingClient(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const release = server.hold();
+    const share = await a.catalog.publish(kind, "x", true, body);
+    // The share's confirmation read starts and stalls with the old head.
+    const stale = a.holdNext();
+    const issued = a.issued();
+    release();
+    for (let i = 0; i < 50 && a.issued() === issued; i++) await flush();
+    expect(a.issued()).toBe(issued + 1);
+    // Another device lands a newer share before this unshare's preflight.
+    const later = now() + 30;
+    server.put(head(later));
+    const unshare = a.catalog.publish(kind, "x", false);
+    await flush();
+    stale();
+    const sent = await settled(a.writes, await unshare);
+    expect(sent.event.id).not.toBe(share);
+    expect(sent.event.created_at).toBe(later + 1);
+    expect(a.catalog.state(kind, "x")).toMatchObject({
+      shared: false,
+      change: { shared: false, delivery: "accepted" },
+    });
+  });
+
+  it("a stale replica never promotes a change the writer outranked", async () => {
+    const server = relay();
+    server.put(head(now()));
+    let stale: RelayEvent | undefined;
+    const a = client(server, alice, memoryStorage(), (events) =>
+      stale ? [stale] : events,
+    );
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const release = server.hold();
+    const id = await a.catalog.publish(kind, "x", false);
+    for (let i = 0; i < 50 && !stale; i++) {
+      await flush();
+      stale = a.writes.local.snapshot().find((item) => item.event.id === id)
+        ?.signed as RelayEvent | undefined;
+    }
+    expect(stale).toBeDefined();
+    // The writer keeps a newer share; a lagging replica serves the unshare.
+    server.put(head(now() + 40));
+    release();
+    expect((await settled(a.writes, id)).delivery).toBe("accepted");
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: true });
+    await a.catalog.refresh();
+    await flush();
+    expect(a.catalog.state(kind, "x")).toEqual({ shared: true });
+  });
+
+  it("surfaces a failed confirmation read and re-reads on retry without resending", async () => {
+    const server = relay();
+    const a = client(server, alice);
+    await a.writes.ready;
+    await a.catalog.refresh();
+    const release = server.hold();
+    const id = await a.catalog.publish(kind, "x", true, body);
+    a.link.down = true;
+    release();
+    const sent = await settled(a.writes, id);
+    expect(sent.delivery).toBe("accepted");
+    expect(a.catalog.state(kind, "x").change).toMatchObject({
+      operation: id,
+      delivery: "queued",
+      stalled: true,
+      error:
+        "The relay accepted the update, but the catalog could not confirm it.",
+    });
+    a.link.down = false;
+    a.catalog.retry(id);
+    await flush();
+    await flush();
+    expect(a.catalog.state(kind, "x")).toEqual({
+      shared: true,
+      change: { operation: id, shared: true, delivery: "accepted" },
+    });
+    const own = a.writes.local
+      .snapshot()
+      .filter((item) => item.event.kind === kind);
+    expect(own.map((item) => item.event.id)).toEqual([id]);
   });
 
   it("shares and unshares maximum-size content through the outbox", async () => {

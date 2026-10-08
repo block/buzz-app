@@ -17,6 +17,8 @@ export type CatalogKind = typeof AGENT_CATALOG_KIND | typeof TEAM_CATALOG_KIND;
 const KINDS: readonly CatalogKind[] = [AGENT_CATALOG_KIND, TEAM_CATALOG_KIND];
 const PAGE = 200;
 const MAX_EVENTS = 5_000;
+const UNCONFIRMED =
+  "The relay accepted the update, but the catalog could not confirm it.";
 const READ_FAILED =
   "Could not read the community catalog. Check the community connection, then retry.";
 
@@ -30,7 +32,7 @@ export type CatalogShareState = Readonly<{
     operation: string;
     shared: boolean;
     delivery: CatalogDelivery;
-    /** Queued with no attempt in flight, e.g. restored after a restart. */
+    /** Queued with no attempt or confirmation in flight; `retry` resumes it. */
     stalled?: true;
     error?: string;
   }>;
@@ -100,8 +102,9 @@ export function createCommunityCatalog({
   // newer head answers `duplicate:` and keeps it. Only own changes a strong
   // coordinate read returned as the head count as accepted.
   const verified = new Set<string>();
-  // Answered by a read without becoming the head; re-read on the next refresh.
-  const checked = new Set<string>();
+  // A confirmation read failed or found another head that does not outrank
+  // the change. Re-read only on refresh or an explicit retry, never a resend.
+  const unconfirmed = new Set<string>();
   const verifying = new Map<string, Promise<void>>();
   const outcome = (item: OutgoingEvent): CatalogDelivery => {
     const value = delivery(item);
@@ -181,7 +184,8 @@ export function createCommunityCatalog({
           consistency: "strong",
         },
       ],
-      { priority: "foreground" },
+      // Never join a read that predates this intent or write.
+      { priority: "foreground", fresh: true },
     );
     return catalogHeads(
       events.filter((event) => event.pubkey === owner && catalogD(event) === d),
@@ -190,16 +194,18 @@ export function createCommunityCatalog({
   async function verify(item: OutgoingEvent) {
     const d = catalogD(item.event as RelayEvent);
     if (d === undefined) return;
+    let head: RelayEvent | undefined;
     try {
-      const head = await readHead(item.event.kind as CatalogKind, viewer, d);
-      if (closed) return;
-      if (head) retain(head);
-      if (head?.id === item.event.id) verified.add(item.event.id);
-      else checked.add(item.event.id);
+      head = await readHead(item.event.kind as CatalogKind, viewer, d);
     } catch {
-      // Stays pending; the next refresh or delivery change reads again.
-      return;
+      head = undefined;
     }
+    if (closed) return;
+    if (head) retain(head);
+    if (head?.id === item.event.id) {
+      verified.add(item.event.id);
+      unconfirmed.delete(item.event.id);
+    } else unconfirmed.add(item.event.id);
     publish();
   }
   /** Promotes accepted own changes only once the relay's head is theirs. */
@@ -208,7 +214,11 @@ export function createCommunityCatalog({
     const checks: Promise<void>[] = [];
     for (const item of localCatalog()) {
       const id = item.event.id;
-      if (delivery(item) !== "accepted" || verified.has(id) || checked.has(id))
+      if (
+        delivery(item) !== "accepted" ||
+        verified.has(id) ||
+        unconfirmed.has(id)
+      )
         continue;
       let check = verifying.get(id);
       if (!check) {
@@ -256,7 +266,7 @@ export function createCommunityCatalog({
         status = "ready";
         error = undefined;
         publish();
-        checked.clear();
+        unconfirmed.clear();
         return verifyAccepted();
       })
       .catch(() => {
@@ -286,10 +296,14 @@ export function createCommunityCatalog({
               operation: item.event.id,
               shared: isShared(item.event as RelayEvent),
               delivery: outcome(item),
-              ...(item.delivery === "unknown"
+              ...(item.delivery === "unknown" || unconfirmed.has(item.event.id)
                 ? { stalled: true as const }
                 : {}),
-              ...(item.error ? { error: item.error } : {}),
+              ...(item.error
+                ? { error: item.error }
+                : unconfirmed.has(item.event.id)
+                  ? { error: UNCONFIRMED }
+                  : {}),
             }),
           }
         : {}),
@@ -398,7 +412,11 @@ export function createCommunityCatalog({
         return id;
       },
       retry(operation: string) {
-        outbox?.retry(operation);
+        // An accepted change only needs a fresh confirmation, not a resend.
+        if (unconfirmed.delete(operation)) {
+          publish();
+          void verifyAccepted();
+        } else outbox?.retry(operation);
       },
       dismiss(operation: string) {
         return outbox?.dismiss(operation) ?? Promise.resolve();
@@ -426,7 +444,7 @@ export function createCommunityCatalog({
       relayEvents = [];
       confirmedHeads.clear();
       verified.clear();
-      checked.clear();
+      unconfirmed.clear();
       status = "unavailable";
       publish();
       listeners.clear();

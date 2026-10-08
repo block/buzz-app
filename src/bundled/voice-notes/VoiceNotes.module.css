@@ -87,6 +87,8 @@
   background: var(--text-standard);
 }
 .card {
+  --voice-card-background: var(--surface-inset);
+  --voice-card-border: var(--border-standard);
   position: relative;
   display: flex;
   align-items: center;
@@ -97,12 +99,57 @@
   max-width: 100%;
   padding: var(--space-2) calc(var(--space-5) / 2);
   margin: var(--space-1) 0;
-  border: 1px solid var(--border-standard);
+  border: 1px solid var(--voice-card-border);
   border-radius: var(--radius-container);
-  background: var(--surface-inset);
+  background: var(--voice-card-background);
   transition:
     background-color 150ms var(--easing-state),
     border-color 150ms var(--easing-state);
+}
+.cardSurface {
+  display: none;
+}
+.card[data-smooth-corners] {
+  isolation: isolate;
+  background: transparent;
+  border-color: transparent;
+}
+.card[data-smooth-corners] .cardSurface {
+  display: block;
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  pointer-events: none;
+  clip-path: var(--media-corner-clip);
+}
+.cardSurface > path {
+  fill: var(--voice-card-background);
+  stroke: var(--voice-card-border);
+  stroke-width: 2px;
+  transition:
+    fill 150ms var(--easing-state),
+    stroke 150ms var(--easing-state);
+}
+.play,
+.discard {
+  display: inline-flex;
+  border-radius: var(--radius-icon-button);
+}
+.play[data-smooth-corners] > button,
+.discard[data-smooth-corners] > button {
+  clip-path: var(--media-corner-clip);
+}
+.play:has(:focus-visible),
+.discard:has(:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.discard {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
 }
 .play {
   flex-shrink: 0;
@@ -231,8 +278,8 @@
     background: var(--affordance-subtle-hover);
   }
   .card:hover {
-    border-color: var(--border-prominent);
-    background: var(--affordance-panel-hover);
+    --voice-card-border: var(--border-prominent);
+    --voice-card-background: var(--affordance-panel-hover);
   }
 }
 :where(.card:focus-within) .speed {
@@ -273,6 +320,7 @@
   }
   .iconButton,
   .card,
+  .cardSurface > path,
   .details > *,
   .playIcon > svg {
     transition: none;

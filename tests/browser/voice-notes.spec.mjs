@@ -1,6 +1,6 @@
 import { watchPageErrors } from "./page-errors.mjs";
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 let server, origin;
@@ -153,6 +153,15 @@ test("record, preview, send and play the chat card with speed and seeking", asyn
     "stroke",
     "rgb(255, 255, 255)",
   );
+  await expect(draftPlay).toHaveCSS("clip-path", /^path\(/);
+  await expect(draftCard.locator("[data-image-outline] path")).toHaveAttribute(
+    "d",
+    / c .* a /,
+  );
+  // The background is smoothed separately so the floating remove control escapes.
+  await draftCard
+    .getByRole("button", { name: "Remove voice note" })
+    .click({ trial: true });
   const geometry = await draftCard.boundingBox();
   expect(geometry.width).toBeGreaterThan(300);
   expect(geometry.height).toBeLessThan(65);

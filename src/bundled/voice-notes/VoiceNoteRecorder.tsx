@@ -1,3 +1,4 @@
+import { useMediaCorners } from "../../features/messages/use-media-corners";
 import { useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { XIcon as X } from "../../shared/design-system/icons";
@@ -21,6 +22,7 @@ export function VoiceNoteRecorder({
   onCancel(): void;
   status: "requesting" | "recording" | "processing";
 }) {
+  const discardCorners = useMediaCorners();
   const waveform = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(38);
   const track = useRef<HTMLDivElement>(null);
@@ -62,15 +64,17 @@ export function VoiceNoteRecorder({
   return (
     <fieldset className={styles.recorder}>
       <legend className="sr-only">{label ?? "Recording voice note"}</legend>
-      <button
-        className={styles.iconButton}
-        type="button"
-        aria-label="Discard voice note"
-        title="Discard voice note"
-        onClick={onCancel}
-      >
-        <X size={18} aria-hidden="true" />
-      </button>
+      <span ref={discardCorners} className={styles.discard}>
+        <button
+          className={styles.iconButton}
+          type="button"
+          aria-label="Discard voice note"
+          title="Discard voice note"
+          onClick={onCancel}
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      </span>
       <span className={styles.divider} />
       <span className={styles.timer} role="status">
         {label ?? (

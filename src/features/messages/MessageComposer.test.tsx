@@ -3352,6 +3352,52 @@ it.each(
   },
 );
 
+it("lets a host hide the session agent picker and still routes to the sole agent", async () => {
+  const view = mount();
+  const channel = {
+    id: "channel",
+    channelType: "session" as const,
+    members: [first.pubkey],
+  };
+  const list = { status: "ready" as const, channels: [channel] };
+  const library = {
+    status: "ready" as const,
+    definitions: [],
+    identities: [first],
+  };
+  const session = {
+    ...view.session,
+    viewer: "viewer",
+    channels: { list: () => list, subscribeList: () => () => {} },
+    agentLibrary: {
+      snapshot: () => library,
+      subscribe: () => () => {},
+      refresh: vi.fn(async () => {}),
+    },
+    workSessions: {
+      refreshMembership: vi.fn(async () => channel),
+      addAgents: vi.fn(async () => {}),
+    },
+  } as unknown as RelaySession;
+  const picker = /^(Change agent|Change selected agent|Choose an agent)/;
+  view.retarget({ session, sessionConversation: true });
+  expect(screen.getByRole("button", { name: picker })).toBeInTheDocument();
+  view.retarget({ trailingTool: false });
+  expect(
+    screen.queryByRole("button", { name: picker }),
+  ).not.toBeInTheDocument();
+  view.fill("Hello");
+  view.submit();
+  await waitFor(() =>
+    expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "Hello",
+      [first.pubkey],
+      [],
+    ),
+  );
+});
+
 it("routes to the avatar choice and lets an explicit mention override it", async () => {
   const view = mount();
   const library = {

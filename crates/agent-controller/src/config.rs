@@ -402,6 +402,22 @@ pub(crate) fn validate_environment(
         {
             return Err("Agent worker count must be an integer from 1 to 32".into());
         }
+        if key == "BUZZ_ACP_CHANNELS"
+            && !value.split(',').all(|channel| {
+                channel.len() == 36
+                    && channel.bytes().enumerate().all(|(i, byte)| {
+                        if [8, 13, 18, 23].contains(&i) {
+                            byte == b'-'
+                        } else {
+                            byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()
+                        }
+                    })
+            })
+        {
+            return Err(
+                "Agent channels must be a nonempty comma-separated list of canonical UUIDs".into(),
+            );
+        }
     }
     Ok(())
 }
@@ -418,11 +434,13 @@ pub(crate) fn validate_env_key(key: &str, command: &str) -> Result<()> {
             .enumerate()
             .all(|(i, c)| c == b'_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
         // Pi/Goose retain old Buzz's behavior overrides. Other harnesses keep
-        // their namespace restrictions; Create's worker count is editable.
+        // their namespace restrictions, with bounded worker/channel controls.
         || (!behavior_overrides
-            && ((upper.starts_with("BUZZ_ACP_") && key != "BUZZ_ACP_AGENTS")
+            && ((upper.starts_with("BUZZ_ACP_")
+                && !matches!(key, "BUZZ_ACP_AGENTS" | "BUZZ_ACP_CHANNELS"))
                 || upper.starts_with("BUZZ_MANAGED_")))
-        || (upper == "BUZZ_ACP_AGENTS" && key != "BUZZ_ACP_AGENTS")
+        || (matches!(upper.as_str(), "BUZZ_ACP_AGENTS" | "BUZZ_ACP_CHANNELS")
+            && upper != key)
         || upper.starts_with("BUZZ_APP_")
         || upper.starts_with("GIT_CONFIG_")
         || matches!(

@@ -1,6 +1,11 @@
 import { harnessPreset } from "../../features/agents/harness-presets";
 export { harnessKind, isGoose } from "../../features/agents/harness-presets";
-import type { AgentEdit, AgentView } from "../../features/agents/control";
+import type {
+  AgentControlState,
+  AgentEdit,
+  AgentView,
+} from "../../features/agents/control";
+import { harnessKind } from "../../features/agents/harness-presets";
 
 export interface AgentDraft {
   revision: number;
@@ -15,6 +20,35 @@ export interface AgentDraft {
   provider: string;
   environment: Record<string, string | null>;
   databricks?: { host: string; filter: string } | null;
+}
+
+/** Copy the defaults harness; provider/model continue inheriting at start. */
+export function newAgentDraft(state: AgentControlState): AgentDraft {
+  const defaults = state.data?.defaultSettings;
+  const chosen = state.data?.harnessOptions?.find(
+    (option) =>
+      option.available !== false &&
+      harnessKind(option.command) === (defaults?.harness ?? "buzz-agent"),
+  );
+  const command = chosen?.command ?? "buzz-agent";
+  const inherits = defaults?.harness === "buzz-agent" && !!defaults.provider;
+  return {
+    revision: 0,
+    name: "",
+    systemPrompt: "",
+    sessionPolicy: null,
+    workspace: state.data?.defaultWorkspace ?? "",
+    command,
+    args: JSON.stringify(chosen?.defaultArgs ?? []),
+    model: "",
+    provider:
+      command !== "buzz-agent" ||
+      inherits ||
+      state.data?.agentDefaults?.provider
+        ? ""
+        : (chosen?.providers[0]?.value ?? "databricks_v2"),
+    environment: {},
+  };
 }
 // Goose provider config keys, checked against built-in ConfigKey declarations
 // and declarative provider api_key_env values. OAuth/local providers have none.

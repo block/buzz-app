@@ -287,6 +287,8 @@ export interface AgentControl {
     destination: string,
     owner: string,
     edit: AgentEdit,
+    /** Persist the exact identity before authorization/commit; throwing cancels creation. */
+    onPrepared?: (identity: { id: string; pubkey: string }) => void,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
   setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
@@ -411,11 +413,16 @@ export function createAgentControl(
         (data) => {
           if (data && current === generation) ready(data);
         },
-        () => {
+        (error: unknown) => {
           if (current === generation)
             update({
               status: "error",
               error:
+                // Native rejection strings are sanitized; arbitrary Error objects
+                // can contain child output and must remain hidden.
+                (typeof error === "string"
+                  ? `${error}${/[.!?]$/.test(error) ? "" : "."} `
+                  : "") +
                 "Could not refresh local agents. Current host status is unconfirmed.",
             });
         },
@@ -579,6 +586,7 @@ export function createAgentControl(
             destination: string,
             owner: string,
             edit: AgentEdit,
+            onPrepared?: (identity: { id: string; pubkey: string }) => void,
           ) => {
             let id = "";
             const data = await run(
@@ -591,6 +599,7 @@ export function createAgentControl(
                   owner,
                 );
                 id = prepared.id;
+                onPrepared?.(prepared);
                 const result = await communityRequest<{ auth: string[] }>(
                   destination,
                   "authorize-agent",

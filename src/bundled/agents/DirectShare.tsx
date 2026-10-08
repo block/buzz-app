@@ -210,7 +210,12 @@ function AgentShareContents({
         </>
       }
       catalogControls={
-        <AgentShareSwitch session={session} agent={agent} name={name} />
+        <AgentShareSwitch
+          session={session}
+          agent={agent}
+          name={name}
+          defaultSessionPolicy={policy}
+        />
       }
     />
   );

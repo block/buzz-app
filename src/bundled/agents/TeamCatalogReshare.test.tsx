@@ -320,7 +320,7 @@ it("keeps the share dialog open until a pending portable read publishes", async 
 
 it("shares an inheriting member with the agent defaults it runs with", async () => {
   const test = pendingShare("thread");
-  render(test.dialog);
+  render(<ToastProvider>{test.dialog}</ToastProvider>);
   await startShare(test.loadTeam);
   test.settle().resolve({ team: { name: "Crew" } });
   await waitFor(async () => {

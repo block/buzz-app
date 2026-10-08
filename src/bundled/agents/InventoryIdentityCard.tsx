@@ -254,7 +254,6 @@ export function InventoryIdentityCard({
               session={session}
               agent={agent}
               name={row.displayName}
-              defaultSessionPolicy={data?.defaultSettings?.sessionPolicy}
             />
           </Fragment>
         ))}

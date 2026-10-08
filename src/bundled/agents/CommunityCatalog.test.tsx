@@ -27,6 +27,11 @@ import {
 import { controlFixture } from "../../features/agents/control-testing";
 import { importTeamSnapshot } from "../../features/agents/team-import";
 import { AgentControlPanel } from "./AgentControlPanel";
+import { AgentDirectShare } from "./DirectShare";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+vi.mock("../../features/direct-messages/RecipientPicker", () => ({
+  RecipientPicker: () => null,
+}));
 vi.mock("../../features/agents/team-import", () => ({
   importTeamSnapshot: vi.fn(),
 }));
@@ -901,3 +906,61 @@ it("adds a catalog team through the shared importer only while its listed head i
   await viewer.catalog.refresh();
   expect(viewer.catalog.snapshot().teams).toEqual([]);
 });
+
+it.each(["channel", "thread"] as const)(
+  "shares an inheriting agent through the real direct-share catalog switch with %s defaults",
+  async (sessionPolicy) => {
+    const server = catalogRelay();
+    const owner = client(server, alice, `https://catalog.test:${alice.pubkey}`);
+    const fixture = controlFixture();
+    fixture.agent.relayUrl = "wss://catalog.test";
+    fixture.agent.harness.command = "buzz-agent";
+    fixture.data.defaultSettings = {
+      harness: "buzz-agent",
+      provider: "",
+      model: "",
+      effort: "",
+      sessionPolicy,
+      environmentKeys: [],
+    };
+    const control = createAgentControl(fixture.host);
+    owners.push(control);
+    await control.refresh();
+    const operations: never[] = [];
+    const session = {
+      ...owner.session,
+      outbox: {
+        ready: async () => {},
+        snapshot: () => operations,
+        subscribe: () => () => {},
+      },
+      directMessages: { delivery: () => "unknown" },
+    } as unknown as RelaySession;
+    render(
+      <ToastProvider>
+        <AgentDirectShare
+          session={session}
+          agent={fixture.agent}
+          control={control}
+          name={fixture.agent.name}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() => expect(enabled()).toBe(true));
+    fireEvent.click(shareSwitch());
+    await screen.findByText(
+      `Published ${fixture.agent.name} to the community catalog.`,
+    );
+    const viewer = client(server, bob);
+    await viewer.catalog.refresh();
+    expect(viewer.catalog.snapshot().agents).toEqual([
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          displayName: fixture.agent.name,
+          sessionPolicy,
+        }),
+      }),
+    ]);
+  },
+);

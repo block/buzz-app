@@ -295,7 +295,12 @@ launch rejection; a Tauri IPC test checks the actual serialized snapshot.
 The **Harnesses** card always lists **Buzz Agent**, **Goose**, **Pi**, and
 **Claude Code**. Claude Code is also a choice in Create/Edit once its tools are
 installed. **Add harness** opens the Tier 2 Hermes chooser and setup details.
-Hermes also appears in the main list once its executable is detected:
+Hermes also appears in the main list once its executable is detected.
+
+Buzz supplies `buzz-dev-mcp` only to **Buzz Agent**, including an explicitly
+selected absolute path to its executable. Goose, Pi, Claude Code, Codex, and
+other harnesses use their own tools and receive no additional developer MCP
+server from Buzz. Runtime snapshots report an MCP command only for Buzz Agent.
 
 - **Buzz Agent** is bundled and shows **Ready**.
 - **Goose** is bundled and always shows **Ready**. Buzz launches `goose-acp`
@@ -571,8 +576,9 @@ Launch-selected agents start relay listeners; their AI worker pools remain lazy
 until work arrives. Status reads project configured ACP/MCP paths without reading
 or hashing executables. These paths and `runtimeAvailable` describe the bundle
 accepted at initialization, not a fresh integrity check or relay readiness. Every
-actual launch still verifies its bundled worker, ACP and MCP executables before
-spawn, and exposes verification failure on the agent. Native Start projects one
+actual launch still verifies its worker and ACP executables, plus the MCP
+executable for Buzz Agent, before spawn and exposes verification failure on the
+agent. Native Start projects one
 final snapshot after recording its outcome. This adds no incoming wake service
 for fully stopped listeners and no durable interrupted-turn recovery.
 

@@ -36,6 +36,12 @@ type Props = {
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
 };
+/**
+ * Who reacted is the pill's primary answer and people scan several pills in a
+ * row, so the first hover opens quickly (as Slack does); once a preview is
+ * open, moving along the row switches previews immediately.
+ */
+export const REACTION_PREVIEW_DELAY_MS = 100;
 const noSubscribe = () => () => {};
 const noOperations = Object.freeze([]);
 const empty = () => noOperations;
@@ -389,7 +395,9 @@ export function MessageReactions(
               unavailable={action.disabled}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}
-              previewDelay={pointerInRow && preview ? 0 : 1200}
+              previewDelay={
+                pointerInRow && preview ? 0 : REACTION_PREVIEW_DELAY_MS
+              }
               previewOpen={preview?.key === key}
               previewSlide={previewSlide}
               onPreviewChange={(open) =>

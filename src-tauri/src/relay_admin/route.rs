@@ -118,7 +118,7 @@ pub(crate) enum StaffRequest {
         id: String,
         action_id: String,
     },
-    ListFeedback,
+    ListFeedback {},
     GetFeedback {
         id: String,
     },
@@ -126,7 +126,7 @@ pub(crate) enum StaffRequest {
         id: String,
         status: FeedbackStatus,
     },
-    ListOperators,
+    ListOperators {},
     PutOperator {
         pubkey: String,
         role: Role,
@@ -274,6 +274,24 @@ fn body(fields: Value) -> Vec<u8> {
 }
 
 impl StaffRequest {
+    /// Anything that may change relay state once sent.
+    pub(super) fn is_write(&self) -> bool {
+        !matches!(
+            self,
+            Self::Probe {}
+                | Self::ListReports { .. }
+                | Self::GetReport { .. }
+                | Self::ListFeedback {}
+                | Self::GetFeedback { .. }
+                | Self::ListOperators {}
+                | Self::ListRestrictions { .. }
+                | Self::ListCommunities { .. }
+                | Self::SearchMembers { .. }
+                | Self::GetMember { .. }
+                | Self::GetEvent { .. }
+        )
+    }
+
     /// The writes whose retry must reuse the same frozen request.
     pub(super) fn request_id(&self) -> Option<&str> {
         match self {
@@ -359,7 +377,7 @@ impl StaffRequest {
                 Some(json!({ "actionId": uuid(action_id)? })),
                 SUCCESS_CAP,
             ),
-            Self::ListFeedback => ("GET", "/feedback".into(), None, SUCCESS_CAP),
+            Self::ListFeedback {} => ("GET", "/feedback".into(), None, SUCCESS_CAP),
             Self::GetFeedback { id } => {
                 ("GET", format!("/feedback/{}", uuid(id)?), None, SUCCESS_CAP)
             }
@@ -369,7 +387,7 @@ impl StaffRequest {
                 Some(json!({ "status": enum_text(status) })),
                 SUCCESS_CAP,
             ),
-            Self::ListOperators => ("GET", "/operators".into(), None, SUCCESS_CAP),
+            Self::ListOperators {} => ("GET", "/operators".into(), None, SUCCESS_CAP),
             Self::PutOperator { pubkey, role } => (
                 "PUT",
                 format!("/operators/{}", hex64(pubkey)?),

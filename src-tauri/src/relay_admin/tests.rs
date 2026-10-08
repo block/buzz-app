@@ -2,7 +2,7 @@
 //! resolver and address rule so the real request path can reach a local TLS
 //! server that presents a certificate for `admin.test`.
 
-use super::attachment::{fetch, AttachmentRef, Use};
+use super::attachment::{fetch, save_to, AttachmentRef, Use, ATTACHMENT_CAP};
 use super::net::{admin_origin, public, Lookup, Net, Resolve};
 use super::*;
 use base64::engine::general_purpose::STANDARD;
@@ -172,6 +172,8 @@ fn ban(request_id: &str) -> StaffRequest {
     }))
 }
 
+const PROBE: &str = r#"{"status":"ok","authMode":"nip98","role":"moderator","source":"db","canAct":true,"canStaff":false}"#;
+
 const ID: &str = "0f5b8f2e-3c1a-4c7e-9a43-2b6f0d1e9a11";
 
 async fn run(
@@ -186,7 +188,7 @@ async fn run(
 
 #[tokio::test]
 async fn answer_changing_from_allowed_to_private_is_refused_at_the_request() {
-    let fixture = fixture(vec![reply("200 OK", "application/json", "{}"); 2]).await;
+    let fixture = fixture(vec![reply("200 OK", "application/json", PROBE); 2]).await;
     let net = net(
         &fixture,
         vec![lo(), Some(vec!["10.0.0.7".parse().unwrap()])],
@@ -239,7 +241,7 @@ async fn system_proxy_settings_cannot_redirect_the_connection() {
             *counter.lock().unwrap() += 1;
         }
     });
-    let fixture = fixture(vec![reply("200 OK", "application/json", "{}")]).await;
+    let fixture = fixture(vec![reply("200 OK", "application/json", PROBE)]).await;
     let net = net(&fixture, vec![lo()]);
     let host = IdentityHost::fixture();
     let ctx = context(&host, &fixture).await;
@@ -657,4 +659,373 @@ fn routes_build_exact_urls_and_bodies() {
         serde_json::from_value::<StaffRequest>(json!({ "route": "probe", "path": "/x" })).is_err()
     );
     assert!(serde_json::from_value::<StaffRequest>(json!({ "route": "rawHttp" })).is_err());
+}
+
+/// The witnesses from review plus each registry block's edges.
+const REFUSED_WITNESSES: &[&str] = &[
+    "192.88.99.2",
+    "192.88.99.0",
+    "192.88.99.255",
+    "2001:2::1",
+    "2001:2:0:ffff::1",
+    "3fff::1",
+    "3fff:fff:ffff::1",
+    "198.19.255.255",
+    "100.127.255.255",
+    "2001:1ff:ffff::1",
+];
+const PUBLIC_NEIGHBOURS: &[&str] = &[
+    "192.88.98.255",
+    "192.88.100.0",
+    "198.20.0.0",
+    "100.128.0.0",
+    "2001:200::1",
+    "3fff:1000::1",
+];
+
+#[test]
+fn reserved_ranges_are_refused_as_literals_and_neighbours_are_not() {
+    for ip in REFUSED_WITNESSES {
+        assert!(!public(ip.parse().unwrap()), "{ip}");
+        let literal = match ip.parse::<IpAddr>().unwrap() {
+            IpAddr::V4(v4) => format!("https://{v4}"),
+            IpAddr::V6(v6) => format!("https://[{v6}]"),
+        };
+        assert!(admin_origin(&literal).is_err(), "{literal}");
+    }
+    for ip in PUBLIC_NEIGHBOURS {
+        assert!(public(ip.parse().unwrap()), "{ip}");
+    }
+}
+
+#[tokio::test]
+async fn reserved_dns_answers_are_refused_by_the_production_rule() {
+    let fixture = fixture(vec![]).await;
+    let answers = REFUSED_WITNESSES
+        .iter()
+        .map(|ip| Some(vec![ip.parse().unwrap()]))
+        .collect::<Vec<_>>();
+    let mut net = Net::custom(Arc::new(Script(Mutex::new(answers))), public);
+    net.root = Some(fixture.root.clone());
+    let host = IdentityHost::fixture();
+    let probe = request(json!({ "route": "probe" }));
+    for ip in REFUSED_WITNESSES {
+        let failure = run(&net, &host, &fixture, &probe).await.unwrap_err();
+        assert!(failure.not_sent, "{ip}");
+    }
+    assert!(fixture.seen.lock().unwrap().is_empty());
+}
+
+const PK: &str = "abababababababababababababababababababababababababababababababab";
+const REPORT: &str = r#"{"id":"r","communityId":"c","communityHost":"h","reportEventId":"e","reporterPubkey":"p","targetKind":"event","target":"t","reportType":"spam","status":"open","activeAction":null,"createdAt":"2026-01-01T00:00:00Z"}"#;
+
+/// Every route: a valid body, and a misrouted or malformed 2xx.
+fn route_bodies() -> Vec<(Value, String, &'static str)> {
+    let action = r#"{"id":"a","requestId":"q","actorPubkey":"p","actorRole":"moderator","action":"ban","status":"succeeded","reason":null,"expiresAt":null,"errorMessage":null,"createdAt":"t","updatedAt":"t"}"#;
+    let resolution = format!(r#"{{"status":"resolved","activeAction":{action}}}"#);
+    let page = |item: &str| format!(r#"{{"items":[{item}],"nextCursor":null}}"#);
+    vec![
+        (json!({ "route": "probe" }), PROBE.into(), r#"{"gateway":"sign in"}"#),
+        (json!({ "route": "listReports", "query": {} }), format!("[{REPORT}]"), r#"{"items":[]}"#),
+        (json!({ "route": "getReport", "id": ID }), REPORT.into(), r#"{"id":"r"}"#),
+        (json!({ "route": "resolveReport", "id": ID, "action": "ban", "requestId": ID }), resolution.clone(), r#"{"status":"resolved","activeAction":{"status":"teleported"}}"#),
+        (json!({ "route": "reopenReport", "id": ID, "requestId": ID }), r#"{"status":"open"}"#.into(), "[]"),
+        (json!({ "route": "cancelReport", "id": ID, "actionId": ID }), resolution, r#"{"ok":true}"#),
+        (json!({ "route": "listFeedback" }), r#"[{"id":"f","communityId":null,"communityHost":null,"submitterPubkey":"p","bodySummary":"b","status":"new","receivedAt":"t"}]"#.into(), r#"[{"id":"f"}]"#),
+        (json!({ "route": "getFeedback", "id": ID }), r#"{"id":"f","communityId":null,"communityHost":null,"eventId":"e","submitterPubkey":"p","body":"b","status":"reviewed","tags":[],"eventCreatedAt":"t","receivedAt":"t"}"#.into(), r#"{"id":"f","status":"lost"}"#),
+        (json!({ "route": "setFeedbackStatus", "id": ID, "status": "archived" }), r#"{"status":"archived"}"#.into(), r#"{"status":"burned"}"#),
+        (json!({ "route": "listOperators" }), r#"[{"pubkey":"p","effectiveRole":"operator","sources":["config"]}]"#.into(), r#"[{"pubkey":"p","effectiveRole":"king","sources":[]}]"#),
+        (json!({ "route": "putOperator", "pubkey": PK, "role": "moderator" }), r#"{"pubkey":"p","effectiveRole":"moderator","sources":["db"]}"#.into(), "{}"),
+        (json!({ "route": "deleteOperator", "pubkey": PK }), format!(r#"{{"deleted":"{PK}"}}"#), "null"),
+        (json!({ "route": "listRestrictions", "communityHost": "c.example" }), page(r#"{"pubkey":"p","banned":true,"banExpiresAt":null,"banReason":null,"mutedUntil":null,"muteReason":null,"actorPubkey":"a","updatedAt":"t"}"#), "[]"),
+        (json!({ "route": "liftRestriction", "communityHost": "c.example", "kind": "ban", "pubkey": PK }), String::new(), "{}"),
+        (json!({ "route": "directAction", "communityHost": "c.example", "action": "ban", "target": PK, "requestId": ID }), r#"{"state":"succeeded","actionId":"a","replayed":false}"#.into(), r#"{"state":"queued"}"#),
+        (json!({ "route": "listCommunities" }), page(r#"{"id":"c","host":"c.example","icon":null}"#), r#"{"items":null}"#),
+        (json!({ "route": "searchMembers", "communityHost": "c.example", "q": "a" }), r#"{"items":[{"pubkey":"p","displayName":null,"nip05":null,"avatarUrl":null}]}"#.into(), r#"{"members":[]}"#),
+        (json!({ "route": "getMember", "communityHost": "c.example", "pubkey": PK }), r#"{"pubkey":"p","profile":null,"role":null,"banned":false,"mutedUntil":null,"isStaff":false}"#.into(), r#"{"pubkey":"p"}"#),
+        (json!({ "route": "getEvent", "communityHost": "c.example", "id": PK }), r#"{"id":"e","authorPubkey":"p","kind":1,"content":"c","createdAt":"t","deletedAt":null,"channelId":null}"#.into(), r#"{"id":"e","kind":"one"}"#),
+    ]
+}
+
+#[tokio::test]
+async fn every_route_accepts_only_its_own_success_shape() {
+    let bodies = route_bodies();
+    let mut replies = Vec::new();
+    for (_, good, bad) in &bodies {
+        let status = if good.is_empty() {
+            "204 No Content"
+        } else {
+            "200 OK"
+        };
+        replies.push(reply(status, "application/json", good));
+        replies.push(reply("200 OK", "application/json", bad));
+        replies.push(reply("200 OK", "application/json", ""));
+    }
+    let fixture = fixture(replies).await;
+    let net = net(&fixture, vec![lo(); bodies.len() * 3]);
+    let host = IdentityHost::fixture();
+    for (value, good, _) in bodies {
+        let req = request(value.clone());
+        assert!(
+            run(&net, &host, &fixture, &req).await.is_ok(),
+            "valid {value}"
+        );
+        let bad = run(&net, &host, &fixture, &req).await.unwrap_err();
+        assert_eq!(bad.category, Category::Ambiguous, "misrouted {value}");
+        let empty = run(&net, &host, &fixture, &req).await;
+        if good.is_empty() {
+            assert!(empty.is_ok(), "{value}");
+        } else {
+            let empty = empty.unwrap_err();
+            assert_eq!(
+                (empty.category, empty.body_empty),
+                (Category::Ambiguous, true),
+                "empty {value}"
+            );
+        }
+        // Writes stay retryable; a non-success never claims the request unsent.
+        assert!(!bad.not_sent);
+    }
+}
+
+#[tokio::test]
+async fn a_gateway_page_after_a_write_keeps_the_write_uncertain() {
+    let fixture = fixture(vec![
+        reply("502 Bad Gateway", "text/html", "<html>bad gateway</html>"),
+        reply("403 Forbidden", "text/html", "<html>access</html>"),
+        reply("400 Bad Request", "application/json", r#"{"gateway":"no"}"#),
+        reply(
+            "200 OK",
+            "application/json",
+            r#"{"state":"succeeded","actionId":"a","replayed":true}"#,
+        ),
+    ])
+    .await;
+    let net = net(&fixture, vec![lo(); 4]);
+    let host = IdentityHost::fixture();
+    let write = ban(ID);
+    for _ in 0..3 {
+        let failure = run(&net, &host, &fixture, &write).await.unwrap_err();
+        assert_eq!(failure.category, Category::Ambiguous);
+        assert!(!failure.not_sent);
+    }
+    assert_eq!(
+        run(&net, &host, &fixture, &write).await.unwrap()["replayed"],
+        true
+    );
+    let seen = fixture.seen.lock().unwrap();
+    assert_eq!(seen.len(), 4);
+    for s in seen.iter() {
+        assert_eq!(s.target(), seen[0].target());
+        assert_eq!(s.body, seen[0].body, "same intent and requestId");
+    }
+}
+
+#[test]
+fn every_route_builds_its_url_method_and_cap_and_rejects_bad_input() {
+    use super::route::{PROBE_CAP, SUCCESS_CAP};
+    let origin = admin_origin("https://admin.example.com").unwrap();
+    let b = "/api/admin/v1";
+    let table: Vec<(Value, &str, String, Option<&str>)> = vec![
+        (json!({"route":"probe"}), "GET", format!("{b}/probe"), None),
+        (
+            json!({"route":"listReports","query":{"limit":5}}),
+            "GET",
+            format!("{b}/reports?limit=5"),
+            None,
+        ),
+        (
+            json!({"route":"getReport","id":ID}),
+            "GET",
+            format!("{b}/reports/{ID}"),
+            Some("id"),
+        ),
+        (
+            json!({"route":"resolveReport","id":ID,"action":"ban","requestId":ID}),
+            "POST",
+            format!("{b}/reports/{ID}/resolve"),
+            Some("requestId"),
+        ),
+        (
+            json!({"route":"reopenReport","id":ID,"requestId":ID}),
+            "POST",
+            format!("{b}/reports/{ID}/reopen"),
+            Some("id"),
+        ),
+        (
+            json!({"route":"cancelReport","id":ID,"actionId":ID}),
+            "POST",
+            format!("{b}/reports/{ID}/cancel"),
+            Some("actionId"),
+        ),
+        (
+            json!({"route":"listFeedback"}),
+            "GET",
+            format!("{b}/feedback"),
+            None,
+        ),
+        (
+            json!({"route":"getFeedback","id":ID}),
+            "GET",
+            format!("{b}/feedback/{ID}"),
+            Some("id"),
+        ),
+        (
+            json!({"route":"setFeedbackStatus","id":ID,"status":"new"}),
+            "PATCH",
+            format!("{b}/feedback/{ID}"),
+            Some("id"),
+        ),
+        (
+            json!({"route":"listOperators"}),
+            "GET",
+            format!("{b}/operators"),
+            None,
+        ),
+        (
+            json!({"route":"putOperator","pubkey":PK,"role":"operator"}),
+            "PUT",
+            format!("{b}/operators/{PK}"),
+            Some("pubkey"),
+        ),
+        (
+            json!({"route":"deleteOperator","pubkey":PK}),
+            "DELETE",
+            format!("{b}/operators/{PK}"),
+            Some("pubkey"),
+        ),
+        (
+            json!({"route":"listRestrictions","communityHost":"c.example"}),
+            "GET",
+            format!("{b}/members/restrictions?communityHost=c.example"),
+            Some("communityHost"),
+        ),
+        (
+            json!({"route":"liftRestriction","communityHost":"c.example","kind":"ban","pubkey":PK}),
+            "DELETE",
+            format!("{b}/members/{PK}/ban?communityHost=c.example"),
+            Some("pubkey"),
+        ),
+        (
+            json!({"route":"directAction","communityHost":"c.example","action":"delete","target":PK,"requestId":ID}),
+            "POST",
+            format!("{b}/events/{PK}/delete?communityHost=c.example"),
+            Some("target"),
+        ),
+        (
+            json!({"route":"listCommunities","q":"c"}),
+            "GET",
+            format!("{b}/communities?q=c"),
+            None,
+        ),
+        (
+            json!({"route":"searchMembers","communityHost":"c.example","q":"a"}),
+            "GET",
+            format!("{b}/members/search?communityHost=c.example&q=a"),
+            Some("communityHost"),
+        ),
+        (
+            json!({"route":"getMember","communityHost":"c.example","pubkey":PK}),
+            "GET",
+            format!("{b}/members/{PK}?communityHost=c.example"),
+            Some("pubkey"),
+        ),
+        (
+            json!({"route":"getEvent","communityHost":"c.example","id":PK}),
+            "GET",
+            format!("{b}/events/{PK}?communityHost=c.example"),
+            Some("id"),
+        ),
+    ];
+    assert_eq!(table.len(), 19, "one row per route");
+    for (value, method, target, id_field) in table {
+        let req = request(value.clone());
+        let built = req.build(&origin).unwrap();
+        let actual = match built.url.query() {
+            Some(q) => format!("{}?{q}", built.url.path()),
+            None => built.url.path().to_owned(),
+        };
+        assert_eq!(
+            (built.method, actual.as_str()),
+            (method, target.as_str()),
+            "{value}"
+        );
+        let cap = if value["route"] == "probe" {
+            PROBE_CAP
+        } else {
+            SUCCESS_CAP
+        };
+        assert_eq!(built.success_cap, cap, "{value}");
+        assert_eq!(req.is_write(), method != "GET", "{value}");
+        let mut extra = value.clone();
+        extra["unexpected"] = json!(1);
+        assert!(
+            serde_json::from_value::<StaffRequest>(extra).is_err(),
+            "unknown field {value}"
+        );
+        if let Some(field) = id_field {
+            let mut bad = value.clone();
+            bad[field] = json!("../probe");
+            assert!(request(bad).build(&origin).is_err(), "bad {field} {value}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn attachment_size_limit_is_enforced_before_and_while_reading() {
+    let fixture = fixture(vec![reply("200 OK", "image/png", "0123456789")]).await;
+    let net = net(&fixture, vec![lo()]);
+    let host = IdentityHost::fixture();
+    let ctx = context(&host, &fixture).await;
+    let at = |size| AttachmentRef {
+        feedback_id: ID.into(),
+        sha256: "0".repeat(64),
+        mime: "image/png".into(),
+        size,
+    };
+    for size in [0, ATTACHMENT_CAP + 1] {
+        let f = fetch(
+            &net,
+            &host,
+            &ctx,
+            Some(origin(&fixture)),
+            &at(size),
+            Use::Preview,
+        )
+        .await;
+        assert!(f.unwrap_err().not_sent, "{size}");
+    }
+    let longer = fetch(
+        &net,
+        &host,
+        &ctx,
+        Some(origin(&fixture)),
+        &at(4),
+        Use::Preview,
+    )
+    .await;
+    assert_eq!(
+        longer.unwrap_err().code.as_deref(),
+        Some("attachment_size_mismatch")
+    );
+    assert_eq!(fixture.seen.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn save_reports_cancellation_success_and_disk_errors() {
+    assert_eq!(save_to(None, b"x"), json!({ "state": "cancelled" }));
+    let dir = std::env::temp_dir().join(format!("relay-admin-save-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("a.png");
+    assert_eq!(
+        save_to(Some(Ok(file.clone())), b"bytes"),
+        json!({ "state": "saved" })
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), b"bytes");
+    let missing = save_to(Some(Ok(dir.join("no/such/dir/a.png"))), b"x");
+    assert_eq!(missing["state"], "failed");
+    assert_eq!(missing["failure"]["notSent"], true);
+    let not_a_path = save_to(Some(Err("not a file path".into())), b"x");
+    assert_eq!(not_a_path["state"], "failed");
+    std::fs::remove_dir_all(dir).unwrap();
 }

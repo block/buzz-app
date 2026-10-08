@@ -123,7 +123,11 @@ pub(super) fn admin_origin(value: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-/// Globally routable unicast only.
+/// Globally routable unicast only: every range in the IANA IPv4 and IPv6
+/// special-purpose address registries that is not marked globally reachable is
+/// refused, with no exceptions of our own. Ranges the registry marks globally
+/// reachable but that tunnel to arbitrary IPv4 (6to4, Teredo) or sit inside a
+/// non-global block are refused too.
 pub(super) fn public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => public_v4(v4),
@@ -134,27 +138,52 @@ pub(super) fn public(ip: IpAddr) -> bool {
     }
 }
 
+/// `(network, prefix length)` blocks from the IANA IPv4 special-purpose
+/// registry that are not globally reachable, plus multicast and 240/4.
+const V4_REFUSED: &[([u8; 4], u8)] = &[
+    ([0, 0, 0, 0], 8),       // "this network"
+    ([10, 0, 0, 0], 8),      // private
+    ([100, 64, 0, 0], 10),   // shared address space
+    ([127, 0, 0, 0], 8),     // loopback
+    ([169, 254, 0, 0], 16),  // link-local
+    ([172, 16, 0, 0], 12),   // private
+    ([192, 0, 0, 0], 24),    // IETF protocol assignments
+    ([192, 0, 2, 0], 24),    // documentation
+    ([192, 88, 99, 0], 24),  // deprecated 6to4 relay anycast
+    ([192, 168, 0, 0], 16),  // private
+    ([198, 18, 0, 0], 15),   // benchmarking
+    ([198, 51, 100, 0], 24), // documentation
+    ([203, 0, 113, 0], 24),  // documentation
+    ([224, 0, 0, 0], 4),     // multicast
+    ([240, 0, 0, 0], 4),     // reserved and broadcast
+];
+
 fn public_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, c, _] = ip.octets();
-    !(ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_documentation()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-        || a == 0
-        || (a == 100 && (64..128).contains(&b))
-        || (a == 192 && b == 0 && c == 0)
-        || (a == 198 && (18..20).contains(&b))
-        || a >= 240)
+    let ip = u32::from(ip);
+    !V4_REFUSED.iter().any(|&(net, len)| {
+        let mask = u32::MAX << (32 - len);
+        ip & mask == u32::from_be_bytes(net)
+    })
 }
 
+/// Blocks inside global unicast `2000::/3` that the IANA IPv6 special-purpose
+/// registry lists as not globally reachable, or that embed arbitrary IPv4.
+/// `2001::/23` (IETF protocol assignments) is refused whole: it holds Teredo,
+/// benchmarking, ORCHID and others, and no admin host lives there.
+const V6_REFUSED: &[(u128, u8)] = &[
+    (0x2001_0000 << 96, 23), // IETF protocol assignments (Teredo, benchmarking, ORCHID…)
+    (0x2001_0db8 << 96, 32), // documentation
+    (0x2002 << 112, 16),     // 6to4
+    (0x3fff << 112, 20),     // documentation
+];
+
 fn public_v6(ip: Ipv6Addr) -> bool {
-    let s = ip.segments();
-    // Global unicast is 2000::/3. Inside it, refuse ranges that embed or
-    // tunnel to arbitrary IPv4 (6to4, Teredo), documentation, and ORCHID.
-    (s[0] & 0xe000) == 0x2000
-        && s[0] != 0x2002
-        && !(s[0] == 0x2001 && (s[1] == 0 || s[1] == 0x0db8 || (s[1] & 0xfff0) == 0x0010))
+    let ip = u128::from(ip);
+    // Everything outside 2000::/3 (loopback, ULA, link-local, multicast,
+    // IPv4-compatible, NAT64 64:ff9b::/96 …) is not global unicast.
+    ip >> 125 == 0b001
+        && !V6_REFUSED.iter().any(|&(net, len)| {
+            let mask = u128::MAX << (128 - len);
+            ip & mask == net
+        })
 }

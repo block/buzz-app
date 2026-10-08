@@ -11,6 +11,24 @@ import {
   snapshotRecoveryValue,
 } from "./snapshot-recovery";
 
+it("accepts native agent and maximum-length team source IDs without aliasing recovery keys", () => {
+  const nativeId = `${"a".repeat(64)}-${"b".repeat(64)}`;
+  expect(nativeId).toHaveLength(129);
+  expect(snapshotRecoveryKey("agent", nativeId)).toBe(
+    `snapshot-share:agent:${nativeId}`,
+  );
+  const teamId = "t".repeat(128);
+  expect(snapshotRecoveryKey("team", teamId)).toBe(
+    `snapshot-share:team:${teamId}`,
+  );
+  expect(() => snapshotRecoveryKey("agent", "")).toThrow(
+    "stable source identity",
+  );
+  expect(() => snapshotRecoveryKey("team", "x".repeat(130))).toThrow(
+    "stable source identity",
+  );
+});
+
 const key = snapshotRecoveryKey("agent", "worker-source");
 const people = [{ pubkey: "b".repeat(64), name: "Receiver" }];
 const recovery = { key, value: snapshotRecoveryValue(people, "none") };

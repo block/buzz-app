@@ -641,11 +641,14 @@ it("adopts a shared agent through the create form with its portable settings", a
       control={control}
       importDestination="https://relay.example.test"
       createOwner={viewer.session.viewer}
-      catalog={(add, has) => (
+      session={viewer.session}
+      catalog={(add, has, open, onClose) => (
         <CatalogLauncher
           session={viewer.session}
           addAgent={add}
           hasAgent={has}
+          open={open}
+          onClose={onClose}
         />
       )}
     />
@@ -653,8 +656,9 @@ it("adopts a shared agent through the create form with its portable settings", a
   const bobView = client(server, bob);
   const view = render(render_(bobView));
   const openCatalog = async () => {
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
+      screen.getByRole("button", { name: "Choose from catalog" }),
     );
     return screen.findByRole("button", {
       name: /Helper (is already in My Agents|from Community Catalog)/,
@@ -774,17 +778,21 @@ it.each([
         control={control}
         importDestination="https://relay.example.test"
         createOwner={viewer.session.viewer}
-        catalog={(add, has) => (
+        session={viewer.session}
+        catalog={(add, has, open, onClose) => (
           <CatalogLauncher
             session={viewer.session}
             addAgent={add}
             hasAgent={has}
+            open={open}
+            onClose={onClose}
           />
         )}
       />,
     );
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
+      screen.getByRole("button", { name: "Choose from catalog" }),
     );
     fireEvent.click(
       await screen.findByRole("button", {
@@ -844,14 +852,13 @@ it("adds a catalog team through the shared importer only while its listed head i
         session={viewer.session}
         addAgent={undefined}
         hasAgent={() => false}
+        open
+        onClose={() => {}}
         control={control}
         destination="https://catalog.test"
       />,
     );
   const openTeam = async () => {
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Choose from catalog" }),
-    );
     // The only entry is selected by default.
     return screen.findByRole("button", {
       name: /Crew (is already in your teams|from Community Catalog)/,

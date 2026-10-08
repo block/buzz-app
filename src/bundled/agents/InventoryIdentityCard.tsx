@@ -18,7 +18,6 @@ import {
 } from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
 import { Fragment, useState } from "react";
-import { AgentDirectShare } from "./DirectShare";
 import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
 import {
   type ArchiveAction,
@@ -45,7 +44,7 @@ export function InventoryIdentityCard({
   sourceProfiles,
   edit,
   duplicate,
-  onExport,
+  onShare,
   remove,
   removeRelay,
   archive,
@@ -69,7 +68,7 @@ export function InventoryIdentityCard({
   sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
-  onExport?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   /** Undefined when this connection cannot remove relay-only agents. */
   removeRelay?:
@@ -184,7 +183,7 @@ export function InventoryIdentityCard({
         }
         onEdit={setups.length ? edit : undefined}
         onDuplicate={setups.length ? duplicate : undefined}
-        onExport={setups.length ? onExport : undefined}
+        onShare={setups.length ? onShare : undefined}
         onDelete={setups.length ? remove : undefined}
         archived={!!archive?.archived}
         archive={
@@ -248,12 +247,6 @@ export function InventoryIdentityCard({
               state={state}
               control={control}
               imported={agent.id === importedId}
-            />
-            <AgentDirectShare
-              control={control}
-              session={session}
-              agent={agent}
-              name={row.displayName}
             />
           </Fragment>
         ))}

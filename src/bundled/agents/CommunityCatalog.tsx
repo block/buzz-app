@@ -415,7 +415,7 @@ export async function adoptCatalogTeam(
   return result.id;
 }
 
-/** The header action that opens the catalog. An added agent goes through the
+/** The Add dialog's catalog browser. An added agent goes through the
  * ordinary create flow, so its copy has a fresh identity and local keys. */
 export function CatalogLauncher({
   session,
@@ -423,7 +423,11 @@ export function CatalogLauncher({
   hasAgent,
   control,
   destination,
+  open,
+  onClose,
 }: {
+  open: boolean;
+  onClose(): void;
   session: RelaySession;
   addAgent:
     | ((settings: CatalogSeed, onCreated: (agent: AgentView) => void) => void)
@@ -434,7 +438,6 @@ export function CatalogLauncher({
   control?: AgentControl | undefined;
   destination?: string | undefined;
 }) {
-  const [open, setOpen] = useState(false);
   if (!session.communityCatalog.available()) return null;
   const kit = session.channelKit;
   const owner = session.viewer;
@@ -445,47 +448,35 @@ export function CatalogLauncher({
         (entry) =>
           entry.record.value.type === "team" && entry.record.value.id === id,
       );
-  return (
-    <>
-      <Button
-        variant="subtle"
-        size="sm"
-        aria-haspopup="dialog"
-        onClick={() => setOpen(true)}
-      >
-        Choose from catalog
-      </Button>
-      {open && (
-        <CommunityCatalogDialog
-          session={session}
-          onClose={() => setOpen(false)}
-          hasCopy={(publication, id) =>
-            publication.kind === AGENT_CATALOG_KIND ? hasAgent(id) : hasTeam(id)
-          }
-          onAddTeam={
-            control?.previewTeam && kit.available && destination && owner
-              ? (listed) =>
-                  adoptCatalogTeam(session, control, destination, owner, listed)
-              : undefined
-          }
-          onAddAgent={
-            addAgent &&
-            ((publication) => {
-              setOpen(false);
-              addAgent(catalogSeed(publication.agent), (agent) =>
-                rememberAdded(
-                  session.scope,
-                  session.viewer ?? "",
-                  publication,
-                  agent.id,
-                ),
-              );
-            })
-          }
-        />
-      )}
-    </>
-  );
+  return open ? (
+    <CommunityCatalogDialog
+      session={session}
+      onClose={onClose}
+      hasCopy={(publication, id) =>
+        publication.kind === AGENT_CATALOG_KIND ? hasAgent(id) : hasTeam(id)
+      }
+      onAddTeam={
+        control?.previewTeam && kit.available && destination && owner
+          ? (listed) =>
+              adoptCatalogTeam(session, control, destination, owner, listed)
+          : undefined
+      }
+      onAddAgent={
+        addAgent &&
+        ((publication) => {
+          onClose();
+          addAgent(catalogSeed(publication.agent), (agent) =>
+            rememberAdded(
+              session.scope,
+              session.viewer ?? "",
+              publication,
+              agent.id,
+            ),
+          );
+        })
+      }
+    />
+  ) : null;
 }
 
 /** Browse and preview shared agents and teams. Preview renders plain data

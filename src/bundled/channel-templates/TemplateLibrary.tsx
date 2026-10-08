@@ -4,7 +4,6 @@ import type { TeamSnapshot } from "../../features/agents/team-bundles";
 import { decodeTeamFile } from "../../features/agents/team-encoding";
 import { TeamImportDialog } from "../agents/TeamImportDialog";
 import { TeamDeployDialog } from "../agents/TeamDeployDialog";
-import { TeamExportDialog } from "../agents/TeamExportDialog";
 import { npubEncode } from "nostr-tools/nip19";
 import { useEffect, useRef, useState } from "react";
 import type { ChannelKit } from "../../features/channel-templates/capability";
@@ -38,6 +37,11 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { TeamDirectShare } from "../agents/DirectShare";
+import {
+  CommunityCatalogDialog,
+  adoptCatalogTeam,
+} from "../agents/CommunityCatalog";
+import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-protocol";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import type { useTemplateCatalog } from "./useTemplateCatalog";
 import styles from "./TemplateLibrary.module.css";
@@ -65,7 +69,8 @@ export function TemplateLibrary({
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<TeamSnapshot>();
   const [deploying, setDeploying] = useState<Team>();
-  const [exporting, setExporting] = useState<Team>();
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [editing, setEditing] = useState<Selection>();
   const [sharing, setSharing] = useState<Team>();
   const [deleting, setDeleting] = useState<Selection>();
@@ -191,19 +196,6 @@ export function TemplateLibrary({
                 }
                 actions={
                   <>
-                    {type === "team" &&
-                      control?.previewTeam &&
-                      control.create &&
-                      session?.viewer && (
-                        <Button
-                          variant="subtle"
-                          size="sm"
-                          disabled={disabled}
-                          onClick={() => input.current?.click()}
-                        >
-                          Import team snapshot
-                        </Button>
-                      )}
                     {type === "team" && previewError && (
                       <p role="alert" className="text-body-sm text-danger">
                         {previewError}
@@ -226,28 +218,25 @@ export function TemplateLibrary({
                       variant="subtle"
                       size="sm"
                       disabled={disabled}
-                      onClick={(event) =>
-                        open(
-                          {
-                            value:
-                              type === "template"
-                                ? {
-                                    type,
-                                    id: crypto.randomUUID(),
-                                    name: "",
-                                    description: "",
-                                    ...emptyLineup(),
-                                  }
-                                : {
-                                    type,
-                                    id: crypto.randomUUID(),
-                                    name: "",
-                                    agents: [],
-                                  },
-                          },
-                          event.currentTarget,
-                        )
-                      }
+                      onClick={(event) => {
+                        if (type === "team") {
+                          trigger.current = event.currentTarget;
+                          setAddTeamOpen(true);
+                        } else {
+                          open(
+                            {
+                              value: {
+                                type,
+                                id: crypto.randomUUID(),
+                                name: "",
+                                description: "",
+                                ...emptyLineup(),
+                              },
+                            },
+                            event.currentTarget,
+                          );
+                        }
+                      }}
                     >
                       <PlusIcon size={16} />{" "}
                       {type === "team" ? "Create team" : "New template"}
@@ -270,11 +259,9 @@ export function TemplateLibrary({
                             ? () => setDeploying(value)
                             : undefined
                         }
-                        onExport={
-                          control?.exportTeam &&
-                          value.type === "team" &&
-                          value.portable
-                            ? () => setExporting(value)
+                        onShare={
+                          control && session && value.type === "team"
+                            ? () => setSharing(value)
                             : undefined
                         }
                         value={value}
@@ -298,13 +285,6 @@ export function TemplateLibrary({
                         }
                         onDelete={(element) =>
                           open({ value, eventId: entry.eventId }, element, true)
-                        }
-                        onShare={
-                          control &&
-                          session?.communityCatalog.available() &&
-                          value.type === "team"
-                            ? () => setSharing(value)
-                            : undefined
                         }
                       />
                     );
@@ -360,13 +340,80 @@ export function TemplateLibrary({
             close={() => setDeploying(undefined)}
           />
         )}
-        {exporting && control && session && (
-          <TeamExportDialog
-            team={exporting}
-            control={control}
-            kit={kit}
-            community={destination}
-            close={() => setExporting(undefined)}
+        <Dialog
+          open={addTeamOpen}
+          onOpenChange={setAddTeamOpen}
+          title="Add team"
+        >
+          <div className="flex flex-col gap-3">
+            <Button
+              disabled={disabled}
+              onClick={() => {
+                setAddTeamOpen(false);
+                open(
+                  {
+                    value: {
+                      type: "team",
+                      id: crypto.randomUUID(),
+                      name: "",
+                      agents: [],
+                    },
+                  },
+                  newTeam.current,
+                );
+              }}
+            >
+              Create team manually
+            </Button>
+            {control?.previewTeam && control.create && session?.viewer && (
+              <Button
+                disabled={disabled}
+                onClick={() => {
+                  setAddTeamOpen(false);
+                  input.current?.click();
+                }}
+              >
+                Import team snapshot
+              </Button>
+            )}
+            {session?.communityCatalog.available() && (
+              <Button
+                onClick={() => {
+                  setAddTeamOpen(false);
+                  setCatalogOpen(true);
+                }}
+              >
+                Choose from catalog
+              </Button>
+            )}
+          </div>
+        </Dialog>
+        {catalogOpen && session && (
+          <CommunityCatalogDialog
+            session={session}
+            onClose={() => setCatalogOpen(false)}
+            hasCopy={(publication, id) =>
+              publication.kind !== AGENT_CATALOG_KIND &&
+              kit
+                .snapshot()
+                .entries.some(
+                  (entry) =>
+                    entry.record.value.type === "team" &&
+                    entry.record.value.id === id,
+                )
+            }
+            onAddTeam={
+              control?.previewTeam && kit.available && session.viewer
+                ? (listed) =>
+                    adoptCatalogTeam(
+                      session,
+                      control,
+                      destination,
+                      session.viewer ?? "",
+                      listed,
+                    )
+                : undefined
+            }
           />
         )}
         {sharing && control && session && (
@@ -453,16 +500,14 @@ function LibraryItem({
   onEdit,
   onDuplicate,
   onDeploy,
-  onExport,
-  onDelete,
   onShare,
+  onDelete,
 }: {
   value: Team | Template;
-  onShare?: (() => void) | undefined;
   entries: readonly KitEntry[];
   agents: readonly AgentChoice[];
   onDeploy?: (() => void) | undefined;
-  onExport?: (() => void) | undefined;
+  onShare?: (() => void) | undefined;
   disabled: boolean;
   onEdit(trigger: HTMLElement | null): void;
   onDuplicate(template: Template, trigger: HTMLElement | null): void;
@@ -508,7 +553,7 @@ function LibraryItem({
       />
       <MenuPopup align="end" size="compact">
         {onDeploy && <MenuItem onClick={onDeploy}>Deploy to channel</MenuItem>}
-        {onExport && <MenuItem onClick={onExport}>Share</MenuItem>}
+        {onShare && <MenuItem onClick={onShare}>Share</MenuItem>}
         <MenuItem
           onClick={() => {
             onEdit(menuTrigger.current);
@@ -516,7 +561,6 @@ function LibraryItem({
         >
           Edit {value.type}
         </MenuItem>
-        {onShare && <MenuItem onClick={onShare}>Share to catalog</MenuItem>}
         {value.type === "template" && (
           <MenuItem
             onClick={() => {

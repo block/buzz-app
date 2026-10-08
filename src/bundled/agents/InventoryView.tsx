@@ -93,7 +93,7 @@ export function InventoryView({
   sourceProfiles,
   edit,
   duplicate,
-  onExport,
+  onShare,
   remove,
   removeRelay,
   archive,
@@ -115,7 +115,7 @@ export function InventoryView({
   sourceProfiles: ReadonlyMap<string, Profile & { community: string }>;
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
-  onExport?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
   removeRelay?:
     | ((pubkey: string, signal: AbortSignal) => Promise<void>)
@@ -220,7 +220,7 @@ export function InventoryView({
                     sourceProfiles={sourceProfiles}
                     edit={edit}
                     duplicate={duplicate}
-                    onExport={onExport}
+                    onShare={onShare}
                     remove={remove}
                     removeRelay={removeRelay}
                     nested={nested}

@@ -647,7 +647,7 @@ it("shows native controls per exact destination and separate read-only discovere
     screen.getByRole("article", { name: "Agent Not imported" }),
   ).toBeTruthy();
   expect(screen.queryByText("Old Buzz library", { exact: true })).toBeNull();
-  expect(screen.getByText("Create agent", { exact: true })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
   expect(f.calls.some((call) => call.action === "import")).toBe(false);
 });
 for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
@@ -1029,7 +1029,10 @@ it("creates and starts Claude with its own defaults after switching from Buzz Ag
       return structuredClone(fixture.data);
     });
   });
-  await user.click(await screen.findByRole("button", { name: "Create agent" }));
+  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Claude helper");
   await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
@@ -1061,12 +1064,44 @@ it("creates and starts Claude with its own defaults after switching from Buzz Ag
   expect(start).toHaveBeenCalledWith("claude-agent", "start");
 });
 
+it("keeps manual, import and catalog paths behind one Add agent launcher", async () => {
+  setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.host.prepareCreate = async () => ({
+      id: "new-agent",
+      pubkey: "cd".repeat(32),
+    });
+    fixture.host.commitCreate = async () => structuredClone(fixture.data);
+  });
+  const add = await screen.findByRole("button", { name: "Add agent" });
+  expect(
+    screen.queryByRole("button", { name: "Import agent snapshot" }),
+  ).toBeNull();
+  fireEvent.click(add);
+  const options = screen.getByRole("dialog", { name: "Add agent" });
+  expect(
+    within(options).getByRole("button", { name: "Create agent manually" }),
+  ).toBeVisible();
+  expect(
+    within(options).getByRole("button", { name: "Import agent snapshot" }),
+  ).toBeVisible();
+  fireEvent.click(
+    within(options).getByRole("button", { name: "Import agent snapshot" }),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Import agent snapshot" }),
+  ).toBeVisible();
+});
+
 it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
-  const add = await screen.findByRole("button", { name: "Create agent" });
+  const add = await screen.findByRole("button", { name: "Add agent" });
   expect(add).toHaveAttribute("aria-haspopup", "dialog");
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(add);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "New helper" },
@@ -1291,7 +1326,7 @@ it("keeps the read-only library available when native management is unavailable"
   });
   fireEvent.click(screen.getByText(/^Other agents \(/));
   expect(within(card).queryByRole("button", { name: /Start|Edit/ })).toBeNull();
-  expect(screen.queryByText("Create agent", { exact: true })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add agent" })).toBeNull();
   expect(screen.getByText(/This browser cannot run/)).toBeVisible();
 });
 function expectAIFieldOrder(dialog: HTMLElement) {
@@ -1310,7 +1345,10 @@ function expectAIFieldOrder(dialog: HTMLElement) {
 
 it("shows Harness, Provider and Model in that order when adding an agent", async () => {
   const { f } = setup();
-  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   expectAIFieldOrder(dialog);
   expect(
@@ -1538,7 +1576,10 @@ it("creates and starts a bundled Goose agent with the selected provider", async 
     });
     fixture.host.publishProfile = async () => structuredClone(fixture.data);
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Goose helper" },
@@ -1626,8 +1667,9 @@ it("keeps the saved agent when Start reports a process failure", async () => {
   });
   const user = userEvent.setup();
   try {
-    await user.click(
-      await screen.findByRole("button", { name: "Create agent" }),
+    await user.click(await screen.findByRole("button", { name: "Add agent" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create agent manually" }),
     );
     const dialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
@@ -1695,7 +1737,10 @@ it("checks an unconfirmed Start without repeating it", async () => {
     });
   });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Create agent" }));
+  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Goose helper");
   await user.click(
@@ -1726,7 +1771,10 @@ it("shows an unavailable Pi harness without allowing selection", async () => {
       providers: [{ value: "anthropic", label: "Anthropic" }],
     });
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await userEvent.click(
     within(dialog).getByRole("combobox", { name: "Harness" }),
@@ -1757,7 +1805,10 @@ it.each(["Create agent", "Edit agent"] as const)(
     );
     if (dialogName === "Create agent") {
       await userEvent.click(
-        await screen.findByRole("button", { name: "Create agent" }),
+        await screen.findByRole("button", { name: "Add agent" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Create agent manually" }),
       );
     } else {
       const [card] = await screen.findAllByRole("article", {
@@ -2041,7 +2092,10 @@ for (const stage of ["create", "profile"] as const) {
       const user = userEvent.setup();
       try {
         await user.click(
-          await screen.findByRole("button", { name: "Create agent" }),
+          await screen.findByRole("button", { name: "Add agent" }),
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: "Create agent manually" }),
         );
         const dialog = screen.getByRole("dialog", { name: "Create agent" });
         await user.type(within(dialog).getByLabelText("Name"), "New helper");
@@ -2076,7 +2130,10 @@ for (const stage of ["create", "profile"] as const) {
         }
         await closeManagement(management);
         // A later dialog must not be closed by the dismissed operation's callback.
-        await user.click(screen.getByRole("button", { name: "Create agent" }));
+        await user.click(screen.getByRole("button", { name: "Add agent" }));
+        fireEvent.click(
+          screen.getByRole("button", { name: "Create agent manually" }),
+        );
         const newer = screen.getByRole("dialog", { name: "Create agent" });
         await act(async () => {
           release();
@@ -2127,7 +2184,10 @@ it("blocks creation before native writes when the runtime is missing and preserv
     fixture.host.prepareCreate = prepare;
     fixture.host.commitCreate = commit;
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Calvin" },
@@ -2193,7 +2253,10 @@ it("retries the same saved profile even if the runtime becomes unavailable", asy
       });
   });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Create agent" }));
+  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
   await user.type(within(dialog).getByLabelText("Name"), "Calvin");
   await user.click(
@@ -2435,8 +2498,9 @@ for (const mode of ["edit", "create"] as const) {
       fixture.host.publishProfile = async () => structuredClone(fixture.data);
     });
     if (mode === "create") {
+      fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
       fireEvent.click(
-        await screen.findByRole("button", { name: "Create agent" }),
+        screen.getByRole("button", { name: "Create agent manually" }),
       );
     } else {
       const cards = await screen.findAllByRole("article", {
@@ -2554,7 +2618,10 @@ it("create seeds editable workers while inheriting model and context defaults", 
       return structuredClone(fixture.data);
     });
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create agent manually" }),
+  );
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Defaults agent" },
@@ -2631,7 +2698,10 @@ for (const platform of ["MacIntel", "Win32"] as const) {
       "Databricks sign-in is not supported on Windows yet. Choose OpenAI for this agent.";
     const add = async () => {
       await user.click(
-        await screen.findByRole("button", { name: "Create agent" }),
+        await screen.findByRole("button", { name: "Add agent" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Create agent manually" }),
       );
       const dialog = screen.getByRole("dialog");
       fireEvent.change(within(dialog).getByLabelText("Name"), {

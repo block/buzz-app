@@ -4,7 +4,7 @@ import type { Recipient } from "../direct-messages/usePeople";
 export type MemoryLevel = "none" | "core" | "everything";
 
 export function snapshotRecoveryKey(kind: "agent" | "team", sourceId: string) {
-  if (!sourceId || sourceId.length > 120)
+  if (!sourceId || sourceId.length > 129)
     throw new Error("Sharing requires a stable source identity.");
   return `snapshot-share:${kind}:${sourceId}`;
 }

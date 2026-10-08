@@ -37,13 +37,19 @@ export function AgentDirectShare({
   agent,
   control,
   name,
+  open: externalOpen,
+  onClose,
 }: {
+  open?: boolean;
+  onClose?: () => void;
   session: RelaySession;
   agent: AgentView;
   control: AgentControl;
   name: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = externalOpen ?? internalOpen;
+  const close = onClose ?? (() => setInternalOpen(false));
   const state = useAgentControl(control);
   const current = state.data?.agents.find((value) => value.id === agent.id);
   let review: ReturnType<typeof buildAgentSnapshot> | undefined;
@@ -60,7 +66,9 @@ export function AgentDirectShare({
   }
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Share</Button>
+      {externalOpen === undefined && (
+        <Button onClick={() => setInternalOpen(true)}>Share</Button>
+      )}
       {open && current && (
         <AgentShareContents
           key={messageViewKey(
@@ -76,7 +84,7 @@ export function AgentDirectShare({
           agent={current}
           name={name}
           control={control}
-          close={() => setOpen(false)}
+          close={close}
         />
       )}
     </>

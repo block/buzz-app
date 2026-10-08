@@ -39,7 +39,7 @@ import {
   ManagedAgentActions,
   useManagedAgentActions,
 } from "./ManagedAgentActions";
-import { AgentShareSwitch, CatalogLauncher } from "./CommunityCatalog";
+import { CatalogLauncher } from "./CommunityCatalog";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
@@ -330,10 +330,12 @@ export function AgentsPage({
                     }
                     catalog={
                       connection.status === "ready"
-                        ? (addAgent, hasAgent) => (
+                        ? (addAgent, hasAgent, open, onClose) => (
                             <CatalogLauncher
                               key={`${connection.scope}:${connection.generation}`}
                               session={connection.session}
+                              open={open}
+                              onClose={onClose}
                               addAgent={addAgent}
                               hasAgent={hasAgent}
                               control={control}
@@ -352,7 +354,7 @@ export function AgentsPage({
                       label,
                       onUseHere,
                       onImport,
-                      onExport,
+                      onShare,
                     ) =>
                       state.status === "unavailable" ? (
                         <>
@@ -383,7 +385,7 @@ export function AgentsPage({
                           }
                           onUseHere={onUseHere}
                           onImport={onImport}
-                          onExport={onExport}
+                          onShare={onShare}
                         />
                       ) : (
                         <ManagedAgents
@@ -393,7 +395,7 @@ export function AgentsPage({
                           label={label}
                           edit={edit}
                           duplicate={duplicate}
-                          onExport={onExport}
+                          onShare={onShare}
                           remove={remove}
                           importedId={importedId}
                           control={control}
@@ -428,7 +430,7 @@ function ManagedAgents({
   state,
   edit,
   duplicate,
-  onExport,
+  onShare,
   remove,
   importedId,
   control,
@@ -444,7 +446,7 @@ function ManagedAgents({
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   duplicate(agent: AgentView): void;
-  onExport(agent: AgentView): void;
+  onShare(agent: AgentView): void;
   remove(agent: AgentView): void;
   importedId: string | null;
   control: AgentControl;
@@ -495,7 +497,7 @@ function ManagedAgents({
               }
               onEdit={edit}
               onDuplicate={duplicate}
-              onExport={onExport}
+              onShare={onShare}
               onDelete={control.delete ? remove : undefined}
               onViewProfile={
                 sameCommunityAgents([agent], connection.scope ?? "").length
@@ -503,16 +505,6 @@ function ManagedAgents({
                   : undefined
               }
             >
-              {connection.status === "ready" && (
-                <AgentShareSwitch
-                  session={connection.session}
-                  agent={agent}
-                  name={label(agent)}
-                  defaultSessionPolicy={
-                    state.data?.defaultSettings?.sessionPolicy
-                  }
-                />
-              )}
               <ManagedAgentActions
                 action={actions(agent)}
                 agent={agent}

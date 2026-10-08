@@ -45,6 +45,7 @@ function fixture(
 ) {
   const agent = {
     ...controlFixture().agent,
+    id: `${"a".repeat(64)}-${"b".repeat(64)}`,
     relayUrl: source,
     sessionPolicy: "thread",
     harness: {

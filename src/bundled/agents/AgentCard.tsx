@@ -50,7 +50,7 @@ export function AgentCard({
   onEdit,
   onViewProfile,
   onDuplicate,
-  onExport,
+  onShare,
   onDelete,
   archive,
   archived = false,
@@ -77,7 +77,7 @@ export function AgentCard({
   onEdit?: ((agent: AgentView, avatar?: string) => void) | undefined;
   onViewProfile?: ((trigger: HTMLButtonElement) => void) | undefined;
   onDuplicate?: ((agent: AgentView) => void) | undefined;
-  onExport?: ((agent: AgentView) => void) | undefined;
+  onShare?: ((agent: AgentView) => void) | undefined;
   onDelete?: ((agent: AgentView) => void) | undefined;
   /** Visibility in the connected community; undefined when it cannot change. */
   archive?:
@@ -316,14 +316,14 @@ export function AgentCard({
                             : `Duplicate ${identityLabel(agent)}`}
                         </MenuItem>
                       )}
-                      {onExport && (
+                      {onShare && (
                         <MenuItem
                           onClick={() => {
                             trigger.current?.focus();
-                            onExport(agent);
+                            onShare(agent);
                           }}
                         >
-                          Export
+                          Share
                         </MenuItem>
                       )}
                       {onDelete && (

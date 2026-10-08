@@ -292,7 +292,7 @@
   --image-edge-light: oklch(0 0 0 / 0.1);
   --image-edge-dark: oklch(1 0 0 / 0.1);
   --bubble-ink: #ffffff;
-  --bubble-neutral: #404040;
+  --bubble-neutral: var(--neutral-3);
   --bubble-blue: #2563eb;
   --bubble-cyan: #0e7490;
   --bubble-green: #15803d;
@@ -422,6 +422,7 @@
   --image-rim: oklch(1 0 0 / 0.1);
   --neutral-raised: #282828;
   --neutral-quiet-hover: #2e2e2e;
+  --bubble-neutral: var(--neutral-5);
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -539,9 +540,12 @@
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
   --border-image: var(--image-edge-light);
-  --surface-message: var(--neutral-navigation-quiet);
-  --text-message-own: var(--bubble-ink);
+  --surface-message: var(--neutral-2);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-action: var(--neutral-12);
+  --text-message-action: var(--neutral-1);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-standard-text);
@@ -609,8 +613,11 @@
 .dark {
   --border-image: var(--image-edge-dark);
   --surface-message: var(--neutral-4);
-  --text-message-own: var(--bubble-ink);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-action: var(--neutral-12);
+  --text-message-action: var(--neutral-1);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-raised);
@@ -862,6 +869,9 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --text-color-message-own: var(--text-message-own);
+  --text-color-message-link-own: var(--text-message-link-own);
+  --text-color-message-action: var(--text-message-action);
   --text-color-navigation: var(--text-navigation);
   --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
@@ -1095,50 +1105,80 @@
 :root[data-bubble-color="neutral"],
 [data-bubble-color="neutral"] {
   --surface-message-own: var(--bubble-neutral);
-  --text-message-own: var(--bubble-ink);
+  --text-message-own: var(--text-standard);
+  --text-message-link-own: var(--text-link);
+  --surface-message-action: var(--neutral-12);
+  --text-message-action: var(--neutral-1);
 }
 :root[data-bubble-color="blue"],
 [data-bubble-color="blue"] {
   --surface-message-own: var(--bubble-blue);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="cyan"],
 [data-bubble-color="cyan"] {
   --surface-message-own: var(--bubble-cyan);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="green"],
 [data-bubble-color="green"] {
   --surface-message-own: var(--bubble-green);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="orange"],
 [data-bubble-color="orange"] {
   --surface-message-own: var(--bubble-orange);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="red"],
 [data-bubble-color="red"] {
   --surface-message-own: var(--bubble-red);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="pink"],
 [data-bubble-color="pink"] {
   --surface-message-own: var(--bubble-pink);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="lilac"],
 [data-bubble-color="lilac"] {
   --surface-message-own: var(--bubble-lilac);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="purple"],
 [data-bubble-color="purple"] {
   --surface-message-own: var(--bubble-purple);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }
 :root[data-bubble-color="indigo"],
 [data-bubble-color="indigo"] {
   --surface-message-own: var(--bubble-indigo);
   --text-message-own: var(--bubble-ink);
+  --text-message-link-own: var(--bubble-ink);
+  --surface-message-action: var(--surface-message-own);
+  --text-message-action: var(--bubble-ink);
 }

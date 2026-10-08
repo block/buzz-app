@@ -54,7 +54,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBeVisible();
     const sentSingleEmoji = page.locator("p[data-single-emoji]");
     await expect(sentSingleEmoji).toHaveCSS("font-size", "42px");
-    await expect(sentSingleEmoji).toHaveCSS("margin-top", "4px");
+    await expect(sentSingleEmoji).toHaveCSS("margin-top", "0px");
     await expect(sentSingleEmoji.locator('img[alt=":party:"]')).toHaveCSS(
       "width",
       "42px",

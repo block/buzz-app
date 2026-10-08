@@ -252,7 +252,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
       await chooseColorMode(page, mode);
       await expect(appearance.getByRole("button")).toHaveCount(
-        scale === 100 ? 2 : 3,
+        scale === 100 ? 12 : 13,
       );
       await expect(
         appearance.getByRole("button", {

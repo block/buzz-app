@@ -475,7 +475,7 @@ export const MessageRow = memo(function MessageRow({
         data-stack-next={stackNext || undefined}
       >
         <span className={styles.messageGutter}>
-          {stackPrevious && stackNext && (
+          {stackPrevious && (
             <MessageTimestamp createdAt={row.createdAt} compact />
           )}
         </span>
@@ -506,136 +506,142 @@ export const MessageRow = memo(function MessageRow({
               onDismiss={() => setReporting(undefined)}
             />
           )}
-          <div className={styles.messageHeader}>
-            {!row.membership && (
-              <MessageActionBar
-                rowRef={rowRef}
-                menuTriggerRef={menuTrigger}
-                messageId={row.id}
-                onReply={
-                  (onReply ? () => onReply(row.id) : undefined) ??
-                  (onOpenThread
-                    ? () =>
-                        onOpenThread(
-                          row.threadRootId ?? row.id,
-                          row.threadRootId ?? row.id,
-                          "reply",
-                        )
-                    : undefined)
-                }
-                replyDisabled={
-                  !!(
-                    row.delivery && !["accepted", "seen"].includes(row.delivery)
-                  ) ||
-                  archived ||
-                  (!!session?.channels.get && (!listed || readOnly))
-                }
-                onSendToChannel={
-                  session &&
-                  listed &&
-                  !archived &&
-                  !readOnly &&
-                  row.threadRootId &&
-                  row.authorId === session.viewer &&
-                  !row.agentEnvelope &&
-                  !row.diff &&
-                  (!row.delivery ||
-                    ["accepted", "seen"].includes(row.delivery)) &&
-                  session.outbox?.supports(9)
-                    ? () => {
-                        session.messages.sendToChannel(row, getThreadRoot?.());
-                      }
-                    : undefined
-                }
-                link={messageCopyLink(row, scope)}
-                copyText={() =>
-                  messageCopyText(row, directory.profiles, directory.agents)
-                }
-                quickControls={
-                  quickControls ??
-                  (canReact && session && scope && extensions ? (
-                    <MessageReactionControls
-                      row={row}
-                      session={session}
-                      scope={scope}
-                      tools={extensions.tools}
-                      inline={extensions.inline}
-                      disabled={
-                        !!row.delivery &&
-                        !["accepted", "seen"].includes(row.delivery)
-                      }
-                    />
-                  ) : undefined)
-                }
-                leadingItems={
-                  session ? (
-                    <MessageReadStateItem row={row} session={session} />
-                  ) : undefined
-                }
-                overflowItems={
-                  <>
-                    {overflowItems ??
-                      (session ? (
-                        <MessageManagementItems row={row} session={session} />
-                      ) : undefined)}
-                    {actionItems}
-                    {reportItem}
-                  </>
-                }
-              />
-            )}
-            {/* Screen-reader text stays out of selections: the clipboard carries
-                what the reader saw, so a continuation copies without a byline. */}
-            <div
-              className={stackPrevious ? "sr-only select-none" : styles.byline}
-            >
-              {row.workflowOwnerId && workflowOwnerName ? (
-                <WorkflowByline
-                  ownerId={row.workflowOwnerId}
-                  ownerName={workflowOwnerName}
-                  signer={row.signerId ?? row.authorId}
-                  canOpenLink={canOpenLink}
-                  onOpenLink={onOpenLink}
-                />
-              ) : (
-                <strong className={styles.author}>{name}</strong>
-              )}
-              {(!stackPrevious || !stackNext) && (
-                <MessageTimestamp createdAt={row.createdAt} />
-              )}
-              {session &&
-                actions.map(
-                  (action) =>
-                    action.marker && (
-                      <ContributionBoundary
-                        key={contributionKey(action)}
-                        fallback={null}
-                      >
-                        <action.marker message={row} session={session} />
-                      </ContributionBoundary>
-                    ),
-                )}
-            </div>
-          </div>
-          {row.sentFromThread && (
-            <div className={styles.sentFromThread}>
-              Sent from{" "}
-              <MessageLink
-                url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
-                registry={extensions?.links}
-                session={session}
-                scope={scope}
-                onOpenLink={onOpenLink}
-                label={
-                  row.sentFromThread.excerpt
-                    ? `Thread — ${row.sentFromThread.excerpt}`
-                    : "Thread"
-                }
-              />
-            </div>
-          )}
           <div className={styles.messageContent}>
             {!stackNext && <div className={styles.messageAvatar}>{avatar}</div>}
+            <div className={styles.messageHeader}>
+              {!row.membership && (
+                <MessageActionBar
+                  rowRef={rowRef}
+                  menuTriggerRef={menuTrigger}
+                  messageId={row.id}
+                  onReply={
+                    (onReply ? () => onReply(row.id) : undefined) ??
+                    (onOpenThread
+                      ? () =>
+                          onOpenThread(
+                            row.threadRootId ?? row.id,
+                            row.threadRootId ?? row.id,
+                            "reply",
+                          )
+                      : undefined)
+                  }
+                  replyDisabled={
+                    !!(
+                      row.delivery &&
+                      !["accepted", "seen"].includes(row.delivery)
+                    ) ||
+                    archived ||
+                    (!!session?.channels.get && (!listed || readOnly))
+                  }
+                  onSendToChannel={
+                    session &&
+                    listed &&
+                    !archived &&
+                    !readOnly &&
+                    row.threadRootId &&
+                    row.authorId === session.viewer &&
+                    !row.agentEnvelope &&
+                    !row.diff &&
+                    (!row.delivery ||
+                      ["accepted", "seen"].includes(row.delivery)) &&
+                    session.outbox?.supports(9)
+                      ? () => {
+                          session.messages.sendToChannel(
+                            row,
+                            getThreadRoot?.(),
+                          );
+                        }
+                      : undefined
+                  }
+                  link={messageCopyLink(row, scope)}
+                  copyText={() =>
+                    messageCopyText(row, directory.profiles, directory.agents)
+                  }
+                  quickControls={
+                    quickControls ??
+                    (canReact && session && scope && extensions ? (
+                      <MessageReactionControls
+                        row={row}
+                        session={session}
+                        scope={scope}
+                        tools={extensions.tools}
+                        inline={extensions.inline}
+                        disabled={
+                          !!row.delivery &&
+                          !["accepted", "seen"].includes(row.delivery)
+                        }
+                      />
+                    ) : undefined)
+                  }
+                  leadingItems={
+                    session ? (
+                      <MessageReadStateItem row={row} session={session} />
+                    ) : undefined
+                  }
+                  overflowItems={
+                    <>
+                      {overflowItems ??
+                        (session ? (
+                          <MessageManagementItems row={row} session={session} />
+                        ) : undefined)}
+                      {actionItems}
+                      {reportItem}
+                    </>
+                  }
+                />
+              )}
+              {/* Screen-reader text stays out of selections: the clipboard carries
+                what the reader saw, so a continuation copies without a byline. */}
+              <div
+                className={
+                  stackPrevious ? "sr-only select-none" : styles.byline
+                }
+              >
+                {row.workflowOwnerId && workflowOwnerName ? (
+                  <WorkflowByline
+                    ownerId={row.workflowOwnerId}
+                    ownerName={workflowOwnerName}
+                    signer={row.signerId ?? row.authorId}
+                    canOpenLink={canOpenLink}
+                    onOpenLink={onOpenLink}
+                  />
+                ) : (
+                  <strong className={styles.author}>{name}</strong>
+                )}
+                {!stackPrevious && (
+                  <MessageTimestamp createdAt={row.createdAt} />
+                )}
+                {session &&
+                  actions.map(
+                    (action) =>
+                      action.marker && (
+                        <ContributionBoundary
+                          key={contributionKey(action)}
+                          fallback={null}
+                        >
+                          <action.marker message={row} session={session} />
+                        </ContributionBoundary>
+                      ),
+                  )}
+              </div>
+            </div>
+            {row.sentFromThread && (
+              <div className={styles.sentFromThread}>
+                Sent from{" "}
+                <MessageLink
+                  url={`buzz://message?${new URLSearchParams({ channel: row.channelId, id: row.sentFromThread.rootId, thread: row.sentFromThread.rootId })}`}
+                  registry={extensions?.links}
+                  session={session}
+                  scope={scope}
+                  onOpenLink={onOpenLink}
+                  label={
+                    row.sentFromThread.excerpt
+                      ? `Thread — ${row.sentFromThread.excerpt}`
+                      : "Thread"
+                  }
+                />
+              </div>
+            )}
             {!attachmentOnly && (
               <div
                 className={styles.messageBubble}

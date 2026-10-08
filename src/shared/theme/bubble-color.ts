@@ -23,8 +23,8 @@ export function parseBubbleColor(value: unknown): BubbleColor {
 
 // Scope the existing prominent-button recipe to this message action only.
 export const messageButtonStyle = {
-  "--affordance-prominent": "var(--surface-message-own)",
-  "--affordance-prominent-hover": "var(--surface-message-own)",
-  "--affordance-prominent-pressed": "var(--surface-message-own)",
-  "--text-inverse": "var(--text-message-own)",
+  "--affordance-prominent": "var(--surface-message-action)",
+  "--affordance-prominent-hover": "var(--surface-message-action)",
+  "--affordance-prominent-pressed": "var(--surface-message-action)",
+  "--text-inverse": "var(--text-message-action)",
 } as CSSProperties;

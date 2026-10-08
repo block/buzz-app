@@ -92,6 +92,21 @@ for (const theme of ["light", "dark"]) {
       await expect(mention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expectReadable(spoiler);
       await expectReadable(
+        spoiler.getByRole("link", { name: "release notes", exact: true }),
+      );
+      if (color === "neutral") {
+        await expect(ownLink).toHaveCSS(
+          "color",
+          await receivedLink.evaluate(
+            (element) => getComputedStyle(element).color,
+          ),
+        );
+        await page.mouse.move(0, 0);
+        await own.screenshot({
+          path: info.outputPath(`neutral-message-${theme}.png`),
+        });
+      }
+      await expectReadable(
         table.getByRole("cell", { name: "Ready", exact: true }),
       );
       await expectReadable(

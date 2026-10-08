@@ -27,18 +27,10 @@ for (const direction of ["forward", "backward"]) {
       "[Before](https://example.com/before)",
     );
     const target = app.append("primary", "alpha", "Untouched continuation");
-    const after = app.append(
-      "primary",
-      "alpha",
-      "Following author",
-      true,
-      false,
-    );
+    const after = app.append("primary", "alpha", "Following continuation");
     const row = (event) =>
       page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
-    await expect(
-      row(target).locator('[data-layout="continuation"]'),
-    ).toBeVisible();
+    await expect(row(target).locator("[data-stack-previous]")).toBeVisible();
     await expect(row(after)).toBeVisible();
     await settle(page);
     const actions = row(target).getByRole("group", {
@@ -461,7 +453,7 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   const following = page.locator(
     `[data-channel-timeline] [data-message-id="${next.id}"]`,
   );
-  await expect(row.locator('[data-layout="continuation"]')).toBeVisible();
+  await expect(row.locator("[data-stack-previous]")).toBeVisible();
   await expect(following).toBeVisible();
   const actions = row.getByRole("group", { name: "Message actions" });
   const link = row.getByRole("link", { name: /this reference/ });

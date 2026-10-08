@@ -291,15 +291,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message",
         variable: "--surface-message",
-        pointsAt: "neutral-navigation-quiet light / neutral-4 dark",
+        pointsAt: "neutral-2 light / neutral-4 dark",
         use: "Received message bubbles; pair with standard text and links.",
         status: "core",
       },
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt: "Selected message color with white foreground",
-        use: "Own message bubbles and send button; pair with --text-message-own.",
+        pointsAt: "neutral-3 light / neutral-5 dark; selected accent otherwise",
+        use: "Own message bubbles; pair with --text-message-own.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-action",
+        variable: "--surface-message-action",
+        pointsAt: "neutral-12; selected message accent otherwise",
+        use: "Send button and color swatches; pair with text-message-action.",
         status: "core",
       },
       {
@@ -377,6 +384,27 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-link",
         pointsAt: "blue-11 light / blue-11 dark",
         use: "Inline links and mentions in prose.",
+        status: "core",
+      },
+      {
+        token: "text-message-own",
+        variable: "--text-message-own",
+        pointsAt: "text-standard for neutral; bubble-ink for accents",
+        use: "Prose on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-link-own",
+        variable: "--text-message-link-own",
+        pointsAt: "text-link for neutral; bubble-ink for accents",
+        use: "Links and mentions on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-message-action",
+        variable: "--text-message-action",
+        pointsAt: "neutral-1; bubble-ink for accents",
+        use: "Send icon and selected swatch check on surface-message-action.",
         status: "core",
       },
       {

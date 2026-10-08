@@ -168,10 +168,10 @@ it.each(["light", "dark"] as const)(
   "message text and links contrast with both bubble fills in %s",
   (mode) => {
     const palette = resolvedPalette(mode);
-    // Received links retain the system link color; own links use the bubble ink.
+    // Neutral bubbles keep standard text and the system link color.
     for (const surface of ["--surface-message", "--surface-message-own"]) {
       for (const text of surface === "--surface-message-own"
-        ? ["--text-message-own"]
+        ? ["--text-message-own", "--text-message-link-own"]
         : ["--text-standard", "--text-subtle", "--text-link"]) {
         expect(
           contrast(palette[text], palette[surface]),
@@ -191,7 +191,23 @@ it.each(BUBBLE_COLORS)(
   (color) => {
     for (const mode of ["light", "dark"] as const) {
       const palette = resolvedPalette(mode, color);
-      expect(palette["--text-message-own"]).toBe("#ffffff");
+      expect(palette["--text-message-own"]).toBe(
+        color === "neutral" ? palette["--text-standard"] : "#ffffff",
+      );
+      expect(
+        contrast(
+          palette["--text-message-link-own"],
+          palette["--surface-message-own"],
+        ),
+        `${color} links in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(
+          palette["--text-message-action"],
+          palette["--surface-message-action"],
+        ),
+        `${color} send icon in ${mode}`,
+      ).toBeGreaterThanOrEqual(4.5);
       expect(
         contrast(
           palette["--text-message-own"],

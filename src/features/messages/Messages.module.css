@@ -2462,6 +2462,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .messageAvatar {
+  user-select: none;
   position: absolute;
   bottom: 0;
   right: calc(100% + var(--space-3));
@@ -2513,7 +2514,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .messageBubble[data-own] {
   color: var(--text-message-own);
   background: var(--surface-message-own);
-  --message-link: var(--text-message-own);
+  --message-link: var(--text-message-link-own);
 }
 .messageBubble[data-own] .text blockquote {
   color: inherit;
@@ -2531,8 +2532,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     .spoilerMask:focus-visible,
     .spoiler[data-revealed="true"]
   ) {
-  /* Revealed spoilers keep the contrast of white text on the bubble. */
-  background: color-mix(in oklab, var(--bg-scrim) 35%, transparent);
+  /* Revealed content uses the same neutral inset as code and tables. */
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  --message-link: var(--text-link);
 }
 
 .messageBubble[data-long-text] {

@@ -449,6 +449,90 @@ it("binds export approval to configuration and source across native refreshes", 
   expect(exportButton()).toBeDisabled();
 });
 
+it("invalidates export approval when omitted avatar artwork changes", () => {
+  const agent = portableAgent();
+  agent.picture = "https://images.example.test/avatar.png?version=1#old";
+  const props = {
+    agent,
+    destination: "https://relay.example.test",
+    onClose: vi.fn(),
+  };
+  const mounted = render(<AgentSnapshotExport {...props} />);
+  const approval = screen.getByRole("checkbox", {
+    name: /I reviewed the portable configuration/,
+  });
+  const exportButton = () => screen.getByRole("button", { name: "Export" });
+  expect(buildAgentSnapshot(agent).profile.avatarUrl).toBeUndefined();
+  fireEvent.click(screen.getByText("Review portable configuration"));
+  expect(screen.getByText(`Artwork source: ${agent.picture}`)).toBeVisible();
+  fireEvent.click(approval);
+  expect(exportButton()).toBeEnabled();
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{
+        ...agent,
+        picture: "https://images.example.test/avatar.png?version=2#new",
+      }}
+    />,
+  );
+  expect(approval).not.toBeChecked();
+  expect(exportButton()).toBeDisabled();
+});
+
+it("aborts a pending artwork export when an omitted avatar URL changes and returns", async () => {
+  const agent = portableAgent();
+  agent.picture = "https://images.example.test/avatar.png?version=1";
+  let release!: () => void;
+  class HeldImage {
+    crossOrigin = "";
+    src = "";
+    decode() {
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+  }
+  vi.stubGlobal("Image", HeldImage);
+  const download = vi.fn();
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = download;
+      static revokeObjectURL = vi.fn();
+    },
+  );
+  const props = {
+    agent,
+    destination: "https://relay.example.test",
+    onClose: vi.fn(),
+  };
+  const mounted = render(<AgentSnapshotExport {...props} />);
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I reviewed the portable configuration/,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(release).toBeDefined());
+  mounted.rerender(
+    <AgentSnapshotExport
+      {...props}
+      agent={{
+        ...agent,
+        picture: "https://images.example.test/avatar.png?version=2",
+      }}
+    />,
+  );
+  mounted.rerender(<AgentSnapshotExport {...props} />);
+  await act(async () => {
+    release();
+  });
+  expect(download).not.toHaveBeenCalled();
+  expect(props.onClose).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
 it("aborts a pending export if the source changes and then returns to its old value", async () => {
   const agent = portableAgent();
   let release!: () => void;

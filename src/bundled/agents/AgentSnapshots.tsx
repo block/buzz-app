@@ -54,14 +54,15 @@ export function AgentSnapshotExport({
     reviewError =
       cause instanceof Error ? cause.message : "Export unavailable.";
   }
-  // Approval is for these exact serialized bytes and this source/destination,
-  // not for the lifetime of a mounted dialog across native inventory refreshes.
+  // Approval covers the raw artwork source too: PNG export may embed an HTTPS
+  // picture URL that the portable JSON manifest deliberately omits.
   const reviewKey = review
     ? JSON.stringify([
         agent.id,
         agent.pubkey,
         agent.relayUrl,
         destination,
+        agent.picture,
         review,
       ])
     : null;
@@ -272,15 +273,19 @@ export function AgentSnapshotExport({
         </label>
         <p>
           Portable configuration includes the agent name, instructions, model,
-          provider, worker count and avatar URL when present. Review the actual
-          values before sharing: free text can contain secrets that automated
-          checks cannot detect.
+          provider, worker count and avatar URL when present. PNG exports may
+          also embed artwork from the source avatar URL shown below. Review the
+          actual values before sharing: free text can contain secrets that
+          automated checks cannot detect.
         </p>
         <details>
           <summary>Review portable configuration</summary>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
             {JSON.stringify(review, null, 2)}
           </pre>
+          {agent.picture && !review?.profile.avatarUrl && (
+            <p className="break-all">Artwork source: {agent.picture}</p>
+          )}
         </details>
         <label>
           <input

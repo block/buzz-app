@@ -1,13 +1,11 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc276456f8452ab 100644
+index a183cc7b1669aab25467840540ce3bd1c025fb47..50d35b1125628c8d5485c39b611c24bdcfe696a9 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -6,6 +6,10 @@ import { jsx as c } from "react/jsx-runtime";
--
-+
+ 
  import { flushSync as f } from "react-dom";
--
-+
+ 
 +// WebKit can restore a stale native scroll offset after an instant correction.
 +// Interrupt only the corrected axis; observer-inferred idle is not native idle.
 +const isMacWebKit = () => typeof navigator !== "undefined" && !b() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
@@ -15,10 +13,14 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
  var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v = e => [ ...e ].sort((e, t) => e - t), p = setTimeout, S = clearTimeout, m = "function" == typeof queueMicrotask ? queueMicrotask : e => {
      Promise.resolve().then(e);
  }, $ = () => {
-@@ -21,6 +25,14 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -19,7 +23,16 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+ })(() => !!/iP(hone|od|ad)/.test(navigator.userAgent) || "MacIntel" === navigator.platform && navigator.maxTouchPoints > 0), I = e => u(e.t(), e.o()), y = ({i: e, l: t, u: n, h: o, v: r, p: i, t: s, S: l, m: c, $: f}, h = 0) => {
+     let g = !!f, v = !!h, p = 1, S = 0, m = 0, $ = 0, w = 0, _ = 0, z = 0, I = 0, y = 0, x = null, k = [ 0, v ? u(h - 1, 0) : -1 ], R = 0, C = !1;
      const T = /* @__PURE__ */ new Set, M = () => $ - m, O = () => M() + _ + w, E = e => n(e) - _, L = e => {
-         e && (b() && 0 !== I || x && 1 === y ? _ += e : w += e);
-     };
+-        e && (b() && 0 !== I || x && 1 === y ? _ += e : w += e);
++        e && (b() && 0 !== I || x && 1 === y ? _ += e : (w += e, 2 === y && (shiftJump = !0)));
++    };
++    let shiftJump = !1;
 +    // A shift compensates every resize until scroll-end, a 150ms timer from
 +    // its jump's scroll event, but the rows it prepends measure in the frame
 +    // after that jump. Count the rows it awaits so a late frame cannot lose them.
@@ -26,11 +28,10 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +    const itemCount = l, shiftPending = () => {
 +        for (let e = u(k[0], 0), t = a(k[1], shiftEnd - 1, l() - 1); e <= t; e++) if (i(e)) return !0;
 +        return !1;
-+    };
+     };
      return {
          _: () => {
-             T.clear();
-@@ -31,7 +43,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -31,7 +44,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              let n, o;
              if (z) [n, o] = k; else {
                  let r = u(0, O()), i = r + S;
@@ -41,10 +42,21 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                  x && (n = a(n, x[0]), o = u(o, x[1]));
              }
              return [ u(n, 0), a(o, l() - 1) ];
-@@ -69,7 +83,10 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -46,7 +61,10 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         o: () => S,
+         O: () => m,
+         t: s,
+-        L: () => (z = w, w = 0, [ z, 2 === y ]),
++        L: () => {
++            const jump = w, shift = 2 === y || shiftJump;
++            return z = jump, w = 0, shiftJump = !1, [ jump, shift ];
++        },
+         H: (e, t) => {
+             const n = [ e, t ];
+             return T.add(n), () => {
+@@ -69,7 +87,10 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  }
--
-+
+ 
                case 2:
 -                h = 8, 0 !== I && (a = !0, h += 1), I = 0, y = 0, x = null;
 +                h = 8, 0 !== I && (a = !0, h += 1), I = 0, x = null;
@@ -52,10 +64,9 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                // unmeasured; the batch that measures them ends it below.
 +                2 === y && shiftPending() ? shiftIdle = !0 : (y = 0, shiftEnd = 0, shiftIdle = !1);
                  break;
--
-+
+ 
                case 3:
-@@ -78,7 +95,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -78,7 +99,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                      if (!e.length) break;
                      L(e.reduce((e, [t, n]) => {
                          let r;
@@ -66,7 +77,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                              const e = M(), n = E(t), i = o(t);
                              r = 1 !== I && 0 === y ? n + i <= e : n < e && n + i < e + S;
                          }
-@@ -89,6 +108,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -89,6 +112,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                          g && (R += i ? n : n - e);
                      }
                      g && S && R > S && (L(f(t(O()))), g = !1), h = 3, u = !0;
@@ -75,12 +86,10 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                    shiftIdle && 2 === y && !shiftPending() && (y = 0, shiftEnd = 0, shiftIdle = !1);
                      break;
                  }
--
-+
-@@ -97,7 +119,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+ 
+@@ -97,7 +123,12 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
                  break;
--
-+
+ 
                case 5:
 -                l[1] ? (L(c(l[0], !0)), y = 2, h = 1) : (c(l[0]), h = 1);
 +                if (l[1]) {
@@ -90,10 +99,9 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 +                    L(c(l[0], !0)), y = 2, h = 1;
 +                } else c(l[0]), h = 1;
                  break;
--
-+
+ 
                case 6:
-@@ -173,15 +200,44 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -173,15 +204,44 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          q: () => [ l.slice(), o ]
      };
  }, C = e => {
@@ -141,7 +149,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
              t && t.disconnect();
          }
      };
-@@ -249,32 +305,64 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -249,32 +309,67 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
          o && o();
      } ];
  }, E = (e, t) => {
@@ -195,8 +203,11 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
 -                if (o) {
 +            for (const type of inputEvents) u.addEventListener(type, a, { capture: true, passive: true });
 +            h.A(n = u, !0), t && (i = "rtl" === getComputedStyle(u).direction), o = M(e, u, t, () => T(u[s], i), (t, n, o) => {
-+                if (isMacWebKit()) interruptMomentum();
-+                else if (o) {
++                // Brake native momentum only for a prepend shift's corrections,
++                // the case where WebKit can drop the write (patches/README.md).
++                if (isMacWebKit()) {
++                    if (n) interruptMomentum();
++                } else if (o) {
                      const e = u.style, t = e[c];
                      e[c] = "hidden", p(() => {
                          e[c] = t;
@@ -215,7 +226,7 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
                      behavior: "instant"
                  }) : u.scrollBy({
                      [l]: T(t, i),
-@@ -283,7 +371,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -283,7 +378,9 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
              }), r[1](!0);
          },
          _() {
@@ -226,9 +237,9 @@ index a183cc7b1669aab25467840540ce3bd1c025fb47..dbaf1b6d73776ba996bd975dbdc27645
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +887,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+@@ -797,4 +894,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
  });
--
-+
+ 
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
+\ No newline at end of file
 -//# sourceMappingURL=index.js.map

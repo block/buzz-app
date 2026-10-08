@@ -288,7 +288,7 @@ it("does not overwrite a later style owner", () => {
   expect(c.style.getPropertyPriority(c.axis)).toBe("important");
 });
 
-it("interrupts positive and negative resize compensation at the same production driver", () => {
+it("applies resize compensation without braking the coast", () => {
   for (const size of [50, 150]) {
     const c = setup();
     c.store.W(3, [[0, size]]);
@@ -297,12 +297,33 @@ it("interrupts positive and negative resize compensation at the same production 
       {
         method: "scrollBy",
         options: { top: size - 100, behavior: "instant" },
-        overflow: "hidden",
-        priority: "important",
+        overflow: "",
+        priority: "",
       },
     ]);
+    expect(vi.getTimerCount()).toBe(0);
     c.driver._();
   }
+});
+
+it("still brakes a correction that belongs to a prepend shift, even flushed after scroll-end", () => {
+  const c = setup();
+  c.prepend();
+  vi.runAllTimers();
+  c.store.W(2); // inferred idle while the prepended rows are still unmeasured
+  c.calls.length = 0;
+  c.store.W(
+    3,
+    Array.from({ length: 40 }, (_, index) => [index, 150]),
+  );
+  c.driver.J();
+  expect(c.calls).toHaveLength(1);
+  expect(c.calls[0]).toMatchObject({
+    overflow: "hidden",
+    priority: "important",
+  });
+  expect(c.store.L()[1]).toBe(false);
+  c.driver._();
 });
 
 it("does not change the imperative scheduler's smooth or instant scrolling policy", async () => {

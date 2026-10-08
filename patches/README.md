@@ -59,7 +59,9 @@ then runs before native momentum actually ends, and the timeline stays blank.
 One of two paused draft trials failed; this was timing-dependent, not a
 universally failing sequence. Increasing an idle timeout is not the remedy.
 
-Instead, at each **nonzero automatic correction** on Mac WebKit:
+Instead, at each **nonzero automatic correction that belongs to a prepend
+shift** on Mac WebKit (a pending jump remembers a shift contribution even when
+the batch measuring the last prepended row ends shift mode before the flush):
 
 1. Temporarily set only the corrected overflow axis to `hidden !important`.
 2. Apply Virtua's original relative correction or absolute edge target.
@@ -71,10 +73,12 @@ without changing the iOS branch. Overlapping interventions cancel/restore their
 predecessor before capturing the original declaration. Disposal restores
 immediately; an observably changed later declaration is not overwritten.
 
-**Tradeoff:** a correction can stop the remaining trackpad coast. Several size
-corrections can therefore reduce inertial travel more than one prepend. A fresh
-gesture must continue to work; sustained real-history/media acceptance must assess
-whether repeated braking is acceptable. No wheel ownership, permanent scrolling
+Row-measurement corrections outside a shift move by their own height
+difference and are not braked: braking them stopped the trackpad coast five or
+six times per fling and hid the overlay scrollbar for a frame each time.
+
+**Tradeoff:** a prepend correction can still stop the remaining trackpad coast,
+and a fresh gesture must continue to work. No wheel ownership, permanent scrolling
 CSS, forced layout, alternate store sizing, or new scroll scheduler is introduced.
 
 The `overflow-y: hidden` frame also removes a classic, space-taking scrollbar.

@@ -116,12 +116,17 @@ export function TemplateLibrary({
       setDeleteOpen(true);
     } else setEditing(selection);
   };
+  const removed = useRef<string | undefined>(undefined);
   const remove = async () => {
     if (!deleting || busy || !mounted.current || !active()) return;
     setBusy(true);
     setError("");
     try {
-      await kit.save(deleting.value, deleting.eventId, true);
+      // A retry after a failed delivery only retries the delivery.
+      if (removed.current !== deleting.eventId) {
+        await kit.save(deleting.value, deleting.eventId, true);
+        removed.current = deleting.eventId;
+      }
       if (deleting.value.type === "team")
         await deliverTeamTexts(kit, control, session);
       if (mounted.current && active()) setDeleteOpen(false);

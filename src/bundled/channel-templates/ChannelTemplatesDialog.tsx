@@ -117,6 +117,9 @@ export function ChannelTemplatesDialog({
     initial.type === "team" && !!initial.portable,
   );
   const revision = useRef(crypto.randomUUID());
+  // The head after a save in this dialog, so a retry after a failed delivery
+  // does not conflict with the save it already made.
+  const head = useRef(expected);
   const prepared = useRef<TeamSnapshot | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -221,13 +224,20 @@ export function ChannelTemplatesDialog({
           members,
         };
         prepared.current = snapshot;
-        await kit.savePortable(draft, snapshot, expected, revision.current);
+        head.current = await kit.savePortable(
+          draft,
+          snapshot,
+          head.current,
+          revision.current,
+        );
+        revision.current = crypto.randomUUID();
+        prepared.current = undefined;
       } else {
         if (hasPortableFields)
           throw new Error(
             "Description and team instructions require nonempty local team members",
           );
-        await kit.save(draft, expected);
+        head.current = await kit.save(draft, head.current);
       }
       if (draft.type === "team") await deliverTeamTexts(kit, control, session);
       if (live.current && active()) onOpenChange(false);

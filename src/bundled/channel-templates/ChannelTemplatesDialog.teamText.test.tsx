@@ -11,10 +11,14 @@ import type { KitEntry, Team } from "../../features/channel-templates/model";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 
+vi.mock("../../features/profiles/AgentOwnerPreview", () => ({
+  AgentOwnerPreview: () => null,
+}));
 afterEach(cleanup);
 const viewer = "c".repeat(64);
 const community = "https://relay.example.test";
 const member = "a".repeat(64);
+const second = "b".repeat(64);
 const session = { viewer, scope: `${community}:${viewer}` } as RelaySession;
 const memberSnapshot = {
   format: "buzz-agent-snapshot",
@@ -68,7 +72,10 @@ function setup(
   const kitState = { status: "ready" as const, entries };
   const controlState = {
     data: {
-      agents: [{ pubkey: member, relayUrl: "wss://relay.example.test" }],
+      agents: [member, second].map((pubkey) => ({
+        pubkey,
+        relayUrl: "wss://relay.example.test",
+      })),
     },
   };
   const save = vi.fn<ChannelKit["save"]>().mockResolvedValue("saved");
@@ -113,7 +120,10 @@ function setup(
       active={() => true}
       session={session}
       control={control}
-      agents={[{ pubkey: member, name: "Member", avatar: undefined }]}
+      agents={[
+        { pubkey: member, name: "Member", avatar: undefined },
+        { pubkey: second, name: "Second", avatar: undefined },
+      ]}
     />,
     { wrapper: ToastProvider },
   );
@@ -212,4 +222,40 @@ it.each([
   await userEvent.type(await instructions(), "OURS");
   await saveTeam();
   await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
+});
+
+it("keeps the saved text on a members-only edit", async () => {
+  const { savePortable, captureTeam } = setup(portable, [entryOf(portable)], {
+    portable: "SAVED",
+  });
+  const field = await instructions();
+  await waitFor(() => expect(field).toHaveValue("SAVED"));
+  await userEvent.click(screen.getByRole("checkbox", { name: /Second/ }));
+  await saveTeam();
+  await waitFor(() => expect(savePortable).toHaveBeenCalledOnce());
+  const [team, snapshot] = savePortable.mock.calls[0] ?? [];
+  expect(team?.agents).toEqual([member, second]);
+  expect(snapshot?.team.instructions).toBe("SAVED");
+  expect(captureTeam.mock.calls[0]?.[1]).toEqual([second]);
+});
+
+it("retries only the delivery after a save whose delivery failed", async () => {
+  const { savePortable, syncTeamInstructions } = setup(
+    portable,
+    [entryOf(portable)],
+    { portable: "SAVED" },
+  );
+  syncTeamInstructions.mockRejectedValueOnce(new Error("controller offline"));
+  const field = await instructions();
+  await waitFor(() => expect(field).toHaveValue("SAVED"));
+  await saveTeam();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "controller offline",
+  );
+  await saveTeam();
+  await waitFor(() => expect(syncTeamInstructions).toHaveBeenCalledTimes(2));
+  expect(savePortable.mock.calls.map((call) => call[2])).toEqual([
+    "portable-head",
+    "saved",
+  ]);
 });

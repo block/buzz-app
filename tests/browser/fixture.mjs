@@ -1038,7 +1038,7 @@ export const test = base.extend({
       if (filter.kinds?.includes(30178)) {
         expect(filter).toEqual({
           kinds: [30175, 30178],
-          limit: 200,
+          limit: 63,
         });
         return [];
       }

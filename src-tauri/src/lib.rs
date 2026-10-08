@@ -44,11 +44,12 @@ use identity::{
 use relay::{
     media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
-    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_sidebar,
-    relay_direct_message, relay_git_authorization, relay_http, relay_kit_decode, relay_kit_prepare,
-    relay_kit_sign, relay_project_git, relay_project_git_cancel, relay_publish_read_state,
-    relay_sign, relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_begin,
-    relay_upload_cancel, relay_upload_chunk, relay_workflow_runs,
+    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
+    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
+    relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
+    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
+    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
+    relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
 #[cfg(test)]
@@ -435,6 +436,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_direct_message,
         relay_decode_sidebar,
         relay_sign_sidebar,
+        relay_decode_reminders,
+        relay_sign_reminder,
         relay_agent_resolve,
         relay_agent_log_proof,
         relay_archive,

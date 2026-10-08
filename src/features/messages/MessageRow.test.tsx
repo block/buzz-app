@@ -1809,3 +1809,238 @@ it("presents automation, links the owner and discloses the separate relay signer
     cleanup();
   }
 });
+
+it("contains a broken plugin message action to its own contribution", () => {
+  const listeners = new Set<() => void>();
+  const entry = (
+    id: string,
+    marker: () => React.ReactNode,
+    matches = () => true,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches,
+    icon: marker,
+    component: () => null,
+    marker,
+  });
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const healthy = entry("healthy", () => <span>healthy marker</span>);
+  let actions = [
+    entry(
+      "throwing-matcher",
+      () => <span>never</span>,
+      () => broken(),
+    ),
+    entry("throwing-marker", broken),
+    healthy,
+  ];
+  const store = {
+    snapshot: () => actions,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          actions: store,
+        }}
+      />,
+    );
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    // Disabling and re-enabling is a fresh installation with a fresh boundary.
+    swap([healthy]);
+    swap([entry("throwing-marker", () => <span>fixed marker</span>), healthy]);
+    expect(screen.getByText("fixed marker")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("contains a throwing plugin action icon and opened component", async () => {
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const entry = (
+    id: string,
+    icon: () => React.ReactNode,
+    component: () => React.ReactNode,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    icon,
+    component,
+  });
+  const actions = [
+    entry("Broken icon", broken, () => null),
+    entry("Broken component", () => <span>ok icon</span>, broken),
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: { snapshot: () => actions, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Broken icon" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Broken component/ }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByText("Root")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
+  const listeners = new Set<() => void>();
+  const entry = () => ({
+    id: "remind",
+    title: "Remind",
+    key: "test.plugin/remind",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => <span>action dialog</span>,
+  });
+  let actions = [entry()];
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: {
+            snapshot: () => actions,
+            subscribe(listener: () => void) {
+              listeners.add(listener);
+              return () => void listeners.delete(listener);
+            },
+          },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
+    expect(await screen.findByText("action dialog")).toBeInTheDocument();
+    swap([]);
+    expect(screen.queryByText("action dialog")).toBeNull();
+    swap([entry()]);
+    expect(screen.queryByText("action dialog")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});

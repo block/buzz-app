@@ -117,9 +117,28 @@ export type MessageRenderer = Readonly<{
   matches(message: ChannelMessage): boolean;
   component: ComponentType<{ message: ChannelMessage }>;
 }>;
+/** One ⋯ menu entry for a message. The host owns the menu, focus and row lifetime. */
+export type MessageAction = Readonly<{
+  id: string;
+  title: string;
+  icon?: ComponentType;
+  matches(message: ChannelMessage, session: RelaySession): boolean;
+  /** Mounted by the row after the menu closes; call close() to dismiss. */
+  component: ComponentType<{
+    message: ChannelMessage;
+    session: RelaySession;
+    close(): void;
+  }>;
+  /**
+   * Optional presentation beside the message timestamp, such as a state mark.
+   * Rendered only while `matches` passes: hiding the menu entry hides the mark.
+   */
+  marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
+  actions?: ContributionReader<MessageAction>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

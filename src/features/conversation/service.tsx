@@ -22,6 +22,7 @@ import type {
   InlineRenderer,
   LinkRenderer,
   MessageRenderer,
+  MessageAction,
   ContributionReader,
 } from "./contracts";
 
@@ -40,6 +41,8 @@ export type Conversation = {
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
   registerLink(renderer: LinkRenderer): void;
+  actions: ContributionReader<MessageAction>;
+  registerMessageAction(action: MessageAction): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
@@ -72,7 +75,8 @@ function validate(
     | ComposerCompletion
     | ComposerAccessory
     | LinkRenderer
-    | MessageRenderer,
+    | MessageRenderer
+    | MessageAction,
 ) {
   if (
     !value ||
@@ -100,6 +104,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly inlineEntries;
   readonly links;
   private readonly linkEntries;
+  readonly actions;
+  private readonly actionEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
     const attachments = createContributions<AttachmentRenderer>(ctx);
@@ -135,6 +141,19 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+    const actions = createContributions<MessageAction>(ctx);
+    this.actionEntries = actions;
+    this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+  }
+  registerMessageAction(value: MessageAction) {
+    validate(value);
+    if (
+      typeof value.matches !== "function" ||
+      (value.icon !== undefined && typeof value.icon !== "function") ||
+      (value.marker !== undefined && typeof value.marker !== "function")
+    )
+      throw new Error("A message action needs a matcher");
+    this.actionEntries.register(this.ctx, value);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);

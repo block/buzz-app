@@ -183,6 +183,7 @@ fi
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s' "$BUZZ_ACP_AGENTS" > worker-count
+printf '%s' "$BUZZ_ACP_MCP_COMMAND" > mcp-command
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
@@ -1978,6 +1979,81 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
         controller.running.is_empty(),
         "a corrupt sidecar must not fall back to PATH"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn only_buzz_agent_receives_the_developer_mcp() {
+    for (selection, bundled, expects_mcp) in [
+        ("buzz-agent", true, true),
+        ("buzz-agent", false, true),
+        ("buzz-agent.exe", false, true),
+        ("goose", true, false),
+        ("goose-acp", true, false),
+        ("goose-acp", false, false),
+        ("buzz-pi-acp", false, false),
+        ("claude-agent-acp", false, false),
+        ("codex-acp", false, false),
+        ("hermes-acp", false, false),
+        ("custom-acp", false, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let runtime = bundle(tools.path());
+        let worker = tools.path().join(selection);
+        if !worker.exists() {
+            fs::copy(tools.path().join("buzz-agent"), &worker).unwrap();
+        }
+        for name in ["pi", "node"] {
+            crate::test_executable::write_executable(
+                &tools.path().join(name),
+                "#!/bin/sh\nprintf '0.99.1\\n'\n",
+            );
+        }
+        let mut saved = agent(dir.path());
+        saved.harness.command = if bundled {
+            selection.into()
+        } else {
+            worker.display().to_string()
+        };
+        saved.harness.provider.clear();
+        saved.harness.model.clear();
+        if selection == "claude-agent-acp" {
+            saved.environment.insert(
+                "CLAUDE_CODE_EXECUTABLE".into(),
+                tools.path().join("claude").display().to_string(),
+            );
+        }
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        store.insert(vec![saved.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(runtime),
+            dir.path().join("ownership"),
+        );
+        let expected = expects_mcp.then(|| tools.path().join("buzz-dev-mcp").display().to_string());
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].mcp_command,
+            expected,
+            "{selection}: reported MCP server"
+        );
+        let key = Secret::parse(KEY, PUB).unwrap();
+        let mut command = controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&saved, &key)
+            .unwrap();
+        fs::write(dir.path().join("exit-listener"), "").unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success(), "{selection}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("mcp-command")).unwrap(),
+            expected.unwrap_or_default(),
+            "{selection}: launched MCP server"
+        );
+    }
 }
 
 #[test]

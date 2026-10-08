@@ -359,7 +359,7 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
   await expect(search).toBeFocused();
   await openPage(page, "Bestie");
   await expect(
-    page.getByRole("heading", { name: "Meet your Bestie" }),
+    page.getByText("Sign in to Builderlab to set up Bestie.", { exact: true }),
   ).toBeVisible();
 });
 

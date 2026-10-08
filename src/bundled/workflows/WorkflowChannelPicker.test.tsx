@@ -31,6 +31,27 @@ it("picks the first matching channel with Enter, without an arrow key", async ()
   expect(onSelect).toHaveBeenCalledExactlyOnceWith("2");
 });
 
+it("ranks an exact name before a longer one that contains it", async () => {
+  const user = userEvent.setup();
+  const onSelect = vi.fn();
+  render(
+    <WorkflowChannelPicker
+      channels={[
+        { id: "1", name: "dev-general" },
+        { id: "2", name: "general" },
+      ]}
+      onSelect={onSelect}
+    />,
+  );
+  const input = screen.getByRole("combobox", { name: "Choose a channel" });
+  await user.type(input, "general");
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["general", "dev-general"]);
+  await user.keyboard("{Enter}");
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith("2");
+});
+
 it("does not pick a channel with Enter before anything is typed", async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();

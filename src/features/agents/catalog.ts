@@ -1,6 +1,8 @@
 import type { EventData, RelayEvent } from "../relay/events.ts";
 import type { LocalEvents, Outbox, OutgoingEvent } from "../relay/outbox.ts";
+import { ReadError } from "../relay/errors.ts";
 import type { RelayReader } from "../relay/reader.ts";
+import { MAX_EVENT_BYTES } from "./catalog-envelope.ts";
 import {
   AGENT_CATALOG_KIND,
   type AgentPublication,
@@ -15,7 +17,9 @@ import {
 
 export type CatalogKind = typeof AGENT_CATALOG_KIND | typeof TEAM_CATALOG_KIND;
 const KINDS: readonly CatalogKind[] = [AGENT_CATALOG_KIND, TEAM_CATALOG_KIND];
-const PAGE = 200;
+// Small pages avoid normal reader size refusals. Relay-admitted events can
+// exceed this app's signer bound, so a size refusal still halves the page.
+const PAGE = Math.floor((8 * 1024 * 1024 - 2) / (MAX_EVENT_BYTES + 1));
 const MAX_EVENTS = 5_000;
 const UNCONFIRMED =
   "The relay accepted the update, but the catalog could not confirm it.";
@@ -233,12 +237,27 @@ export function createCommunityCatalog({
   async function readAll(reader: RelayReader, signal: AbortSignal) {
     const events: RelayEvent[] = [];
     let cursor: { until: number; before_id: string } | undefined;
+    let limit = PAGE;
     for (;;) {
       signal.throwIfAborted();
-      const page = await reader.read(
-        [{ kinds: [...KINDS], limit: PAGE, ...cursor }],
-        { signal, priority: "background" },
-      );
+      let page: readonly RelayEvent[];
+      try {
+        page = await reader.read([{ kinds: [...KINDS], limit, ...cursor }], {
+          signal,
+          priority: "background",
+        });
+      } catch (problem) {
+        if (
+          problem instanceof ReadError &&
+          problem.kind === "invalid-response" &&
+          problem.message === "Relay response exceeds the read budget" &&
+          limit > 1
+        ) {
+          limit = Math.floor(limit / 2);
+          continue; // Retry the same cursor; no page was accepted.
+        }
+        throw problem;
+      }
       signal.throwIfAborted();
       // Unshared foreign heads are withheld by the relay; the head rule still
       // applies so a stale shared copy can never outrank a newer own unshare.
@@ -246,7 +265,7 @@ export function createCommunityCatalog({
       if (events.length > MAX_EVENTS)
         throw new Error("Community catalog exceeds read budget");
       const last = page.at(-1);
-      if (page.length < PAGE || !last) return events;
+      if (page.length < limit || !last) return events;
       cursor = { until: last.created_at, before_id: last.id };
     }
   }

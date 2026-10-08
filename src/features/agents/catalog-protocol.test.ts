@@ -17,6 +17,7 @@ const owner = "cd".repeat(32);
 function agent(overrides: Partial<AgentView> = {}): AgentView {
   return {
     ...controlFixture().agent,
+    harness: { ...controlFixture().agent.harness, command: "buzz-agent" },
     sessionPolicy: "channel",
     ...overrides,
   };
@@ -54,6 +55,7 @@ describe("agent projection", () => {
         display_name: "Fixture agent",
         system_prompt: "Help with the project.",
         acp_command: "buzz-acp",
+        runtime: "buzz-agent",
         model: "fixture-model",
         provider: "fixture-provider",
         respond_to: "owner-only",
@@ -87,6 +89,20 @@ describe("agent projection", () => {
         .session_policy;
     expect(policy("channel", "thread")).toBe("channel");
     expect(policy("thread", "channel")).toBe("thread");
+  });
+
+  it("projects the known Windows Buzz Agent executable but still rejects Codex", () => {
+    const windows = agent({
+      harness: { ...agent().harness, command: "C:\\Tools\\buzz-agent.exe" },
+    });
+    expect(JSON.parse(agentCatalogContent(windows)).runtime).toBe("buzz-agent");
+    expect(() =>
+      agentCatalogContent(
+        agent({
+          harness: { ...windows.harness, command: "C:\\Tools\\codex-acp.exe" },
+        }),
+      ),
+    ).toThrow(/runtime that cannot be shared/);
   });
 
   it("omits a machine-local transport that has no portable alias", () => {
@@ -183,6 +199,25 @@ describe("team projection", () => {
         member,
       ]),
     ).rejects.toThrow("team too large to share: the team instructions");
+  });
+
+  it("refuses to publish a member with an unmapped harness instead of dropping its runtime", async () => {
+    const unknown = agent({
+      harness: {
+        ...member.harness,
+        command: "/local/codex-acp",
+        model: "gpt-5-codex",
+        provider: "openai",
+      },
+    });
+    expect(() => agentCatalogContent(unknown)).toThrow(
+      /runtime that cannot be shared/,
+    );
+    await expect(
+      teamCatalogContent({ id: "t1", name: "Crew", agents: [owner] }, [
+        { ...unknown, pubkey: owner },
+      ]),
+    ).rejects.toThrow(/runtime that cannot be shared/);
   });
 
   it("fails rather than publishing a partial team", async () => {

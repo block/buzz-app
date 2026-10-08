@@ -555,8 +555,10 @@ export function CommunityCatalogDialog({
                     ? `${current.agent.displayName} is already in My Agents`
                     : `Add ${current.agent.displayName} from Community Catalog`
                 }
-                disabled={isAdded(current) || !!transport}
-                onClick={() => onAddAgent(current)}
+                disabled={isAdded(current) || adding || !!transport}
+                onClick={() => {
+                  if (!adding) onAddAgent(current);
+                }}
               >
                 {isAdded(current) ? "Added to My Agents" : "Add agent"}
               </Button>

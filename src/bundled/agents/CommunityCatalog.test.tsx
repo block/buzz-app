@@ -416,6 +416,71 @@ it("previews shared entries as plain text and adds an explicit copy", async () =
   ).toContain("Added to my teams");
 });
 
+it("keeps pending team import recovery visible when an agent is selected", async () => {
+  const server = catalogRelay();
+  server.put(
+    signed(alice, {
+      kind: 30175,
+      tags: [
+        ["d", "helper"],
+        ["shared", "true"],
+      ],
+      content: agentBody,
+      created_at: 1,
+    }),
+  );
+  server.put(
+    signed(alice, {
+      kind: 30178,
+      tags: [
+        ["d", "crew"],
+        ["shared", "true"],
+      ],
+      content: teamBody,
+      created_at: 1,
+    }),
+  );
+  const viewer = client(server, bob);
+  let rejectImport!: (reason: Error) => void;
+  const onAddTeam = vi.fn(
+    () =>
+      new Promise<string>((_resolve, reject) => {
+        rejectImport = reject;
+      }),
+  );
+  const onAddAgent = vi.fn();
+  render(
+    <CommunityCatalogDialog
+      session={viewer.session}
+      onClose={() => {}}
+      hasCopy={() => false}
+      onAddAgent={onAddAgent}
+      onAddTeam={onAddTeam}
+    />,
+  );
+  await screen.findByText("Agent instructions");
+  fireEvent.click(screen.getByRole("button", { name: /Crew/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Add Crew from Community Catalog" }),
+  );
+  expect(onAddTeam).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: /Helper/ }));
+  const addAgent = screen.getByRole("button", {
+    name: "Add Helper from Community Catalog",
+  });
+  expect(addAgent).toBeDisabled();
+  fireEvent.click(addAgent);
+  expect(onAddAgent).not.toHaveBeenCalled();
+  rejectImport(new Error("Some members were not added; retry the team import"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Some members were not added",
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Community Catalog" }),
+  ).toBeVisible();
+  expect(addAgent).toBeEnabled();
+});
+
 it("refuses to add entries that name a transport this app can't run", async () => {
   const server = catalogRelay();
   const alias = { acp_command: "buzz-janet-acp" };

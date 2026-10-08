@@ -94,6 +94,7 @@ it("re-sharing an adopted team keeps its description and instructions", async ()
 
   const copy = {
     ...controlFixture().agent,
+    harness: { ...controlFixture().agent.harness, command: "buzz-agent" },
     id: "copy-1",
     pubkey: "cd".repeat(32),
     name: "Mate",
@@ -190,6 +191,7 @@ function pendingShare(defaultSessionPolicy: "channel" | "thread" = "channel") {
   const server = catalogRelay();
   const member = {
     ...controlFixture().agent,
+    harness: { ...controlFixture().agent.harness, command: "buzz-agent" },
     id: "member-1",
     pubkey: "ef".repeat(32),
     name: "Mate",

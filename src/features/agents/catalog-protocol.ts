@@ -162,7 +162,18 @@ function persona(agent: AgentView, defaultSessionPolicy?: SessionPolicy) {
       ?.split(/[\\/]/)
       .at(-1)
       ?.replace(/\.exe$/i, "") ?? STOCK_ACP;
-  const runtime = harnessKind(agent.harness.command);
+  const runtime =
+    agent.harness.command
+      .replaceAll("\\", "/")
+      .split("/")
+      .at(-1)
+      ?.toLowerCase() === "buzz-agent.exe"
+      ? "buzz-agent"
+      : harnessKind(agent.harness.command);
+  if (!runtime)
+    throw new Error(
+      `Agent '${agent.name}' uses a runtime that cannot be shared with the community catalog.`,
+    );
   const avatar = catalogAvatar(agent.picture);
   const model = agent.harness.model.trim();
   const provider = agent.harness.provider.trim();
@@ -171,7 +182,7 @@ function persona(agent: AgentView, defaultSessionPolicy?: SessionPolicy) {
     system_prompt: agent.systemPrompt,
     ...(portableAcpCommand(acp) ? { acp_command: acp } : {}),
     ...(avatar ? { avatar_url: avatar } : {}),
-    ...(runtime ? { runtime } : {}),
+    runtime,
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     // An allowlist would disclose the owner's trusted pubkeys; downgrade it.

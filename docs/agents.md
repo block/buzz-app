@@ -258,6 +258,19 @@ made in another window or device. After a save/delete revision conflict, close t
 dialog, refresh, and reopen the current team before retrying; stale drafts never
 silently overwrite a newer revision.
 
+**Team instructions** are shared text every member gets after its own
+instructions. Any saved team can have them; adding text to an ordinary team moves
+it to the portable team record, which older app versions do not show. Saving a
+team writes its current text into each member's local settings and clears it for
+agents no team with text lists any longer. Save never restarts an agent: a running
+member shows **Restart required** until it is restarted. The same pass runs after
+a team is deleted and once teams load at app start. Save refuses to put one agent
+on two teams with different text and names the other team; teams without text
+never conflict.
+
+**Deploy to channel** only adds the team's saved agents to the chosen channel and
+starts any that are stopped. It does not change instructions or restart anyone.
+
 Saved teams from the Agents page are available in both mention choosers. A team
 is a shortcut, not a group identity: explicit selection inserts its saved agent
 keys as individual mentions in one undoable edit. Names never resolve membership.

@@ -1,5 +1,4 @@
 import { expect, it, vi } from "vitest";
-import type { TeamSnapshot } from "./team-bundles";
 import type { AgentView, AgentControl } from "./control";
 import type { RelaySession } from "../relay/session";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
@@ -65,7 +64,7 @@ it("retries every saved member using the exact imported pubkeys without creating
   expect(create).not.toHaveBeenCalled();
 });
 
-it("applies shared instructions separately and restarts an existing copy when its revision changes", async () => {
+it("adds an existing running member without writing team text or restarting it", async () => {
   vi.mocked(addChannelMember).mockClear();
   vi.mocked(startAddedAgent).mockClear();
   const agent = {
@@ -74,132 +73,42 @@ it("applies shared instructions separately and restarts an existing copy when it
     revision: 2,
     runningRevision: 1,
     status: "running",
-    systemPrompt: "INDIVIDUAL",
     relayUrl: "wss://relay.example",
   } as AgentView;
-  const applyTeamInstructions = vi.fn(async () => ({ agents: [agent] }));
-  const action = vi.fn(async () => ({
-    agents: [{ ...agent, runningRevision: 2 }],
-  }));
-  const create = vi.fn();
-  const control = {
-    create,
-    refresh: vi.fn(),
-    snapshot: () => ({ data: { agents: [agent] } }),
-    applyTeamInstructions,
-    action,
-  } as unknown as AgentControl;
-  const session = {
-    viewer: "b".repeat(64),
-    scope: `https://relay.example:${"b".repeat(64)}`,
-  } as RelaySession;
-  const attempt = teamDeployment(
-    { type: "team", id: "team", name: "Saved", agents: [agent.pubkey] },
-    "channel",
-  );
-  const snapshot = {
-    team: { name: "Saved", instructions: "TEAM" },
-  } as TeamSnapshot;
-  await deployTeam(
-    control,
-    session,
-    attempt,
-    new AbortController().signal,
-    snapshot,
-  );
-  expect(applyTeamInstructions).toHaveBeenCalledExactlyOnceWith(
-    agent.id,
-    2,
-    "TEAM",
-    "team",
-    "https://relay.example",
-  );
-  expect(action).toHaveBeenCalledExactlyOnceWith(agent.id, "restart");
-  expect(create).not.toHaveBeenCalled();
-  expect(agent.systemPrompt).toBe("INDIVIDUAL");
-});
-
-it.each([false, true])(
-  "only mutates the deployment community regardless of inventory order (%s)",
-  async (reverse) => {
-    vi.mocked(addChannelMember).mockClear();
-    vi.mocked(startAddedAgent).mockClear();
-    const pubkey = "a".repeat(64);
-    const local = {
-      id: "local",
-      pubkey,
-      relayUrl: "wss://relay.example",
-      revision: 1,
-      status: "stopped",
-    } as AgentView;
-    const foreign = {
-      ...local,
-      id: "foreign",
-      relayUrl: "wss://foreign.example",
-    };
-    const agents = reverse ? [local, foreign] : [foreign, local];
-    const applyTeamInstructions = vi.fn(async () => ({ agents }));
-    const action = vi.fn();
-    const control = {
-      refresh: vi.fn(),
-      snapshot: () => ({ data: { agents } }),
-      applyTeamInstructions,
-      action,
-    } as unknown as AgentControl;
-    const session = {
-      viewer: "b".repeat(64),
-      scope: `https://relay.example:${"b".repeat(64)}`,
-    } as RelaySession;
-    const attempt = teamDeployment(
-      { type: "team", id: "team", name: "Saved", agents: [pubkey] },
-      "channel",
-    );
-    await deployTeam(control, session, attempt, new AbortController().signal, {
-      team: { name: "Saved", instructions: "TEAM" },
-    } as TeamSnapshot);
-    expect(applyTeamInstructions).toHaveBeenCalledExactlyOnceWith(
-      "local",
-      1,
-      "TEAM",
-      "team",
-      "https://relay.example",
-    );
-    expect(action).not.toHaveBeenCalled();
-  },
-);
-it("refuses portable deployment when only a foreign-community record exists", async () => {
-  vi.mocked(addChannelMember).mockClear();
-  vi.mocked(startAddedAgent).mockClear();
-  const pubkey = "a".repeat(64);
   const applyTeamInstructions = vi.fn();
+  const syncTeamInstructions = vi.fn();
   const action = vi.fn();
   const control = {
     refresh: vi.fn(),
-    snapshot: () => ({
-      data: {
-        agents: [{ id: "foreign", pubkey, relayUrl: "wss://foreign.example" }],
-      },
-    }),
+    snapshot: () => ({ data: { agents: [agent] } }),
     applyTeamInstructions,
+    syncTeamInstructions,
     action,
   } as unknown as AgentControl;
   const session = {
     viewer: "b".repeat(64),
     scope: `https://relay.example:${"b".repeat(64)}`,
   } as RelaySession;
-  await expect(
-    deployTeam(
-      control,
-      session,
-      teamDeployment(
-        { type: "team", id: "team", name: "Saved", agents: [pubkey] },
-        "channel",
-      ),
-      new AbortController().signal,
-      { team: { name: "Saved", instructions: "TEAM" } } as TeamSnapshot,
+  const signal = new AbortController().signal;
+  await deployTeam(
+    control,
+    session,
+    teamDeployment(
+      { type: "team", id: "team", name: "Saved", agents: [agent.pubkey] },
+      "channel",
     ),
-  ).rejects.toThrow("unavailable locally");
+    signal,
+  );
+  expect(addChannelMember).toHaveBeenCalledOnce();
+  expect(startAddedAgent).toHaveBeenCalledExactlyOnceWith(
+    control,
+    session,
+    "channel",
+    agent.pubkey,
+    signal,
+    true,
+  );
   expect(applyTeamInstructions).not.toHaveBeenCalled();
+  expect(syncTeamInstructions).not.toHaveBeenCalled();
   expect(action).not.toHaveBeenCalled();
-  expect(addChannelMember).not.toHaveBeenCalled();
 });

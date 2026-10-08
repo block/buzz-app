@@ -1,6 +1,8 @@
 import type { AgentControl } from "./control";
 import type { ChannelKit } from "../channel-templates/capability";
 import type { Team } from "../channel-templates/model";
+import type { RelaySession } from "../relay/session";
+import type { Communities } from "../communities/service";
 
 export type TeamText = { team: Team; text: string };
 
@@ -49,4 +51,67 @@ export function teamTextConflict(
   return other
     ? `An agent on this team is also on "${other.team.name}", which has different team instructions. Remove the agent from one team or use the same instructions.`
     : undefined;
+}
+
+/** Writes every team's current text into its members' settings and clears it
+ * for agents no team with text lists. Never restarts: running members show
+ * restart-needed instead. Runs after each team save or delete and once teams
+ * load at app start. */
+export async function deliverTeamTexts(
+  kit: ChannelKit,
+  control: AgentControl | undefined,
+  session: RelaySession | undefined,
+) {
+  if (!control?.syncTeamInstructions || !session?.viewer) return;
+  try {
+    const texts = await readTeamTexts(kit, control);
+    await control.syncTeamInstructions(
+      session.scope.slice(0, -(session.viewer.length + 1)),
+      Object.fromEntries(texts.map(({ team, text }) => [team.id, text])),
+    );
+  } catch (reason) {
+    throw new Error(
+      `Saved, but team members' instructions weren't updated: ${reason instanceof Error ? reason.message : String(reason)}`,
+    );
+  }
+}
+
+/** Delivers team text once per relay session, after its teams and the local
+ * agents have both loaded. */
+export function bindTeamTextSync(
+  control: AgentControl,
+  communities: Communities,
+) {
+  let watched: RelaySession | undefined;
+  let synced: RelaySession | undefined;
+  let stopKit = () => {};
+  const update = () => {
+    const relay = communities.relay.snapshot();
+    const session = relay.status === "ready" ? relay.session : undefined;
+    if (session !== watched) {
+      stopKit();
+      watched = session;
+      stopKit = session?.channelKit.subscribe(update) ?? (() => {});
+      session?.channelKit.ensure();
+    }
+    if (
+      !session ||
+      synced === session ||
+      session.channelKit.snapshot().status !== "ready" ||
+      control.snapshot().status !== "ready"
+    )
+      return;
+    synced = session;
+    void deliverTeamTexts(session.channelKit, control, session).catch(
+      (reason) => console.warn("Team instruction sync failed", reason),
+    );
+  };
+  const stopRelay = communities.relay.subscribe(update);
+  const stopControl = control.subscribe(update);
+  update();
+  return () => {
+    stopKit();
+    stopRelay();
+    stopControl();
+  };
 }

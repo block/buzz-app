@@ -253,6 +253,12 @@ export interface AgentControlHost {
     team: string,
     community: string,
   ): Promise<ControlSnapshot>;
+  /** Writes each team's current text into its members' settings, clears it
+   * for agents no team with text lists, and never restarts anyone. */
+  syncTeamInstructions?(
+    community: string,
+    teams: Record<string, string>,
+  ): Promise<ControlSnapshot>;
   captureTeam?(
     team: TeamSnapshot["team"],
     members: string[],
@@ -341,6 +347,12 @@ export interface AgentControl {
     instructions: string,
     team: string,
     community: string,
+  ): Promise<ControlSnapshot>;
+  /** Writes each team's current text into its members' settings, clears it
+   * for agents no team with text lists, and never restarts anyone. */
+  syncTeamInstructions?(
+    community: string,
+    teams: Record<string, string>,
   ): Promise<ControlSnapshot>;
   captureTeam?(
     team: TeamSnapshot["team"],
@@ -679,6 +691,19 @@ export function createAgentControl(
               );
             return agent;
           },
+        }
+      : {}),
+    ...(host?.syncTeamInstructions
+      ? {
+          syncTeamInstructions: (
+            community: string,
+            teams: Record<string, string>,
+          ) =>
+            run(async (host) => {
+              if (!host.syncTeamInstructions)
+                throw new Error("Team instruction updates are unavailable.");
+              return host.syncTeamInstructions(community, teams);
+            }, ready),
         }
       : {}),
     ...(host?.applyTeamInstructions

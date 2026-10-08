@@ -2,6 +2,7 @@ import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
 import type { TeamSnapshot } from "../../features/agents/team-bundles";
 import {
+  deliverTeamTexts,
   readTeamTexts,
   teamTextConflict,
 } from "../../features/agents/team-instructions";
@@ -228,6 +229,7 @@ export function ChannelTemplatesDialog({
           );
         await kit.save(draft, expected);
       }
+      if (draft.type === "team") await deliverTeamTexts(kit, control, session);
       if (live.current && active()) onOpenChange(false);
     } catch (reason) {
       if (live.current && active())

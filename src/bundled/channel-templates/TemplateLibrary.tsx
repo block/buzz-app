@@ -1,3 +1,4 @@
+import { deliverTeamTexts } from "../../features/agents/team-instructions";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import type { TeamSnapshot } from "../../features/agents/team-bundles";
@@ -121,6 +122,8 @@ export function TemplateLibrary({
     setError("");
     try {
       await kit.save(deleting.value, deleting.eventId, true);
+      if (deleting.value.type === "team")
+        await deliverTeamTexts(kit, control, session);
       if (mounted.current && active()) setDeleteOpen(false);
     } catch (reason) {
       if (mounted.current && active())
@@ -338,7 +341,6 @@ export function TemplateLibrary({
         {deploying && session && (
           <TeamDeployDialog
             team={deploying}
-            kit={kit}
             control={control}
             session={session}
             close={() => setDeploying(undefined)}

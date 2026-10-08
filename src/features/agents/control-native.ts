@@ -28,6 +28,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         team,
         community,
       }),
+    syncTeamInstructions: (community, teams) =>
+      invoke("agent_control_team_sync", { community, teams }),
     captureTeam: (team, members, community) =>
       invoke("agent_control_team_capture", { team, members, community }),
     previewTeam: (content) => invoke("agent_control_team_preview", { content }),

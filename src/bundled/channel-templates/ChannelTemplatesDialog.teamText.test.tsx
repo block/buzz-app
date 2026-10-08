@@ -91,7 +91,9 @@ function setup(
     team: { name: initial.name },
     members: members.map(() => structuredClone(memberSnapshot)),
   }));
+  const syncTeamInstructions = vi.fn(async () => controlState);
   const control = {
+    syncTeamInstructions,
     previewTeam: vi.fn(async (id: string) => {
       const team = entries.find(
         (entry) => entry.record.value.id === JSON.parse(id),
@@ -115,7 +117,7 @@ function setup(
     />,
     { wrapper: ToastProvider },
   );
-  return { save, savePortable, captureTeam };
+  return { save, savePortable, captureTeam, syncTeamInstructions };
 }
 const instructions = () =>
   screen.findByRole("textbox", { name: "Team Instructions" });
@@ -149,9 +151,11 @@ it("keeps an ordinary team ordinary when no text is added", async () => {
 });
 
 it("shows the saved text and keeps it on a name-only edit", async () => {
-  const { savePortable } = setup(portable, [entryOf(portable)], {
-    portable: "SAVED",
-  });
+  const { savePortable, syncTeamInstructions } = setup(
+    portable,
+    [entryOf(portable)],
+    { portable: "SAVED" },
+  );
   const field = await instructions();
   await waitFor(() => expect(field).toHaveValue("SAVED"));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "!");
@@ -161,6 +165,11 @@ it("shows the saved text and keeps it on a name-only edit", async () => {
   expect(team?.agents).toEqual([member]);
   expect(snapshot?.team.instructions).toBe("SAVED");
   expect(snapshot?.members).toHaveLength(1);
+  await waitFor(() =>
+    expect(syncTeamInstructions).toHaveBeenCalledExactlyOnceWith(community, {
+      portable: "SAVED",
+    }),
+  );
 });
 
 it("saves an explicit clear as empty text", async () => {
@@ -177,7 +186,7 @@ it("saves an explicit clear as empty text", async () => {
 
 it("refuses a save that gives a member two different team texts", async () => {
   const other = { ...portable, id: "other", name: "Reviewers" };
-  const { save, savePortable } = setup(
+  const { save, savePortable, syncTeamInstructions } = setup(
     ordinary,
     [entryOf(ordinary), entryOf(other)],
     { other: "THEIRS" },
@@ -187,6 +196,7 @@ it("refuses a save that gives a member two different team texts", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent('"Reviewers"');
   expect(savePortable).not.toHaveBeenCalled();
   expect(save).not.toHaveBeenCalled();
+  expect(syncTeamInstructions).not.toHaveBeenCalled();
 });
 
 it.each([

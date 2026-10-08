@@ -866,7 +866,9 @@ it("renders proxy audio attachments with an inline player", () => {
   );
   expect(html).toContain('aria-label="Play audio"');
   expect(html).toContain('aria-label="Seek audio"');
-  expect(html).toContain("0:00 / 0:12");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.querySelector("fieldset")?.textContent).toBe("00:00 00:12");
   expect(html).not.toContain("Download file");
 });
 

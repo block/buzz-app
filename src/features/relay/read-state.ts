@@ -1,5 +1,9 @@
 import { newer, type RelayEvent } from "./events";
-import { retainReadState, retainReadOrder } from "./read-state-retention";
+import {
+  retainLocalRead,
+  retainReadState,
+  type CoveredFrontier,
+} from "./read-state-retention";
 import type { ReadStateHost } from "./read-state-host";
 import {
   effectiveFrontier,
@@ -72,6 +76,15 @@ const same = (a: unknown, b: unknown): boolean => {
     )
   );
 };
+/** Reserve and journal are disjoint; only the journal is eligible for sync. */
+const localState = (journal: ReadJournal): ReadState =>
+  Object.freeze({
+    frontiers: Object.freeze({
+      ...journal.reserve,
+      ...journal.state.frontiers,
+    }),
+    overrides: journal.state.overrides,
+  });
 /** One durable domain owner. Read intent is not cache; one tab never saves over another's intent. */
 export function createReadState({
   viewer,
@@ -99,6 +112,8 @@ export function createReadState({
   const listeners = new Set<() => void>();
   let journal: ReadJournal | undefined;
   let state: ReadState = EMPTY_READ_STATE;
+  // Message evidence (and so ancestry) belongs to unread, which registers this.
+  let covered: CoveredFrontier | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let refreshing: Promise<void> | undefined;
   let publishing: Promise<void> | undefined;
@@ -137,6 +152,11 @@ export function createReadState({
       emit();
     }
   };
+  /**
+   * Checked inside the storage transaction with the journal it will replace,
+   * so a fence on local intent sees other windows' saves, not this cache.
+   */
+  type Validity = (current: ReadJournal) => boolean;
   function queue<T>(job: () => Promise<T>): Promise<T> {
     const next = work.then(job);
     work = next.catch(() => {});
@@ -153,7 +173,7 @@ export function createReadState({
     });
     if (closed) return saved;
     journal = saved;
-    state = saved.state;
+    state = localState(saved);
     if (announce) broadcast?.postMessage("changed");
     emit();
     return saved;
@@ -257,16 +277,14 @@ export function createReadState({
           "Read-state observation cancelled",
           "AbortError",
         );
-      const state = retainReadState(
+      const { state, recent, reserve } = retainLocalRead(
         [current.state, ...decoded.map(({ parsed }) => parsed.state)],
         current.recent ?? {},
         current.clientId,
+        current.reserve,
+        covered,
       );
-      return {
-        ...current,
-        state,
-        recent: retainReadOrder(state, current.recent ?? {}),
-      };
+      return { ...current, state, recent, reserve };
     });
     if (closed || generation !== epoch) return;
     for (const item of decoded) {
@@ -339,7 +357,7 @@ export function createReadState({
     key: string,
     timestamp: number | undefined,
     unread: boolean | undefined,
-    valid: () => boolean,
+    valid: Validity,
     clearLocalKeys: readonly string[] = [key],
   ): Promise<ReadMutationResult> {
     return queue(async () => {
@@ -350,7 +368,7 @@ export function createReadState({
         throw new Error("Read-state sync unsupported by this host");
       try {
         const saved = await save((current) => {
-          if (!valid()) throw new Error("Reading observation expired");
+          if (!valid(current)) throw new Error("Reading observation expired");
           if (
             !contextId(key) ||
             (timestamp !== undefined && !uint32(timestamp))
@@ -361,16 +379,18 @@ export function createReadState({
             timestamp === undefined
               ? (current.recent ?? {})
               : { ...current.recent, [key]: revision };
-          const nextState =
+          const kept =
             timestamp === undefined
-              ? current.state
-              : retainReadState(
+              ? { state: current.state, recent, reserve: current.reserve ?? {} }
+              : retainLocalRead(
                   [
                     current.state,
                     { frontiers: { [key]: timestamp }, overrides: {} },
                   ],
                   recent,
                   current.clientId,
+                  current.reserve,
+                  covered,
                 );
           const localUnread = { ...current.localUnread };
           // Automatic observations do not clear explicit local manual-unread intent.
@@ -380,8 +400,9 @@ export function createReadState({
           return {
             ...current,
             revision,
-            state: nextState,
-            recent: retainReadOrder(nextState, recent),
+            state: kept.state,
+            recent: kept.recent,
+            reserve: kept.reserve,
             localUnread,
             acceptedRevision:
               timestamp === undefined &&
@@ -457,6 +478,7 @@ export function createReadState({
             journal.recent ?? {},
             journal.clientId,
             READ_STATE_PLAINTEXT_BYTES,
+            covered,
           );
           const payload = readBlob(journal.clientId, publishingState, (key) =>
             effectiveFrontier(publishingState, key),
@@ -563,6 +585,10 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
+    /** Lets the next save drop marks that broader marks already cover. */
+    setCoverage(next: CoveredFrontier | undefined) {
+      covered = next;
+    },
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -576,7 +602,7 @@ export function createReadState({
     read: (
       key: string,
       timestamp: number,
-      valid: () => boolean,
+      valid: Validity,
       explicit = false,
       clearLocalKeys?: readonly string[],
     ) =>
@@ -587,11 +613,8 @@ export function createReadState({
         valid,
         clearLocalKeys,
       ),
-    clearLocalUnread: (
-      key: string,
-      keys: readonly string[],
-      valid: () => boolean,
-    ) => mutate(key, undefined, false, valid, keys),
+    clearLocalUnread: (key: string, keys: readonly string[], valid: Validity) =>
+      mutate(key, undefined, false, valid, keys),
     /** Atomic explicit subtree read; local-only hosts clear intent without fabricating frontiers. */
     readMessages: (
       messages: readonly Readonly<{
@@ -601,7 +624,7 @@ export function createReadState({
         rootId?: string | undefined;
       }>[],
       clearForce: string | undefined,
-      valid: () => boolean,
+      valid: Validity,
     ) =>
       queue(async () => {
         await ready;
@@ -609,18 +632,19 @@ export function createReadState({
           throw new Error("Saved read state unavailable; retry storage first");
         try {
           const saved = await save((current) => {
-            if (!valid()) throw new Error("Reading observation expired");
+            if (!valid(current)) throw new Error("Reading observation expired");
             if (
               messages.some(
                 ({ key, timestamp }) => !contextId(key) || !uint32(timestamp),
               )
             )
               throw new Error("Invalid read frontier");
+            const currentState = localState(current);
             if (
               capability !== "frontier-sync" &&
               messages.some(
                 ({ key, timestamp, channelId, rootId }) =>
-                  (effectiveFrontier(current.state, key, channelId, rootId) ??
+                  (effectiveFrontier(currentState, key, channelId, rootId) ??
                     -1) < timestamp,
               )
             )
@@ -637,18 +661,25 @@ export function createReadState({
               delete localUnread[key];
             }
             if (clearForce) delete localUnread[clearForce];
-            const nextState = Object.keys(frontiers).length
-              ? retainReadState(
+            const kept = Object.keys(frontiers).length
+              ? retainLocalRead(
                   [current.state, { frontiers, overrides: {} }],
                   recent,
                   current.clientId,
+                  current.reserve,
+                  covered,
                 )
-              : current.state;
+              : {
+                  state: current.state,
+                  recent,
+                  reserve: current.reserve ?? {},
+                };
             return {
               ...current,
               revision,
-              state: nextState,
-              recent: retainReadOrder(nextState, recent),
+              state: kept.state,
+              recent: kept.recent,
+              reserve: kept.reserve,
               localUnread,
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision

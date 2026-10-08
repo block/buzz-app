@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentSettingsFields } from "./AgentSettingsFields";
 import { agentDraft, agentEdit, type AgentDraft } from "./agent-edit";
@@ -11,6 +11,112 @@ import { controlFixture } from "../../features/agents/control-testing";
 import type { ModelCatalog, ModelRequest } from "../../features/agents/models";
 
 afterEach(cleanup);
+
+it.each(["/old/bin/hermes-acp", "C:\\tools\\hermes-acp.exe"])(
+  "preserves Hermes settings through discovery refresh and explicitly recovers defaults (%s)",
+  async (command) => {
+    const f = controlFixture();
+    const begin = vi.fn(async () => 1);
+    f.host.models = { begin, run: vi.fn(), cancel: vi.fn() };
+    const control = createAgentControl(f.host);
+    let current = {
+      ...agentDraft(f.agent),
+      command,
+      model: "provider:old-model",
+      provider: "old-provider",
+    };
+    const initial = {
+      command: "hermes-acp",
+      label: "Hermes Agent",
+      available: false,
+      providers: [],
+      defaultArgs: [],
+    };
+    function Example({ found }: { found: boolean | "no-option" }) {
+      const [draft, setDraft] = useState(current);
+      current = draft;
+      return (
+        <AgentSettingsFields
+          draft={draft}
+          control={control}
+          state={{
+            status: "ready",
+            busy: false,
+            error: null,
+            data: {
+              ...f.data,
+              harnessOptions:
+                found === "no-option"
+                  ? []
+                  : [
+                      {
+                        ...initial,
+                        command: found
+                          ? "/new/bin/hermes-acp"
+                          : initial.command,
+                        available: found,
+                      },
+                    ],
+            },
+          }}
+          disabled={false}
+          onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        />
+      );
+    }
+    const user = userEvent.setup();
+    const view = render(<Example found="no-option" />);
+    try {
+      expect(
+        screen.getByRole("combobox", { name: "Harness" }),
+      ).toHaveTextContent("Hermes Agent (current executable)");
+      expect(screen.getByText("provider:old-model")).toBeVisible();
+      expect(screen.getByText("old-provider")).toBeVisible();
+      expect(() => agentEdit(current)).toThrow("Use Hermes Agent defaults");
+      view.rerender(<Example found={false} />);
+      expect(screen.getByText(/needs its ACP launcher/)).toBeVisible();
+      view.rerender(<Example found />);
+      expect(current).toMatchObject({
+        command,
+        model: "provider:old-model",
+        provider: "old-provider",
+      });
+      expect(
+        screen.getByRole("combobox", { name: "Harness" }),
+      ).toHaveTextContent("Hermes Agent (current executable)");
+      expect(
+        screen.queryByRole("combobox", { name: /Provider|Model/ }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /Browse models|Test connection/ }),
+      ).toBeNull();
+      await user.click(
+        screen.getByRole("button", { name: "Use Hermes Agent defaults" }),
+      );
+      expect(agentEdit(current).harness).toMatchObject({
+        command,
+        provider: "",
+        model: "",
+      });
+      expect(screen.queryByRole("alert")).toBeNull();
+      // The completed mount, refresh and reset never enter native model/auth work.
+      expect(begin).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("combobox", { name: "Harness" }));
+      await user.click(
+        await screen.findByRole("option", { name: "Hermes Agent" }),
+      );
+      expect(agentEdit(current).harness).toMatchObject({
+        command: "/new/bin/hermes-acp",
+        args: [],
+        provider: "",
+        model: "",
+      });
+    } finally {
+      view.unmount();
+      control.dispose();
+    }
+  },
+);
 
 it("browses an own Databricks workspace before global defaults, and inherits when blank", async () => {
   const f = controlFixture();
@@ -414,6 +520,7 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
     expect(agentEdit(draft(), true).environment).toEqual({
       OPENAI_API_KEY: "test-openai-key",
     });
+    expect(run).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run).toHaveBeenCalledWith(
@@ -434,11 +541,118 @@ it("uses a masked OpenAI key for Goose model lookup and discards unsaved keys on
     );
     await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
     await user.click(await screen.findByRole("option", { name: "Anthropic" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        action: "connect",
+        edit: expect.objectContaining({
+          harness: expect.objectContaining({ provider: "anthropic" }),
+        }),
+      }),
+    );
     expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
       "type",
       "password",
     );
     expect(draft().environment).toEqual({});
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom provider / current value",
+      }),
+    );
+    const custom = screen.getByLabelText("Custom provider");
+    await user.clear(custom);
+    await user.type(custom, "openai");
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("does not replay a failed Goose provider choice after a preset custom-path round trip", async () => {
+  const fixture = controlFixture();
+  fixture.data.harnessOptions = [
+    {
+      command: "/usr/local/bin/goose-acp",
+      label: "Goose",
+      defaultArgs: ["acp"],
+      providers: [{ value: "anthropic", label: "Anthropic" }],
+      configurationPolicy: {
+        authentication: "harnessWithOverrides",
+        provider: "selector",
+        supportedModes: [],
+        model: "optional",
+        effortDiscovery: "unknown",
+        selectorEnvironment: {
+          model: "GOOSE_MODEL",
+          provider: "GOOSE_PROVIDER",
+        },
+      },
+    },
+  ];
+  const run = vi.fn(async () => {
+    throw Error("Goose sign-in cancelled");
+  });
+  fixture.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(fixture.host);
+  const user = userEvent.setup();
+  function Editor() {
+    const [draft, setDraft] = useState(() => ({
+      ...agentDraft(fixture.agent),
+      command: "/custom/goose-acp",
+      args: '["acp"]',
+      provider: "",
+      model: "",
+      environment: {},
+    }));
+    return (
+      <AgentSettingsFields
+        draft={draft}
+        control={control}
+        state={{
+          status: "ready",
+          data: fixture.data,
+          busy: false,
+          error: null,
+        }}
+        disabled={false}
+        onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+      />
+    );
+  }
+  const view = render(<Editor />);
+  try {
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(await screen.findByRole("option", { name: "Anthropic" }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Model" }),
+      ).not.toHaveAttribute("aria-busy", "true"),
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom executable / current value",
+      }),
+    );
+    const executable = screen.getByRole("textbox", { name: "Executable" });
+    await user.clear(executable);
+    await user.paste("/custom/hermes-acp");
+    expect(screen.queryByLabelText("Model")).toBeNull();
+
+    await user.clear(screen.getByRole("textbox", { name: "Executable" }));
+    await user.paste("/custom/goose-acp");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible(),
+    );
+    expect(screen.getByLabelText("Anthropic API key")).toBeVisible();
+    await act(async () => {});
+    expect(run).toHaveBeenCalledOnce();
   } finally {
     view.unmount();
     control.dispose();
@@ -617,6 +831,7 @@ it("uses a draft Goose provider override for the API key and model lookup", asyn
       screen.getByLabelText("Anthropic API key"),
       "anthropic-key",
     );
+    expect(run).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Browse models" }));
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run).toHaveBeenCalledWith(

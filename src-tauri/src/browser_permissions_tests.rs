@@ -66,11 +66,14 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_export",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",
+        "identity_sign_builderlab_binding",
         "relay_decode_read_state",
         "relay_sign_read_state",
         "relay_publish_read_state",
         "relay_http",
         "relay_workflow_runs",
+        "relay_project_git",
+        "relay_project_git_cancel",
         "relay_channel_sign",
         "relay_channel_publish",
         "relay_kit_sign",
@@ -79,14 +82,22 @@ fn native_command_permissions_allow_only_main_webview() {
         "relay_direct_message",
         "relay_decode_sidebar",
         "relay_sign_sidebar",
+        "relay_decode_reminders",
+        "relay_sign_reminder",
         "relay_agent_resolve",
+        "relay_git_authorization",
         "relay_agent_log_proof",
         "relay_agent_observer",
+        "relay_archive",
         "relay_agent_memories_read",
         "relay_agent_library",
+        "relay_upload_begin",
+        "relay_upload_chunk",
         "relay_upload",
         "relay_upload_cancel",
         "media_download",
+        "media_copy_image",
+        "media_stream_base",
         "get_os_idle_seconds",
         "plugin_import_folder",
         "plugin_import_git",
@@ -99,6 +110,9 @@ fn native_command_permissions_allow_only_main_webview() {
         "plugin_recover",
         "plugin_host_run_command",
         "plugin_host_request",
+        "oauth_callback_begin",
+        "oauth_callback_wait",
+        "oauth_callback_cancel",
         "agent_control_create_prepare",
         "agent_control_create_authorize",
         "agent_control_create_commit",
@@ -107,6 +121,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_control_log_challenge",
         "agent_control_read_log",
         "pi_install",
+        "claude_install",
+        "claude_auth_status",
         "agent_control_save",
         "agent_control_save_defaults",
         "agent_control_start_on_app_launch",
@@ -122,6 +138,10 @@ fn native_command_permissions_allow_only_main_webview() {
         "agent_models_run",
         "title_bar_double_click",
         "notification_show",
+        #[cfg(target_os = "macos")]
+        "notification_permission_state",
+        #[cfg(target_os = "macos")]
+        "request_notification_access",
         "dock_permission",
         "unread_indicator_set",
         "deep_link_take",
@@ -146,8 +166,14 @@ fn native_command_permissions_allow_only_main_webview() {
     } else {
         "tauri://localhost"
     };
+    // Window fallback belongs to trusted app UI, never a sibling or remote page.
+    for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
+        assert!(invoke(&guest, "plugin:window|close", origin).is_err());
+    }
+    assert!(invoke(&main, "plugin:window|close", "https://example.org").is_err());
     // The removed owner attestation cannot acquire a main-webview grant.
     assert!(invoke(&main, "relay_agent_authorize", local_origin).is_err());
+    assert!(invoke(&main, "relay_agent_history_decode", local_origin).is_err());
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
@@ -161,4 +187,5 @@ fn native_command_permissions_allow_only_main_webview() {
             "remote content must not use main grants: {command}"
         );
     }
+    assert!(invoke(&main, "plugin:window|close", local_origin).is_ok());
 }

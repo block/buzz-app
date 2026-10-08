@@ -30,6 +30,7 @@ type Props = {
   name: string;
   community?: string | undefined;
   shape?: "circle" | "squircle";
+  size?: "compact" | "default";
   disabled?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
@@ -86,7 +87,11 @@ export function AvatarEditor(props: Props) {
   }, [open]);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <div className={styles.avatarFrame} data-shape={props.shape ?? "circle"}>
+      <div
+        className={styles.avatarFrame}
+        data-shape={props.shape ?? "circle"}
+        data-size={props.size}
+      >
         <div
           className={styles.avatarArtwork}
           data-shape={props.shape ?? "circle"}

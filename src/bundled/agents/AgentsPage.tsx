@@ -1,10 +1,24 @@
-import type { CommunityReader } from "../../features/communities/service";
+import type { TemplateProviders } from "../../features/channel-templates/provider";
+import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { UnifiedInventory } from "./UnifiedInventory";
+import type { CommunityReader } from "../../features/communities/service";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { PageProps } from "../../features/pages/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type { OpenResult } from "../../features/navigation/controller";
+import type {
+  PanelContext,
+  Panels,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import { profileTarget } from "../../features/profiles/target";
 import { editAgentRoute } from "./edit-route";
 import type {
   AgentControl,
@@ -16,12 +30,26 @@ import { relayOrigin } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { sameCommunityAgents } from "../../features/agents/choices";
 import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AgentCard } from "./AgentCard";
+import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
-import { ManagedAgentActions } from "./ManagedAgentActions";
+import {
+  ManagedAgentActions,
+  useManagedAgentActions,
+} from "./ManagedAgentActions";
+import { PanelCard } from "../../features/panels/PanelCard";
+import { PanelFrame } from "../../features/panels/PanelFrame";
 
+const noTemplates = {
+  subscribe: () => () => {},
+  snapshot: () => emptyTemplates,
+};
+const emptyTemplates = Object.freeze([]);
+const noPanels = Object.freeze([]) as readonly RegisteredPanel[];
+const noPanelSnapshot = () => noPanels;
+const noPanelSubscribe = () => () => {};
 const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
 
 export function AgentsPage({
@@ -29,20 +57,138 @@ export function AgentsPage({
   control,
   navigation,
   open,
+  panels,
+  companion,
+  companionOpening,
   communities,
+  templates,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
+  panels?: Panels;
+  templates?: TemplateProviders;
+  communities?: CommunityReader;
   open?: (
     target: OpenTarget,
     options?: { replace?: boolean },
   ) => Promise<OpenResult>;
-  communities?: CommunityReader;
 }) {
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(
     null,
   );
   const connection = useRelayConnection(relay);
+  const providers = templates ?? noTemplates;
+  const templateProviders = useSyncExternalStore(
+    providers.subscribe,
+    providers.snapshot,
+    providers.snapshot,
+  );
+  const provider =
+    templateProviders.length === 1 ? templateProviders[0] : undefined;
+  const teams =
+    provider?.teams && connection.status === "ready" ? (
+      <OwnedContribution
+        key={`${connection.scope}:${connection.generation}`}
+        entry={provider}
+        registry={providers}
+      >
+        {(entry, active) => {
+          const Teams = entry.teams;
+          return Teams ? (
+            <Teams session={connection.session} active={active} />
+          ) : null;
+        }}
+      </OwnedContribution>
+    ) : null;
+  const pageSurface = useRef<HTMLElement>(null);
+  const registeredPanels = useSyncExternalStore(
+    panels?.subscribe ?? noPanelSubscribe,
+    panels?.snapshot ?? noPanelSnapshot,
+    panels?.snapshot ?? noPanelSnapshot,
+  );
+  const opening = useRef(0);
+  const profileCard = useRef<HTMLElement>(null);
+  const [profile, setProfile] = useState<{
+    panel: RegisteredPanel;
+    target: string;
+    trigger: HTMLButtonElement;
+    opening: number;
+  }>();
+  const previousProfile = useRef(profile);
+  const restoreProfileFocus = useRef(true);
+  useEffect(() => {
+    const before = previousProfile.current;
+    previousProfile.current = profile;
+    if (
+      profile &&
+      before !== profile &&
+      !profileCard.current?.contains(document.activeElement)
+    )
+      profileCard.current?.focus({ preventScroll: true });
+    if (before && !profile && restoreProfileFocus.current) {
+      const target = before.trigger.isConnected
+        ? before.trigger
+        : pageSurface.current;
+      target?.focus({ preventScroll: true });
+    }
+    restoreProfileFocus.current = true;
+  }, [profile]);
+  useEffect(() => {
+    if (profile && !registeredPanels.includes(profile.panel)) {
+      opening.current++;
+      setProfile(undefined);
+    }
+  }, [profile, registeredPanels]);
+  const previousCompanionOpening = useRef(companionOpening);
+  useEffect(() => {
+    const before = previousCompanionOpening.current;
+    previousCompanionOpening.current = companionOpening;
+    if (profile && companionOpening && companionOpening !== before) {
+      opening.current++;
+      restoreProfileFocus.current = false;
+      setProfile(undefined);
+    }
+  }, [companionOpening, profile]);
+  const currentOpening = profile?.opening;
+  const canOpenProfile = (target: string) =>
+    currentOpening !== undefined &&
+    opening.current === currentOpening &&
+    panels?.resolve(target) !== undefined;
+  const panelContext: PanelContext = {
+    channelId: "",
+    canOpen: canOpenProfile,
+    open: (target) => {
+      const panel = panels?.resolve(target);
+      if (
+        !panel ||
+        currentOpening === undefined ||
+        opening.current !== currentOpening
+      )
+        return false;
+      setProfile((current) =>
+        current?.opening === currentOpening
+          ? { ...current, panel, target }
+          : current,
+      );
+      return true;
+    },
+  };
+  const closeProfile = () => {
+    if (currentOpening === undefined || opening.current !== currentOpening)
+      return;
+    opening.current++;
+    setProfile((current) =>
+      current?.opening === currentOpening ? undefined : current,
+    );
+  };
+  const resolveProfile: ProfileResolver = (pubkey) => {
+    const target = profileTarget(pubkey, { agent: true });
+    const panel = target && panels?.resolve(target);
+    return target && panel
+      ? (trigger: HTMLButtonElement) =>
+          setProfile({ panel, target, trigger, opening: ++opening.current })
+      : undefined;
+  };
   const resolveName = useIdentityNames(connection.session.names);
   const request = useMemo(
     () => navigation?.forSession(relay, connection),
@@ -100,114 +246,154 @@ export function AgentsPage({
         )}
       </div>
     );
+  const pageCompanion =
+    profile || companion ? (
+      <>
+        {companion && <div hidden={profile !== undefined}>{companion}</div>}
+        {profile && (
+          <PanelCard
+            ref={profileCard}
+            panel={profile.panel}
+            target={profile.target}
+            context={panelContext}
+            close={closeProfile}
+          />
+        )}
+      </>
+    ) : undefined;
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Agents">
-        <div className="flex h-full min-h-0 flex-col">
-          <PanelHeader
-            title="Agents"
-            actions={<div ref={setHeaderActions} />}
-          />
-          <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
-            <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
-              {control ? (
-                <AgentControlPanel
-                  control={control}
-                  editTarget={editTarget}
-                  onOpenHarnesses={
-                    open
-                      ? () => {
-                          void open({
+      <PanelFrame companion={pageCompanion}>
+        <FullPageSurface aria-label="Agents" ref={pageSurface} tabIndex={-1}>
+          <div className="flex h-full min-h-0 flex-col">
+            <PanelHeader
+              title="Agents"
+              actions={
+                <div
+                  ref={setHeaderActions}
+                  className="flex items-center gap-2"
+                />
+              }
+            />
+            <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
+              <div className="mx-auto flex w-full max-w-6xl flex-col gap-section-gap">
+                {control ? (
+                  <AgentControlPanel
+                    control={control}
+                    headerActions={headerActions}
+                    editTarget={editTarget}
+                    onOpenHarnesses={
+                      open
+                        ? () => {
+                            void open({
+                              version: 1,
+                              kind: "settings",
+                              section: "agents",
+                            });
+                          }
+                        : undefined
+                    }
+                    {...(editTarget && request && connection.status === "ready"
+                      ? { editRequest: request }
+                      : {})}
+                    onCloseTarget={() => {
+                      if (target?.kind === "page" && open)
+                        void open(
+                          {
                             version: 1,
-                            kind: "settings",
-                            section: "agents",
-                          });
-                        }
-                      : undefined
-                  }
-                  {...(editTarget && request && connection.status === "ready"
-                    ? { editRequest: request }
-                    : {})}
-                  onCloseTarget={() => {
-                    if (target?.kind === "page" && open)
-                      void open(
-                        {
-                          version: 1,
-                          kind: "page",
-                          pluginId: target.pluginId,
-                          pageId: target.pageId,
-                          ...(target.scope !== undefined
-                            ? { scope: target.scope }
-                            : {}),
-                        },
-                        { replace: true },
-                      );
-                  }}
-                  resolveName={resolveName}
-                  importDestination={importDestination}
-                  createOwner={
-                    connection.status === "ready"
-                      ? connection.viewer
-                      : undefined
-                  }
-                >
-                  {(
-                    state,
-                    edit,
-                    duplicate,
-                    remove,
-                    importedId,
-                    label,
-                    onUseHere,
-                    onImport,
-                  ) =>
-                    state.status === "unavailable" ? (
-                      library
-                    ) : state.data?.parked !== undefined ? (
-                      <UnifiedInventory
-                        key={connection.viewer ?? "offline"}
-                        state={state}
-                        edit={edit}
-                        duplicate={duplicate}
-                        remove={control.delete ? remove : undefined}
-                        importedId={importedId}
-                        control={control}
-                        connection={connection}
-                        client={client}
-                        onUseHere={onUseHere}
-                        onImport={onImport}
-                      />
-                    ) : (
-                      <ManagedAgents
-                        onUseHere={onUseHere}
-                        key={`${connection.scope}:${connection.generation}`}
-                        state={state}
-                        label={label}
-                        edit={edit}
-                        duplicate={duplicate}
-                        remove={remove}
-                        importedId={importedId}
-                        control={control}
-                        connection={connection}
-                        destination={importDestination}
-                        headerActions={headerActions}
-                      />
-                    )
-                  }
-                </AgentControlPanel>
-              ) : (
-                <>
-                  <p className="text-secondary">
-                    Open the desktop app to import and run agents. You can still
-                    mention existing channel members.
-                  </p>
-                  {library}
-                </>
-              )}
+                            kind: "page",
+                            pluginId: target.pluginId,
+                            pageId: target.pageId,
+                            ...(target.scope !== undefined
+                              ? { scope: target.scope }
+                              : {}),
+                          },
+                          { replace: true },
+                        );
+                    }}
+                    resolveName={resolveName}
+                    importDestination={importDestination}
+                    createOwner={
+                      connection.status === "ready"
+                        ? connection.viewer
+                        : undefined
+                    }
+                  >
+                    {(
+                      state,
+                      edit,
+                      duplicate,
+                      remove,
+                      importedId,
+                      label,
+                      onUseHere,
+                      onImport,
+                    ) =>
+                      state.status === "unavailable" ? (
+                        <>
+                          {teams}
+                          {library}
+                        </>
+                      ) : state.data?.parked !== undefined ? (
+                        <UnifiedInventory
+                          key={connection.viewer ?? "offline"}
+                          teams={teams}
+                          headerActions={headerActions}
+                          state={state}
+                          edit={edit}
+                          duplicate={duplicate}
+                          remove={control.delete ? remove : undefined}
+                          importedId={importedId}
+                          control={control}
+                          connection={connection}
+                          client={client}
+                          resolveProfile={resolveProfile}
+                          profileKeys={
+                            new Set(
+                              sameCommunityAgents(
+                                state.data?.agents ?? [],
+                                connection.scope ?? "",
+                              ).map((agent) => agent.pubkey),
+                            )
+                          }
+                          onUseHere={onUseHere}
+                          onImport={onImport}
+                        />
+                      ) : (
+                        <ManagedAgents
+                          onUseHere={onUseHere}
+                          key={`${connection.scope}:${connection.generation}`}
+                          state={state}
+                          label={label}
+                          edit={edit}
+                          duplicate={duplicate}
+                          remove={remove}
+                          importedId={importedId}
+                          control={control}
+                          connection={connection}
+                          destination={importDestination}
+                          resolveProfile={resolveProfile}
+                          headerActions={headerActions}
+                          teams={teams}
+                        />
+                      )
+                    }
+                  </AgentControlPanel>
+                ) : (
+                  <>
+                    <p className="text-secondary">
+                      Open the desktop app to import and run agents. You can
+                      still mention existing channel members.
+                    </p>
+                    {teams}
+                    {library}
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      </FullPageSurface>
+        </FullPageSurface>
+      </PanelFrame>
     </div>
   );
 }
@@ -221,8 +407,10 @@ function ManagedAgents({
   connection,
   label,
   destination,
+  resolveProfile,
   headerActions,
   onUseHere,
+  teams,
 }: {
   label(agent: AgentView): string;
   state: AgentControlState;
@@ -233,9 +421,12 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
   destination: string;
+  resolveProfile: ProfileResolver;
   headerActions: HTMLElement | null;
+  teams: React.ReactNode;
   onUseHere(pubkey: string, action: "use" | "clone"): void;
 }) {
+  const actions = useManagedAgentActions(state, control);
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
@@ -244,7 +435,7 @@ function ManagedAgents({
   );
   return (
     <section aria-label="My agents" className="flex flex-col gap-4">
-      <h2 className="sr-only">My agents</h2>
+      <h2 className="m-0 text-label-sm">Individual agents</h2>
       <p className="m-0 text-body-sm text-secondary">
         Set up an imported agent with Use here, then start it separately. Before
         starting the same identity here, stop the old agent and disable its
@@ -253,29 +444,37 @@ function ManagedAgents({
       {state.data?.agents.length === 0 && (
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
       )}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+      <div className="agent-grid">
         {state.data?.agents.map((agent) => {
           const identity = snapshot.identities.find(
             (entry) => entry.pubkey === agent.pubkey,
           );
-          const avatar =
-            identity?.avatar ??
-            snapshot.definitions.find(
-              (entry) => entry.id === identity?.definitionId,
-            )?.avatar;
           return (
             <AgentCard
               key={agent.id}
               name={label(agent)}
-              avatar={avatar}
+              avatar={identity?.avatar}
               identities={[agent]}
               session={connection.session}
               editable={[agent]}
+              imported={agent.id === importedId}
+              revealControls={
+                agent.id === importedId ||
+                !!agent.error ||
+                !!agent.profilePending ||
+                !!actions(agent).notice
+              }
               onEdit={edit}
               onDuplicate={duplicate}
               onDelete={control.delete ? remove : undefined}
+              onViewProfile={
+                sameCommunityAgents([agent], connection.scope ?? "").length
+                  ? resolveProfile(agent.pubkey)
+                  : undefined
+              }
             >
               <ManagedAgentActions
+                action={actions(agent)}
                 agent={agent}
                 onUseHere={onUseHere}
                 state={state}
@@ -290,6 +489,7 @@ function ManagedAgents({
           );
         })}
       </div>
+      {teams}
       {connection.status === "ready" && (
         <AgentLibrary
           session={connection.session}

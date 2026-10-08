@@ -7,7 +7,9 @@ import {
 } from "../../plugins/contributions.ts";
 
 export type PageProps = {
-  companion?: ReactNode;
+  companion?: ReactNode | undefined;
+  /** Opaque identity for the current shell-owned companion opening. */
+  companionOpening?: object | undefined;
   navigation?: import("../navigation/service").PageNavigation | undefined;
 };
 
@@ -30,6 +32,15 @@ export type Page = Readonly<{
    * listed in search and reachable by deep link or from another page.
    */
   primary?: boolean;
+  /**
+   * A `data:image/<subtype>[;params],<payload>` URL shown beside the page in
+   * search and primary navigation. Any other value is dropped with a warning,
+   * and a missing or unloadable image shows the generic page icon. Bundled
+   * pages keep their host icons.
+   */
+  icon?: string;
+  /** Plugin-owned count or mark shown at the end of the page's navigation row. */
+  badge?: ComponentType;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -42,6 +53,8 @@ declare module "@deepseek-ai/cordis" {
     pages: Pages;
   }
 }
+
+const dataImageUrl = /^data:image\/[\w.+-]+(?:;[^,]*)?,/i;
 
 export class PagesService extends Service implements Pages {
   private readonly contributions;
@@ -63,7 +76,8 @@ export class PagesService extends Service implements Pages {
         page.layout !== "document" &&
         page.layout !== "workspace") ||
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
-      (page.primary !== undefined && typeof page.primary !== "boolean")
+      (page.primary !== undefined && typeof page.primary !== "boolean") ||
+      (page.badge !== undefined && typeof page.badge !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",
@@ -76,6 +90,19 @@ export class PagesService extends Service implements Pages {
         typeof page.route.validate !== "function")
     )
       throw new Error("Invalid page route contract");
-    this.contributions.register(this.ctx, page);
+    this.contributions.register(this.ctx, this.withAcceptedIcon(page));
+  }
+  // A rejected icon is decoration, so it must not fail plugin activation.
+  private withAcceptedIcon(page: Page): Page {
+    const { icon, ...rest } = page;
+    if (
+      icon === undefined ||
+      (typeof icon === "string" && dataImageUrl.test(icon))
+    )
+      return page;
+    console.warn(
+      `Ignoring page icon for ${this.ctx.pluginOwner?.id}/${page.id}: expected a data:image/ URL`,
+    );
+    return rest;
   }
 }

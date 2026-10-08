@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -24,6 +25,7 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
+import { ArchiveSettings } from "./ArchiveSettings";
 import { AgentSettings } from "./AgentSettings";
 import type { AgentControl } from "../features/agents/control";
 import type { SettingsCards } from "../features/settings/service";
@@ -138,7 +140,7 @@ export function Settings({
               ))}
             </nav>
           </aside>
-          <div className={styles.detail}>
+          <div className={`${styles.detail} buzz-settings-page`}>
             {navigationPane && <h1 className="sr-only">Settings</h1>}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
@@ -162,6 +164,13 @@ export function Settings({
             <div hidden={selected !== "agents"}>
               <AgentSettings
                 control={agentControl}
+                archive={
+                  <ArchiveSettings
+                    relay={communities.relay}
+                    community={selectedCommunity?.name}
+                    active={selected === "agents"}
+                  />
+                }
                 active={selected === "agents"}
               />
             </div>
@@ -223,6 +232,14 @@ export function Settings({
                     plugins={plugins}
                     catalog={catalog}
                     busy={busy}
+                    authorizeGit={async (repository) => {
+                      const connection = communities.relay.snapshot();
+                      return connection.status === "ready"
+                        ? ((await connection.session.authorizeGit?.(
+                            repository,
+                          )) ?? null)
+                        : null;
+                    }}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />
@@ -256,7 +273,7 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <div className="divide-y divide-line">
+                  <SettingsGroup>
                     {catalog?.plugins.map((plugin) => {
                       const id = plugin.manifest.id;
                       const running = activation[id];
@@ -305,11 +322,18 @@ export function Settings({
                             {plugin.previous && (
                               <Button
                                 type="button"
-                                disabled={busy}
+                                disabled={
+                                  busy || !!plugin.rollbackBlockedReason
+                                }
                                 onClick={() => plugins.change("rollback", id)}
                               >
                                 Roll back
                               </Button>
+                            )}
+                            {plugin.rollbackBlockedReason && (
+                              <span className="text-body-sm text-muted">
+                                {plugin.rollbackBlockedReason}
+                              </span>
                             )}
                             {plugin.reloadable && !plugin.enabled && (
                               <Button
@@ -334,7 +358,7 @@ export function Settings({
                         </article>
                       );
                     })}
-                  </div>
+                  </SettingsGroup>
                 </div>
               </section>
             </div>

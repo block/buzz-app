@@ -1,260 +1,58 @@
-import { bindNames } from "../identity-names/service";
-import { createAgentDirectory } from "../identity-names/testing";
-import { Context } from "@deepseek-ai/cordis";
-import { PluginRuntime } from "../../plugins/runtime";
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../relay/session";
 import type {
   SidebarDecoder,
   SidebarMuteMutator,
 } from "../relay/sidebar-preferences";
-import type { LiveCallbacks } from "../relay/live";
-import type { ReadFilter } from "../relay/events";
-import type { Communities } from "../communities/service";
 import {
   keypair,
   message,
-  metadata,
   profile,
   roster,
   signed,
   flush,
 } from "../relay/testing";
-import {
-  newReadJournal,
-  readJournal,
-  type ReadJournal,
-} from "../relay/read-state-storage";
-import { NotificationsService } from "./service";
-import { createNotificationPreferences } from "./preferences";
-import { provideNavigation } from "../navigation/service";
-import { bindMessageNotifications, notificationAuthorized } from "./messages";
+import { cleanups, setup } from "./messages-testing";
 
-const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
   for (const stop of cleanups.splice(0)) await stop();
   vi.restoreAllMocks();
 });
-async function setup(
-  readBarrier: Promise<void> = Promise.resolve(),
-  readFrontier?: number,
-  remote?: {
-    observation: "bounded" | "snapshot";
-    barrier: Promise<void>;
-    decodeBarrier?: Promise<void>;
-    frontier: number;
-    channelsMounted?: boolean;
-    deferRoster?: boolean;
-  },
-  sidebar?: { decode: SidebarDecoder; write?: SidebarMuteMutator },
-) {
-  const viewer = keypair(),
-    peer = keypair(),
-    relay = keypair();
-  const origin = "https://relay.example.com";
-  let callbacks!: LiveCallbacks;
-  let readState: ReadJournal | undefined =
-    readFrontier === undefined
-      ? undefined
-      : {
-          ...newReadJournal(),
-          state: { frontiers: { room: readFrontier }, overrides: {} },
-        };
-  const markerQuery = vi.fn(async () => {
-    await remote?.barrier;
-    return [
-      signed(viewer, {
-        kind: 30078,
-        tags: [
-          ["d", `read-state:${"a".repeat(32)}`],
-          ["t", "read-state"],
-        ],
-        content: "encrypted remote marker",
-      }),
-    ];
-  });
-  const decode = vi.fn(
-    async (
-      events: readonly ReturnType<typeof message>[],
-      signal: AbortSignal,
-    ) => {
-      await remote?.decodeBarrier;
-      signal.throwIfAborted();
-      return events.map((event) => ({
-        eventId: event.id,
-        blob: {
-          v: 1,
-          client_id: "other-device",
-          contexts: { room: remote?.frontier },
-        },
-      }));
-    },
+it("does not notify workflow owners for another recipient, but still notifies explicit owner mentions", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup();
+  const tags = [
+    ["p", h.viewer.pubkey],
+    ["p", h.peer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["buzz:workflow-mention", h.peer.pubkey],
+  ];
+  const output = message(
+    h.relay,
+    "room",
+    "@Westie do the work",
+    1_780_000_000,
+    tags,
   );
-  const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    remote && filters[0]?.kinds?.includes(30078)
-      ? markerQuery()
-      : ([] as ReturnType<typeof message>[]),
-  );
-  const owner = createRelaySession(
-    {
-      viewer: viewer.pubkey,
-      relayAuthor: relay.pubkey,
-      query,
-      ...(remote
-        ? {
-            readState: {
-              decode,
-              ...(remote.observation === "snapshot"
-                ? { communityId: "test-community" }
-                : {}),
-            },
-            ...(remote.observation === "snapshot"
-              ? { readStateSnapshot: markerQuery }
-              : {}),
-          }
-        : {}),
-      ...(sidebar
-        ? {
-            decodeSidebarPreferences: sidebar.decode,
-            ...(sidebar.write ? { writeSidebarMute: sidebar.write } : {}),
-          }
-        : {}),
-      media: () => undefined,
-      subscribe(value) {
-        callbacks = value;
-        return { update() {}, retry() {}, dispose() {} };
-      },
-    },
-    {
-      identityNames: {
-        register() {},
-        bind: (source) =>
-          bindNames(source, {
-            snapshot: () => [createAgentDirectory()],
-            subscribe: () => () => {},
-          }),
-      },
-      readStateStorage: {
-        async update(change) {
-          await readBarrier;
-          readState = readJournal(change(readState), viewer.pubkey);
-          return readState;
-        },
-        close() {},
-      },
-    },
-  );
-  cleanups.push(owner.dispose);
-  const ctx = new Context();
-  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
-  ctx.effect(() => () => runtime.dispose());
-  cleanups.push(() => ctx.fiber.dispose());
-  const navigation = provideNavigation(ctx);
-  const data = new Map<string, string>();
-  const preferences = createNotificationPreferences({
-    localStorage: {
-      getItem: (key: string) => data.get(key) ?? null,
-      setItem: (key: string, value: string) => data.set(key, value),
-    },
-    addEventListener() {},
-    removeEventListener() {},
-  } as unknown as Window);
-  let click = () => {};
-  const show = vi.fn(async (_item, activate: () => void) => {
-    click = activate;
-  });
-  const permission = vi.fn(async (): Promise<"granted"> => "granted");
-  const listeners = new Set<() => void>();
-  let selected: string | null = origin;
-  const snapshot = {
-    status: "ready" as const,
-    generation: 1,
-    viewer: viewer.pubkey,
-    session: owner.session,
-  };
-  const communities = {
-    snapshot: () => ({
-      status: "ready",
-      viewer: viewer.pubkey,
-      selected,
-      memberships: [{ id: origin, name: "Example" }],
-    }),
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    relay: {
-      snapshot: () => snapshot,
-      subscribe(listener: () => void) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-  } as unknown as Communities;
-  const notifications = new NotificationsService(
-    ctx,
-    navigation.navigation,
-    {
-      label: "Test platform",
-      permission,
-      requestPermission: async () => "granted",
-      show,
-      dispose() {},
-    },
-    preferences,
-    (target) => notificationAuthorized(communities, target),
-  );
-  const discover = () =>
-    callbacks.receive([
-      roster(relay, "room", [viewer.pubkey]),
-      metadata(relay, "room", "Room"),
-    ]);
-  // Channels starts the same shared observation once the roster is ready.
-  if (remote?.channelsMounted) {
-    discover();
-    void owner.session.unread.ensure();
-  }
-  const stop = bindMessageNotifications(notifications, communities);
-  cleanups.push(stop);
+  h.emit([output], "live");
   await flush();
-  // Names retain owner inventory independently of notification/roster startup.
-  await vi.waitFor(() =>
-    expect(owner.session.agentLibrary.snapshot().status).toBe("ready"),
+  expect(h.show).not.toHaveBeenCalled();
+  const explicit = message(
+    h.relay,
+    "room",
+    "@Wes review the result",
+    1_780_000_000,
+    [...tags, ["buzz:workflow-mention", h.viewer.pubkey]],
   );
-  notifications.updatePreferences({ sound: false });
-  const emit = (
-    events: ReturnType<typeof message>[],
-    phase?: "replay" | "live",
-    channelId = "room",
-  ) => callbacks.receive(events, phase ? { phase, channelId } : undefined);
-  if (!remote?.channelsMounted && !remote?.deferRoster) discover();
-  const make = (text: string, age = 0, author = peer) =>
-    message(author, "room", text, Math.floor(Date.now() / 1000) - age, [
-      ["p", viewer.pubkey],
-    ]);
-  return {
-    owner,
-    notifications,
-    navigation,
-    emit,
-    make,
-    show,
-    permission,
-    query,
-    markerQuery,
-    decode,
-    stop,
-    discover,
-    peer,
-    relay,
-    viewer,
-    click: () => click(),
-    deselect() {
-      selected = null;
-      for (const listener of listeners) listener();
-    },
-  };
-}
+  h.emit([explicit], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wes review the result");
+  h.click();
+  expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
+    messageId: explicit.id,
+  });
+});
+
 it.each([9, 40002])(
   "only production live kind-%s traffic can notify, never history/replay/local observation",
   async (kind) => {
@@ -978,3 +776,50 @@ it.each([true, false])(
     else expect(h.show).not.toHaveBeenCalled();
   },
 );
+
+it("explicit thread choices decide reply alerts; mentions still alert", async () => {
+  const saved = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => saved.set(key, value),
+    removeItem: (key: string) => saved.delete(key),
+  });
+  try {
+    const h = await setup();
+    const now = Math.floor(Date.now() / 1000);
+    const followed = message(h.peer, "room", "Their thread", now - 2);
+    const mine = message(h.viewer, "room", "My thread", now - 1);
+    h.emit([followed, mine], "replay");
+    h.owner.session.unread.follow("room", followed.id, true);
+    h.owner.session.unread.follow("room", mine.id, false);
+    const answer = (root: typeof mine, text: string, tags: string[][] = []) =>
+      signed(h.peer, {
+        kind: 9,
+        content: text,
+        created_at: now,
+        tags: [
+          ["h", "room"],
+          ["e", root.id, "", "root"],
+          ["e", root.id, "", "reply"],
+          ...tags,
+        ],
+      });
+    h.emit([answer(mine, "muted")], "live");
+    h.emit([answer(followed, "followed")], "live");
+    await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+    h.emit([answer(mine, "mention", [["p", h.viewer.pubkey]])], "live");
+    await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+    expect(h.show.mock.calls.map(([alert]) => alert.body)).toEqual([
+      "followed",
+      "mention",
+    ]);
+    expect([...saved.values()]).toEqual([
+      JSON.stringify([
+        [`room:${followed.id}`, true],
+        [`room:${mine.id}`, false],
+      ]),
+    ]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

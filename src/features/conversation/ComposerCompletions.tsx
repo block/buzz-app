@@ -172,6 +172,9 @@ function OwnedCompletion({
   const mention = provider.pluginId === "buzz.mentions";
   const channel = provider.pluginId === "buzz.channels";
   const named = mention || channel;
+  // Typing the terminator accepts the provider-verified exact match (spaceId):
+  // plain Space after a name, the closing colon after an emoji shortcode.
+  const terminator = provider.pluginId === "buzz.emoji" ? ":" : " ";
   const popup = useCompletionPosition(
     input,
     compact ? 0.375 : 1,
@@ -238,12 +241,17 @@ function OwnedCompletion({
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
   function accept(index: number, key = "click") {
-    if (!active() || latest.current !== result) return false;
+    const published = latest.current;
+    if (!active() || !published) return false;
     if (index === items.length && result?.retry) {
-      result.retry();
+      if (!published.retry) return false;
+      published.retry();
       return true;
     }
-    const item = items[index];
+    // Publication is synchronous; React may still be displaying the previous
+    // result. Keep the user's chosen ID, but use only its current evidence/edit.
+    const item = published.items.find((item) => item.id === items[index]?.id);
+    if (key === terminator && item?.id !== published.spaceId) return false;
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
       item.edit,
@@ -278,8 +286,9 @@ function OwnedCompletion({
         current.current.editor.invalidate();
         return true;
       }
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
-        return false;
+      if (event.altKey || event.ctrlKey || event.metaKey) return false;
+      // Shift types ":" on common layouts; other shifted keys keep editing.
+      if (event.shiftKey && event.key !== ":") return false;
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
@@ -291,9 +300,9 @@ function OwnedCompletion({
         }
         return false;
       }
-      if (event.key === " " && result?.spaceId) {
+      if (event.key === terminator && result?.spaceId) {
         const exact = items.findIndex((item) => item.id === result.spaceId);
-        if (accept(exact, " ")) {
+        if (accept(exact, terminator)) {
           event.preventDefault();
           event.stopPropagation();
           return true;

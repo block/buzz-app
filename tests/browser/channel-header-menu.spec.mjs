@@ -370,7 +370,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     .getByRole("menuitem", { name: "Save as template…", exact: true })
     .click();
   const template = page.getByRole("dialog", {
-    name: "Channel template",
+    name: "New template",
     exact: true,
   });
   await expect(template).toBeVisible();

@@ -1,5 +1,11 @@
 import { InventoryIdentityCard } from "./InventoryIdentityCard";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
+import type {
+  ArchiveAction,
+  ArchiveFocus,
+  ArchiveRun,
+} from "./inventory-archive";
 import type {
   AgentControl,
   AgentControlState,
@@ -10,6 +16,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Profile } from "../../features/relay/contracts";
 import { relayOrigin } from "../../features/communities/destination";
 import { AgentCard } from "./AgentCard";
+import type { ProfileResolver } from "./AgentCard";
 import {
   localHereGroup,
   localOtherGroup,
@@ -54,6 +61,26 @@ function communitySections(group: string, identities: InventoryEntry[]) {
     }));
 }
 
+function orderedGroups(entries: InventoryEntry[]) {
+  const groups = new Map<string, InventoryEntry[]>();
+  for (const entry of entries) {
+    const group = entry.decision.group;
+    groups.set(group, [...(groups.get(group) ?? []), entry]);
+  }
+  for (const identities of groups.values()) {
+    identities.sort(
+      (a, b) =>
+        a.row.displayName.localeCompare(b.row.displayName, undefined, {
+          sensitivity: "base",
+        }) || a.row.pubkey.localeCompare(b.row.pubkey),
+    );
+  }
+  return inventoryGroups.flatMap((group) => {
+    const identities = groups.get(group);
+    return identities ? [[group, identities] as const] : [];
+  });
+}
+
 /** Final inventory presentation; discovery and transport lifetime stay with the caller. */
 export function InventoryView({
   state,
@@ -67,10 +94,15 @@ export function InventoryView({
   edit,
   duplicate,
   remove,
+  removeRelay,
+  archive,
   importedId,
+  resolveProfile,
+  profileKeys,
   onUseHere,
   onImport,
   children,
+  teams,
 }: {
   state: AgentControlState;
   control: AgentControl;
@@ -83,7 +115,23 @@ export function InventoryView({
   edit(agent: AgentView, avatar?: string): void;
   duplicate?: ((agent: AgentView) => void) | undefined;
   remove?: ((agent: AgentView) => void) | undefined;
+  removeRelay?:
+    | ((pubkey: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
+  /** Archive state and actions for the connected community. */
+  archive?:
+    | {
+        archived: ReadonlySet<string>;
+        community: string;
+        runs: ReadonlyMap<string, ArchiveRun>;
+        request(pubkey: string, action: ArchiveAction): void;
+        focus?: (ArchiveFocus & { seq: number }) | undefined;
+        attempt: number;
+      }
+    | undefined;
   importedId: string | null;
+  resolveProfile?: ProfileResolver | undefined;
+  profileKeys?: ReadonlySet<string> | undefined;
   onUseHere(
     pubkey: string,
     action: "use" | "clone",
@@ -91,29 +139,118 @@ export function InventoryView({
   ): void;
   onImport(pubkey: string, source?: ImportSource): void;
   children?: ReactNode;
+  teams?: ReactNode;
 }) {
   const [selectedSources, setSelectedSources] = useState<
     Record<string, ImportSource>
   >({});
+  const [archivedOpen, setArchivedOpen] = useState<boolean>();
+  const [wasAllArchived, setWasAllArchived] = useState(false);
+  const root = useRef<HTMLElement>(null);
+  // A confirmed change moves the card; focus follows it to its new place.
+  const focus = archive?.focus;
+  useEffect(() => {
+    if (!focus) return;
+    const element = root.current;
+    const target = element?.querySelector<HTMLElement>(
+      focus.archived
+        ? "[data-archived-agents] .buzz-accordion-trigger"
+        : `[data-agent-pubkey="${focus.pubkey}"] button[aria-label^="Actions for"]`,
+    );
+    target?.focus();
+  }, [focus]);
   const data = state.data;
   if (!data) return null;
-  const groups = new Map<string, InventoryEntry[]>();
-  for (const row of rows.values()) {
-    const decision = inventoryDecision(row, destination);
-    const group = decision.group;
-    groups.set(group, [...(groups.get(group) ?? []), { row, decision }]);
+  const active: InventoryEntry[] = [];
+  const archived: InventoryEntry[] = [];
+  for (const row of rows.values())
+    (archive?.archived.has(row.pubkey) ? archived : active).push({
+      row,
+      decision: inventoryDecision(row, destination),
+    });
+  const allArchived = !active.length && !!archived.length;
+  // Entering the all-archived state reopens the section, even after an
+  // earlier collapse; a collapse made while in that state still holds.
+  if (allArchived !== wasAllArchived) {
+    setWasAllArchived(allArchived);
+    if (allArchived) setArchivedOpen(undefined);
   }
-  const orderedGroups = inventoryGroups.flatMap((group) => {
-    const identities = groups.get(group);
-    return identities ? [[group, identities] as const] : [];
-  });
-  for (const identities of groups.values()) {
-    identities.sort(
-      (a, b) =>
-        a.row.displayName.localeCompare(b.row.displayName, undefined, {
-          sensitivity: "base",
-        }) || a.row.pubkey.localeCompare(b.row.pubkey),
-    );
+  const archivedExpanded = archivedOpen ?? allArchived;
+  // Inside the Archived section, groups sit one heading level below its title.
+  function renderGroups(entries: InventoryEntry[], nested = false) {
+    const GroupHeading = nested ? "h3" : "h2";
+    const CommunityHeading = nested ? "h4" : "h3";
+    return orderedGroups(entries).map(([group, identities]) => (
+      <section key={group} aria-label={group} className="flex flex-col gap-3">
+        <GroupHeading className="m-0 text-label-sm">
+          {group === localHereGroup ? "Individual agents" : group}
+        </GroupHeading>
+        {communitySections(group, identities).map(
+          ({ community, identities }) => (
+            <section
+              key={community}
+              aria-label={community || undefined}
+              className="flex min-w-0 flex-col gap-2"
+            >
+              {community && (
+                <CommunityHeading className="m-0 break-all text-label text-secondary">
+                  {community}
+                </CommunityHeading>
+              )}
+              <div
+                className={
+                  group !== localHereGroup
+                    ? `overflow-hidden rounded-xl border border-primary ${group === relayGroup ? "agent-relay-inventory" : ""}`
+                    : "agent-grid"
+                }
+              >
+                {identities.map(({ row, decision }) => (
+                  <InventoryIdentityCard
+                    key={row.pubkey}
+                    row={row}
+                    decision={decision}
+                    community={community}
+                    state={state}
+                    control={control}
+                    session={session}
+                    destination={destination}
+                    publicProfiles={publicProfiles}
+                    sourceProfiles={sourceProfiles}
+                    edit={edit}
+                    duplicate={duplicate}
+                    remove={remove}
+                    removeRelay={removeRelay}
+                    nested={nested}
+                    archive={
+                      archive && {
+                        archived: archive.archived.has(row.pubkey),
+                        community: archive.community,
+                        run: archive.runs.get(row.pubkey),
+                        attempt: archive.attempt,
+                        request: (action) =>
+                          archive.request(row.pubkey, action),
+                      }
+                    }
+                    importedId={importedId}
+                    resolveProfile={resolveProfile}
+                    profileKeys={profileKeys}
+                    onUseHere={onUseHere}
+                    onImport={onImport}
+                    selectedSource={selectedSources[row.pubkey]}
+                    onSourceChange={(source) =>
+                      setSelectedSources((saved) => ({
+                        ...saved,
+                        [row.pubkey]: source,
+                      }))
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          ),
+        )}
+      </section>
+    ));
   }
   profiles.sort(
     (a, b) =>
@@ -121,68 +258,47 @@ export function InventoryView({
       a.id.localeCompare(b.id),
   );
   return (
-    <section aria-label="My agents" className="flex flex-col gap-6">
+    <section ref={root} aria-label="My agents" className="flex flex-col gap-6">
       {children}
       {!rows.size && <p>No agents yet. Add an agent to get started.</p>}
-      {orderedGroups.map(([group, identities]) => (
-        <section key={group} aria-label={group} className="flex flex-col gap-3">
-          <h2 className="m-0 text-heading">{group}</h2>
-          {communitySections(group, identities).map(
-            ({ community, identities }) => (
-              <section
-                key={community}
-                aria-label={community || undefined}
-                className="flex min-w-0 flex-col gap-2"
-              >
-                {community && (
-                  <h3 className="m-0 break-all text-label text-secondary">
-                    {community}
-                  </h3>
-                )}
-                <div
-                  className={
-                    group !== localHereGroup
-                      ? `overflow-hidden rounded-xl border border-primary ${group === relayGroup ? "agent-relay-inventory" : ""}`
-                      : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] items-start gap-4"
-                  }
-                >
-                  {identities.map(({ row, decision }) => (
-                    <InventoryIdentityCard
-                      key={row.pubkey}
-                      row={row}
-                      decision={decision}
-                      community={community}
-                      state={state}
-                      control={control}
-                      session={session}
-                      destination={destination}
-                      publicProfiles={publicProfiles}
-                      sourceProfiles={sourceProfiles}
-                      edit={edit}
-                      duplicate={duplicate}
-                      remove={remove}
-                      importedId={importedId}
-                      onUseHere={onUseHere}
-                      onImport={onImport}
-                      selectedSource={selectedSources[row.pubkey]}
-                      onSourceChange={(source) =>
-                        setSelectedSources((saved) => ({
-                          ...saved,
-                          [row.pubkey]: source,
-                        }))
-                      }
-                    />
-                  ))}
-                </div>
-              </section>
-            ),
-          )}
+      {allArchived && <p>All your agents are archived in this community.</p>}
+      {renderGroups(
+        active.filter((entry) => entry.decision.group === localHereGroup),
+      )}
+      {teams}
+      {renderGroups(
+        active.filter((entry) => entry.decision.group !== localHereGroup),
+      )}
+      {!!archived.length && (
+        <section
+          aria-label="Archived agents"
+          data-archived-agents=""
+          className="flex flex-col gap-3"
+        >
+          <Accordion
+            headingLevel={2}
+            value={archivedExpanded ? ["archived"] : []}
+            onValueChange={(value) =>
+              setArchivedOpen(value.includes("archived"))
+            }
+            items={[
+              {
+                value: "archived",
+                title: `Archived (${archived.length})`,
+                content: (
+                  <div className="flex flex-col gap-6">
+                    {renderGroups(archived, true)}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </section>
-      ))}
+      )}
       {!!profiles.length && (
         <section aria-label="Profiles without identities" className="space-y-3">
           <h2 className="text-heading">Profiles without identities</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+          <div className="agent-grid">
             {profiles.map((profile) => (
               <AgentCard
                 key={profile.id}

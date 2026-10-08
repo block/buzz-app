@@ -1,6 +1,6 @@
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11.25rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.75rem), 1fr));
   gap: var(--space-4);
 }
 .agent-dialog {
@@ -23,8 +23,11 @@
 .agent-inventory-row + .agent-inventory-row {
   border-top: 1px solid var(--border-primary);
 }
-.agent-inventory-row > :last-child {
+.agent-inventory-row > .agent-inventory-actions {
   justify-content: flex-end;
+}
+.agent-inventory-row > .agent-card-feedback {
+  grid-column: 1 / -1;
 }
 .agent-inventory-row details[open] {
   flex-basis: 100%;
@@ -34,7 +37,7 @@
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
   }
-  .agent-inventory-row > :last-child {
+  .agent-inventory-row > .agent-inventory-actions {
     justify-content: flex-start;
   }
 }
@@ -70,7 +73,7 @@
   .agent-relay-inventory .agent-inventory-row {
     grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   }
-  .agent-relay-inventory .agent-inventory-row > :last-child {
+  .agent-relay-inventory .agent-inventory-row > .agent-inventory-actions {
     justify-content: flex-end;
   }
 }

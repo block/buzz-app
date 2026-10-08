@@ -9,6 +9,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -143,16 +144,59 @@ it("re-reads presence after native start or stop until the badge agrees, within 
   }
 });
 
+it("reserves card-header space for a profile-only menu", () => {
+  render(
+    <AgentCard
+      layout="row"
+      name="A very long relay-only identity name"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={() => {}}
+    >
+      <p>Relay-only identity</p>
+    </AgentCard>,
+  );
+
+  expect(
+    screen.getByRole("heading", { level: 3 }).parentElement?.parentElement,
+  ).toHaveClass("pr-6");
+});
+
+it("hands focus from the menu to the opened profile", async () => {
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={() => {
+        const panelButton = document.createElement("button");
+        panelButton.textContent = "Profile action";
+        document.body.append(panelButton);
+        panelButton.focus();
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Agent" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "View profile" }),
+  );
+
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Profile action" }),
+    ).toHaveFocus(),
+  );
+});
+
 it("opens identities in a popover and returns focus on Escape", async () => {
   const user = userEvent.setup();
   const pubkey = "ab".repeat(32);
   render(<AgentCard name="Agent" identities={[{ pubkey, name: "Agent" }]} />);
-  const trigger = screen.getByRole("button", { name: "Agent: public key" });
+  const trigger = screen.getByRole("button", { name: "Actions for Agent" });
   expect(screen.queryByText(npubEncode(pubkey))).toBeNull();
   const card = screen.getByRole("article");
   await user.click(trigger);
   const popup = await screen.findByRole("dialog", {
-    name: "Agent public key",
+    name: "Agent identity details",
   });
   expect(card).not.toContainElement(popup);
   expect(screen.getByText(npubEncode(pubkey))).toBeVisible();
@@ -170,3 +214,118 @@ it("keeps the exact identity label and row heading in the final card shell", () 
   );
   expect(screen.getByRole("heading", { level: 4, name: "Solo" })).toBeVisible();
 });
+
+it("keeps archive feedback visible and management outside the tile", async () => {
+  const user = userEvent.setup();
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      archived
+      archive={{ archived: true, pending: false, onSelect() {} }}
+      feedback={<p role="alert">Archive failed</p>}
+    >
+      <button type="button">Stop</button>
+    </AgentCard>,
+  );
+  expect(screen.getByText("Archived")).toBeVisible();
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  const card = screen.getByRole("article");
+  expect(card.querySelector("details")).toBeNull();
+  const trigger = screen.getByRole("button", { name: "Manage Agent" });
+  await user.click(trigger);
+  const dialog = await screen.findByRole("dialog", { name: "Manage Agent" });
+  expect(card).not.toContainElement(dialog);
+  expect(screen.getByRole("button", { name: "Stop" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+});
+
+it("opens the profile from the tile without opening its separate management controls", async () => {
+  const user = userEvent.setup();
+  const profile = vi.fn();
+  render(
+    <AgentCard
+      name="Agent"
+      identities={[{ pubkey: "ab".repeat(32), name: "Agent" }]}
+      onViewProfile={profile}
+    >
+      <button type="button">Stop</button>
+    </AgentCard>,
+  );
+  const tile = screen.getByRole("button", { name: "View profile for Agent" });
+  await user.click(tile);
+  expect(profile).toHaveBeenLastCalledWith(tile);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{Enter}");
+  await user.keyboard(" ");
+  expect(profile).toHaveBeenCalledTimes(3);
+  await user.click(screen.getByRole("button", { name: "Actions for Agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Manage agent" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Manage Agent" }),
+  ).toBeVisible();
+  expect(profile).toHaveBeenCalledTimes(3);
+  await user.keyboard("{Escape}");
+  expect(
+    screen.getByRole("button", { name: "Actions for Agent" }),
+  ).toHaveFocus();
+});
+
+it("returns to persistent Actions when Review disappears while Manage is open", async () => {
+  const user = userEvent.setup();
+  const card = (revealControls: boolean) => (
+    <AgentCard name="Agent" identities={[]} revealControls={revealControls}>
+      <button type="button">Start</button>
+    </AgentCard>
+  );
+  const view = render(card(true));
+  const review = screen.getByRole("button", { name: "Review agent status" });
+  await user.click(review);
+  await screen.findByRole("dialog", { name: "Manage Agent" });
+  view.rerender(card(false));
+  expect(review).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(
+    screen.getByRole("button", { name: "Actions for Agent" }),
+  ).toHaveFocus();
+});
+
+it.each(["tile", "row"] as const)(
+  "focuses a persistent %s surface on import, not on later updates",
+  async (layout) => {
+    const card = (imported: boolean) => (
+      <AgentCard
+        name="Agent"
+        identities={[]}
+        layout={layout}
+        imported={imported}
+        revealControls={imported}
+        onEdit={() => {}}
+      >
+        <button type="button">Start</button>
+      </AgentCard>
+    );
+    const view = render(card(false));
+    const scroll = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      view.rerender(card(true));
+      const target = screen.getByRole("button", {
+        name: layout === "tile" ? "Review agent status" : "Actions for Agent",
+      });
+      expect(target).toHaveFocus();
+      expect(scroll).toHaveBeenCalledOnce();
+      target.blur();
+      view.rerender(card(true));
+      expect(target).not.toHaveFocus();
+      expect(scroll).toHaveBeenCalledOnce();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = previous;
+    }
+  },
+);

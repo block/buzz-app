@@ -4,6 +4,19 @@ import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+async function openManagement(page, card) {
+  await card.getByRole("button", { name: /^Actions for / }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage agent", exact: true })
+    .click();
+  const management = page.getByRole("dialog", { name: /^Manage / });
+  await expect(management).toBeVisible();
+  return management;
+}
+async function closeManagement(management) {
+  await management.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(management).toHaveCount(0);
+}
 async function closeEditor(page) {
   const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
   if (await dialog.count())
@@ -53,6 +66,97 @@ async function chooseOption(page, name) {
     .toBe(0);
   await page.getByRole("option", { name, exact: true }).click();
 }
+
+test("agent menu leaves focus in Profile after its close animation", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  const errors = watchPageErrors(page);
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html?profile-panel`,
+    );
+    const card = page
+      .getByRole("article", { name: "Agent Fixture agent" })
+      .first();
+    const trigger = card.getByRole("button", {
+      name: "Actions for Fixture agent",
+    });
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "View profile" }).click();
+    const profile = page.getByRole("complementary", { name: "Profile" });
+    await expect(profile).toBeVisible();
+    await expect(
+      profile.getByRole("button", {
+        name: `Profile for buzz:agent-profile:${"ab".repeat(32)}`,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        profile.evaluate((element) => element.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await profile.getByRole("button", { name: "Close Profile panel" }).click();
+    await expect(profile).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    const open = card.getByRole("button", {
+      name: "View profile for Fixture agent",
+      exact: true,
+    });
+    const before = await card.boundingBox();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await open.hover();
+      await expect
+        .poll(() =>
+          open.evaluate((button) => {
+            const style = getComputedStyle(button.parentElement);
+            return (
+              parseFloat(style.borderTopLeftRadius) > 0 &&
+              style.backgroundColor !== "rgba(0, 0, 0, 0)"
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    for (const action of ["click", "Enter", "Space"]) {
+      if (action === "click") await open.click();
+      else await open.press(action);
+      await expect(profile).toBeVisible();
+      await expect
+        .poll(() =>
+          profile.evaluate((el) => el.contains(document.activeElement)),
+        )
+        .toBe(true);
+      expect((await card.boundingBox()).height).toBe(before.height);
+      await expect(card.locator("details")).toHaveCount(0);
+      await profile
+        .getByRole("button", { name: "Close Profile panel" })
+        .click();
+      await expect(profile).toHaveCount(0);
+      await expect(open).toBeFocused();
+    }
+    const management = await openManagement(page, card);
+    await expect(
+      management.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await expect(management).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
 
 test("local controls preserve drafts, confirm operations and distinguish disabled from sleeping", async ({
   page,
@@ -113,7 +217,9 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       editor.getByLabel("Replacement for EXAMPLE_TOKEN"),
     ).toHaveAttribute("type", "password");
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(editor.getByText("Saved.", { exact: true })).toBeVisible();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
+    await openEditor(page);
     await expect(
       editor.getByText(/Saved revision 2 · Running revision 1/),
     ).toBeVisible();
@@ -208,15 +314,63 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       ),
     ).toEqual([]);
     await panel.getByRole("button", { name: "Import Fixture agent" }).click();
+    // Import hands focus to the persistent card, before Manage is opened.
+    const review = panel.getByRole("button", { name: "Review agent status" });
+    await expect(review).toBeFocused();
+    const importedCard = panel.getByRole("article").filter({
+      has: page.getByRole("button", { name: "Review agent status" }),
+    });
+    const importedActions = importedCard.getByRole("button", {
+      name: /^Actions for /,
+    });
+    // Capture the persistent button ID: both identities share a display name,
+    // and Review disappears once the imported agent starts.
+    const actionsId = await importedActions.getAttribute("id");
+    expect(actionsId).toBeTruthy();
+    // This fixture's default host action targets only its original agent.
+    // Model the imported record explicitly for the focus-return transition.
+    await page.evaluate(() => {
+      const fixture = window.agentControlFixture;
+      const action = fixture.host.action;
+      fixture.host.action = async (id, command) => {
+        if (id !== "second-fixture") return action(id, command);
+        fixture.calls.push({ action: command, payload: { id } });
+        const imported = fixture.data.agents.find((agent) => agent.id === id);
+        imported.enabled = command !== "stop";
+        imported.status = command === "stop" ? "stopped" : "running";
+        imported.runningRevision =
+          command === "stop" ? null : imported.revision;
+        return structuredClone(fixture.data);
+      };
+    });
+    await review.click();
+    const management = page.getByRole("dialog", { name: /^Manage / });
+    await management
+      .getByRole("button", { name: "Start", exact: true })
+      .click();
+    await expect(
+      management.getByText("Process running · relay readiness unverified", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(review).toHaveCount(0);
+    await management.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(
+      management.getByText("Process stopped", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(management).toHaveCount(0);
+    await expect(page.locator(`[id="${actionsId}"]`)).toBeFocused();
     // Only the two managed identities have controls; the template stays read-only.
     await expect(
       panel.getByRole("article").filter({
         has: page.getByRole("button", { name: /^Actions for / }),
       }),
     ).toHaveCount(2);
+    await page.getByText(/^Other agents \(/).click();
     await expect(
       panel
-        .getByRole("region", { name: "Library identities", exact: true })
+        .getByRole("region", { name: "Agent library", exact: true })
         .getByRole("article"),
     ).toHaveCount(0);
     await expect(
@@ -235,12 +389,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     });
     await page.getByRole("button", { name: "Toggle appearance" }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.getByRole("button", { name: "Add agent" }).blur();
+    await page.getByRole("button", { name: "Create agent" }).blur();
     await page.mouse.move(0, 0);
-    // Primary aliases prominent: dark resting fill is white, grey is hover.
-    await expect(panel.getByRole("button", { name: "Add agent" })).toHaveCSS(
+    // The compact header action uses the approved subtle dark surface.
+    await expect(page.getByRole("button", { name: "Create agent" })).toHaveCSS(
       "background-color",
-      "rgb(255, 255, 255)",
+      "rgb(35, 35, 35)",
     );
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
@@ -257,14 +411,17 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await closeEditor(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
     // Library-only entries no longer pretend to be managed cards with Edit.
-    await expect(panel.getByText("Add agent", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Create agent", { exact: true })).toHaveCount(
+      0,
+    );
+    await page.getByText(/^Other agents \(/).click();
     const libraryCard = page.getByRole("article", {
       name: "Agent Fixture agent",
       exact: true,
     });
     await expect(libraryCard).toBeVisible();
     await expect(
-      libraryCard.getByRole("button", { name: /Actions|Start|Edit/ }),
+      libraryCard.getByRole("button", { name: /Start|Edit|Manage/ }),
     ).toHaveCount(0);
     expect(errors.unexplained()).toEqual([]);
   } finally {
@@ -514,11 +671,17 @@ test("unavailable runtime blocks launch and credential import while retaining St
       includeHidden: true,
     });
     await closeEditor(page);
+    const management = await openManagement(
+      page,
+      page.getByRole("article", { name: "Agent Fixture agent", exact: true }),
+    );
     await expect(
-      panel
-        .getByRole("region", { name: "My agents" })
-        .getByText("Execution blocked by native host"),
+      management.getByText("Execution blocked by native host"),
     ).toBeVisible();
+    await expect(
+      management.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeEnabled();
+    await closeManagement(management);
     const editor = await openEditor(page);
     await expect(
       editor.getByRole("button", { name: "Start", exact: true }),
@@ -619,6 +782,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await expect(save).toBeDisabled();
     await prompt.fill("Unrelated edit");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: original,
       environment: {},
@@ -634,6 +799,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await chooseOption(page, "Databricks v2");
     await expect(model).toHaveValue(original.model);
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -670,6 +837,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await chooseOption(page, "Not set");
     await model.fill("");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -705,6 +874,8 @@ test("native-supplied harness choices preserve current values and save only expl
     // Re-read blank selectors plus unknown/absolute command; unrelated saves stay exact.
     await prompt.fill("Blank selectors stay blank");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         ...original,
@@ -714,6 +885,13 @@ test("native-supplied harness choices preserve current values and save only expl
       },
       environment: {},
     });
+    await provider.click();
+    await page
+      .getByRole("option", {
+        name: "Custom provider / current value",
+        exact: true,
+      })
+      .click();
     await editor
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
@@ -724,8 +902,12 @@ test("native-supplied harness choices preserve current values and save only expl
       .getByRole("textbox", { name: "Arguments (JSON array)", exact: true })
       .fill(JSON.stringify(args));
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     await prompt.fill("Keep unknown values too");
     await save.click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect((await lastSave()).edit).toMatchObject({
       harness: {
         command: "/custom path/buzz-agent",
@@ -799,6 +981,8 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
     await chooseOption(page, "Host provider");
     await expect(provider).toHaveText("Host provider");
     await editor.getByRole("button", { name: "Save changes" }).click();
+    await expect(editor).toHaveCount(0);
+    await openEditor(page);
     expect(
       await page.evaluate(() => window.agentControlFixture.agent.harness),
     ).toMatchObject({ command: "host-command", provider: "host-provider" });
@@ -1280,6 +1464,30 @@ test("card Import opens a focused review and restores focus after dismissal", as
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
+    // Successful completion hands focus to the new local card, not the
+    // disconnected Import button or the page header.
+    await trigger.click();
+    await dialog
+      .getByRole("button", { name: "Import agent", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    const review = page.getByRole("button", { name: "Review agent status" });
+    await expect(review).toBeFocused();
+    await expect(review).toBeInViewport();
+    // Reset this synthetic identity for the separately gated recovery path below.
+    await page.evaluate(async () => {
+      const fixture = window.agentControlFixture;
+      fixture.data.agents = fixture.data.agents.filter(
+        (agent) => agent.id !== "second-fixture",
+      );
+      await fixture.control.refresh();
+    });
+    await expect(trigger).toBeVisible();
+    // A successful import must not suppress return focus on the next dismissal.
+    await trigger.click();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
     await page.evaluate(() => {
       const fixture = window.agentControlFixture;
       const commit = fixture.host.commitImport;
@@ -1303,10 +1511,12 @@ test("card Import opens a focused review and restores focus after dismissal", as
       name: "Agent Fixture agent",
       exact: true,
     });
+    const management = await openManagement(page, local);
     await expect(
-      local.getByRole("button", { name: "Stop", exact: true }),
+      management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
-    await local.getByRole("button", { name: "Stop", exact: true }).click();
+    await management.getByRole("button", { name: "Stop", exact: true }).click();
+    await closeManagement(management);
     await page.evaluate(() => window.agentControlFixture.releaseImport());
     // The host's rejection explains the conflicting Stop.
     await expect(dialog.getByRole("alert")).toContainText(
@@ -1317,14 +1527,19 @@ test("card Import opens a focused review and restores focus after dismissal", as
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.evaluate(() => window.agentControlFixture.control.refresh());
     await expect(dialog).toHaveCount(0);
+    const imported = page.locator(
+      `article[data-agent-pubkey="${"cd".repeat(32)}"]`,
+    );
+    const importedManagement = await openManagement(page, imported);
+    await importedManagement
+      .getByText("Identity & sources", { exact: true })
+      .click();
     await expect(
-      page
-        .getByRole("article", { name: "Agent Fixture agent", exact: true })
-        .filter({
-          hasText:
-            "npub1ehxumnwdehxumnwdehxumnwdehxumnwdehxumnwdehxumnwdehxskccvaq",
-        }),
-    ).toContainText("Process stopped");
+      importedManagement.getByText(npubEncode("cd".repeat(32)), {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(importedManagement).toContainText("Process stopped");
   } finally {
     await page
       .evaluate(() => window.agentControlFixture?.releaseImport?.())
@@ -1415,9 +1630,11 @@ test("inventory keeps current-community tiles and compact rows without repeated 
       name: "Agent Fixture agent",
       exact: true,
     });
+    const management = await openManagement(page, local);
     await expect(
-      local.getByRole("button", { name: "Stop", exact: true }),
+      management.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
+    await closeManagement(management);
     expect(await local.evaluate((el) => getComputedStyle(el).display)).toBe(
       "flex",
     );
@@ -1487,6 +1704,25 @@ test("inventory keeps current-community tiles and compact rows without repeated 
         path: testInfo.outputPath(`inventory-${width}.png`),
       });
     }
+    const removeButton = relay
+      .getByRole("article")
+      .first()
+      .getByRole("button", { name: "Remove", exact: true });
+    await removeButton.click();
+    const removal = page.getByRole("alertdialog", {
+      name: "Remove 121212121212?",
+    });
+    await expect(
+      removal.getByText(
+        "Tries to remove the agent from every channel it belongs to.",
+      ),
+    ).toBeVisible();
+    await removal.screenshot({
+      path: testInfo.outputPath("remove-dialog.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(removal).toHaveCount(0);
+    await expect(removeButton).toBeFocused();
     await other
       .getByLabel("Details for Other community agent", { exact: true })
       .click();

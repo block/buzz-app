@@ -92,7 +92,8 @@ test("video speed options escape the thread and restore focus after selection an
   // The scoped dark owner must keep the explicit floating recipe, not the
   // ordinary dark control fill (#232323), even though the host stays light.
   await expect(menu).toHaveCSS("--interaction-fill", "#404040");
-  await expect(menu).toHaveCSS("background-color", "rgb(40, 40, 40)");
+  await expect(menu).toHaveCSS("background-color", "rgba(40, 40, 40, 0.9)");
+  await expect(menu).toHaveCSS("backdrop-filter", "blur(8px)");
   const fast = menu.getByRole("menuitemradio", { name: "2x", exact: true });
   await expect
     .poll(() =>
@@ -414,6 +415,12 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   });
   const video = review.locator("video");
   await expect(video).toHaveJSProperty("readyState", 4);
+  // This tests enlarged hit targets, not autoplay. Explicitly pause so the short
+  // clip cannot end and restart in WebKit when muting makes autoplay eligible.
+  await video.evaluate((el) => el.pause());
+  await expect(
+    review.getByRole("button", { name: "Play video", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
@@ -484,6 +491,7 @@ test("enlarged media review reflows comments and keeps playback controls reachab
   await expect(video).toHaveJSProperty("muted", wasMuted);
   await mute.click();
   await expect(video).toHaveJSProperty("muted", !wasMuted);
+  await expect(video).toHaveJSProperty("paused", true);
   await reaction.click();
   const comments = review.getByRole("complementary", {
     name: "Media comments",

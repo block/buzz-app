@@ -10,8 +10,10 @@ import { NotificationsService } from "./service";
 import { messageNotificationText } from "./content";
 
 const sdk = vi.hoisted(() => ({
-  show: vi.fn(async (..._args: unknown[]) => {}),
+  show: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
   permission: vi.fn(async (_args: unknown) => "enabled"),
+  bannerPermission: vi.fn(async () => "granted"),
+  bannerRequest: vi.fn(async () => "granted"),
   indicator: vi.fn(async (_args: unknown) => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
@@ -20,6 +22,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     if (command === "notification_show") return sdk.show(command, args);
     if (command === "dock_permission") return sdk.permission(args);
+    if (command === "notification_permission_state")
+      return sdk.bannerPermission();
+    if (command === "request_notification_access") return sdk.bannerRequest();
     if (command === "unread_indicator_set") return sdk.indicator(args);
     throw new Error(`Unexpected native command: ${command}`);
   },
@@ -67,8 +72,8 @@ it("the default service sends desktop banners via the native bridge and shared p
   const { service, submit } = setup();
   await flush();
   expect(service.snapshot()).toMatchObject({
-    permission: "unknown",
-    systemManaged: true,
+    permission: "granted",
+    systemManaged: false,
     preferences: { enabled: true },
   });
   await submit("first");
@@ -88,12 +93,14 @@ it("the default service sends desktop banners via the native bridge and shared p
   expect(sdk.show).toHaveBeenCalledTimes(1);
 });
 
-it("banner permission stays system-managed while Dock permission is queried separately", async () => {
+it("macOS banner permission reads the native authorization independently of Dock badge setting", async () => {
   const { service, submit } = setup();
   await flush();
   await service.refreshPermission();
   await service.requestPermission();
-  expect(service.snapshot().permission).toBe("unknown");
+  expect(service.snapshot().permission).toBe("granted");
+  expect(sdk.bannerPermission).toHaveBeenCalled();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
   expect(sdk.show).not.toHaveBeenCalled();
   expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
   expect(service.indicator.snapshot().permission).toBe("enabled");
@@ -102,6 +109,24 @@ it("banner permission stays system-managed while Dock permission is queried sepa
   await flush();
   expect(sdk.show).toHaveBeenCalledOnce();
   expect(sdk.show).toHaveBeenCalledWith("notification_show", expect.anything());
+});
+
+it("macOS first-run Delivery exposes an explicit authorization action", async () => {
+  sdk.bannerPermission.mockResolvedValueOnce("default");
+  const { service } = setup();
+  await flush();
+  expect(service.snapshot()).toMatchObject({
+    permission: "default",
+    systemManaged: false,
+  });
+  const html = renderToStaticMarkup(
+    createElement(NotificationSettings, { notifications: service }),
+  );
+  expect(html).toContain("Allow notifications");
+  expect(html).toContain("Check permission");
+  await service.requestPermission();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+  expect(service.snapshot().permission).toBe("granted");
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
@@ -120,7 +145,7 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(sdk.show).toHaveBeenCalledTimes(2);
 });
 
-it("desktop settings expose app-owned sound with the reference desktop copy", async () => {
+it("desktop settings expose app-owned sounds and collapse them when alerts are disabled", async () => {
   const { service } = setup();
   await flush();
   const html = renderToStaticMarkup(
@@ -128,35 +153,31 @@ it("desktop settings expose app-owned sound with the reference desktop copy", as
   );
   expect(html).toContain("Desktop alerts");
   expect(html).toContain("Mentions");
-  expect(html).toContain("Fine-tune what gets through below.");
-  expect(html).toContain(
-    "Native desktop alerts are enabled for the categories you have armed below.",
-  );
   // Sound is app-owned on desktop: the switch and per-event sound rows render.
-  expect(html).toContain("Alert with a sound for the events below.");
+  expect(html).toContain('aria-label="Sound"');
+  expect(html).toContain("Choose a sound to preview it.");
   expect(html).toContain("Direct messages");
   expect(html).toContain("@Mentions");
   expect(html).toContain("Thread replies");
-  expect(html).toContain("Preview flutter");
+  expect(html.match(/role="combobox"/g)).toHaveLength(3);
+  expect(html).not.toContain("Preview flutter");
   expect(html).not.toContain("Permission granted");
-  expect(html).not.toContain("Check permission");
+  expect(html).toContain("Check permission");
   expect(html).not.toContain("Allow notifications");
-  // Disabling desktop alerts swaps in the reference's disabled description.
+  // Keep the parent control visible while hiding dependent delivery settings.
   service.updatePreferences({ enabled: false });
   const disabled = renderToStaticMarkup(
     createElement(NotificationSettings, {
       notifications: service,
-      // Keep this a pure copy render: `active` gates only preview and toasts,
+      // Keep this a static render: `active` gates only preview and toasts,
       // and this harness has no Toast.Provider.
       active: false,
     }),
   );
-  expect(disabled).toContain(
-    "Request OS permission and surface new mentions or needs-action items outside the app.",
-  );
-  expect(disabled).not.toContain(
-    "Native desktop alerts are enabled for the categories you have armed below.",
-  );
+  expect(disabled).toContain('aria-label="Desktop alerts"');
+  expect(disabled).not.toContain('aria-label="Sound"');
+  expect(disabled).not.toContain('role="combobox"');
+  expect(disabled).not.toContain("Notify while viewing");
 });
 
 it("non-Tauri runs select the unchanged browser adapter, never the native SDK", async () => {
@@ -296,6 +317,7 @@ it("the click channel exists before native submission, including immediate activ
   sdk.show.mockImplementationOnce(async (...args: unknown[]) => {
     const { id, onEvent } = args[1] as ReturnType<typeof presentation>;
     onEvent.onmessage({ id, kind: "activated" });
+    return null;
   });
   await submit("immediate");
   await flush();
@@ -305,33 +327,29 @@ it("the click channel exists before native submission, including immediate activ
   });
 });
 
-it("native presentation rejects at capacity before sending instead of evicting live targets", async () => {
+it("macOS admits a 129th request and retires the oldest native callback", async () => {
   const platform = createNotifications();
   const activate = vi.fn(),
     failed = vi.fn();
-  for (let i = 0; i < 128; i++)
+  sdk.show.mockImplementation(async (...args: unknown[]) => {
+    const id = (args[1] as { id: string }).id;
+    return id === "128" ? "0" : null;
+  });
+  for (let i = 0; i < 129; i++)
     await platform.show(
       { id: String(i), title: "Buzz", body: "Hi" },
       activate,
       failed,
     );
-  await expect(
-    platform.show(
-      { id: "overflow", title: "Buzz", body: "Hi" },
-      activate,
-      failed,
-    ),
-  ).rejects.toThrow("maximum 128");
-  expect(sdk.show).toHaveBeenCalledTimes(128);
+  expect(sdk.show).toHaveBeenCalledTimes(129);
+  // Native retirement returns its ID; retained cards remain actionable while
+  // late responses to retired IDs are ignored.
   const first = presentation(0);
   first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  const latest = presentation(128);
+  latest.onEvent.onmessage({ id: latest.id, kind: "activated" });
   expect(activate).toHaveBeenCalledOnce();
-  await platform.show(
-    { id: "next", title: "Buzz", body: "Hi" },
-    activate,
-    failed,
-  );
-  expect(sdk.show).toHaveBeenCalledTimes(129);
+  expect(failed).not.toHaveBeenCalled();
   platform.dispose();
 });
 

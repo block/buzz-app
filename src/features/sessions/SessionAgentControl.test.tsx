@@ -5,7 +5,18 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import type { AgentLibrarySnapshot } from "../agents/library";
+import type { AgentChoicesSnapshot } from "../agents/choices";
 import { SessionAgentControl } from "./SessionAgentControl";
+
+/** Library rows as unarchived shared choices. */
+const choices = (
+  library: AgentLibrarySnapshot,
+): AgentLibrarySnapshot &
+  Pick<AgentChoicesSnapshot, "selectable" | "archives"> => ({
+  ...library,
+  selectable: library.identities.map((row) => ({ ...row, managed: false })),
+  archives: { status: "ready", archived: [] },
+});
 
 afterEach(cleanup);
 it("retries the failed library and updates the picker when a second agent joins", async () => {
@@ -20,11 +31,11 @@ it("retries the failed library and updates the picker when a second agent joins"
     [agent, { name: "Helper" }],
     [other, { name: "Second", isAgent: true as const }],
   ]);
-  let library: AgentLibrarySnapshot = {
+  let library = choices({
     status: "error",
     definitions: [],
     identities: [],
-  };
+  });
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -33,11 +44,11 @@ it("retries the failed library and updates the picker when a second agent joins"
     };
   };
   const refresh = vi.fn(async () => {
-    library = {
+    library = choices({
       status: "ready",
       definitions: [],
       identities: [{ pubkey: agent, name: "Helper" }],
-    };
+    });
     for (const listener of listeners) listener();
   });
   const ensure = vi.fn(async () => {});

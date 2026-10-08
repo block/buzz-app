@@ -101,6 +101,34 @@ confirmation; recipe head and catalog reads remain replica-eligible. For
 writer-backed Canvas editor/Todos reads and replica-eligible template copies, see
 the [Canvas/outbox contract](plugin-architecture.md#optional-canvas-todos).
 
+## Managed-agent registration (kind 30177)
+
+Plugins publish through `session.outbox.send()` after checking
+`session.outbox?.supports(30177)`. The host signs as the current viewer (the
+owner); the caller supplies `["d", agentPubkey]` and JSON `content`, which the
+transport preserves.
+
+Publish the complete intended **instance-state projection**. Another Buzz desktop
+can apply the event to an existing local agent with the same `d` public key,
+replacing its name, `persona_id`, `parallelism`, `respond_to`, and allowlist.
+When reusing a key, preserve its existing configuration in the projection;
+a valid but incomplete projection can clear omitted optional settings.
+
+The content parser requires `name`, `parallelism`, and `respond_to`. Literal
+name-only JSON such as `{"name":"x"}` fails parsing before local application.
+If it becomes the latest verified owner policy, discovery excludes the agent
+rather than falling back to legacy permissions. See the pinned
+[content parser](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/managed_agents/agent_events.rs#L38-L59)
+and [discovery policy](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/desktop/src-tauri/src/nostr_convert/agent_directory.rs#L73-L98).
+
+For definition-linked instances, prompt/model/provider fields resolve through
+kind 30175 and are omitted from new 30177 events. Definition-less instances must
+keep those fields, including intended empty values: readers can apply absent
+values as clears. See [NIP-AP's instance-state rules](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/nips/NIP-AP.md#slimming-kind30177-instance-state).
+Registration seeds discovery; it does not prove ownership or membership. See
+[authenticated owned-agent discovery](https://github.com/block/buzz/blob/fe9e2409a02fbac415d5c66181135be3eec28a86/docs/owned-agent-discovery.md)
+for those separate requirements.
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
@@ -278,6 +306,26 @@ not authority evidence. Every later search/open revalidates nonmember metadata.
 An older metadata replay cannot undo a newer private event or an explicit denial.
 A newer signed public event can regrant a never-joined preview; membership loss
 still requires fresh signed membership, not metadata, to reverse it.
+
+### Public channel name search and Join
+
+The relay has no text search for channel metadata. For a typed, unscoped palette
+query, `channels.searchPublic(query)` reads one page (500) of relay-authored
+`39000` metadata without applying it, matches names locally and keeps only
+explicit active public channels the viewer has not joined. It then resolves at
+most eight matches through the same exact `resolve` path as message hits, so
+`channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
+joined-only. A full page reports partial coverage; read failures show a retry.
+The search waits for a ready channel list.
+
+A public preview offers **Join channel**. It sends the NIP-29 `9021` join request
+through the purpose-bound channel-lifecycle sign/publish route; generic signing
+rejects `9021`. Before signing, the lifecycle owner re-reads signed metadata and
+the viewer roster: a current roster entry needs no request, and only active public
+metadata may be joined. Success is the viewer in a fresh relay-signed `39002`
+roster, applied through shared discovery. That makes the channel a sidebar
+member and enables the composer, which then receives focus. An accepted but
+unconfirmed join reports that it may have taken effect and stays retryable.
 
 ## Ownership and reconciliation
 
@@ -506,7 +554,7 @@ spans show elapsed time. **Export timings** downloads JSON for comparison.
 - `outbox.load`, `outbox.queue`, `outbox.persist`: hydration, queueing and durable transactions.
 - `send.sign`, `send.verify`: host signing and verification of the returned event.
 - `send.publish`: publication through receipt validation.
-- `http.auth`, `http.fetch`: signed host authentication and HTTP request latency.
+- `http.fetch`: host-authenticated HTTP request latency, including host signing.
 - `broker.sign`, `broker.auth`, `broker.connect`, `broker.ttfb`, `broker.relay`, `broker.upstream`:
   dev broker Server-Timing measurements. `connect` appears only when a request had to open a
   new upstream connection; `relay` is the relay's own reported service time, so
@@ -581,7 +629,7 @@ check. It is not an event/query cache or authorization proof; WebSocket and othe
 `eventDto` callers remain uncached. `event-proof.test.ts` covers tampering,
 connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
 to the dev broker's native-config import graph: new runtime imports there must
-retain explicit extensions and pass `dev/vite-config.test.mjs`.
+retain explicit extensions and pass `browser-host/vite-config.test.mjs`.
 
 ## WebSocket-first publication
 
@@ -628,7 +676,7 @@ command receipt text stays ephemeral; it is never journaled or replaced by an ec
   appropriate existing protocols. Presence polling/lease semantics are not changed
   by this publication slice; moving a periodic query onto WS would not make it reactive.
 
-`live.test.ts`, `broker-live.test.ts` and `dev/relay-broker-live.test.mjs` cover
+`live.test.ts`, `broker-live.test.ts` and `browser-host/relay-broker-live.test.mjs` cover
 AUTH/OK correlation, admission, bounded failures, no replay, in-place interests,
 owner fencing, real broker/session-outbox reconciliation, workflow receipts and
 encrypted read-state publication with ephemeral keys and injected sockets. These

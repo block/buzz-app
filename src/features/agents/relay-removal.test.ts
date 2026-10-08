@@ -1,0 +1,247 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { afterEach, expect, it } from "vitest";
+import { PublishRejected } from "../relay/outbox";
+import { createRelaySession } from "../relay/session";
+import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
+import { removeRelayAgent } from "./relay-removal";
+
+const viewer = keypair(),
+  relay = keypair(),
+  agent = keypair(),
+  stranger = keypair();
+const owners: ReturnType<typeof createRelaySession>[] = [];
+afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
+});
+function attested(owner: Key) {
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${agent.pubkey}:`)
+    .digest();
+  return signed(agent, {
+    kind: 0,
+    content: JSON.stringify({ name: "Agent", is_agent: true }),
+    tags: [
+      [
+        "auth",
+        owner.pubkey,
+        "",
+        bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+      ],
+    ],
+  });
+}
+function setup(
+  owner: Key = viewer,
+  channels: Record<string, string[]> = {
+    [`${"a".repeat(8)}-channel`]: [agent.pubkey, viewer.pubkey],
+  },
+  configure: (fixture: ReturnType<typeof archiveRelay>) => void = () => {},
+) {
+  const fixture = archiveRelay(viewer, relay, [attested(owner)], {}, channels);
+  configure(fixture);
+  const instance = createRelaySession(fixture.transport, {
+    outboxStorage: { load: () => [], save: () => {} },
+  });
+  owners.push(instance);
+  const remove = (signal = new AbortController().signal) =>
+    removeRelayAgent(instance.session, viewer.pubkey, agent.pubkey, signal);
+  return { fixture, instance, remove };
+}
+const coordinate = () => `30177:${viewer.pubkey}:${agent.pubkey}`;
+
+it("archives, deletes the owner record, then removes channel memberships", async () => {
+  const { fixture, instance, remove } = setup();
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
+  const deletion = fixture.published[1];
+  expect(deletion?.pubkey).toBe(viewer.pubkey);
+  expect(deletion?.content).toBe("");
+  // The outbox adds its client-id; the native signer admits exactly this shape.
+  expect(deletion?.tags).toEqual([
+    ["a", coordinate()],
+    ["client-id", expect.any(String)],
+  ]);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+  expect(Object.values(fixture.channels).flat()).not.toContain(agent.pubkey);
+  expect(fixture.archived.has(agent.pubkey)).toBe(true);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("without an archive consent path still deletes the record and removes channels", async () => {
+  const { fixture, remove } = setup(stranger);
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([5, 9001]);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+  expect(fixture.archived.has(agent.pubkey)).toBe(false);
+});
+
+it("a refused archive stops the later steps and a retry finishes them", async () => {
+  const { fixture, remove } = setup();
+  fixture.script.fail = new PublishRejected("restricted: not authorized");
+  await expect(remove()).rejects.toThrow("restricted: not authorized");
+  expect(fixture.published).toEqual([]);
+  expect(fixture.archived.has(agent.pubkey)).toBe(false);
+  delete fixture.script.fail;
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
+});
+
+it("a refused record deletion fails Remove; the retry does not archive again", async () => {
+  const { fixture, remove } = setup();
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 5;
+  await expect(remove()).rejects.toThrow("restricted: not authorized");
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035]);
+  expect(fixture.deleted.size).toBe(0);
+  delete fixture.removal.fail;
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5, 9001]);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+});
+
+it("a refused channel removal does not fail Remove or leave outbox work", async () => {
+  const { fixture, instance, remove } = setup();
+  fixture.removal.fail = new Error("restricted: not authorized");
+  fixture.removal.failKind = 9001;
+  await remove();
+  expect(fixture.published.map((event) => event.kind)).toEqual([9035, 5]);
+  expect(fixture.archived.has(agent.pubkey)).toBe(true);
+  expect(fixture.deleted).toEqual(new Set([coordinate()]));
+  expect(Object.values(fixture.channels).flat()).toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("waits for every channel removal before finishing, and leaves no outbox work", async () => {
+  const [first, second] = ["first", "second"].map(
+    (name) => `${name.padEnd(8, "x")}-channel`,
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const attempts: string[] = [];
+  const { fixture, instance, remove } = setup(
+    viewer,
+    {
+      [first as string]: [agent.pubkey, viewer.pubkey],
+      [second as string]: [agent.pubkey, viewer.pubkey],
+    },
+    ({ transport }) => {
+      const writer = transport.writer;
+      if (!writer) throw new Error("fixture writer missing");
+      const publish = writer.publish.bind(writer);
+      // The first channel refuses at once; the second fails only after release.
+      writer.publish = (event, signal) => {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        if (event.kind === 9001 && channel) attempts.push(channel);
+        if (event.kind === 9001 && channel === first)
+          return Promise.reject<void>(
+            new PublishRejected("restricted: first refused"),
+          );
+        if (event.kind === 9001 && channel === second)
+          return held.then<void>(() => {
+            throw new PublishRejected("restricted: second refused");
+          });
+        return publish(event, signal);
+      };
+    },
+  );
+  let finished = false;
+  try {
+    const removal = remove().then(() => {
+      finished = true;
+    });
+    await expect.poll(() => fixture.deleted.size).toBe(1);
+    // Both removals were attempted; the first has already been refused.
+    await expect.poll(() => [...attempts].sort()).toEqual([first, second]);
+    expect(finished).toBe(false);
+    release();
+    await removal;
+  } finally {
+    release();
+  }
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("settles already enqueued channel removals when a later enqueue throws", async () => {
+  const [first, second] = ["first", "second"].map(
+    (name) => `${name.padEnd(8, "x")}-channel`,
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { instance, remove } = setup(
+    viewer,
+    {
+      [first as string]: [agent.pubkey, viewer.pubkey],
+      [second as string]: [agent.pubkey, viewer.pubkey],
+    },
+    ({ transport }) => {
+      const writer = transport.writer;
+      if (!writer) throw new Error("fixture writer missing");
+      const publish = writer.publish.bind(writer);
+      writer.publish = (event, signal) => {
+        // Unrelated filler operations fail and stay in the outbox.
+        if (
+          event.kind === 5 &&
+          !event.tags.some(([, value]) => value === coordinate())
+        )
+          return Promise.reject<void>(new PublishRejected("filler"));
+        // The one enqueued channel removal fails only after release.
+        if (event.kind === 9001)
+          return held.then<void>(() => {
+            throw new PublishRejected("restricted: refused");
+          });
+        return publish(event, signal);
+      };
+    },
+  );
+  const outbox = instance.session.outbox;
+  if (!outbox) throw new Error("fixture outbox missing");
+  await outbox.ready();
+  // Fill the outbox (256 operations) so it takes one channel removal, then
+  // refuses the next.
+  for (let index = 0; index < 255; index++)
+    outbox.send({
+      kind: 5,
+      content: "",
+      tags: [["a", `30177:${viewer.pubkey}:${index}`]],
+    });
+  await expect
+    .poll(() =>
+      outbox.snapshot().every(({ delivery }) => delivery === "failed"),
+    )
+    .toBe(true);
+  const removals = () =>
+    outbox.snapshot().filter(({ event }) => event.kind === 9001);
+  let finished = false;
+  try {
+    const removal = remove().then(() => {
+      finished = true;
+    });
+    // One removal is enqueued and still sending; the next enqueue threw.
+    await expect
+      .poll(() => removals().map(({ delivery }) => delivery))
+      .toEqual(["sending"]);
+    await expect.poll(() => outbox.snapshot().length).toBe(256);
+    expect(finished).toBe(false);
+    release();
+    await removal;
+  } finally {
+    release();
+  }
+  expect(removals()).toEqual([]);
+  expect(outbox.snapshot()).toHaveLength(255);
+});
+
+it("a cancelled removal signs and publishes nothing", async () => {
+  const { fixture, remove } = setup();
+  const controller = new AbortController();
+  controller.abort();
+  await expect(remove(controller.signal)).rejects.toBeDefined();
+  expect(fixture.published).toEqual([]);
+  expect(fixture.signedBy).toEqual([]);
+});

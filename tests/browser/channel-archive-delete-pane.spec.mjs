@@ -373,8 +373,9 @@ for (const action of ["archive", "delete"]) {
 // Production composition must apply owner-agent eligibility in both surfaces.
 // Profile/role permutations and signing races stay in the lifecycle unit tests.
 test.describe("owner-role agent without direct ownership", () => {
-  test.use({ lifecycleRole: "admin", lifecycleOwnerAgent: true });
-  test("offers Delete in both surfaces, retains a rejected channel, then confirms removal", async ({
+  // A plain member: Archive and Delete come only from owning the agent.
+  test.use({ lifecycleRole: "member", lifecycleOwnerAgent: true });
+  test("offers Archive and Delete in both surfaces, retains a rejected channel, then confirms removal", async ({
     page,
     app,
   }) => {

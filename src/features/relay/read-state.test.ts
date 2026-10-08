@@ -9,8 +9,11 @@ import {
 import { keypair } from "./testing";
 import { eventDto, type RelayEvent } from "./events";
 // Test the real host codec with ephemeral identities, never a bypass signer.
-// @ts-expect-error Node-only host module
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Node-only host module
+} from "../../../browser-host/read-state.mjs";
 import type { ReadStateSigning } from "./read-state-host";
 
 const owners: ReturnType<typeof createReadState>[] = [];
@@ -363,6 +366,130 @@ describe("durable read-state owner", () => {
     await owner.read("room", 12, () => true, true);
     expect(owner.localUnread("room")).toBeUndefined();
   });
+  it("keeps an evicted message receipt locally across publication and restart", async () => {
+    const f = fixture();
+    const owner = f.make();
+    const old = `msg:${"a".repeat(64)}`;
+    await owner.ready;
+    await owner.read(old, 1, () => true);
+    await owner.readMessages(
+      Array.from({ length: 1600 }, (_, n) => ({
+        key: `msg:${n.toString(16).padStart(64, "0")}`,
+        timestamp: 10 + n,
+        channelId: "elsewhere",
+      })),
+      undefined,
+      () => true,
+    );
+    expect(f.journal()?.state.frontiers[old]).toBeUndefined();
+    expect(owner.state().frontiers[old]).toBe(1);
+    await owner.flush();
+    expect(owner.snapshot().status).toBe("reconciled");
+    const blob = decodeReadState(
+      [f.host.publish.mock.calls.at(-1)?.[0]],
+      f.key.secret,
+    )[0].blob;
+    expect(blob.contexts[old]).toBeUndefined();
+    expect(
+      new TextEncoder().encode(JSON.stringify(blob)).length,
+    ).toBeLessThanOrEqual(40 * 1024);
+    owner.dispose();
+    const restarted = f.make();
+    await restarted.ready;
+    expect(restarted.state().frontiers[old]).toBe(1);
+    expect(restarted.state().frontiers["msg:unseen"]).toBeUndefined();
+  });
+  it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
+    const f = fixture();
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
+    const options = { broadcastName: `read-reserve:${crypto.randomUUID()}` };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.ready, b.ready]);
+    await a.markLocalUnread("msg:old", () => true);
+    const peer = signReadState(
+      {
+        slot: "b".repeat(32),
+        createdAt: 90,
+        blob: { v: 1, client_id: "peer", contexts: { "msg:old": 5 } },
+      },
+      f.key.secret,
+      100,
+    );
+    f.reader.read.mockResolvedValueOnce([peer]);
+    await a.refresh();
+    expect(a.state().frontiers["msg:old"]).toBe(20);
+    expect(a.localUnread("msg:old")).toBeGreaterThan(0);
+    expect(f.journal()?.reserve?.["msg:old"]).toBeUndefined();
+    await Promise.all([
+      a.read("msg:a", 25, () => true),
+      b.read("msg:b", 30, () => true),
+    ]);
+    await expect
+      .poll(() => a.state().frontiers)
+      .toEqual({ "msg:old": 20, "msg:a": 25, "msg:b": 30 });
+    await expect.poll(() => b.state().frontiers).toEqual(a.state().frontiers);
+    await b.read("msg:old", 10, () => true, true);
+    expect(b.localUnread("msg:old")).toBeUndefined();
+    expect(b.state().frontiers["msg:old"]).toBe(20);
+  });
+  it("does not lose archived intent when a save fails and can clear it on a read-only host", async () => {
+    const f = fixture();
+    f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
+    const owner = f.make();
+    await owner.ready;
+    const saved = f.journal();
+    vi.mocked(f.storage.update).mockRejectedValueOnce(new Error("disk full"));
+    await expect(owner.read("msg:old", 30, () => true)).rejects.toThrow(
+      "disk full",
+    );
+    expect(f.journal()).toBe(saved);
+    expect(owner.state().frontiers["msg:old"]).toBe(20);
+    owner.dispose();
+    const readOnly = f.make({ lock: undefined });
+    await readOnly.ready;
+    await readOnly.markLocalUnread("msg:old", () => true);
+    await readOnly.readMessages(
+      [{ key: "msg:old", timestamp: 20, channelId: "room" }],
+      undefined,
+      () => true,
+    );
+    expect(readOnly.localUnread("msg:old")).toBeUndefined();
+    expect(f.journal()?.reserve).toEqual({ "msg:old": 20 });
+    expect(f.host.sign).not.toHaveBeenCalled();
+  });
+  it("validates optional reserve data without replacing corrupt saved intent", () => {
+    const f = fixture();
+    expect(readJournal(newReadJournal(), f.key.pubkey).reserve).toEqual({});
+    for (const reserve of [
+      [],
+      { "msg:bad": -1 },
+      { "": 1 },
+      { ["x".repeat(257)]: 1 },
+      Object.fromEntries(
+        Array.from({ length: 5001 }, (_, n) => [`msg:${n}`, 1]),
+      ),
+      Object.fromEntries(
+        Array.from({ length: 3000 }, (_, n) => [
+          String(n).padStart(240, "x"),
+          1,
+        ]),
+      ),
+    ])
+      expect(() =>
+        readJournal({ ...newReadJournal(), reserve }, f.key.pubkey),
+      ).toThrow("reserve");
+    expect(() =>
+      readJournal(
+        {
+          ...newReadJournal(),
+          state: { frontiers: { room: 1 }, overrides: {} },
+          reserve: { room: 2 },
+        },
+        f.key.pubkey,
+      ),
+    ).toThrow("reserve");
+  });
   it("keeps ordinary reads publishing across growth, old-history reads and restart", async () => {
     const f = fixture(),
       first = f.make();
@@ -392,6 +519,59 @@ describe("durable read-state owner", () => {
     expect(f.journal()?.state.frontiers[id(1599)]).toBe(1);
     expect(f.journal()?.state.frontiers[id(0)]).toBeUndefined();
     expect(published()[id(1599)]).toBe(1);
+  }, 15000);
+  it("a fresh read stays read, locally and published, when a peer's thread mark covers it", async () => {
+    const hex = (prefix: string, n: number) =>
+      `${prefix}${n.toString(16).padStart(64, "0")}`;
+    const root = "9".repeat(64);
+    const read = `thread-activity:${root}`,
+      cover = `thread:${root}`;
+    // Review fixtures: 500 message marks overflow locally; 200 fit locally
+    // but overflow the smaller published blob.
+    for (const messages of [500, 200]) {
+      const f = fixture();
+      const frontiers: Record<string, number> = {};
+      for (let n = 0; n < 295; n++) frontiers[crypto.randomUUID()] = 10;
+      for (let n = 0; n < 458; n++) frontiers[hex("thread:", n)] = 100 + n;
+      for (let n = 0; n < messages; n++) frontiers[hex("msg:", n)] = 10;
+      f.setJournal({
+        ...newReadJournal(),
+        state: { frontiers, overrides: {} },
+      });
+      const owner = f.make();
+      owner.setCoverage((key, frontier) =>
+        key === read && (frontier(cover) ?? -1) >= (frontier(read) ?? 0)
+          ? cover
+          : undefined,
+      );
+      await owner.ready;
+      await owner.read(read, 50, () => true);
+      // A peer's blob: 401 thread marks this device never used. The one that
+      // covers the read is older than the rest, so it ranks last among them.
+      const contexts: Record<string, number> = { [cover]: 50 };
+      for (let n = 0; n < 400; n++)
+        contexts[hex("thread:", 5000 + n)] = 100 + n;
+      const peer = await signReadState(
+        {
+          slot: "b".repeat(32),
+          createdAt: 90,
+          blob: { v: 1, client_id: "peer", contexts },
+        },
+        f.key.secret,
+        100,
+      );
+      f.reader.read.mockResolvedValueOnce([peer]);
+      await owner.refresh();
+      const stillRead = (marks: Readonly<Record<string, number>>) =>
+        (marks[read] ?? 0) >= 50 || (marks[cover] ?? 0) >= 50;
+      expect(stillRead(f.journal()?.state.frontiers ?? {})).toBe(true);
+      await owner.flush();
+      const published = decodeReadState(
+        [f.host.publish.mock.calls.at(-1)?.[0]],
+        f.key.secret,
+      )[0].blob.contexts;
+      expect(stillRead(published)).toBe(true);
+    }
   }, 15000);
   it("rejects saved corruption and changed signatures without overwriting it", () => {
     const f = fixture();

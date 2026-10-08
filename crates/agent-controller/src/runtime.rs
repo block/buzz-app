@@ -29,6 +29,14 @@ impl RuntimeBundle {
     ) -> Result<Command> {
         agent.validate()?;
         let harness = defaults.resolve(&agent.harness, &agent.environment);
+        if let Some(preset) = crate::harness_preset(&harness.command) {
+            if !harness.model.is_empty() || !harness.provider.is_empty() {
+                return Err(format!(
+                    "Use {} defaults in the agent editor before starting this agent",
+                    preset.label
+                ));
+            }
+        }
         if key.pubkey() != agent.pubkey {
             return Err("Credential does not match the saved agent".into());
         }
@@ -130,6 +138,17 @@ impl RuntimeBundle {
             })
             .transpose()?;
         let pi = crate::pi::verify_launch(pi, preflight)?;
+        let claude = (crate::agent_defaults::harness_kind(&harness.command) == Some("claude"))
+            .then(|| {
+                claude_tools(
+                    &worker,
+                    agent
+                        .environment
+                        .get("CLAUDE_CODE_EXECUTABLE")
+                        .map(String::as_str),
+                )
+            })
+            .transpose()?;
         let (args, environment, tools_path) = if let Some(pi) = &pi {
             (
                 pi.adapter_args(&agent.harness)?,
@@ -140,14 +159,30 @@ impl RuntimeBundle {
             (
                 goose_args(&harness.command, &agent.harness.args),
                 &agent.environment,
-                tools_path()?,
+                if let Some((path, _)) = &claude {
+                    path.clone()
+                } else {
+                    tools_path()?
+                },
             )
         };
-        let path = std::env::join_paths(
-            std::iter::once(self.directory.clone()).chain(std::env::split_paths(&tools_path)),
-        )
-        .map_err(|_| "Invalid runtime tools path")?;
+        let path = path::compose(
+            std::iter::once(self.directory.clone())
+                .chain(std::env::split_paths(&tools_path))
+                .chain(
+                    environment
+                        .get("PATH")
+                        .into_iter()
+                        .flat_map(std::env::split_paths),
+                ),
+        )?;
         command.envs(environment).env("PATH", &path);
+        if let Some((_, Some(cli))) = &claude {
+            if !environment.contains_key("CLAUDE_CODE_EXECUTABLE") {
+                // Do not depend on the SDK's optional native-binary download.
+                command.env("CLAUDE_CODE_EXECUTABLE", cli);
+            }
+        }
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -169,8 +204,15 @@ impl RuntimeBundle {
             )
             .env("BUZZ_ACP_DEDUP", "queue")
             .env("BUZZ_ACP_MULTIPLE_EVENT_HANDLING", "steer")
-            .env("BUZZ_ACP_MCP_COMMAND", self.executable("buzz-dev-mcp")?)
-            .env("BUZZ_ACP_RELAY_OBSERVER", "false");
+            .env(
+                "BUZZ_ACP_MCP_COMMAND",
+                if uses_buzz_dev_mcp(&harness.command) {
+                    self.executable("buzz-dev-mcp")?
+                } else {
+                    PathBuf::new()
+                },
+            )
+            .env("BUZZ_ACP_RELAY_OBSERVER", "true");
         if defaults.owner_only {
             command
                 .env("BUZZ_ACP_ALLOWED_RESPOND_TO", "owner-only")
@@ -185,8 +227,9 @@ impl RuntimeBundle {
             if let Some(value) = selected.provider {
                 command.env(provider_key, value);
             }
-        } else if pi.is_none() && !harness.provider.is_empty() {
-            return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into());
+        } else if pi.is_none() {
+            crate::HarnessConfigurationPolicy::for_command(&harness.command)
+                .validate_selection(&harness.provider, &harness.model)?;
         }
         if let Some(value) = model {
             let value = if pi.is_some() && !agent.harness.provider.is_empty() {
@@ -291,30 +334,70 @@ fn databricks_with_defaults(
     settings.validate()?;
     Ok(Some(settings))
 }
-/// PATH after the runtime bundle for non-Pi harnesses. Windows keeps its native
-/// PATH, where Git Bash and user tools are installed; Unix uses a fixed floor
-/// plus, on Linux, common user-level install locations.
-fn tools_path() -> Result<std::ffi::OsString> {
-    if cfg!(windows) {
-        return Ok(std::env::var_os("PATH").unwrap_or_default());
+pub(crate) mod path;
+use path::tools_path;
+
+/// Claude's npm launcher needs Node even when a desktop app has no shell PATH.
+/// An app-owned adapter keeps using its pinned Node, independently of global tools.
+fn claude_tools(
+    adapter: &Path,
+    cli_override: Option<&str>,
+) -> Result<(std::ffi::OsString, Option<PathBuf>)> {
+    let bin = adapter.parent().ok_or("Invalid Claude ACP adapter path")?;
+    let managed_data = bin
+        .file_name()
+        .filter(|name| *name == "bin")
+        .and_then(|_| bin.parent())
+        .filter(|prefix| {
+            prefix
+                .file_name()
+                .is_some_and(|name| name == "claude-tools")
+        })
+        .and_then(Path::parent);
+    let node = if let Some(app_data) = managed_data {
+        managed_tool(app_data, "node")
+    } else {
+        let sibling = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+        if executable(&sibling).is_ok() {
+            Some(sibling)
+        } else {
+            installed_npm_tool("node")
+        }
     }
-    let mut dirs = Vec::new();
-    if cfg!(target_os = "linux") {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        dirs.extend(
-            home.filter(|h| h.is_absolute())
-                .map(|h| h.join(".local/bin")),
-        );
-        dirs.push(PathBuf::from("/usr/local/bin"));
-    }
-    dirs.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    std::env::join_paths(dirs).map_err(|_| "Invalid runtime tools path".into())
+    .ok_or("Install Node.js for Claude Code in Settings → Agents → Harnesses")?;
+    let cli = if cli_override.is_some() {
+        // Advanced owns this value; do not require an unrelated discoverable CLI.
+        None
+    } else {
+        let cli = if let Some(app_data) = managed_data {
+            managed_tool(app_data, "claude").or_else(|| installed_npm_tool("claude"))
+        } else {
+            installed_npm_tool("claude")
+        }
+        .ok_or("Install Claude Code in Settings → Agents → Harnesses")?;
+        // Rust can run Windows batch launchers; the adapter's JavaScript SDK cannot.
+        // In that case leave native binary resolution to the SDK itself.
+        let batch = cfg!(windows)
+            && cli.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+            });
+        (!batch).then_some(cli)
+    };
+    let path = std::env::join_paths(
+        [node.parent().ok_or("Invalid Node.js path")?, bin]
+            .into_iter()
+            .map(Path::to_path_buf)
+            .chain(std::env::split_paths(&tools_path()?)),
+    )
+    .map_err(|_| "Invalid Claude tools path")?;
+    Ok((path, cli))
 }
 /// App-owned npm shims and the pinned Node binary are separate from user-global tools.
 /// `app_data` is Tauri's resolved app-data directory, never browser input.
 pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
     let path = match name {
         "pi" | "buzz-pi-acp" => app_data.join("node-tools/bin").join(name),
+        "claude" | "claude-agent-acp" => app_data.join("claude-tools/bin").join(name),
         "node" => app_data.join("runtimes/node/v24.18.0").join(
             match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin-arm64/bin/node",
@@ -331,20 +414,45 @@ pub fn managed_tool(app_data: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn installed(name: &str) -> Option<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    dirs.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    dirs.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
+    installed_names(&[name.to_owned()])
+}
+
+/// Claude's setup supports Windows npm launchers; other harnesses retain their
+/// existing discovery until their launch contracts support those paths too.
+pub fn installed_npm_tool(name: &str) -> Option<PathBuf> {
+    // npm also writes an extensionless POSIX shim on Windows. Prefer launchers
+    // that Rust and the displayed PowerShell sign-in command can actually run.
+    #[cfg(windows)]
+    let names = if Path::new(name).extension().is_some() {
+        vec![name.to_owned()]
+    } else {
+        ["exe", "cmd", "bat"]
+            .map(|extension| format!("{name}.{extension}"))
+            .to_vec()
+    };
+    #[cfg(not(windows))]
+    let names = [name.to_owned()];
+    installed_names(&names)
+}
+
+fn installed_names(names: &[String]) -> Option<PathBuf> {
+    let dirs: Vec<_> = std::env::split_paths(&tools_path().ok()?).collect();
+    // Preserve Windows discovery; Unix discovery and launch share one PATH.
+    #[cfg(windows)]
+    let dirs = {
+        let mut dirs = dirs;
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.insert(0, PathBuf::from(home).join(".local/bin"));
+        }
+        dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+        dirs
+    };
     dirs.into_iter()
         .filter(|p| p.is_absolute())
-        .map(|p| p.join(name))
+        .flat_map(|p| names.iter().map(move |name| p.join(name)))
         .find(|p| executable(p).is_ok())
 }
 
@@ -446,7 +554,11 @@ impl Controller {
         };
         for (saved, agent) in saved.iter().zip(&mut snapshot.agents) {
             agent.acp_command.clone_from(&acp_command);
-            agent.mcp_command.clone_from(&mcp_command);
+            agent.mcp_command = if uses_buzz_dev_mcp(&agent.harness.command) {
+                mcp_command.clone()
+            } else {
+                None
+            };
             if let Some(run) = self.running.get_mut(&agent.id) {
                 match run.process.alive() {
                     Ok(true) => {
@@ -1123,6 +1235,17 @@ fn model_context_with_defaults(
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
         model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
     })
+}
+
+// Buzz Agent relies on this MCP for developer tools. Other harnesses supply their
+// own tools; injecting it would expose competing shell and file-edit tools.
+fn uses_buzz_dev_mcp(command: &str) -> bool {
+    matches!(
+        Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("buzz-agent" | "buzz-agent.exe")
+    )
 }
 
 // Saved legacy Goose selections may still carry the CLI's ACP subcommand.

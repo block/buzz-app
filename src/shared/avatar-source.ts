@@ -16,3 +16,15 @@ export function avatarSource(value: unknown): string | undefined {
   }
   return undefined;
 }
+
+/** Displayable small avatar: inline data as-is, remote art through the
+ * session's authenticated media path (never the raw URL). */
+export function avatarMedia(
+  value: unknown,
+  media: ((url: string, size: "small") => string | undefined) | undefined,
+) {
+  const source = avatarSource(value);
+  return source?.startsWith("data:")
+    ? source
+    : source && media?.(source, "small");
+}

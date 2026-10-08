@@ -26,6 +26,33 @@ export interface ProjectGit {
 }
 export const GIT_READ_BYTES = 4 * 1024 * 1024;
 
+/** The canonical URL of a Buzz git repository hosted by this community, or null for any
+ * other URL. `origin` is the community's https origin. Hosts re-validate before signing. */
+export function communityGitRepository(
+  origin: string,
+  input: string,
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  const [, git, owner = "", name = "", ...rest] = url.pathname.split("/");
+  return url.protocol === "https:" &&
+    url.origin === origin &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash &&
+    git === "git" &&
+    !rest.length &&
+    /^[0-9a-f]{64}$/.test(owner) &&
+    entityDtag(name.replace(/\.git$/, ""))
+    ? url.href
+    : null;
+}
+
 export function parseGitRead(input: unknown): GitRead {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("Invalid Git read");

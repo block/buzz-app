@@ -18,6 +18,11 @@ import { scanMarkdown } from "../../features/relay/message-content";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { LinkLabel } from "../links/InlineLink";
 import { ChannelCompletion } from "./ChannelCompletion";
+import {
+  composerClipboard,
+  buzzCopyMarkdown,
+} from "../../features/messages/composer-clipboard";
+import { composerSchema } from "../../features/messages/composer-document";
 
 afterEach(cleanup);
 const channel = (
@@ -172,6 +177,31 @@ it("inserts an escaped ID-backed Markdown link, not notification intent", () => 
     children: [{ type: "text", value: `#${name}` }],
   });
 });
+it.each(["Beta", "a [b] *c* _d_ ~e~ &amp; <f> \\ !"])(
+  "copies a picker-produced channel label without Markdown escapes: %s",
+  (name) => {
+    const t = fixture([channel("beta", { name })]);
+    render(t.element());
+    const source = t.result().items[0]?.edit.text;
+    const doc = composerSchema.nodes.doc.create(
+      null,
+      composerSchema.nodes.paragraph.create(
+        null,
+        composerSchema.nodes.token.create({ source }),
+      ),
+    );
+    const copied = composerClipboard(doc, document);
+    expect(copied.text).toBe(`#${name}`);
+    const html = new DOMParser().parseFromString(copied.html, "text/html");
+    expect(html.querySelector("a")?.textContent).toBe(`#${name}`);
+    expect(
+      scanMarkdown(buzzCopyMarkdown(copied.html) ?? "").links[0],
+    ).toMatchObject({
+      url: "buzz://channel/beta",
+      children: [{ type: "text", value: `#${name}` }],
+    });
+  },
+);
 it.each<Partial<ChannelSummary>>([
   {},
   { members: [] },

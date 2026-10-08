@@ -33,13 +33,13 @@ export default defineConfig(async ({ command, mode }) => {
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
-      (await import("./dev/developer-settings.ts")).developerSettingsPlugin(
+      (await import("./scripts/developer-settings.ts")).developerSettingsPlugin(
         process.cwd(),
       ),
     );
   if (live)
     plugins.push(
-      (await import("./dev/relay-broker.mjs")).relayBrokerPlugin({
+      (await import("./browser-host/relay-broker.mjs")).relayBrokerPlugin({
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
@@ -67,6 +67,9 @@ export default defineConfig(async ({ command, mode }) => {
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
+        env.BUZZ_BUILDERLAB_URL ?? "",
+      ),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(
         openRelay ? defaultOrigin : "",
       ),

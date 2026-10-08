@@ -9,7 +9,9 @@ orders the choices, when Space completes a mention, and what a client sends when
 the user mentions someone outside the channel. Clients that follow it give the
 same search the same list and send the same tags.
 
-The `buzz.mentions` plugin implements the chooser. The relay message writer and
+The `buzz.mentions` plugin implements the chooser: the choice set, matching,
+order, and Space. The composer decides which keys a draft may address and asks
+before sending to people outside the channel. The relay message writer and
 message fold implement the tags. This directory owns the spec and the
 [portable fixtures](mention-rules.fixtures.json).
 
@@ -50,15 +52,17 @@ not authorization.
 
 ## 1. Choice set
 
-For a stream or forum channel that is not archived and not read-only, the choice
-set is:
+For any known channel (stream, untyped channel, forum or DM) that is not
+archived and not read-only, the choice set is:
 
 1. the channel's members;
 2. the agents that the client offers for mention in this channel; and
 3. people and agents found by a community directory search for the current query.
 
-DMs and sessions MUST NOT add directory people. A session that invites agents
-uses its own agent list instead of item 3. Archived or read-only channels have
+Sessions MUST NOT add directory people. This follows the channel type, so it
+also holds in session composers that do not invite agents, such as media
+comments and edits. A session that invites agents uses its own agent list
+instead of item 3. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
 archive state does not exclude a key.
@@ -182,9 +186,9 @@ These rules keep a row from moving under the user's pointer or keyboard.
 
 ## 7. Sending to people outside the channel
 
-When a draft addresses an outside key in a stream or forum, the client MUST ask
-before it sends. The prompt names the outside people. It offers these actions,
-like block/buzz desktop:
+When a draft addresses an outside key in a stream, untyped channel or forum,
+the client MUST ask before it sends. The prompt names the outside people. It
+offers these actions, like block/buzz desktop:
 
 | Action | Shown | Result |
 | --- | --- | --- |
@@ -192,6 +196,13 @@ like block/buzz desktop:
 | Do nothing | With add-member permission | Send. Outside keys become references. Nobody is added or notified. |
 | Send anyway | Without add-member permission | The same as Do nothing. |
 | Close or Escape | Always | Do not send. Keep the draft. |
+
+A DM has fixed participants, so there is no choice to make. The client MUST NOT
+ask. It sends outside keys in a DM as references, which do not notify them. The
+chooser row says so before the user picks the person.
+
+A session MUST NOT ask either, in any session composer. Its recipients follow
+the session choice policy.
 
 Adding a member from this prompt MUST NOT start an agent. The sent message is
 what notifies it. If the draft or its attachments change while adding runs, the
@@ -254,12 +265,14 @@ bin/pnpm exec vitest run src/bundled/mentions/mention-ranking.test.ts \
 
 ## Desktop adapter (informative)
 
-- Choice set: [mention-candidates.ts](../../features/messages/mention-candidates.ts)
+- Choice set: [mention-candidates.ts](mention-candidates.ts)
   and [use-mention-choices.ts](use-mention-choices.ts). Directory pages come from
   [useMentionDirectory.ts](useMentionDirectory.ts).
 - Matching, order, and Space: [mention-ranking.ts](mention-ranking.ts).
 - Query syntax: [mention-query.ts](mention-query.ts).
-- Outside-channel prompt: [useNonmemberMentions.tsx](../../features/messages/useNonmemberMentions.tsx).
+- Recipient admission (host): [mention-admission.ts](../../features/messages/mention-admission.ts).
+  Explicit-choice recency (host): [mention-history.ts](../../features/messages/mention-history.ts).
+- Outside-channel prompt (host): [useNonmemberMentions.tsx](../../features/messages/useNonmemberMentions.tsx).
 - Tags: [messages.ts](../../features/relay/messages.ts) writes them, and
   [fold.ts](../../features/relay/fold.ts) reads them.
 

@@ -693,16 +693,13 @@ mod lifecycle_tests {
         // Keep the listener alive until Start's handshake has completed.
         // Then explicitly permit it to exit, without sending Stop to guardian.
         let gate = root.join("exit");
-        fs::write(
+        crate::test_executable::write_executable(
             &listener,
             format!(
                 "#!/bin/sh\nwhile [ ! -f '{}' ]; do /bin/sleep .01; done\n",
                 gate.display()
             ),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&listener, fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let mut command = Command::new(&listener);
         command.current_dir(root);
         let mut run = Supervised::spawn(
@@ -810,14 +807,13 @@ mod lifecycle_tests {
 
     #[test]
     fn app_death_keeps_lock_through_worker_session_cleanup() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::create_dir(root.join("temp")).unwrap();
         // No real credentials or relay. This listener spawns a worker in a
         // different process group and ignores TERM; session cleanup must kill it.
-        fs::write(
-            root.join("listener"),
+        crate::test_executable::write_executable(
+            &root.join("listener"),
             format!(
                 r##"#!/usr/bin/python3
 import os, signal, subprocess, time
@@ -832,9 +828,7 @@ while True: time.sleep(.1)
                 root.display(),
                 root.display()
             ),
-        )
-        .unwrap();
-        fs::set_permissions(root.join("listener"), fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let mut parent = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

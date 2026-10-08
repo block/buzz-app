@@ -1,5 +1,6 @@
 import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { useState } from "react";
+import { relayPartition } from "../../features/relay/partition";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { AgentControl } from "../../features/agents/control";
@@ -33,7 +34,8 @@ export function InstanceProfilePanel(
   const valid =
     connection.status === "ready" &&
     connection.viewer === instance.viewer &&
-    connection.scope === `${instance.communityOrigin}:${instance.viewer}`;
+    connection.scope ===
+      relayPartition(instance.communityOrigin, instance.viewer);
   return valid ? (
     <InstanceDetails
       key={`${connection.scope}:${connection.generation}:${props.target}:${attempt}`}

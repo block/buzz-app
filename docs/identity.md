@@ -99,8 +99,12 @@ the user must inspect the conversation before explicitly sending a new message.
 Protected media and uploads are native, because the webview cannot attach Blossom
 (kind 24242) authentication itself: `<img>`, `<video>` and `<audio>` send no custom
 headers, and the CSP keeps `connect-src` closed to general HTTPS. Relay `/media/`
-URLs selected by shared TypeScript render through the `buzz-media` URI scheme,
-which validates HTTPS and the `/media/<hash>` URL shape but does not enforce
+URLs selected by shared TypeScript render through the `buzz-media` URI scheme;
+`<video>` and `<audio>` instead load the same URLs from a native listener on
+`127.0.0.1`, since WebKitGTK cannot play a custom scheme. It authorizes each
+request by a random per-launch path token given only to the main window, the
+bound `Host` and the app's `Origin`, and serves one request per connection.
+Both validate HTTPS and the `/media/<hash>` URL shape but do not enforce
 saved-community membership; the selected server receives a short-lived token
 scoped to its origin. The scheme signs a fresh 60-second `get` token per request
 and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
@@ -111,14 +115,17 @@ validation. JavaScript never signs kind 24242. Packaged HEIC and video
 preparation uses fixed demuxers and ffmpeg arguments in the native host, then
 hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
-Member changes, repository HTTP and other broker-only helpers are not claimed
-by this adapter. NIP-FI assertion
+Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
+in the exact add/remove/role shape; the relay decides authority. Repository HTTP
+and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
 acquisition is not implemented, so deployments enforcing it are outside acceptance.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 
-Development with `VITE_BUZZ_LIVE=1` continues to use its pinned legacy broker
-identity, and does not offer native private-key controls. Creating/importing the
+Development with a public `BUZZ_DEV_VIEWER` pin enables the legacy broker
+(Vite derives `VITE_BUZZ_LIVE=1`), even inside `just desktop`, and does not offer
+native private-key controls. Without the pin, supported desktop development uses
+the native identity path; see the [host-mode matrix](contributing.md#shared-logic-and-host-boundaries). Creating/importing the
 new native item does not update that old blob. Future reset/rotation would not
 synchronize copies automatically; neither operation is in this scope.
 

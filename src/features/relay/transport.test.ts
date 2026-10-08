@@ -1,46 +1,34 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { PublishRejected } from "./outbox";
-import { keypair, signed } from "./testing";
+import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
-it("publishes the unchanged signed event to /events with request-bound NIP-98 auth", async () => {
+it("publishes the unchanged signed event bytes through the host's /events request", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
-  const fetcher = vi.fn(async () =>
+  // The host mints NIP-98 for these exact bytes at dispatch; see the native
+  // `native_http_signs_exact_bytes_and_never_follows_redirects` test.
+  const request = vi.fn(async (_url: string, _body: string) =>
     Response.json({ accepted: true, event_id: event.id }),
   );
-  vi.stubGlobal("fetch", fetcher);
   const transport = await connectSignedTransport(
-    {
-      getPublicKey: async () => key.pubkey,
-      signEvent: async (template) => signed(key, template),
-    },
+    hostSigner(key, request),
     "https://relay.test",
     "relay",
   );
   assert.exists(transport.writer);
-  await transport.writer.publish(event, new AbortController().signal);
-  const call = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-  expect(call[0]).toBe("https://relay.test/events");
-  expect(JSON.parse(call[1].body as string)).toEqual(
-    JSON.parse(JSON.stringify(event)),
+  const controller = new AbortController();
+  await transport.writer.publish(event, controller.signal);
+  expect(request).toHaveBeenCalledExactlyOnceWith(
+    "https://relay.test/events",
+    JSON.stringify(event),
+    controller.signal,
   );
-  const headers = call[1].headers as Record<string, string>;
-  assert.exists(headers.Authorization);
-  const auth = JSON.parse(atob(headers.Authorization.slice(6)));
-  expect(auth.tags).toContainEqual(["u", "https://relay.test/events"]);
-  expect(auth.tags).toContainEqual(["method", "POST"]);
-  expect(
-    auth.tags.find((tag: string[]) => tag[0] === "payload")?.[1],
-  ).toHaveLength(64);
 });
 it("distinguishes explicit rejection from invalid or missing delivery receipts", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   const transport = await connectSignedTransport(
-    {
-      getPublicKey: async () => key.pubkey,
-      signEvent: async (template) => signed(key, template),
-    },
+    hostSigner(key),
     "https://relay.test",
     "relay",
   );
@@ -198,10 +186,7 @@ it("exposes the relay HTTP base for display, preferring the broker's explicit va
     expect((await connectBrokerTransport()).relayHttpUrl).toBeUndefined();
   }
   const direct = await connectSignedTransport(
-    {
-      getPublicKey: async () => key.pubkey,
-      signEvent: async (template) => signed(key, template),
-    },
+    hostSigner(key),
     "https://relay.test",
     "relay",
   );
@@ -249,10 +234,7 @@ it.each([null, 42, "", "A".repeat(64), "b".repeat(64)])(
 );
 it("does not infer archive authority from a host-supplied signing key", async () => {
   const transport = await connectSignedTransport(
-    {
-      getPublicKey: async () => key.pubkey,
-      signEvent: async (template) => signed(key, template),
-    },
+    hostSigner(key),
     "https://relay.test",
     key.pubkey,
   );
@@ -274,10 +256,7 @@ it.each([Infinity, 1.5])(
         ),
     );
     const transport = await connectSignedTransport(
-      {
-        getPublicKey: async () => key.pubkey,
-        signEvent: async (template) => signed(key, template),
-      },
+      hostSigner(key),
       "https://relay.test",
       key.pubkey,
     );
@@ -292,6 +271,9 @@ it("uses each signed transport's own origin for protected media, never a deploym
     getPublicKey: async () => "a".repeat(64),
     signEvent: async () => {
       throw new Error("not signing");
+    },
+    request: async () => {
+      throw new Error("not requesting");
     },
   };
   const a = await connectSignedTransport(
@@ -485,6 +467,44 @@ it.each(["relay", "https://relay.test"])(
         "nonce",
       ),
     ).rejects.toThrow("Log authorization unavailable");
+    expect(fetcher).toHaveBeenCalledTimes(before);
+  },
+);
+
+it.each(["relay", "https://relay.test"])(
+  "signs Git access only for the broker community's repositories (%s)",
+  async (community) => {
+    const fetcher = vi.fn(async (url: string) =>
+      Response.json(
+        url.endsWith("/session")
+          ? {
+              viewer: key.pubkey,
+              relayAuthor: key.pubkey,
+              relayUrl: "wss://relay.test",
+              gitAuthorization: true,
+            }
+          : { token: "dG9rZW4=" },
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const transport = await connectBrokerTransport("", undefined, community);
+    assert.exists(transport.authorizeGit);
+    const repository = `https://relay.test/git/${"a".repeat(64)}/plugins`;
+    expect(await transport.authorizeGit(` ${repository} `)).toEqual({
+      repository,
+      token: "dG9rZW4=",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent(community)}/git-authorization`,
+      expect.objectContaining({ body: JSON.stringify({ repository }) }),
+    );
+    const before = fetcher.mock.calls.length;
+    for (const other of [
+      `https://other.test/git/${"a".repeat(64)}/plugins`,
+      "https://github.com/block/plugins",
+      "block/plugins",
+    ])
+      expect(await transport.authorizeGit(other)).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(before);
   },
 );

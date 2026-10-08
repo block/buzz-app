@@ -90,16 +90,17 @@ function fixture(
     typeof createSidebarPreferencesStore
   >["queries"],
   status: RelaySnapshot["status"] = "ready",
+  initialChannels: ChannelList["channels"] = [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "beta", name: "beta", channelType: "stream" },
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ],
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
   let list: ChannelList = {
     status: "ready",
-    channels: ["alpha", "beta", "gamma"].map((id) => ({
-      id,
-      name: id,
-      channelType: "stream",
-    })),
+    channels: initialChannels,
   };
   const listeners = new Set<() => void>();
   const live = {
@@ -241,6 +242,96 @@ it("rebuilds only the changed row on a list publish and never starts nested sess
   expect(h.navigator.open).not.toHaveBeenCalled();
   alpha.onNewSession("beta");
   expect(h.navigator.open).not.toHaveBeenCalled();
+});
+
+it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
+  const saved: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    starred: [],
+    muted: [],
+  };
+  let assignments: Record<string, string> = {};
+  const read = vi.fn(async () => ({ ...saved, assignments }));
+  const write = vi.fn(
+    async (intent: { channelId: string; sectionId?: string }) => {
+      const changedAssignments = intent.sectionId
+        ? { ...assignments, [intent.channelId]: intent.sectionId }
+        : Object.fromEntries(
+            Object.entries(assignments).filter(
+              ([id]) => id !== intent.channelId,
+            ),
+          );
+      assignments = changedAssignments;
+      return { sections: saved.sections, assignments };
+    },
+  );
+  const star = vi.fn(async () => []);
+  const preferences = createSidebarPreferencesStore(read, true, write, star);
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "dm", name: "Alice", channelType: "dm" },
+  ]);
+  const user = userEvent.setup();
+  try {
+    render(h.view("alpha"));
+    await screen.findByRole("button", { name: "Alice" });
+    const row = screen.getByRole("button", { name: "Alice" });
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move conversation" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Direct messages" }),
+    ).toBeChecked();
+    await screen.findByRole("menuitemradio", { name: "Work" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(
+        { channelId: "dm", sectionId: "work" },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-sidebar-section="group:work"]'),
+      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+      expect(
+        document.querySelector('[data-sidebar-section="dms"]'),
+      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
+    });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
+      key: "ContextMenu",
+    });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Move conversation" }),
+    );
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Work" }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("menuitemradio", { name: "Direct messages" }),
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-sidebar-section="dms"]'),
+      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+      expect(
+        document.querySelector('[data-sidebar-section="group:work"]'),
+      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
+    });
+    expect(write).toHaveBeenLastCalledWith(
+      { channelId: "dm" },
+      expect.any(AbortSignal),
+    );
+    expect(star).toHaveBeenLastCalledWith(
+      { channelId: "dm", starred: false },
+      expect.any(AbortSignal),
+    );
+  } finally {
+    preferences.dispose();
+  }
 });
 
 async function failedMoveFixture(groupSource?: "personal") {

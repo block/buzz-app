@@ -1,8 +1,9 @@
+import { archiveHides } from "../../features/relay/identity-archives";
 import { createPortal } from "react-dom";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons/index";
-import { identityTiles, identityGroups } from "./identity-tiles";
+import { identityTiles } from "./identity-tiles";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
@@ -39,20 +40,18 @@ export function AgentLibrary({
   }, [library, archives]);
   const { identities, profiles } = identityTiles(
     snapshot,
-    (key) => managedKeys.includes(key) || archives.state(key) === "archived",
+    (key) =>
+      managedKeys.includes(key) || archiveHides(archives, key, session.viewer),
   );
   const candidates = identities.map((identity) => identity.pubkey);
   const identityLabel = (identity: { pubkey: string; name: string }) =>
     resolveName(identity.pubkey, identity.name, candidates);
-  const groups = identityGroups(snapshot.definitions, identities);
-  for (const group of groups) {
-    group.identities.sort(
-      (a, b) =>
-        identityLabel(a).localeCompare(identityLabel(b), undefined, {
-          sensitivity: "base",
-        }) || a.pubkey.localeCompare(b.pubkey),
-    );
-  }
+  identities.sort(
+    (a, b) =>
+      identityLabel(a).localeCompare(identityLabel(b), undefined, {
+        sensitivity: "base",
+      }) || a.pubkey.localeCompare(b.pubkey),
+  );
   profiles.sort(
     (a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
@@ -60,7 +59,7 @@ export function AgentLibrary({
   );
   const loading = snapshot.status === "loading";
   return (
-    <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
+    <div className="space-y-section-gap">
       {headerActions &&
         createPortal(
           <Button
@@ -96,40 +95,31 @@ export function AgentLibrary({
         </p>
       )}
       {snapshot.status === "ready" && (
-        <>
-          <section
-            aria-label="Library identities"
-            className="flex flex-col gap-4"
-          >
-            <h2 className="m-0 flex items-center gap-2 text-heading">
-              Library identities
-              <span className="rounded-md bg-surface-inset px-2 py-0.5 text-body-sm font-normal text-secondary">
-                {identities.length}
-              </span>
-            </h2>
+        <details className="space-y-4">
+          <summary className="cursor-pointer text-label-sm">
+            Other agents ({identities.length + profiles.length})
+          </summary>
+          <section aria-label="Agent library" className="flex flex-col gap-4">
+            <p className="m-0 text-body-sm text-secondary">
+              Saved identities from old Buzz and this community’s relay,
+              including older agents. This is not the desktop app’s list of
+              locally configured agents.
+            </p>
             {!identities.length && (
               <p>No visible identities in your Buzz library.</p>
             )}
-            {groups.map((group) => (
-              <section
-                key={group.id ?? "unlinked"}
-                aria-label={group.name}
-                className="flex flex-col gap-3"
-              >
-                <h3 className="m-0 text-label text-secondary">{group.name}</h3>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-                  {group.identities.map((identity) => (
-                    <AgentCard
-                      key={identity.pubkey}
-                      name={identityLabel(identity)}
-                      avatar={identity.avatar}
-                      identities={[identity]}
-                      session={session}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            <div className="overflow-hidden rounded-xl border border-primary">
+              {identities.map((identity) => (
+                <AgentCard
+                  layout="row"
+                  key={identity.pubkey}
+                  name={identityLabel(identity)}
+                  avatar={identity.avatar}
+                  identities={[identity]}
+                  session={session}
+                />
+              ))}
+            </div>
           </section>
           {!!profiles.length && (
             <section
@@ -137,9 +127,10 @@ export function AgentLibrary({
               className="flex flex-col gap-4"
             >
               <h2 className="m-0 text-heading">Profiles without identities</h2>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
+              <div className="overflow-hidden rounded-xl border border-primary">
                 {profiles.map((profile) => (
                   <AgentCard
+                    layout="row"
                     key={profile.id}
                     name={profile.name}
                     avatar={profile.avatar}
@@ -162,7 +153,7 @@ export function AgentLibrary({
             custody, community membership or running status. Local import
             remains a separate operation and does not start an agent.
           </p>
-        </>
+        </details>
       )}
     </div>
   );

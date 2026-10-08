@@ -5,6 +5,51 @@ const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
+// Wait until the directory page for this query has settled, so a late page
+// cannot race the step under test.
+const settled = async (page, query) => {
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.searches()))
+    .toContain(query);
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.reads().pending))
+    .toBe(0);
+};
+// Native keydown/text input and browser undo selection need both real engines;
+// catalog failure/ordering and Markdown permutations live in the composer unit tests.
+test("closing-colon emoji conversion restores literal source and caret on undo", async ({
+  page,
+}) => {
+  const input = await open(page);
+  await input.fill("");
+  await input.pressSequentially("hello :-1");
+  await expect(
+    page.getByRole("option", { name: ":-1:", exact: true }),
+  ).toBeVisible();
+  await input.press("Shift+Semicolon");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello :-1:");
+  await expect(input).toHaveJSProperty("selectionStart", 10);
+  await expect(input).toHaveJSProperty("selectionEnd", 10);
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.pressSequentially("!");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "hello :-1:");
+
+  // Pasted/restored Markdown remains plain editor text, not a rich code node.
+  await input.fill("```\n:-1\n```");
+  await input.evaluate((el) => el.setSelectionRange(7, 7));
+  await expect(
+    page.getByRole("option", { name: ":-1:", exact: true }),
+  ).toBeVisible();
+  await input.press("Shift+Semicolon");
+  await expect(input).toHaveJSProperty("value", "```\n:-1:\n```");
+});
+
 const expectAvatarShape = async (target, shape) => {
   await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
@@ -64,6 +109,7 @@ test("open completion republishes library-only display hints without changing th
     .poll(() => page.evaluate(() => window.mentionFixture.libraryReads()))
     .toBe(1);
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: new RegExp(keys.first),
   });
@@ -108,6 +154,7 @@ for (const mode of ["light", "dark"]) {
       // Keep pointer hover from supplying a second highlight during keyboard use.
       await page.mouse.move(0, 0);
       await input.fill(kind === "mention" ? "@Ho" : ":smile");
+      if (kind === "mention") await settled(page, "Ho");
       const popup = page.getByRole("region", {
         name: kind === "mention" ? "Mention suggestions" : "Emoji suggestions",
         exact: true,
@@ -843,14 +890,13 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     second: window.mentionFixture.second,
   }));
   await input.fill("@Ho");
+  await settled(page, "Ho");
   const first = page.getByRole("option", {
     name: `Honey ${keys.first}`,
     exact: true,
   });
-  const second = page.getByRole("option", {
-    name: `Honey ${keys.second}`,
-    exact: true,
-  });
+  // The directory labels the second Honey as an agent, so match its key.
+  const second = page.getByRole("option", { name: new RegExp(keys.second) });
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.refresh());
   await expect(first).toBeVisible();
@@ -866,7 +912,12 @@ test("mention choices survive unrelated list updates but revoke removed membersh
     .toBe("Unrelated preview");
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.removeFirst());
+  // The removed member is now outside the channel. Its row stays but is
+  // disabled: adding them needs a fresh review.
   await expect(first).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: /Channel membership changed/ }),
+  ).toHaveAttribute("aria-disabled", "true");
   await expect(second).toBeVisible();
   await second.click();
   await expect(input).toHaveJSProperty("value", "@Honey ");

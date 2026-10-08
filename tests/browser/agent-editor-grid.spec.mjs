@@ -38,7 +38,7 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.getByText("Add agent", { exact: true })).toBeVisible();
+    await expect(page.getByText("Create agent", { exact: true })).toBeVisible();
     await expect(
       page.getByText("Old Buzz library", { exact: true }),
     ).toHaveCount(0);
@@ -50,17 +50,19 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     const button = await actions.boundingBox();
     expect(button.y - bounds.y).toBeLessThan(16);
     expect(bounds.x + bounds.width - button.x - button.width).toBeLessThan(16);
-    // Managed cards group identity in one row, not a tall gallery pedestal.
+    // Compact tiles center the identity below its portrait without inline controls.
     const avatar = await card
       .getByRole("img", { name: "Fixture agent", exact: true })
       .boundingBox();
     const name = await card
       .getByRole("heading", { name: "Fixture agent", exact: true })
       .boundingBox();
-    expect(name.x).toBeGreaterThan(avatar.x + avatar.width);
-    expect(name.y).toBeGreaterThanOrEqual(avatar.y);
-    expect(name.y + name.height).toBeLessThanOrEqual(avatar.y + avatar.height);
-    const add = page.getByRole("button", { name: "Add agent", exact: true });
+    expect(name.y).toBeGreaterThan(avatar.y + avatar.height);
+    expect(
+      Math.abs(name.x + name.width / 2 - avatar.x - avatar.width / 2),
+    ).toBeLessThan(1);
+    expect(bounds.height).toBeLessThan(300);
+    const add = page.getByRole("button", { name: "Create agent", exact: true });
     await expect(add).toHaveAttribute("aria-haspopup", "dialog");
     await add.focus();
     await add.press("Enter");
@@ -80,6 +82,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     });
     await actions.focus();
     await actions.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitem", { name: "Manage agent", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowDown");
     await expect(
       page.getByRole("menuitem", { name: "Edit", exact: true }),
     ).toBeFocused();
@@ -148,8 +154,8 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await dialog
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-    await expect(dialog.getByRole("status")).toContainText("Saved.");
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await expect(
       card.getByRole("button", {
         name: "Actions for Fixture agent",
@@ -258,6 +264,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("custom.enter");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("custom.click-save");
     await expect(
       page.getByRole("option", { name: /custom.click-save/ }),
@@ -274,6 +284,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("custom.click-save");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     await search.fill("");
     await dialog
       .getByRole("textbox", {
@@ -290,6 +304,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
         page.evaluate(() => window.agentControlFixture.agent.harness.model),
       )
       .toBe("");
+    await expect(dialog).toHaveCount(0);
+    await actions.click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await dialog.getByRole("button", { name: "Model", exact: true }).click();
     // Dirty write-only values receive the same incidental-dismissal protection.
     await dialog
       .getByRole("button", { name: "Environment", exact: true })
@@ -339,8 +357,11 @@ test("managed cards omit the channel picker at narrow widths", async ({
       exact: true,
     });
     await expect(
-      card.getByRole("button", { name: "Stop", exact: true }),
+      card.getByRole("button", { name: "Manage Fixture agent", exact: true }),
     ).toBeVisible();
+    await expect(
+      card.getByRole("button", { name: "Stop", exact: true }),
+    ).toHaveCount(0);
     await expect(
       card.getByRole("button", { name: "Use in channel", exact: true }),
     ).toHaveCount(0);

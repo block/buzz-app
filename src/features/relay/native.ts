@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import {
@@ -14,6 +14,7 @@ import {
   UploadError,
   UPLOAD_MAX_BYTES,
   validateUploadResult,
+  type UploadProgress,
 } from "./attachments";
 import { eventDto, type RelayEvent } from "./events";
 import {
@@ -23,12 +24,14 @@ import {
   type KitRecord,
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
+import { communityGitRepository } from "../projects/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
+import { projectGitHost } from "../projects/git";
 
 import { PublishRejected } from "./outbox";
 
@@ -47,6 +50,7 @@ import {
 } from "../agents/memory";
 import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
+import { archiveClient } from "../archive/client";
 import {
   acceptPublish,
   admitSignedRequest,
@@ -132,15 +136,15 @@ export function nativeMediaUrl(url: string): string {
   return convertFileSrc(url, "buzz-media");
 }
 
-/** Raw IPC bytes; native code hashes, signs and sends them to `PUT /upload`.
+/** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
  * Aborting settles at once and tells native code to drop the request. */
 async function nativeUpload(
   origin: string,
   file: File,
   signal: AbortSignal,
   preparation?: string,
+  progress?: UploadProgress,
 ) {
-  const bytes = await file.arrayBuffer();
   signal.throwIfAborted();
   const id = crypto.randomUUID();
   let abort = () => {};
@@ -153,25 +157,63 @@ async function nativeUpload(
     if (signal.aborted) abort();
   });
   try {
-    const result = await Promise.race([
-      invoke<{
+    const send = async () => {
+      await invoke("relay_upload_begin", { id, size: file.size });
+      signal.throwIfAborted();
+      // Acknowledgement supplies backpressure on every platform, including
+      // WebKit's JSON IPC fallback. Never read the complete File into JS.
+      const chunkSize = 64 * 1024;
+      for (let offset = 0; offset < file.size; offset += chunkSize) {
+        signal.throwIfAborted();
+        const bytes = await file
+          .slice(offset, offset + chunkSize)
+          .arrayBuffer();
+        signal.throwIfAborted();
+        await invoke("relay_upload_chunk", bytes, {
+          headers: {
+            "x-buzz-upload-id": id,
+            "x-buzz-upload-offset": String(offset),
+          },
+        });
+      }
+      signal.throwIfAborted();
+      return invoke<{
         status: number;
         headers: Record<string, string>;
         body: string;
-      }>("relay_upload", bytes, {
-        headers: {
-          "x-buzz-upload-id": id,
-          "x-buzz-community": origin,
-          "x-buzz-content-type": file.type || "application/octet-stream",
-          ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+      }>(
+        "relay_upload",
+        {},
+        {
+          headers: {
+            "x-buzz-upload-id": id,
+            "x-buzz-community": origin,
+            "x-buzz-content-type": file.type || "application/octet-stream",
+            ...(preparation ? { "x-buzz-preparation": preparation } : {}),
+            ...(progress && {
+              "x-buzz-upload-progress": new Channel<{
+                sent: number;
+                total: number;
+              }>(({ sent, total }) => {
+                if (!signal.aborted) progress(sent, total);
+              }).toJSON(),
+            }),
+          },
         },
-      }),
-      aborted,
-    ]);
+      );
+    };
+    const result = await Promise.race([send(), aborted]);
     return new Response(result.body, {
       status: result.status,
       headers: result.headers,
     });
+  } catch (error) {
+    if (!signal.aborted)
+      void invoke("relay_upload_cancel", { id }).catch(() => {});
+    if (typeof error === "string" && /temporary storage/.test(error))
+      throw new UploadError("io");
+    if (error === "Uploads are busy") throw new UploadError("capacity");
+    throw error;
   } finally {
     signal.removeEventListener("abort", abort);
   }
@@ -183,6 +225,7 @@ async function nativeAttachmentUpload(
   origin: string,
   file: File,
   signal: AbortSignal,
+  progress?: UploadProgress,
 ) {
   signal.throwIfAborted();
   if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
@@ -199,9 +242,10 @@ async function nativeAttachmentUpload(
   if (!demuxer) {
     if (voice || file.type.startsWith("video/")) throw new UploadError("video");
     return hostUpload(
-      (item, bounded) => nativeUpload(origin, item, bounded),
+      (item, bounded, report) =>
+        nativeUpload(origin, item, bounded, undefined, report),
       origin,
-    )(file, signal);
+    )(file, signal, progress);
   }
   // Native preparation has its own 600 s deadline; leave a separate upload
   // budget, as broker prepareMedia + hostUpload do.
@@ -214,6 +258,7 @@ async function nativeAttachmentUpload(
     file,
     bounded,
     `${heic ? "image" : voice ? "voice" : "video"}:${demuxer}`,
+    progress,
   );
   bounded.throwIfAborted();
   const body = await readUploadResponse(response);
@@ -337,6 +382,16 @@ export async function connectNativeTransport(
     },
   });
   // Capabilities describe implemented host operations, not everything this key can sign.
+  const archive = archiveClient("device", async (request, signal) => {
+    signal?.throwIfAborted();
+    const value = await invoke("relay_archive", {
+      community: origin,
+      viewer: transport.viewer,
+      request,
+    });
+    signal?.throwIfAborted();
+    return value;
+  });
   return {
     ...transport,
     workflows: workflowHost(async (route, body, signal) => {
@@ -359,6 +414,35 @@ export async function connectNativeTransport(
                 .cursor ?? null,
           });
           return nativeResponse(result);
+        },
+        signal,
+      );
+      signal.throwIfAborted();
+      return response;
+    }),
+    projectGit: projectGitHost(async (read, signal) => {
+      const response = await admitSignedRequest(
+        origin,
+        transport.viewer,
+        async () => {
+          // Admission stays held until native code has stopped and reaped Git.
+          const id = crypto.randomUUID();
+          const cancel = () => {
+            invoke("relay_project_git_cancel", { id }).catch(() => {});
+          };
+          signal.addEventListener("abort", cancel, { once: true });
+          if (signal.aborted) cancel();
+          try {
+            return nativeResponse(
+              await invoke<{
+                status: number;
+                headers: Record<string, string>;
+                body: string;
+              }>("relay_project_git", { community: origin, id, read }),
+            );
+          } finally {
+            signal.removeEventListener("abort", cancel);
+          }
         },
         signal,
       );
@@ -445,8 +529,43 @@ export async function connectNativeTransport(
     },
 
     agentActivity: true,
+    activityArchive: archive.host,
     subscribe(callbacks) {
       let active = true;
+      const archiveAbort = new AbortController();
+      let archiveRefresh: Promise<unknown> | undefined;
+      let archiveRetry: ReturnType<typeof setTimeout> | undefined;
+      let archiveAttempts = 0;
+      const failedKinds = new Map<number, number>();
+      const reportCapture = () => {
+        const settings = archive.current();
+        if (!active || !settings) return;
+        for (const [kind, revision] of failedKinds)
+          if (revision !== settings.revision) failedKinds.delete(kind);
+        callbacks.captureState?.(
+          failedKinds.size ? "error" : settings.observer ? "saving" : "off",
+        );
+      };
+      const refreshArchive = () =>
+        (archiveRefresh ??= archive.host
+          .settings(archiveAbort.signal)
+          .catch(() => {
+            if (!active) return;
+            callbacks.captureState?.("error");
+            // Initial failure has no ingest to trigger recovery. Retry only
+            // while settings are unknown, at most three times per subscription.
+            if (!archive.current() && archiveAttempts < 3)
+              archiveRetry = setTimeout(
+                () => {
+                  archiveRetry = undefined;
+                  if (active && !archive.current()) void refreshArchive();
+                },
+                1000 * 2 ** archiveAttempts++,
+              );
+          })
+          .finally(() => {
+            archiveRefresh = undefined;
+          }));
       let observerGeneration: number | null = null;
       let observerEpoch = 0;
       let listening = false;
@@ -459,6 +578,30 @@ export async function connectNativeTransport(
           if (listening && !next) observerEpoch++;
           listening = next;
           callbacks.state(snapshot);
+        },
+        capture(event) {
+          const settings = archive.current();
+          if (!settings || !active) return;
+          void invoke("relay_archive", {
+            community: origin,
+            viewer: transport.viewer,
+            request: { action: "ingest", event, revision: settings.revision },
+          })
+            .then(() => {
+              if (active && archive.current()?.revision === settings.revision) {
+                failedKinds.delete(event.kind);
+                reportCapture();
+              }
+            })
+            .catch(() => {
+              if (active) {
+                if (archive.current()?.revision === settings.revision) {
+                  failedKinds.set(event.kind, settings.revision);
+                  reportCapture();
+                }
+                void refreshArchive();
+              }
+            });
         },
         telemetry(event, generation) {
           if (generation !== observerGeneration || !listening) return;
@@ -479,6 +622,18 @@ export async function connectNativeTransport(
         },
       });
       if (!traffic) throw new Error("Native relay stream is unavailable");
+      const stopArchive = archive.subscribe((settings) => {
+        if (!active) return;
+        // Readable preferences alone cannot hide a write failure. Recovery
+        // requires success for that kind or a superseding settings revision.
+        clearTimeout(archiveRetry);
+        reportCapture();
+        traffic.archive?.([
+          ...(settings.observer ? [24200] : []),
+          ...(settings.metrics ? [44200] : []),
+        ]);
+      });
+      void refreshArchive();
       return {
         ...traffic,
         observe(generation) {
@@ -488,6 +643,9 @@ export async function connectNativeTransport(
         },
         dispose() {
           active = false;
+          archiveAbort.abort();
+          clearTimeout(archiveRetry);
+          stopArchive();
           observerEpoch++;
           traffic.dispose();
         },
@@ -535,7 +693,37 @@ export async function connectNativeTransport(
         throw new Error("Log authorization unavailable");
       return signature;
     },
+    async authorizeGit(input) {
+      const repository = communityGitRepository(origin, input);
+      if (!repository) return null;
+      const token = await invoke<string>("relay_git_authorization", {
+        community: origin,
+        repository,
+      });
+      return { repository, token };
+    },
     ...nativeSidebar(transport),
+    reminders: {
+      async decode(events, signal) {
+        signal.throwIfAborted();
+        const decoded = await invoke<{ eventId: string; content: unknown }[]>(
+          "relay_decode_reminders",
+          { events },
+        );
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async sign(intent, signal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await invoke<unknown>("relay_sign_reminder", { intent }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || event.kind !== 30300)
+          throw new Error("Invalid reminder event");
+        return event;
+      },
+    },
     readState: {
       ...(readCommunity ? { communityId: readCommunity } : {}),
       async decode(events: readonly RelayEvent[], signal: AbortSignal) {
@@ -632,8 +820,8 @@ export async function connectNativeTransport(
         "background",
       );
     },
-    uploadAttachment: (file, signal) =>
-      nativeAttachmentUpload(origin, file, signal),
+    uploadAttachment: (file, signal, progress) =>
+      nativeAttachmentUpload(origin, file, signal, progress),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

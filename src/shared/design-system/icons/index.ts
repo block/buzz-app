@@ -2,6 +2,29 @@ import { defineIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
+import {
+  GooseLogoArtwork,
+  PiLogoArtwork,
+  ClaudeLogoArtwork,
+  HermesLogoArtwork,
+} from "./HarnessLogos";
+
+// Brand artwork requested for Harness Settings; general UI glyphs remain Tabler.
+export const GooseLogoIcon = defineIcon("custom", GooseLogoArtwork, {
+  meaning: "Goose harness",
+  category: "Custom brand mark",
+  provenance:
+    "Official Block Goose mark (Apache-2.0), reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+export const PiLogoIcon = defineIcon("custom", PiLogoArtwork, {
+  meaning: "Pi harness",
+  category: "Custom brand mark",
+  provenance:
+    "Official Earendil Pi favicon (MIT), reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+
 import TablerArrowClockwiseIcon from "@tabler/icons-react/dist/esm/icons/IconRotateClockwise.mjs";
 export const ArrowClockwiseIcon = defineIcon(
   "tabler",
@@ -51,6 +74,8 @@ import TablerArrowsInIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMin
 export const ArrowsInIcon = defineIcon("tabler", TablerArrowsInIcon);
 import TablerArrowsOutIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMaximize.mjs";
 export const ArrowsOutIcon = defineIcon("tabler", TablerArrowsOutIcon);
+import TablerAlarmIcon from "@tabler/icons-react/dist/esm/icons/IconAlarm.mjs";
+export const AlarmIcon = defineIcon("tabler", TablerAlarmIcon);
 import TablerAtIcon from "@tabler/icons-react/dist/esm/icons/IconAt.mjs";
 export const AtIcon = defineIcon("tabler", TablerAtIcon);
 import TablerBellIcon from "@tabler/icons-react/dist/esm/icons/IconBell.mjs";
@@ -118,6 +143,10 @@ import TablerGitBranchIcon from "@tabler/icons-react/dist/esm/icons/IconGitBranc
 export const GitBranchIcon = defineIcon("tabler", TablerGitBranchIcon);
 import TablerGitCommitIcon from "@tabler/icons-react/dist/esm/icons/IconGitCommit.mjs";
 export const GitCommitIcon = defineIcon("tabler", TablerGitCommitIcon);
+import TablerCircleDashedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDashed.mjs";
+export const CircleDashedIcon = defineIcon("tabler", TablerCircleDashedIcon);
+import TablerGitMergeIcon from "@tabler/icons-react/dist/esm/icons/IconGitMerge.mjs";
+export const GitMergeIcon = defineIcon("tabler", TablerGitMergeIcon);
 import TablerGitPullRequestIcon from "@tabler/icons-react/dist/esm/icons/IconGitPullRequest.mjs";
 export const GitPullRequestIcon = defineIcon(
   "tabler",
@@ -209,6 +238,8 @@ import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
+import TablerBulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
+export const BulbIcon = defineIcon("tabler", TablerBulbIcon);
 import TablerTerminalWindowIcon from "@tabler/icons-react/dist/esm/icons/IconTerminal2.mjs";
 export const TerminalWindowIcon = defineIcon(
   "tabler",
@@ -307,6 +338,9 @@ export const ListChecksIcon = defineIcon("tabler", TablerListChecksIcon);
 import TablerArchiveIcon from "@tabler/icons-react/dist/esm/icons/IconArchive.mjs";
 export const ArchiveIcon = defineIcon("tabler", TablerArchiveIcon);
 
+import TablerArchiveOffIcon from "@tabler/icons-react/dist/esm/icons/IconArchiveOff.mjs";
+export const ArchiveOffIcon = defineIcon("tabler", TablerArchiveOffIcon);
+
 import TablerArrowsLeftRightIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsLeftRight.mjs";
 export const ArrowsLeftRightIcon = defineIcon(
   "tabler",
@@ -356,4 +390,24 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   category: "messaging",
   provenance: "Original Buzz HashArrowIn; retained by explicit design request",
   intendedSizes: [{ width: 16, height: 16 }],
+});
+
+export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
+  meaning: "Claude harness",
+  category: "Custom brand mark",
+  provenance:
+    "Bundled Claude mark reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [{ width: 32, height: 32 }],
+});
+
+export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
+  meaning: "Hermes harness",
+  category: "Custom brand mark",
+  provenance:
+    "Bundled Hermes mark reused from old Buzz by explicit design request; see NOTICE.md",
+  intendedSizes: [
+    { width: 24, height: 24 },
+    { width: 32, height: 32 },
+    { width: 48, height: 48 },
+  ],
 });

@@ -6,6 +6,8 @@ export type PluginInfo = {
   enabled: boolean;
   revision: string;
   previous: string | null;
+  hasSignature?: boolean;
+  rollbackBlockedReason?: string | null;
   reloadable: boolean;
   error: string | null;
 };
@@ -27,12 +29,22 @@ export type ImportPreview = {
   token: string;
   source: string;
   commit: string | null;
-  candidates: { path: string; manifest: PluginManifest; revision: string }[];
+  candidates: {
+    path: string;
+    manifest: PluginManifest;
+    revision: string;
+    publisher?: string | null;
+  }[];
   warnings: string[];
 };
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
-  git(repository: string, reference: string): Promise<ImportPreview | null>;
+  /** `authorization` is a NIP-98 token signed for exactly `repository`. */
+  git(
+    repository: string,
+    reference: string,
+    authorization?: string,
+  ): Promise<ImportPreview | null>;
   install(token: string, path: string): Promise<StorageResult>;
   discard(token: string): Promise<void>;
 };

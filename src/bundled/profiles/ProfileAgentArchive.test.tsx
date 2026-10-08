@@ -30,7 +30,7 @@ import { profileTarget } from "../../features/profiles/target";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 import { PublishRejected } from "../../features/relay/outbox";
-import { removeAgentFromChannels } from "./ProfileAgentDelete";
+import { removeAgentFromChannels } from "../../features/agents/relay-removal";
 import { ProfilePanel } from "./ProfilePanel";
 
 const viewer = keypair(),
@@ -114,20 +114,18 @@ it("verified owner archives through the base confirmation, sees pending, flair a
     await screen.findByRole("button", { name: "Archive agent" }),
   );
   const dialog = await screen.findByRole("alertdialog", {
-    name: "Archive this agent?",
+    name: "Archive Agent?",
   });
-  expect(
-    within(dialog).getByText("Archiving hides this agent from the space."),
-  ).toBeVisible();
-  expect(
-    within(dialog).getByText(
-      "You can unarchive them at any time to restore them",
-    ),
-  ).toBeVisible();
+  // Archive changes visibility only; the copy says what it does not do.
+  expect(dialog).toHaveTextContent(
+    "This hides Agent from search, mentions, and Add member in one.example. It won’t remove the agent from its channels or delete its saved setup. You can unarchive it later.",
+  );
   const gate = deferred();
   fixture.script.hold = gate.promise;
   try {
-    await user.click(within(dialog).getByRole("button", { name: "Archive" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Archive agent" }),
+    );
     expect(
       await screen.findByRole("button", { name: "Archiving…" }),
     ).toHaveAttribute("aria-disabled", "true");
@@ -158,7 +156,11 @@ it("a failed request reports the base failure text and keeps the prior state", a
   await user.click(
     await screen.findByRole("button", { name: "Archive agent" }),
   );
-  await user.click(await screen.findByRole("button", { name: "Archive" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Archive agent",
+    }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Archive failed: restricted: not authorized",
   );
@@ -239,10 +241,10 @@ it("an in-flight Archive blocks Delete before channel effects; retry succeeds", 
     screen.getByRole("button", { name: "Archive agent", hidden: true }),
   );
   const archiveDialog = await screen.findByRole("alertdialog", {
-    name: "Archive this agent?",
+    name: "Archive Agent?",
   });
   fireEvent.click(
-    within(archiveDialog).getByRole("button", { name: "Archive" }),
+    within(archiveDialog).getByRole("button", { name: "Archive agent" }),
   );
   expect(
     await screen.findByRole("button", { name: "Archiving…", hidden: true }),
@@ -267,10 +269,10 @@ it("Delete blocks an already-open Archive confirmation until removal settles", a
     await screen.findByRole("button", { name: "Archive agent" }),
   );
   const archiveDialog = await screen.findByRole("alertdialog", {
-    name: "Archive this agent?",
+    name: "Archive Agent?",
   });
   const archiveConfirm = within(archiveDialog).getByRole("button", {
-    name: "Archive",
+    name: "Archive agent",
   });
   // A second gesture opens Delete behind the first modal before Archive is submitted.
   fireEvent.click(
@@ -552,7 +554,7 @@ it("a failed archive stops before native removal and keeps Delete and the Archiv
   await user.click(screen.getByRole("button", { name: "Archive agent" }));
   await user.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Archive",
+      name: "Archive agent",
     }),
   );
   expect(await screen.findByText("Archived on this relay")).toBeVisible();
@@ -623,8 +625,8 @@ it("Archive confirmation checks controller busy even when it was already open", 
     await screen.findByRole("button", { name: "Archive agent" }),
   );
   const confirm = within(
-    await screen.findByRole("alertdialog", { name: "Archive this agent?" }),
-  ).getByRole("button", { name: "Archive" });
+    await screen.findByRole("alertdialog", { name: "Archive Agent?" }),
+  ).getByRole("button", { name: "Archive agent" });
   const held = deferred();
   const nativeDelete = fixture.native.host.delete?.bind(fixture.native.host);
   vi.spyOn(fixture.native.host, "delete").mockImplementation(

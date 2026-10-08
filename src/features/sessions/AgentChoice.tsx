@@ -18,7 +18,7 @@ import { useAgentChoices } from "../agents/use-choices";
 import { Avatar as ChoiceAvatar } from "../../shared/design-system/ui/Avatar";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarMedia } from "../../shared/avatar-source";
 import { usePresenceStatus } from "../presence/react";
 import type { PresenceStatus } from "../presence/presence";
 import styles from "./Sessions.module.css";
@@ -168,9 +168,10 @@ export function AgentChoice({
   };
   const resolveName = useIdentityNames(session.names);
   const library = session.agentChoices;
-  const agents = useAgentChoices(session);
-  const candidates = agents.identities.map((agent) => agent.pubkey);
-  const identities = agents.identities.map((agent) => ({
+  // Adding grants access, so known-archived agents are not offered.
+  const agents = useAgentChoices(session, true, true);
+  const candidates = agents.selectable.map((agent) => agent.pubkey);
+  const identities = agents.selectable.map((agent) => ({
     ...agent,
     name: resolveName(agent.pubkey, agent.name, candidates),
     qualifier: session.names?.lookup(agent.pubkey, candidates)?.qualifier,
@@ -184,14 +185,7 @@ export function AgentChoice({
     session.presence,
     selected?.pubkey,
   );
-  function picture(avatar?: string) {
-    const source = avatarSource(avatar);
-    return source?.startsWith("data:")
-      ? source
-      : source
-        ? session.media(source, "small")
-        : undefined;
-  }
+  const picture = (avatar?: string) => avatarMedia(avatar, session.media);
   const label = selected
     ? `Change agent: ${selected.name}`
     : value
@@ -355,7 +349,7 @@ export function AgentChoice({
           </div>
           {allowed !== undefined &&
             sessionMembers === undefined &&
-            agents.identities.some(
+            agents.selectable.some(
               (agent) => !allowed.includes(agent.pubkey),
             ) && (
               <p>
@@ -365,7 +359,7 @@ export function AgentChoice({
               </p>
             )}
           {agents.status === "loading" && <p role="status">Loading agents…</p>}
-          {agents.status === "ready" && !agents.identities.length && (
+          {agents.status === "ready" && !agents.selectable.length && (
             <p role="status">No agents available in this community.</p>
           )}
           {agents.status === "unavailable" && (
@@ -373,7 +367,15 @@ export function AgentChoice({
               Your agent library isn’t available on this connection.
             </p>
           )}
-          {(agents.status === "error" || !!agents.error) && (
+          {agents.archives.status === "error" && (
+            <p role="status">
+              Couldn’t check which agents are archived, so archived agents may
+              appear.
+            </p>
+          )}
+          {(agents.status === "error" ||
+            !!agents.error ||
+            agents.archives.status === "error") && (
             <Button onClick={() => void library.refresh()}>
               <ArrowClockwiseIcon size={14} />
               Retry agent list

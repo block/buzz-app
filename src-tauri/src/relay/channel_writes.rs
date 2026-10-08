@@ -69,7 +69,7 @@ fn details(event: &EventTemplate) -> bool {
         && index == event.tags.len()
 }
 fn lifecycle(event: &EventTemplate) -> bool {
-    if !matches!(event.kind, 9002 | 9008 | 9022 | 41012)
+    if !matches!(event.kind, 9002 | 9008 | 9021 | 9022 | 41012)
         || !common(event)
         || event.tags.len() != if event.kind == 9002 { 2 } else { 1 }
     {
@@ -406,6 +406,28 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn lifecycle_accepts_a_join_request_for_one_channel_only() {
+        let channel = uuid::Uuid::nil().to_string();
+        let join = serde_json::json!({
+            "kind": 9021,
+            "created_at": 1700000010,
+            "content": "",
+            "tags": [["h", channel]]
+        });
+        assert!(validate("channel-lifecycle", &join, None).is_ok());
+        assert!(validate("channel-details", &join, None).is_err());
+        for tags in [
+            serde_json::json!([]),
+            serde_json::json!([["h", "open"]]),
+            serde_json::json!([["h", channel], ["h", channel]]),
+            serde_json::json!([["h", channel], ["p", "00".repeat(32)]]),
+        ] {
+            let mut command = join.clone();
+            command["tags"] = tags;
+            assert!(validate("channel-lifecycle", &command, None).is_err());
+        }
+    }
     #[test]
     fn lifecycle_accepts_only_exact_archive_values() {
         let event = serde_json::json!({

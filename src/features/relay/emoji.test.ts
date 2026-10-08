@@ -77,7 +77,9 @@ it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments ou
     { shortcode: "sparkles", url: "ipfs://bafkreiemoji" },
   ]);
   expect(
-    referencedEmoji(":PARTY: :party: https://a.test/:link: :other:"),
+    referencedEmoji(
+      ":PARTY: :party: https://a.test/:link: http://localhost:3000/:dev: :other:",
+    ),
   ).toEqual(["party", "other"]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {

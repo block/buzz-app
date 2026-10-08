@@ -9,7 +9,14 @@ import {
 import { test, expect } from "./fixture.mjs";
 
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { wheel, anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+import {
+  wheel,
+  anchor,
+  settle,
+  upper,
+  expectAnchor,
+  keyScroll,
+} from "./timeline.mjs";
 
 // These layout/navigation journeys exercise the opt-in Bestie surface.
 test.beforeEach(async ({ page }) => {
@@ -50,6 +57,7 @@ const companionLauncher = (page, name) =>
 // Sidebar rows are the primary pages; Messages remains available through search.
 const destinationTitles = [
   "Inbox",
+  "Reminders",
   "Bestie",
   "Projects",
   "Agents",
@@ -80,6 +88,10 @@ async function open(page, app) {
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
 async function link(page, app, target) {
+  await page.route(
+    /https:\/\/api\.github\.com\/repos\/block\/buzz\/(?:issues\/\d+\/comments|pulls\/\d+\/reviews)\?/,
+    (route) => route.fulfill({ json: [] }),
+  );
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
       json: {
@@ -105,7 +117,9 @@ async function link(page, app, target) {
   ).toHaveCSS("pointer-events", "auto");
   await trigger.click();
   await expect(
-    panel(page).getByRole("heading", { name: "A useful change" }),
+    panel(page).getByRole("heading", {
+      name: `A useful change #${new URL(target).pathname.split("/").at(-1)}`,
+    }),
   ).toBeVisible();
   // Geometry assertions observe the settled overlay, not an entrance frame.
   await panel(page).evaluate(async (element) => {
@@ -295,7 +309,17 @@ test("joined surface, sidebar pages, real link panel and compact community navig
     name: "Channel message history",
   });
   const offset = await timeline.evaluate((el) => el.scrollTop);
-  await panel(page).getByRole("heading", { name: "A useful change" }).hover();
+  // This scroll-ownership journey needs overflowing content; descriptions now
+  // start collapsed, so open the real disclosure before sending wheel input.
+  const description = panel(page).getByRole("button", {
+    name: "Expand Description",
+    exact: true,
+  });
+  await description.click();
+  await expect(description).toHaveAttribute("aria-expanded", "true");
+  await panel(page)
+    .getByRole("heading", { name: "A useful change #1" })
+    .hover();
   await page.mouse.wheel(0, 1000);
   await expect
     .poll(() =>
@@ -1021,6 +1045,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   const titles = [
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Projects",
     "Agents",
@@ -1102,6 +1127,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   await expectPageOrder([
     "Messages",
     "Inbox",
+    "Reminders",
     "Bestie",
     "Agents",
     "Sessions",
@@ -1275,7 +1301,10 @@ for (const [control, key] of [
       );
       await expect(focused).toBeFocused();
       const before = await history.evaluate((element) => element.scrollTop);
-      await page.keyboard.press(key);
+      // Linux WebKit can pause a native keyboard scroll and resume it after the
+      // anchor is captured; only the history scrollend completes that gesture.
+      if (nativeScroll) await keyScroll(page, key);
+      else await page.keyboard.press(key);
       if (!nativeScroll) {
         await settle(page);
         expect(await history.evaluate((element) => element.scrollTop)).toBe(
@@ -1367,7 +1396,10 @@ for (const containment of ["auto", "contain"])
       await inner.evaluate((el, value) => {
         el.style.overscrollBehaviorY = value;
       }, containment);
-      await page.keyboard.press("PageUp");
+      // Linux WebKit can pause native PageUp and resume it after the anchor is
+      // captured; only the history scrollend completes that gesture.
+      if (nativeScroll) await keyScroll(page, "PageUp");
+      else await page.keyboard.press("PageUp");
       if (nativeScroll) {
         await expect
           .poll(() => history.evaluate((el) => el.scrollTop))

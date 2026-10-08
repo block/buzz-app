@@ -3,22 +3,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { connectSignedTransport } from "./transport";
 import { createRelayReader } from "./reader";
-import { keypair, signed } from "./testing";
+import { hostSigner } from "./testing";
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 it("production reader prioritizes queued work at real capacity, not a clock interval", async () => {
   vi.useFakeTimers();
-  const key = keypair();
   const calls: number[] = [];
   const release: Array<() => void> = [];
-  const signer = {
-    getPublicKey: async () => key.pubkey,
-    signEvent: async (t: Parameters<typeof signed>[1]) => signed(key, t),
-  };
-  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-    calls.push(JSON.parse(init.body as string)[0].limit);
+  const signer = hostSigner(undefined, async (_url, body) => {
+    calls.push(JSON.parse(body)[0].limit);
     await new Promise<void>((resolve) => release.push(resolve));
     return Response.json([]);
   });
@@ -50,4 +44,42 @@ it("production reader prioritizes queued work at real capacity, not a clock inte
   } finally {
     r.dispose();
   }
+});
+
+it("signed transport forwards query priority to host request admission", async () => {
+  const calls: number[] = [];
+  const release: Array<() => void> = [];
+  const t = await connectSignedTransport(
+    hostSigner(undefined, async (_url, body) => {
+      calls.push(JSON.parse(body)[0].limit);
+      await new Promise<void>((resolve) => release.push(resolve));
+      return Response.json([]);
+    }),
+    "https://priority-forwarding.test",
+    "relay",
+  );
+  const active = [1, 2, 3, 4, 5, 6].map((limit) =>
+    t.query([{ kinds: [0], limit }]),
+  );
+  await vi.waitFor(() => expect(calls).toHaveLength(6));
+  const background = t.query(
+    [{ kinds: [0], limit: 7 }],
+    undefined,
+    "read",
+    "background",
+  );
+  const foreground = t.query(
+    [{ kinds: [0], limit: 8 }],
+    undefined,
+    "read",
+    "foreground",
+  );
+  release.shift()?.();
+  await vi.waitFor(() => expect(calls).toHaveLength(7));
+  expect(calls.at(-1)).toBe(8);
+  release.shift()?.();
+  await vi.waitFor(() => expect(calls).toHaveLength(8));
+  expect(calls.at(-1)).toBe(7);
+  for (const finish of release) finish();
+  await Promise.all([...active, background, foreground]);
 });

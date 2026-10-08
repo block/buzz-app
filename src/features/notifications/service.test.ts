@@ -394,3 +394,100 @@ it("a deferred submission revalidates the sound decision before playing", async 
   await settle();
   expect(t.plays).toEqual(["flutter"]);
 });
+
+it.each(["direct", "mention", "thread"] as const)(
+  "Silent for %s preserves banners and other categories' audio across reload",
+  async (category) => {
+    const t = setup();
+    t.service.updatePreferences({
+      sounds: {
+        ...t.service.snapshot().preferences.sounds,
+        [category]: "silent",
+      },
+    });
+    t.service.reloadPreferences();
+    expect(t.service.snapshot().preferences.sounds[category]).toBe("silent");
+    await t.service.admit(
+      category,
+      category,
+      { sourceKey: "silent", target },
+      () => true,
+    );
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(1);
+    expect(t.plays).toEqual([]);
+    const other = category === "mention" ? "direct" : "mention";
+    await t.service.admit(
+      other,
+      other,
+      { sourceKey: "audible", target },
+      () => true,
+    );
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledTimes(2);
+    expect(t.plays).toEqual(["flutter"]);
+  },
+);
+
+it.each([true, false])(
+  "Silent before=%s or during submission cannot resurrect pending audio",
+  async (initiallySilent) => {
+    const t = setup();
+    const sounds = t.service.snapshot().preferences.sounds;
+    if (initiallySilent)
+      t.service.updatePreferences({ sounds: { ...sounds, mention: "silent" } });
+    let release!: () => void;
+    vi.mocked(t.platform.show).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await t.submit("pending");
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledOnce();
+    try {
+      t.service.updatePreferences({ sounds: { ...sounds, mention: "silent" } });
+      t.service.updatePreferences({ sounds });
+    } finally {
+      release();
+      await flush();
+    }
+    expect(t.plays).toEqual([]);
+  },
+);
+
+it("plugin display text is flattened and bounded, with the category text as fallback", async () => {
+  const t = setup();
+  let producer: ReturnType<Notifications["register"]> | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      producer = ctx.notifications.register({
+        id: "updates",
+        label: "Updates",
+      });
+    },
+  });
+  await vi.waitFor(() => expect(producer).toBeDefined());
+  await producer?.submit({
+    sourceKey: "rich",
+    target,
+    title: `Due\u0007 **now**\n${"t".repeat(200)}`,
+    body: `**Call** [Ana](https://x.example)\n\n<b>raw</b> ${"b".repeat(300)}`,
+  });
+  await producer?.submit({ sourceKey: "plain", target });
+  await expect(
+    producer?.submit({ sourceKey: "bad", target, body: 1 as never }),
+  ).rejects.toThrow("Invalid notification text");
+  await flush();
+  const shown = vi.mocked(t.platform.show).mock.calls.map(([item]) => item);
+  const [rich = { title: "", body: "" }] = shown;
+  expect(Array.from(rich.title)).toHaveLength(128);
+  expect(rich.title.startsWith(`Due **now** ttt`)).toBe(true);
+  expect(rich.title.endsWith("…")).toBe(true);
+  expect(rich.body.startsWith("Call Ana raw bbb")).toBe(true);
+  expect(rich.body).not.toContain("<b>");
+  expect(Array.from(rich.body)).toHaveLength(200);
+  expect(shown[1]).toMatchObject({ title: "Buzz", body: "New updates" });
+});

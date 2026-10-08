@@ -154,9 +154,10 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   await page.clock.runFor(299);
   expect((await journal(page)).state.frontiers).toEqual({});
   await page.clock.runFor(1);
+  // Catch-up reads every visible ordinary message, so none needs its own mark.
   await expect
-    .poll(async () => Object.keys((await journal(page)).state.frontiers).sort())
-    .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
+    .poll(async () => Object.keys((await journal(page)).state.frontiers))
+    .toEqual([`activity:${alphaId}`]);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
   await page.clock.resume();
   const stored = await journal(page);
@@ -181,7 +182,7 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
 });
 
-test("focus cancellation and local manual-unread survive dwell/reload until explicit mark-through", async ({
+test("focus cancellation and local manual-unread survive reload until explicit mark-through or reading to the bottom", async ({
   page,
   app,
 }) => {
@@ -270,15 +271,6 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     }),
   ).toBeVisible();
   await park(page);
-  await history(page).focus();
-  await page.clock.runFor(1000);
-  expect((await journal(page)).localUnread[alphaId]).toBeGreaterThan(0);
-  await expect(
-    alpha(page).getByRole("img", {
-      name: "Marked unread on this device only",
-      exact: true,
-    }),
-  ).toBeVisible();
   await page.clock.resume();
   app.relay.holdContent(); // Reload must use verified disk evidence, not wait for network repair.
   await page.reload();
@@ -300,9 +292,33 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
   await expect
     .poll(async () => (await journal(page)).localUnread[alphaId])
     .toBeUndefined();
+  const newest = app.histories.get(`primary/${alphaId}`).at(-1).created_at;
   await expect
     .poll(async () => (await journal(page)).state.frontiers[alphaId])
-    .toBe(app.histories.get(`primary/${alphaId}`).at(-1).created_at);
+    .toBe(newest);
+  await expect(alpha(page).getByRole("img")).toHaveCount(0);
+  // Reading to the live bottom also ends a manual unread, without moving the
+  // channel mark. Channel settings stays open from Mark read so the timeline
+  // keeps its layout. Reload does not promise the live bottom, so scroll there
+  // as a reader would.
+  await park(page);
+  await page
+    .getByRole("button", { name: "Mark unread on this device", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await journal(page)).localUnread[alphaId])
+    .toBeGreaterThan(0);
+  await history(page).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeHidden();
+  await history(page).focus();
+  await expect
+    .poll(async () => (await journal(page)).localUnread[alphaId])
+    .toBeUndefined();
+  expect((await journal(page)).state.frontiers[alphaId]).toBe(newest);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
 });
 
@@ -345,13 +361,12 @@ test("a surviving window publishes a closed window's durable read intent", async
     await releaseReadingFocus(page);
     await history(page).focus();
     await page.clock.runFor(300);
-    // One dwell writes catch-up, then each visible message. A positive revision
-    // alone can be an intermediate durable state, not the publication baseline.
+    // One dwell writes catch-up. It reads each visible ordinary message, so
+    // none needs its own mark. A positive revision alone can be an
+    // intermediate durable state, not the publication baseline.
     await expect
-      .poll(async () =>
-        Object.keys((await journal(page)).state.frontiers).sort(),
-      )
-      .toEqual([`activity:${alphaId}`, ...ids.map((id) => `msg:${id}`)].sort());
+      .poll(async () => Object.keys((await journal(page)).state.frontiers))
+      .toEqual([`activity:${alphaId}`]);
     await park(page);
     const stored = await journal(page);
     await expect(
@@ -474,5 +489,107 @@ test.describe("automatic catch-up after membership rows", () => {
       "font-weight",
       "400",
     );
+  });
+});
+
+// Browser boundary: real app reading → strict IndexedDB under pressure → reload.
+// Lower-layer tests own unseen/manual/override matrices; no new fixture controls.
+test.describe("local receipt reserve", () => {
+  test.use({ historyCounts: { [alphaId]: 20, beta: 1400 } });
+  test("a viewport receipt survives other-channel pressure and app reload", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const ids = await visible(page);
+    expect(ids.length).toBeGreaterThan(0);
+    const key = `msg:${ids[0]}`;
+    // Read one visible row without a dwell at the bottom: a catch-up mark
+    // would cover it and leave no message mark for pressure to evict.
+    await page.evaluate(
+      async ({ alphaId, id }) => {
+        const reading = window.fixtureRelay
+          .snapshot()
+          .session.unread.reading(alphaId);
+        try {
+          await reading.observe([id]);
+        } finally {
+          reading.dispose();
+        }
+      },
+      { alphaId, id: ids[0] },
+    );
+    await expect
+      .poll(async () => (await journal(page)).state.frontiers[key])
+      .toBeDefined();
+    expect(
+      (await journal(page)).state.frontiers[`activity:${alphaId}`],
+    ).toBeUndefined();
+    await park(page);
+    await holdReadingFocus(page); // Applied on reload, so it cannot silently reread Alpha.
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.channels.ensure("beta"),
+    );
+    const ready = () =>
+      expect
+        .poll(() =>
+          page.evaluate(() => {
+            const view = window.fixtureRelay
+              .snapshot()
+              .session.channels.window("beta");
+            return view.status === "ready" && !view.loadingOlder;
+          }),
+        )
+        .toBe(true);
+    await ready();
+    while (true) {
+      const more = await page.evaluate(async () => {
+        const { channels, unread } = window.fixtureRelay.snapshot().session;
+        const view = channels.window("beta");
+        const reading = unread.reading("beta");
+        try {
+          for (const row of view.rows) await reading.observe([row.id]);
+        } finally {
+          reading.dispose();
+        }
+        return view.hasMore;
+      });
+      if (!more) break;
+      const pending = app.pending.length;
+      await page.evaluate(() =>
+        window.fixtureRelay.snapshot().session.channels.loadOlder("beta"),
+      );
+      // This fixture deliberately gates every older-history response.
+      await expect.poll(() => app.pending.length).toBe(pending + 1);
+      app.pending[pending].release();
+      await ready();
+    }
+    const stored = await journal(page);
+    expect(stored.state.frontiers[key]).toBeUndefined();
+    expect(stored.reserve[key]).toBeDefined();
+    await expect
+      .poll(async () => (await journal(page)).acceptedRevision, {
+        timeout: 12000,
+      })
+      .toBe(stored.revision);
+    expect(
+      app.report.readPublications.at(-1).blob.contexts[key],
+    ).toBeUndefined();
+    await page.reload();
+    await openPage(page, "Messages");
+    await composer(page).waitFor();
+    await settle(page);
+    await page.evaluate(() =>
+      window.fixtureRelay.snapshot().session.unread.ensure(),
+    );
+    expect((await journal(page)).reserve[key]).toBe(stored.reserve[key]);
+    expect(
+      await page.evaluate(
+        ({ alphaId, id }) =>
+          window.fixtureRelay.snapshot().session.unread.attention(alphaId, id)
+            .unread,
+        { alphaId, id: ids[0] },
+      ),
+    ).toBe(false);
   });
 });

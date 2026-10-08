@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import viteConfig from "../../../vite.config";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 
 // Mock only the OS credential readers; every other execFileSync reaches the
 // real binary, so readCredential's call log is exactly the credential reads.
@@ -196,6 +196,12 @@ it.each([
     expect(readCredential).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
     // Direct broker users cannot bypass validation by avoiding the Vite entry.
-    expect(() => relayBrokerPlugin({ relayUrl, communityAliases })).toThrow();
+    expect(() =>
+      relayBrokerPlugin({
+        archiveFile: ":memory:",
+        relayUrl,
+        communityAliases,
+      }),
+    ).toThrow();
   },
 );

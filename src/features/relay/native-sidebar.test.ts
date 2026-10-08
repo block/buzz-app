@@ -587,3 +587,29 @@ it("removes only the section register and preserves unrelated sections and chann
     true,
   );
 });
+
+it("rejects invalid sidebar intents before native reads or signing", async () => {
+  const transport = await connectNativeTransport(community);
+  vi.mocked(invoke).mockClear();
+  for (const channelId of [" ", "x".repeat(257)]) {
+    await expect(
+      transport.writeSidebarStar?.({ channelId, starred: true }, signal),
+    ).rejects.toThrow("Invalid sidebar star intent");
+    await expect(
+      transport.writeSidebarMute?.({ channelId, muted: true }, signal),
+    ).rejects.toThrow("Invalid sidebar mute intent");
+    await expect(
+      transport.writeSidebarAssignment?.({ channelId }, signal),
+    ).rejects.toThrow("Invalid sidebar assignment intent");
+  }
+  await expect(
+    transport.writeSidebarAssignment?.(
+      { channelId: "c", createSection: { id: "invalid", name: "Work" } },
+      signal,
+    ),
+  ).rejects.toThrow("Invalid sidebar assignment intent");
+  await expect(
+    transport.writeSidebarSort?.("section:missing", "recent", [], signal),
+  ).rejects.toThrow("Invalid sidebar sort intent");
+  expect(invoke).not.toHaveBeenCalled();
+});

@@ -11,7 +11,13 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
 export async function buildApp(
-  { developmentReact, pluginFixtures, companionFixture },
+  {
+    developmentReact,
+    pluginFixtures,
+    companionFixture,
+    agentManagement,
+    pairingFixture,
+  },
   use,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
@@ -24,6 +30,21 @@ export async function buildApp(
       logLevel: "error",
       plugins: [
         react(),
+        ...(pairingFixture
+          ? [
+              {
+                name: "pairing-fixture",
+                transform(code, id) {
+                  if (id !== join(root, "src/bundled/pairing/index.tsx"))
+                    return;
+                  return code.replace(
+                    'import { PairingSettings } from "./PairingSettings";',
+                    `import { PairingFixture as PairingSettings } from ${JSON.stringify(join(root, "tests/browser/pairing-fixture.tsx"))};`,
+                  );
+                },
+              },
+            ]
+          : []),
         ...(pluginFixtures || companionFixture
           ? [
               {
@@ -58,6 +79,28 @@ export async function buildApp(
       },
       build: { outDir: join(directory, "dist"), emptyOutDir: true },
     };
+    if (agentManagement)
+      config.plugins.push({
+        name: "fixture-native-agent-control",
+        transform(_code, id) {
+          if (id !== join(root, "src/features/agents/control-native.ts"))
+            return;
+          return `
+import { createAgentControl } from "./control";
+import { controlFixture } from "./control-testing";
+export function nativeAgentControlHost() {
+  const fixture = controlFixture();
+  fixture.agent.relayUrl = "https://primary.example";
+  fixture.agent.pubkey = "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01";
+  Object.assign(window, { agentManagementFixture: fixture });
+  return fixture.host;
+}
+export function createNativeAgentControl() {
+  return createAgentControl(nativeAgentControlHost());
+}
+`;
+        },
+      });
     const start = performance.now();
     await build(config);
     await use({ config, durationMs: performance.now() - start });

@@ -45,7 +45,7 @@ import type { Contribution } from "../../plugins/contributions";
 import { CreateChannelDialog } from "../channels/CreateChannelDialog";
 import { TemplateEditor } from "./TemplateEditor";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { SaveAsTemplate } from "./TemplateSettings";
+import { AgentTeams, SaveAsTemplate } from "./TemplateSettings";
 import { ChannelHeaderMenu } from "../channels/ChannelHeaderMenu";
 import { MentionPicker } from "../mentions/MentionPicker";
 import { MentionCompletion } from "../mentions/MentionCompletion";
@@ -209,7 +209,8 @@ function harness(
           ...records.map((record) =>
             signed(viewer, {
               kind: 30078,
-              content: "saved",
+              content: JSON.stringify(record),
+              created_at: clock,
               tags: [
                 ["d", coordinate(record)],
                 ["t", KIT_TAG],
@@ -1903,7 +1904,7 @@ it("keeps failed template reads retryable in the header and opens the existing d
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(copy);
-    await screen.findByRole("dialog", { name: "Channel template" });
+    await screen.findByRole("dialog", { name: "New template" });
     expect(read).toHaveBeenCalledTimes(2);
     await waitFor(() =>
       expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
@@ -1967,3 +1968,91 @@ it("retires an in-flight header template copy when its optional provider is disa
     test.dispose();
   }
 });
+
+it.each(["save", "delete"] as const)(
+  "refreshes teams on Agents after a remote revision %s conflict",
+  async (action) => {
+    const user = userEvent.setup();
+    const test = harness(async () => ({ definitions: [], identities: [] }));
+    const original: KitRecord = {
+      version: 1,
+      community: "https://relay.example.test",
+      deleted: false,
+      value: { type: "team", id: "shared", name: "Original team", agents: [] },
+    };
+    const updated: KitRecord = {
+      ...original,
+      value: { type: "team", id: "shared", name: "Remote team", agents: [] },
+    };
+    test.setRecord(original);
+    try {
+      render(<AgentTeams session={test.owner.session} active={() => true} />);
+      const edit = await screen.findByRole("button", {
+        name: "Edit team Original team",
+      });
+      await waitFor(() => expect(edit).toBeEnabled());
+      const originalHead =
+        test.owner.session.channelKit.snapshot().entries[0]?.eventId;
+      expect(originalHead).toBeTruthy();
+      test.setRecord(updated);
+      if (action === "save") {
+        await user.click(edit);
+        await user.clear(screen.getByRole("textbox", { name: "Name" }));
+        await user.type(
+          screen.getByRole("textbox", { name: "Name" }),
+          "Local draft",
+        );
+        await user.click(screen.getByRole("button", { name: "Save team" }));
+      } else {
+        await user.click(
+          screen.getByRole("button", { name: "Actions for Original team" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Delete team…" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+      }
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Refresh the catalog",
+      );
+      expect(test.owner.session.channelKit.snapshot().status).toBe("ready");
+      expect(
+        test.published.filter((event) => event.kind === 30078),
+      ).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.click(screen.getByRole("button", { name: "Refresh teams" }));
+      const currentEdit = await screen.findByRole("button", {
+        name: "Edit team Remote team",
+      });
+      await waitFor(() => expect(currentEdit).toBeEnabled());
+      expect(
+        test.owner.session.channelKit.snapshot().entries[0]?.eventId,
+      ).not.toBe(originalHead);
+      // Reopen from the refreshed row rather than silently overwriting a stale draft.
+      if (action === "save") {
+        await user.click(currentEdit);
+        expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+          "Remote team",
+        );
+        await user.click(screen.getByRole("button", { name: "Save team" }));
+      } else {
+        await user.click(
+          screen.getByRole("button", { name: "Actions for Remote team" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Delete team…" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      const writes = test.published.filter((event) => event.kind === 30078);
+      expect(writes).toHaveLength(1);
+      const saved = test.stored.get(writes[0]?.content ?? "");
+      expect(saved?.deleted).toBe(action === "delete");
+      expect(saved?.value).toEqual(updated.value);
+    } finally {
+      test.dispose();
+    }
+  },
+);

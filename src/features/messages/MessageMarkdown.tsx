@@ -34,8 +34,8 @@ import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { emojiMatches, messageParts } from "../relay/emoji";
-import { safeMessageUrl } from "../relay/message-content";
+import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
+import { safeLinkUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
 import {
@@ -77,7 +77,7 @@ function protectInlineContent(
     ChannelMessage,
     | "content"
     | "edited"
-    | "attachmentContentRemoved"
+    | "attachmentSeams"
     | "mentions"
     | "mentionReferences"
     | "emoji"
@@ -144,7 +144,7 @@ function protectInlineContent(
         .map((part) => {
           const partStart = partOffset;
           partOffset += part.length;
-          const urlPart = part.startsWith("https://");
+          const urlPart = linkPart(part);
           let result = "";
           let end = 0;
           // Protect explicitly encoded URL punctuation before GFM's fallback
@@ -228,7 +228,7 @@ function inlineProtectionKey(
   const emoji = row.emoji?.map(({ shortcode, url }) => [shortcode, url]);
   return JSON.stringify([
     row.edited === true,
-    row.attachmentContentRemoved === true,
+    row.attachmentSeams,
     mentions,
     agentNames,
     emoji,
@@ -306,7 +306,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 }
 
 const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) || profileKey(value) ? value : safeMessageUrl(value);
+  parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) =>
@@ -411,7 +411,8 @@ function PreparedMessageMarkdown({
     return (
       <MessageLink
         url={url}
-        label={label ?? channelLinkLabel(url, directory.channels)}
+        label={label}
+        directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
         onOpenLink={onOpenLink}
         session={session}
@@ -472,9 +473,13 @@ function PreparedMessageMarkdown({
       protectInlineContent(
         {
           content: prepared.content,
-          ...(sourceRow.edited ? { edited: true as const } : {}),
-          ...(sourceRow.attachmentContentRemoved
-            ? { attachmentContentRemoved: true as const }
+          // Seams index the folded body. Leave link-repaired prose unbound, as edits are.
+          ...(sourceRow.edited ||
+          (sourceRow.attachmentSeams && prepared.content !== sourceRow.content)
+            ? { edited: true as const }
+            : {}),
+          ...(sourceRow.attachmentSeams
+            ? { attachmentSeams: sourceRow.attachmentSeams }
             : {}),
           mentions: sourceRow.mentions,
           mentionReferences: sourceRow.mentionReferences ?? [],
@@ -510,11 +515,14 @@ function PreparedMessageMarkdown({
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
+      // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
         <Mention
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
           data-mention-kind={agent ? "agent" : "person"}
+          data-profile-target={target}
+          data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}
           onClick={
             clickable

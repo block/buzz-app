@@ -174,23 +174,22 @@ fn bundle(directory: &Path) -> RuntimeBundle {
             fs::copy(std::env::current_exe().unwrap(), &path).unwrap();
             continue;
         }
-        fs::write(&path, r#"#!/bin/sh
+        crate::test_executable::write_executable(
+            &path,
+            r#"#!/bin/sh
 if [ -n "$BUZZ_ACP_LAUNCH_PREFIX" ]; then
   exec /usr/bin/env python3 -c 'import json,os; p=json.loads(os.environ["BUZZ_ACP_LAUNCH_PREFIX"]); os.execv(p[0],p+[os.environ["BUZZ_ACP_AGENT_COMMAND"]]+[x for x in os.environ.get("BUZZ_ACP_AGENT_ARGS", "").split(",") if x])'
 fi
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
 printf '%s' "$BUZZ_ACP_TEAM_INSTRUCTIONS" > team-instructions
 printf '%s' "$BUZZ_ACP_AGENTS" > worker-count
+printf '%s' "$BUZZ_ACP_MCP_COMMAND" > mcp-command
 printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 printf 'harness fixture output\n'
 trap 'exit 0' TERM INT
 while :; do [ -f "$BUZZ_AGENT_CONFIG_DIR/exit-listener" ] && exit 0; /bin/sleep 0.1; done
-"#).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-        }
+"#,
+        );
     }
     let files: BTreeMap<_, _> = names
         .iter()
@@ -391,7 +390,8 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         .iter()
         .map(|e| e.field.as_str())
         .collect();
-    assert_eq!(fields, ["name", "system_prompt"]);
+    // Inheriting the device default moves this imported (Channel) agent to Thread, so the restart badge includes it.
+    assert_eq!(fields, ["name", "session_policy", "system_prompt"]);
     assert_eq!(
         fs::read_to_string(dir.path().join("starts")).unwrap(),
         first
@@ -1008,7 +1008,10 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
-    fs::copy(tools.path().join("buzz-agent"), tools.path().join("goose")).unwrap();
+    crate::test_executable::copy_executable(
+        &tools.path().join("buzz-agent"),
+        &tools.path().join("goose"),
+    );
     for (worker, model_key, provider_key) in [
         ("buzz-agent", "BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"),
         ("goose", "GOOSE_MODEL", "GOOSE_PROVIDER"),
@@ -1051,6 +1054,28 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
 
 #[test]
 #[cfg(unix)]
+fn custom_provider_is_editable_but_requires_external_configuration_at_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let custom = tools.path().join("custom-acp");
+    fs::copy(tools.path().join("buzz-agent"), &custom).unwrap();
+    let mut a = agent(dir.path());
+    a.harness.command = custom.display().to_string();
+    a.validate().unwrap();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    assert!(runtime
+        .command_with_defaults(&a, &key, &crate::BuildDefaults::default())
+        .unwrap_err()
+        .contains("a provider selector mapping is not available"));
+    a.harness.provider.clear();
+    assert!(runtime
+        .command_with_defaults(&a, &key, &crate::BuildDefaults::default())
+        .is_ok());
+}
+
+#[test]
+#[cfg(unix)]
 fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -1072,6 +1097,60 @@ fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
 }
 
 #[test]
+#[cfg(unix)]
+fn hermes_launch_requires_defaults_and_preserves_saved_values_for_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = bundle(dir.path());
+    let launcher = dir.path().join("hermes-acp");
+    crate::test_executable::copy_executable(&dir.path().join("buzz-agent"), &launcher);
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.command = launcher.to_string_lossy().into_owned();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![saved.clone()]).unwrap();
+    let mut recovered = store.agents().unwrap().remove(0);
+    for (model, provider) in [("mistyped/model", ""), ("", "old-provider")] {
+        recovered.harness.model = model.into();
+        recovered.harness.provider = provider.into();
+        assert!(runtime
+            .command(&recovered, &key)
+            .unwrap_err()
+            .contains("Use Hermes Agent defaults"));
+    }
+    // Reading and a failed launch must leave the original values repairable.
+    let unchanged = store.agents().unwrap().remove(0);
+    assert_eq!(unchanged.harness.model, saved.harness.model);
+    assert_eq!(unchanged.harness.provider, saved.harness.provider);
+    recovered.harness.model.clear();
+    recovered.harness.provider.clear();
+    let mut defaults = crate::agent_defaults::AgentDefaults {
+        model: "another-harness-model".into(),
+        provider: "another-provider".into(),
+        ..Default::default()
+    };
+    defaults
+        .environment
+        .insert("BUZZ_ACP_MODEL".into(), "another-model".into());
+    let effective = crate::agent_defaults::effective(&recovered, &defaults);
+    let command = runtime
+        .command_with_defaults(&effective, &key, &deployment_defaults())
+        .unwrap();
+    let environment: BTreeMap<_, _> = command.get_envs().collect();
+    let env = |name| environment[std::ffi::OsStr::new(name)].unwrap();
+    assert_eq!(env("BUZZ_ACP_AGENT_COMMAND"), launcher.as_os_str());
+    assert_eq!(env("BUZZ_ACP_AGENT_ARGS"), "");
+    assert!(!environment.contains_key(std::ffi::OsStr::new("BUZZ_ACP_MODEL")));
+    assert_eq!(command.get_current_dir(), Some(dir.path()));
+    recovered
+        .environment
+        .insert("BUZZ_ACP_MODEL".into(), "override".into());
+    assert!(runtime
+        .command(&recovered, &key)
+        .unwrap_err()
+        .contains("host-reserved"));
+}
+
+#[test]
 fn launch_path_puts_bundled_tools_before_platform_tools() {
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
@@ -1080,20 +1159,111 @@ fn launch_path_puts_bundled_tools_before_platform_tools() {
         .unwrap();
     let env: BTreeMap<_, _> = command.get_envs().collect();
     let path = env[std::ffi::OsStr::new("PATH")].unwrap();
-    let mut expected = vec![tools.path().to_owned()];
+    let paths = std::env::split_paths(path).collect::<Vec<_>>();
+    assert_eq!(paths.first(), Some(&tools.path().to_owned()));
     if cfg!(windows) {
-        // Native PATH is where Git Bash and user tools live; system keys come along.
+        let mut expected = vec![tools.path().to_owned()];
         expected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         assert!(env.contains_key(std::ffi::OsStr::new("SystemRoot")));
+        assert_eq!(paths, expected);
     } else {
-        if cfg!(target_os = "linux") {
-            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-            expected.extend(home.map(|home| home.join(".local/bin")));
-            expected.push("/usr/local/bin".into());
+        for dir in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            assert!(paths.contains(&PathBuf::from(dir)), "launch omitted {dir}");
         }
-        expected.extend(["/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(Into::into));
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|h| h.is_absolute())
+        {
+            assert!(paths.contains(&home.join(".local/bin")));
+        }
+        for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|p| p.is_absolute())
+        {
+            assert!(
+                paths.contains(&dir),
+                "launch omitted inherited directory {dir:?}"
+            );
+        }
+        assert!(paths.iter().all(|p| p.is_absolute()));
+        assert_eq!(
+            paths.iter().collect::<std::collections::HashSet<_>>().len(),
+            paths.len()
+        );
     }
-    assert_eq!(std::env::split_paths(path).collect::<Vec<_>>(), expected);
+}
+
+#[test]
+#[cfg(unix)]
+fn claude_launch_uses_its_node_and_preserves_harness_defaults() {
+    let dir = tempfile::Builder::new()
+        .prefix("Claude tools ")
+        .tempdir()
+        .unwrap();
+    let runtime = bundle(dir.path());
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let mut saved = agent(dir.path());
+    saved.harness.model.clear();
+    saved.harness.provider.clear();
+    let bin = dir.path().join("claude-tools/bin");
+    fs::create_dir_all(&bin).unwrap();
+    let adapter = bin.join("claude-agent-acp");
+    let cli = bin.join("claude");
+    for path in [&adapter, &cli] {
+        fs::copy(dir.path().join("buzz-agent"), path).unwrap();
+    }
+    let node = dir.path().join("runtimes/node/v24.18.0").join(
+        match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("macos", "aarch64") => "darwin-arm64/bin/node",
+            ("macos", _) => "darwin-x64/bin/node",
+            ("linux", "aarch64") => "linux-arm64/bin/node",
+            _ => "linux-x64/bin/node",
+        },
+    );
+    fs::create_dir_all(node.parent().unwrap()).unwrap();
+    fs::copy(dir.path().join("buzz-agent"), &node).unwrap();
+    saved.harness.command = adapter.to_string_lossy().into_owned();
+    let command = runtime
+        .command_with_defaults(&saved, &key, &deployment_defaults())
+        .unwrap();
+    let environment: BTreeMap<_, _> = command.get_envs().collect();
+    let env = |name| environment[std::ffi::OsStr::new(name)].unwrap();
+    assert_eq!(env("BUZZ_ACP_AGENT_COMMAND"), adapter.as_os_str());
+    assert_eq!(env("BUZZ_ACP_AGENT_ARGS"), "");
+    let path: Vec<_> = std::env::split_paths(env("PATH")).collect();
+    assert_eq!(
+        &path[..3],
+        &[dir.path(), node.parent().unwrap(), bin.as_path()]
+    );
+    assert!(!environment.contains_key(std::ffi::OsStr::new("BUZZ_ACP_MODEL")));
+    assert_eq!(env("CLAUDE_CODE_EXECUTABLE"), cli.as_os_str());
+    saved
+        .environment
+        .insert("CLAUDE_CODE_EXECUTABLE".into(), "/custom/claude".into());
+    let override_command = runtime.command(&saved, &key).unwrap();
+    assert!(override_command
+        .get_envs()
+        .any(|(name, value)| name == "CLAUDE_CODE_EXECUTABLE"
+            && value == Some(std::ffi::OsStr::new("/custom/claude"))));
+    saved.harness.model = "old-model".into();
+    assert!(runtime
+        .command(&saved, &key)
+        .unwrap_err()
+        .contains("Use Claude Code defaults"));
+    saved.harness.model.clear();
+    fs::remove_file(&cli).unwrap();
+    // The managed Node remains required even when another installation is on PATH.
+    fs::remove_file(node).unwrap();
+    assert!(runtime
+        .command(&saved, &key)
+        .unwrap_err()
+        .contains("Install Node.js for Claude Code"));
 }
 
 #[test]
@@ -1111,6 +1281,91 @@ fn start_and_restart_reject_missing_saved_identities() {
         assert!(controller.action("missing", action).is_err());
     }
     assert!(controller.running.is_empty());
+}
+
+#[test]
+fn external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides() {
+    const FIXTURE: &str = "BUZZ_CLAUDE_LAUNCH_FIXTURE";
+    let Some(root) = std::env::var_os(FIXTURE) else {
+        let dir = tempfile::Builder::new()
+            .prefix("External Claude ")
+            .tempdir()
+            .unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::tests::external_claude_launch_resolves_node_and_avoids_windows_batch_cli_overrides", "--nocapture"])
+            .env(FIXTURE, dir.path())
+            .env("HOME", dir.path().join("home"))
+            .env("PATH", dir.path().join("tools"))
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
+    crate::prepare_tools_path();
+    let runtime = bundle(&root);
+    let bin = root.join("tools");
+    fs::create_dir_all(&bin).unwrap();
+    let adapter = bin.join(if cfg!(windows) {
+        "claude-agent-acp.cmd"
+    } else {
+        "claude-agent-acp"
+    });
+    let cli = bin.join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
+    let node = bin.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let fixture = root.join(format!("buzz-agent{}", std::env::consts::EXE_SUFFIX));
+    for path in [&adapter, &cli, &node] {
+        fs::copy(&fixture, path).unwrap();
+    }
+    let mut saved = agent(&root);
+    saved.harness.command = adapter.to_string_lossy().into_owned();
+    saved.harness.model.clear();
+    saved.harness.provider.clear();
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let command = runtime.command(&saved, &key).unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        env[std::ffi::OsStr::new("BUZZ_ACP_AGENT_COMMAND")],
+        Some(adapter.as_os_str())
+    );
+    let path: Vec<_> = std::env::split_paths(env[std::ffi::OsStr::new("PATH")].unwrap()).collect();
+    assert_eq!(path[1], bin);
+    if cfg!(windows) {
+        assert!(!env.contains_key(std::ffi::OsStr::new("CLAUDE_CODE_EXECUTABLE")));
+        let native = bin.join("claude.exe");
+        fs::copy(&fixture, &native).unwrap();
+        let command = runtime.command(&saved, &key).unwrap();
+        assert!(command.get_envs().any(
+            |(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value == Some(native.as_os_str())
+        ));
+    } else {
+        assert_eq!(
+            env[std::ffi::OsStr::new("CLAUDE_CODE_EXECUTABLE")],
+            Some(cli.as_os_str())
+        );
+    }
+    fs::remove_file(&cli).unwrap();
+    if cfg!(windows) {
+        fs::remove_file(bin.join("claude.exe")).unwrap();
+    }
+    let custom_cli = root.join(format!("custom-claude{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(&fixture, &custom_cli).unwrap();
+    saved.environment.insert(
+        "CLAUDE_CODE_EXECUTABLE".into(),
+        custom_cli.to_string_lossy().into_owned(),
+    );
+    let command = runtime.command(&saved, &key).unwrap();
+    assert!(command.get_envs().any(|(name, value)| {
+        name == "CLAUDE_CODE_EXECUTABLE" && value == Some(custom_cli.as_os_str())
+    }));
 }
 
 #[test]
@@ -1433,7 +1688,7 @@ fn build_floor_agrees_at_command_oauth_and_discovery_without_rewriting_saved_age
     assert_eq!(env["BUZZ_AGENT_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_MODEL"], Some("build-model"));
     assert_eq!(env["BUZZ_ACP_RESPOND_TO"], Some("owner-only"));
-    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("channel"));
+    assert_eq!(env["BUZZ_ACP_SESSION_POLICY"], Some("thread"));
     assert_eq!(env["BUZZ_ACP_ALLOWED_RESPOND_TO"], Some("owner-only"));
     assert_eq!(
         env.get("BUZZ_ACP_RESPOND_TO_ALLOWLIST").copied().flatten(),
@@ -1614,11 +1869,9 @@ fn external_harnesses_never_receive_buzz_agent_build_defaults() {
 #[test]
 #[cfg(unix)]
 fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let goose = dir.path().join("goose");
-    fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&goose, "#!/bin/sh\nexit 0\n");
     let controller = Controller::new(
         Store::open(dir.path().join("config")).unwrap(),
         Arc::new(Memory),
@@ -1754,6 +2007,81 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
 }
 
 #[test]
+#[cfg(unix)]
+fn only_buzz_agent_receives_the_developer_mcp() {
+    for (selection, bundled, expects_mcp) in [
+        ("buzz-agent", true, true),
+        ("buzz-agent", false, true),
+        ("buzz-agent.exe", false, true),
+        ("goose", true, false),
+        ("goose-acp", true, false),
+        ("goose-acp", false, false),
+        ("buzz-pi-acp", false, false),
+        ("claude-agent-acp", false, false),
+        ("codex-acp", false, false),
+        ("hermes-acp", false, false),
+        ("custom-acp", false, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let runtime = bundle(tools.path());
+        let worker = tools.path().join(selection);
+        if !worker.exists() {
+            fs::copy(tools.path().join("buzz-agent"), &worker).unwrap();
+        }
+        for name in ["pi", "node"] {
+            crate::test_executable::write_executable(
+                &tools.path().join(name),
+                "#!/bin/sh\nprintf '0.99.1\\n'\n",
+            );
+        }
+        let mut saved = agent(dir.path());
+        saved.harness.command = if bundled {
+            selection.into()
+        } else {
+            worker.display().to_string()
+        };
+        saved.harness.provider.clear();
+        saved.harness.model.clear();
+        if selection == "claude-agent-acp" {
+            saved.environment.insert(
+                "CLAUDE_CODE_EXECUTABLE".into(),
+                tools.path().join("claude").display().to_string(),
+            );
+        }
+        let mut store = Store::open(dir.path().join("config")).unwrap();
+        store.insert(vec![saved.clone()]).unwrap();
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(runtime),
+            dir.path().join("ownership"),
+        );
+        let expected = expects_mcp.then(|| tools.path().join("buzz-dev-mcp").display().to_string());
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].mcp_command,
+            expected,
+            "{selection}: reported MCP server"
+        );
+        let key = Secret::parse(KEY, PUB).unwrap();
+        let mut command = controller
+            .bundle
+            .as_ref()
+            .unwrap()
+            .command(&saved, &key)
+            .unwrap();
+        fs::write(dir.path().join("exit-listener"), "").unwrap();
+        command.env("BUZZ_AGENT_CONFIG_DIR", dir.path());
+        assert!(command.output().unwrap().status.success(), "{selection}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("mcp-command")).unwrap(),
+            expected.unwrap_or_default(),
+            "{selection}: launched MCP server"
+        );
+    }
+}
+
+#[test]
 #[cfg(unix)] // Windows: see windows_refuses_databricks_before_workspace_validation_or_start
 fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -1793,7 +2121,6 @@ fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
 #[test]
 #[cfg(unix)]
 fn pi_launch_rejects_old_user_global_cli() {
-    use std::os::unix::fs::PermissionsExt;
     // Keep the parent-credential fixture out of the parallel test process.
     if std::env::var("BUZZ_PRIVATE_KEY").as_deref() != Ok("synthetic-version-probe-test") {
         let output = Command::new(std::env::current_exe().unwrap())
@@ -1815,8 +2142,7 @@ fn pi_launch_rejects_old_user_global_cli() {
     let adapter = dir.path().join("buzz-pi-acp");
     let pi = dir.path().join("pi");
     for path in [&adapter, &pi, &dir.path().join("node")] {
-        fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(path, "#!/bin/sh\nexit 0\n");
     }
     let runtime = bundle(dir.path());
     let mut selected = agent(dir.path());
@@ -1872,24 +2198,20 @@ fn pi_launch_rejects_old_user_global_cli() {
 #[test]
 #[cfg(unix)]
 fn pi_version_probe_times_out_and_retires_helpers() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     for name in ["buzz-pi-acp", "node"] {
         let file = dir.path().join(name);
-        fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(file, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&file, "#!/bin/sh\nexit 0\n");
     }
     let pi = dir.path().join("pi");
     let pid_file = dir.path().join("helper.pid");
-    fs::write(
+    crate::test_executable::write_executable(
         &pi,
         format!(
             "#!/bin/sh\nprintf '0.99.1\\n'\n/bin/sleep 30 &\nprintf '%s' $! > '{}'\nwait\n",
             pid_file.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&pi, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let runtime = bundle(dir.path());
     let mut selected = agent(dir.path());
     selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
@@ -1946,7 +2268,6 @@ fn worker_environment_override_beats_imported_parallelism_and_removal_restores_i
 #[test]
 #[cfg(unix)]
 fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
-    use std::os::unix::fs::PermissionsExt;
     for harness in ["goose-acp", "buzz-pi-acp"] {
         let dir = tempfile::tempdir().unwrap();
         let tools = tempfile::tempdir().unwrap();
@@ -1954,8 +2275,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
         if harness == "buzz-pi-acp" {
             for name in ["buzz-pi-acp", "pi", "node"] {
                 let path = tools.path().join(name);
-                fs::write(&path, "#!/bin/sh\nprintf '0.99.1\\n'\n").unwrap();
-                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                crate::test_executable::write_executable(&path, "#!/bin/sh\nprintf '0.99.1\\n'\n");
             }
         }
         let mut a = agent(dir.path());
@@ -1972,6 +2292,7 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
             ("BUZZ_ACP_AGENTS".into(), "10".into()),
             ("BUZZ_ACP_EFFORT_LEVEL".into(), "low".into()),
             ("BUZZ_ACP_LAZY_POOL".into(), "false".into()),
+            ("BUZZ_ACP_RELAY_OBSERVER".into(), "false".into()),
         ]);
         store
             .save(
@@ -2032,19 +2353,18 @@ fn pi_and_goose_saved_environment_overrides_reach_the_listener_last() {
         assert_eq!(env["BUZZ_ACP_AGENTS"], "2");
         assert_eq!(env["BUZZ_ACP_EFFORT_LEVEL"], "high");
         assert_eq!(env["BUZZ_ACP_LAZY_POOL"], "true");
+        assert_eq!(env["BUZZ_ACP_RELAY_OBSERVER"], "true");
     }
 }
 
 #[test]
 #[cfg(unix)]
 fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
     let adapter = tools.path().join("buzz-pi-acp");
-    fs::write(&adapter, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&adapter, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&adapter, "#!/bin/sh\nexit 0\n");
     let extension = tools.path().join("extension with spaces.ts");
     fs::write(&extension, "export default function() {};").unwrap();
     let mut a = agent(dir.path());
@@ -2057,14 +2377,11 @@ fn pi_selection_and_extensions_survive_save_reopen_and_reach_adapter() {
         "--extension".into(),
         extension.display().to_string(),
     ];
-    for tool in ["pi", "node"] {
-        fs::copy(&adapter, tools.path().join(tool)).unwrap();
-    }
-    fs::write(
-        tools.path().join("pi"),
+    crate::test_executable::write_executable(
+        &tools.path().join("pi"),
         "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.99.1\\n'; fi\n",
-    )
-    .unwrap();
+    );
+    crate::test_executable::write_executable(&tools.path().join("node"), "#!/bin/sh\nexit 0\n");
     a.environment.insert(
         "PI_CODING_AGENT_DIR".into(),
         dir.path().display().to_string(),
@@ -2390,7 +2707,6 @@ fn import_and_repair_deliver_team_instructions_to_a_started_process() {
 #[cfg(unix)]
 #[test]
 fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let app_data = dir.path();
     let prefix = app_data.join("node-tools/bin");
@@ -2417,8 +2733,7 @@ fn managed_prefix_detection_and_shim_launch_path_use_pinned_node() {
         } else {
             "#!/usr/bin/env node\n"
         };
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&path, script);
     }
     assert_eq!(
         managed_tool(app_data, "buzz-pi-acp"),
@@ -2678,6 +2993,8 @@ fn databricks_environment_override_is_not_projected_as_a_restart_selector() {
         host: "https://old.example".into(),
         filter: String::new(),
     });
+    // Pin the policy explicitly so the raw and effective configs agree and only the model is under test.
+    a.session_policy = Some(crate::config::SessionPolicy::Channel);
     let first = crate::restart::spawn_config(&a);
     let matching_default = crate::agent_defaults::AgentDefaults {
         harness: "buzz-agent".into(),
@@ -2954,7 +3271,6 @@ const PROTECTION_WORKERS: &[ProtectionWorkerFixture] = &[
 #[cfg(unix)]
 fn plugin_protection_copies_defaults_and_fails_closed_when_provider_retires() {
     use crate::security::{Binding, Request};
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let mut controller = Controller::new(
         Store::open(dir.path().join("config")).unwrap(),
@@ -2963,8 +3279,7 @@ fn plugin_protection_copies_defaults_and_fails_closed_when_provider_retires() {
         dir.path().join("ownership"),
     );
     let executable = dir.path().join("protection");
-    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_executable::write_executable(&executable, "#!/bin/sh\nexit 0\n");
     let register = || Request::Register {
         provider: "test.security".into(),
         executable: executable.clone(),
@@ -3075,7 +3390,6 @@ fn provider_runs_through_controller_start_restart_and_missing_provider_fails_clo
 #[cfg(unix)]
 fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
     use crate::security::{Binding, Request};
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let tools = tempfile::tempdir().unwrap();
     let mut saved = agent(dir.path());
@@ -3087,7 +3401,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
         // A generic external harness owns its provider/model configuration.
         saved.harness.model.clear();
         saved.harness.provider.clear();
-        fs::copy(tools.path().join("buzz-agent"), &worker_path).unwrap();
+        crate::test_executable::copy_executable(&tools.path().join("buzz-agent"), &worker_path);
         worker_path.display().to_string()
     };
     saved.harness.args = worker.args.iter().map(|arg| (*arg).into()).collect();
@@ -3117,7 +3431,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
     let provider = provider_dir.join("launcher");
     // Exercise the real launch boundary without requiring a plugin:
     // check the --launch protocol, record each context, and stay alive for restart/stop.
-    fs::write(
+    crate::test_executable::write_executable(
         &provider,
         r#"#!/bin/sh
 [ "$1" = --launch ] || exit 2
@@ -3125,9 +3439,7 @@ fn protected_worker_lifecycle(worker: &ProtectionWorkerFixture) {
 trap 'exit 0' TERM INT
 while :; do /bin/sleep 0.1; done
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let lease = controller
         .security(Request::Register {
             provider: "test.provider".into(),
@@ -3248,3 +3560,152 @@ while :; do /bin/sleep 0.1; done
 
 #[cfg(target_os = "macos")]
 mod protection_integration;
+
+#[test]
+#[cfg(unix)]
+fn launch_discovers_login_shell_tools_without_inheriting_credentials() {
+    const FIXTURE: &str = "BUZZ_TOOL_PATH_FIXTURE";
+    let Some(root) = std::env::var_os(FIXTURE) else {
+        let dir = tempfile::Builder::new()
+            .prefix("Installed tools ")
+            .tempdir()
+            .unwrap();
+        let tools = dir.path().join("custom tools");
+        fs::create_dir_all(&tools).unwrap();
+        crate::test_executable::write_executable(
+            &tools.join("installed-helper"),
+            "#!/bin/sh\nprintf 'discovered'\n",
+        );
+        let shell = dir.path().join("login-shell");
+        crate::test_executable::write_executable(&shell, format!(
+            "#!/bin/sh\n[ \"${{OPENAI_API_KEY-unset}}\" = unset ] || exit 1\n[ \"${{BUZZ_PRIVATE_KEY-unset}}\" = unset ] || exit 1\nexport SHELL_EXPORTED_SECRET=from-shell\nexport PATH='{}:/usr/bin:/bin'\n/bin/sh -c \"$2\"\n", tools.display()));
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::launch_discovers_login_shell_tools_without_inheriting_credentials",
+                "--nocapture",
+            ])
+            .env(FIXTURE, dir.path())
+            .env("SHELL", shell)
+            .env("PATH", "/usr/bin:/bin")
+            .env("BUZZ_PRIVATE_KEY", "parent-key")
+            .env("NOSTR_PRIVATE_KEY", "parent-key")
+            .env("BUZZ_RELAY_URL", "wss://parent.example")
+            .env("OPENAI_API_KEY", "parent-provider-secret")
+            .env("BUZZ_ACP_REPLAY_FLOOR", "parent-replay")
+            .env("GIT_CONFIG_COUNT", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    };
+    let root = PathBuf::from(root);
+    crate::prepare_tools_path();
+    let runtime = bundle(&root);
+    let mut saved = agent(&root);
+    // An explicit tool path adds tools without displacing the bundled runtime.
+    saved.environment.insert(
+        "PATH".into(),
+        root.join("owner tools").display().to_string(),
+    );
+    let command = runtime
+        .command(&saved, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    let paths = command
+        .get_envs()
+        .find(|(name, _)| *name == "PATH")
+        .unwrap()
+        .1
+        .unwrap();
+    let paths = std::env::split_paths(paths).collect::<Vec<_>>();
+    assert_eq!(paths[0], root);
+    assert!(paths.contains(&root.join("owner tools")));
+    assert_eq!(
+        installed("installed-helper"),
+        Some(root.join("custom tools/installed-helper"))
+    );
+    // Exercise the resulting environment, including env_clear, in a real child.
+    let mut child = command;
+    crate::test_executable::write_executable(
+        &root.join("buzz-acp"),
+        r#"#!/bin/sh
+installed-helper || exit 1
+printf '\n%s\n%s\n%s\n' "$BUZZ_PRIVATE_KEY" "$NOSTR_PRIVATE_KEY" "$BUZZ_RELAY_URL"
+for name in OPENAI_API_KEY SHELL_EXPORTED_SECRET BUZZ_ACP_REPLAY_FLOOR GIT_CONFIG_COUNT; do
+    eval "value=\${$name-unset}"
+    [ "$value" = unset ] || exit 2
+done
+"#,
+    );
+    child.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = child.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("discovered\n{KEY}\n{KEY}\nwss://relay.example\n")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn pi_saved_tool_path_is_shared_by_context_and_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = dir.path().join("saved tools");
+    fs::create_dir(&tools).unwrap();
+    crate::test_executable::write_executable(
+        &tools.join("saved-path-helper"),
+        "#!/bin/sh\nprintf '0.99.1\\n'\n",
+    );
+    let runtime = bundle(dir.path());
+    for name in ["node", "buzz-pi-acp"] {
+        crate::test_executable::write_executable(&dir.path().join(name), "#!/bin/sh\nexit 0\n");
+    }
+    crate::test_executable::write_executable(
+        &dir.path().join("pi"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let mut selected = agent(dir.path());
+    selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
+    selected
+        .environment
+        .insert("PATH".into(), tools.display().to_string());
+    let context = crate::pi::PiContext::new(
+        &selected.harness,
+        &selected.workspace,
+        &selected.environment,
+    )
+    .unwrap();
+    let paths = std::env::split_paths(&context.path).collect::<Vec<_>>();
+    assert_eq!(paths[0], dir.path());
+    assert!(paths.contains(&tools), "Pi context omitted saved PATH");
+    let version = context.version_command().output().unwrap();
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8_lossy(&version.stdout), "0.99.1\n");
+    let mut command = runtime
+        .command(&selected, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    crate::test_executable::write_executable(
+        &dir.path().join("buzz-acp"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let result = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "0.99.1\n");
+}

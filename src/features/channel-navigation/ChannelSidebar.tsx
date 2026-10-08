@@ -40,6 +40,7 @@ import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
   BellSlashIcon,
+  ChatCircleIcon,
   FolderSimpleIcon,
   MinusIcon,
   PlusIcon,
@@ -79,6 +80,7 @@ import {
   type ChannelMenuSurface,
   useChannelNavigation,
 } from "./ChannelNavigationState";
+import { splitPartition } from "../relay/partition";
 import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -385,17 +387,15 @@ function ReadySidebar({
   }, [lifecycleDialog, sidebar.list]);
   const select = useCallback(
     (id: string) => {
-      if (!viewer || relay.snapshot().session !== queries) return;
+      const parts = splitPartition(scope);
+      if (!viewer || !parts || relay.snapshot().session !== queries) return;
       clientMetrics.channelIntent(id, window.event);
       writeView(scope, "selected-channel", id);
       void navigator.open({
         version: 1,
         kind: "conversation",
         channelId: id,
-        scope: {
-          viewer,
-          communityOrigin: scope.slice(0, -(viewer.length + 1)),
-        },
+        scope: { viewer, communityOrigin: parts.communityOrigin },
       });
     },
     [navigator, relay, queries, scope, viewer],
@@ -530,11 +530,14 @@ function ReadySidebar({
   const focusChannelPlacement = (channelId: string) => {
     const data = queries.sidebarPreferences.snapshot().data;
     const sectionId = data?.assignments[channelId];
+    const channel = sidebarChannels.find((row) => row.id === channelId);
     const sectionKey = data?.starred.includes(channelId)
       ? "starred"
       : sectionId
         ? `group:${sectionId}`
-        : "channels";
+        : channel?.channelType === "dm"
+          ? "dms"
+          : "channels";
     sidebar.toggle(sectionKey, true);
     setRowFocus(channelId);
   };
@@ -601,23 +604,19 @@ function ReadySidebar({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (
-      placementWritable &&
-      channel.channelType !== "dm" &&
-      channel.channelType !== "forum"
-    ) {
+    if (placementWritable && channel.channelType !== "forum") {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
       const starred = sectionKey === "starred";
-      if (actions.length) actions.push(<MenuSeparator key="group-actions" />);
+      const movingDm = channel.channelType === "dm";
       actions.push(
         <MenuSubmenu key="move-channel">
           <MenuSubmenuTrigger>
             <MenuIcon>
               <FolderSimpleIcon size={14} />
             </MenuIcon>
-            Move channel
+            {movingDm ? "Move conversation" : "Move channel"}
           </MenuSubmenuTrigger>
           <MenuSubmenuPopup
             aria-label={`Move ${channel.name} to section`}
@@ -634,13 +633,17 @@ function ReadySidebar({
                   ? "starred"
                   : currentSectionId
                     ? `group:${currentSectionId}`
-                    : "channels"
+                    : movingDm
+                      ? "dms"
+                      : "channels"
               }
               onValueChange={(destination) => {
                 if (destination === "starred")
                   void setChannelStar(channel.id, !starred, surface);
                 else {
-                  const groupId = destination.slice("group:".length);
+                  const groupId = destination.startsWith("group:")
+                    ? destination.slice("group:".length)
+                    : undefined;
                   void assignGroup(
                     channel.id,
                     groupId === currentSectionId ? undefined : groupId,
@@ -669,6 +672,14 @@ function ReadySidebar({
                   {group.name}
                 </MenuRadioItem>
               ))}
+              {movingDm && (
+                <MenuRadioItem value="dms" closeOnClick={false}>
+                  <MenuIcon>
+                    <ChatCircleIcon size={14} />
+                  </MenuIcon>
+                  Direct messages
+                </MenuRadioItem>
+              )}
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
@@ -713,8 +724,6 @@ function ReadySidebar({
     const muteable =
       queries.sidebarPreferences.muteWritable && !!preferences.data;
     const readable = queries.unread.sync().capability === "frontier-sync";
-    if (actions.length && (muteable || readable))
-      actions.push(<MenuSeparator key="attention-separator" />);
     if (muteable) {
       const intent = mute.intents.get(channel.id);
       const muted = intent?.pending
@@ -752,7 +761,7 @@ function ReadySidebar({
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
-          separator={actions.length > 0}
+          separator={false}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}
@@ -1151,6 +1160,7 @@ function ReadySidebar({
                           menuEnabled={menuEnabled}
                           sectionKey={section.key}
                           selectFrame={
+                            channel.channelType !== "dm" &&
                             isChannelSectionKey(section.key)
                               ? DraggableChannel
                               : undefined

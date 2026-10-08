@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import { useChannelIdentityNames } from "../identity-names/react";
+import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
@@ -179,6 +180,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
 }: ChannelTimelineProps) {
+  useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
     transient
       ? null
@@ -196,15 +198,19 @@ function Timeline({
     [window.rows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
-  const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  // Holders are counted per row: a report notice and an image viewer can hold
+  // the same row, and releasing one must not drop the other's pin.
+  const [pinnedIds, setPinnedIds] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
   );
   const keepRowMounted = useCallback((id: string) => {
-    setPinnedIds((ids) => new Set(ids).add(id));
+    setPinnedIds((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
     return () =>
       setPinnedIds((ids) => {
-        const next = new Set(ids);
-        next.delete(id);
+        const next = new Map(ids);
+        const count = (ids.get(id) ?? 0) - 1;
+        if (count > 0) next.set(id, count);
+        else next.delete(id);
         return next;
       });
   }, []);

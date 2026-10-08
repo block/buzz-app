@@ -8,12 +8,15 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/inter/wght.css";
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
+import { useChannelPanels } from "../../src/bundled/channels/useChannelPanels";
 import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { apply } from "../../src/bundled/terminal";
 import { nativeBridge } from "../../src/bundled/terminal/bridge";
 import type { TerminalBridge } from "../../src/bundled/terminal/bridge";
 import type {
   Panel,
+  Panels,
+  RegisteredPanel,
   ChannelPanelContext,
 } from "../../src/features/panels/service";
 
@@ -195,6 +198,37 @@ function Fixture() {
     </>
   );
 }
+// Motion coverage exercises the production drawer owner as well as the plugin.
+const registered: RegisteredPanel = {
+  ...contribution,
+  key: "buzz.terminal/terminal",
+  pluginId: "buzz.terminal",
+  revision: "fixture",
+};
+const entries = [registered];
+const panels: Panels = {
+  snapshot: () => entries,
+  subscribe: () => () => {},
+  register: () => {},
+  resolve: () => registered,
+};
+function MotionFixture() {
+  useKeyboardFocusVisibility();
+  const drawer = useChannelPanels(panels, context);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      {drawer.launchers}
+      <div style={{ flex: 1 }}>Conversation</div>
+      {drawer.content}
+    </div>
+  );
+}
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing root");
-createRoot(root).render(<Fixture />);
+createRoot(root).render(
+  new URLSearchParams(location.search).has("motion") ? (
+    <MotionFixture />
+  ) : (
+    <Fixture />
+  ),
+);

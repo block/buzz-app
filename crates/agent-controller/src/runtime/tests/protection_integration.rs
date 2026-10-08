@@ -1,7 +1,6 @@
 //! Opt-in real listeners + enforcing provider. Disposable relay and synthetic workers.
 use super::*;
 use crate::security::{Binding, Request};
-use std::os::unix::fs::PermissionsExt;
 #[path = "protection_relay.rs"]
 mod relay;
 
@@ -172,7 +171,10 @@ fn real_listeners_protect_future_run_controls_and_recover_worker_crashes() {
     for entry in fs::read_dir(launcher.parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
-            fs::copy(entry.path(), provider.path().join(entry.file_name())).unwrap();
+            crate::test_executable::copy_executable(
+                &entry.path(),
+                &provider.path().join(entry.file_name()),
+            );
         }
     }
     let launcher = provider.path().join(launcher.file_name().unwrap());
@@ -188,8 +190,7 @@ fn real_listeners_protect_future_run_controls_and_recover_worker_crashes() {
     for (work, public) in [(&work_a, PUB), (&work_b, &public_b)] {
         fs::create_dir(work).unwrap();
         let worker = work.join("goose");
-        fs::write(&worker, include_str!("protection_worker.py")).unwrap();
-        fs::set_permissions(&worker, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&worker, include_str!("protection_worker.py"));
         fs::write(work.join("probe.json"), json!({}).to_string()).unwrap();
         let mut saved = agent(work);
         saved.pubkey = public.into();

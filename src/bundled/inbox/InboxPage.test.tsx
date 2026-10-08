@@ -33,8 +33,11 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
-// @ts-expect-error Node host codec, with disposable test identities only.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Node host codec, with disposable test identities only.
+} from "../../../browser-host/read-state.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();

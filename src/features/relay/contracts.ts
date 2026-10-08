@@ -81,6 +81,10 @@ export type ChannelMessage = Readonly<{
   delivery?: Delivery | undefined;
   deliveryError?: string | undefined;
   authorId: string;
+  /** Actual signing key when relay attribution makes authorId a different identity. */
+  signerId?: string | undefined;
+  /** Display-only owner attested by this community’s explicit relay signer. */
+  workflowOwnerId?: string | undefined;
   /** Unix seconds from the signed event. */
   createdAt: number;
   /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
@@ -101,8 +105,9 @@ export type ChannelMessage = Readonly<{
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
-  /** Attachment removal changed the signed body; new text adjacency cannot bind identities. */
-  attachmentContentRemoved?: true;
+  /** Offsets in `content` where attachment removal joined once-separate text; a
+   * bound name never spans one. */
+  attachmentSeams?: readonly number[];
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
   /** Signed two-field mention tags bind display only; never notification recipients. */
@@ -153,6 +158,11 @@ export type ChannelWindow = Readonly<{
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
+export type PublicChannelSearch = Readonly<{
+  channels: readonly ChannelSummary[];
+  /** The relay returned a full metadata page, so some channels were not checked. */
+  partial: boolean;
+}>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
@@ -163,13 +173,20 @@ export interface ChannelQueries {
     channelIds: readonly string[],
     options?: ChannelReadOptions,
   ): Promise<void>;
+  /** Name lookup for active public channels the viewer has not joined. Matches
+   * become readable through `get`; they never enter list(). */
+  searchPublic?(
+    query: string,
+    options?: ReadOptions & { limit?: number; exact?: boolean },
+  ): Promise<PublicChannelSearch>;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
-   * membership change on one it already carries, without a full rediscovery. */
+   * membership change on one it already carries, without a full rediscovery.
+   * Returns true only when the read supplied a fresh roster. */
   refreshRoster?(
     channelId: string,
     options?: ChannelReadOptions,
-  ): Promise<void>;
+  ): Promise<boolean>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

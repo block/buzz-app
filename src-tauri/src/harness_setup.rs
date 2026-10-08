@@ -269,7 +269,12 @@ pub(crate) async fn pi_install<R: tauri::Runtime>(
         let waiting = agents.waiting_for_pi().await?;
         let path = app_data.join("agent-controller/pi-install.log");
         let mut report = run_install(&path, |log| {
-            crate::managed_pi::install(state.inner(), &app_data, log)
+            crate::managed_npm::install(
+                state.inner(),
+                &app_data,
+                log,
+                crate::managed_npm::Harness::Pi,
+            )
         })
         .await?;
         if !report.ready {
@@ -315,3 +320,50 @@ pub(crate) async fn pi_install<R: tauri::Runtime>(
 #[cfg(test)]
 #[path = "harness_setup/tests.rs"]
 mod tests;
+
+#[tauri::command]
+pub(crate) async fn claude_install<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, HarnessSetup>,
+) -> Result<InstallReport, String> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (app, state);
+        Err("Claude Code installation is supported only on macOS and Linux".into())
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let _guard = state.claim()?;
+        let app_data = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Could not resolve Claude Code install storage")?;
+        if ["claude", "claude-agent-acp", "node"]
+            .iter()
+            .all(|name| buzz_agent_controller::installed(name).is_some())
+        {
+            return Err("Claude Code is installed user-globally; update it in your terminal, then click Check again".into());
+        }
+        let path = app_data.join("agent-controller/claude-install.log");
+        let mut report = run_install(&path, |log| {
+            crate::managed_npm::install(
+                state.inner(),
+                &app_data,
+                log,
+                crate::managed_npm::Harness::Claude,
+            )
+        })
+        .await?;
+        if report.ready
+            && ["claude", "claude-agent-acp", "node"]
+                .iter()
+                .any(|name| buzz_agent_controller::managed_tool(&app_data, name).is_none())
+        {
+            report.ready = false;
+            report.error = Some(
+                "Claude Code install finished but its tools were not found. See the log.".into(),
+            );
+        }
+        Ok(report)
+    }
+}

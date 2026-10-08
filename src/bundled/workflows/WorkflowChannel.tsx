@@ -26,6 +26,7 @@ import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { WorkflowOperations } from "./WorkflowOperations";
 import { WorkflowRuns } from "./WorkflowRuns";
+import { saveAwaitsReadback } from "./WorkflowLanding";
 import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
 import { readWorkflowDocumentFields } from "./workflowYamlDocument";
@@ -101,6 +102,7 @@ export function WorkflowChannel({
   const [confirmRun, setConfirmRun] = useState(initialAction === "run");
   const [error, setError] = useState<string | null>(null);
   const [readRuns, setReadRuns] = useState(false);
+  const [createdRun, setCreatedRun] = useState<string>();
   const operation = draft?.operationId
     ? operations.find((item) => item.eventId === draft.operationId)
     : undefined;
@@ -113,16 +115,29 @@ export function WorkflowChannel({
   const readonly = !!draft?.original && draft.original.owner !== viewer;
   const dirty = !!draft && (draft.yaml !== draft.initial || localDraftAtRisk);
   const atRisk = dirty || !!draft?.operationId;
-  const unresolvedWrite = ownOperations.some(
-    (item) =>
-      (item.outcome === "pending" ||
-        item.outcome === "unknown" ||
-        (item.action === "delete" && item.outcome === "succeeded")) &&
-      (draft?.original
-        ? item.workflow.id === draft.original.id &&
-          item.workflow.owner === draft.original.owner
-        : item.action === "save"),
-  );
+  // A run request never changes configuration, so its lost receipt cannot
+  // leave a configuration write unresolved; nor can a save a newer head replaced.
+  const unresolvedWrite = ownOperations.some((item) => {
+    const original = draft?.original;
+    if (!original)
+      return (
+        item.action === "save" &&
+        item.outcome !== "rejected" &&
+        item.outcome !== "succeeded"
+      );
+    if (
+      item.workflow.id !== original.id ||
+      item.workflow.owner !== original.owner
+    )
+      return false;
+    if (item.outcome === "pending") return true;
+    if (item.action === "delete") return item.outcome !== "rejected";
+    return (
+      item.action === "save" &&
+      item.outcome === "unknown" &&
+      saveAwaitsReadback(item, original)
+    );
+  });
   useEffect(() => {
     onDraftRiskChange?.(atRisk);
     return () => onDraftRiskChange?.(false);
@@ -272,10 +287,18 @@ export function WorkflowChannel({
       (item) => item.eventId === submission.current,
     );
     if (
-      active?.action === "trigger" &&
-      (active.outcome === "succeeded" || active.outcome === "rejected")
+      active?.action !== "trigger" ||
+      (active.outcome !== "succeeded" &&
+        active.outcome !== "rejected" &&
+        active.outcome !== "unknown")
     )
-      submission.current = null;
+      return;
+    submission.current = null;
+    // Like base Buzz, a created run is shown, not just acknowledged.
+    if (active.runId) {
+      setCreatedRun(active.runId);
+      setReadRuns(true);
+    }
   }, [operations]);
   let blocked: string | undefined;
   if (!capability.availability.save)
@@ -493,7 +516,7 @@ export function WorkflowChannel({
                 )}
                 {draft.original && readRuns && (
                   <WorkflowRuns
-                    key={`${draft.original.owner}:${draft.original.id}`}
+                    key={`${draft.original.owner}:${draft.original.id}:${createdRun ?? ""}`}
                     capability={capability}
                     workflow={draft.original}
                   />

@@ -48,7 +48,7 @@ describe("message fold", () => {
         truncated: true,
       },
     });
-    expect(row?.attachmentContentRemoved).toBeUndefined();
+    expect(row?.attachmentSeams).toBeUndefined();
     expect(Object.isFrozen(row?.diff)).toBe(true);
     const untagged = signed(alice, {
       kind: 40008,
@@ -176,6 +176,84 @@ describe("message fold", () => {
       replyCount: 0,
       participants: [],
     });
+  });
+  it("attributes relay-signed workflow output to its owner, never another signer's claim", () => {
+    const tags = (author: string) => [
+      ["p", author],
+      ["h", channel],
+      ["buzz:workflow", "true"],
+      ["buzz:workflow-owner", author],
+    ];
+    const run = signed(relay, {
+      kind: 9,
+      content: "scheduled",
+      created_at: 10,
+      tags: tags(alice.pubkey),
+    });
+    const actor = signed(relay, {
+      kind: 9,
+      content: "acted",
+      created_at: 11,
+      tags: [
+        ["h", channel],
+        ["actor", bob.pubkey],
+        ["p", alice.pubkey],
+      ],
+    });
+    const notLeading = signed(relay, {
+      kind: 9,
+      content: "system",
+      created_at: 12,
+      tags: [
+        ["h", channel],
+        ["p", alice.pubkey],
+      ],
+    });
+    const spoofed = signed(bob, {
+      kind: 9,
+      content: "spoof",
+      created_at: 13,
+      tags: tags(alice.pubkey),
+    });
+    const events = [
+      run,
+      actor,
+      notLeading,
+      spoofed,
+      signed(alice, {
+        kind: 40003,
+        content: "edited by owner",
+        created_at: 14,
+        tags: [["e", run.id]],
+      }),
+      signed(bob, {
+        kind: 40003,
+        content: "not the owner",
+        created_at: 15,
+        tags: [["e", notLeading.id]],
+      }),
+    ];
+    const rows = foldMessages(channel, relay.pubkey, events, {
+      signingAuthority: relay.pubkey,
+    });
+    expect(rows.map(({ authorId, content }) => [authorId, content])).toEqual([
+      [alice.pubkey, "edited by owner"],
+      [bob.pubkey, "acted"],
+      [relay.pubkey, "system"],
+      [bob.pubkey, "spoof"],
+    ]);
+    // Without an explicit NIP-11 self (e.g. a contact-key fallback), the signer
+    // stays the author and gains no delegated edit authority.
+    expect(
+      foldMessages(channel, relay.pubkey, events).map(
+        ({ authorId, content }) => [authorId, content],
+      ),
+    ).toEqual([
+      [relay.pubkey, "scheduled"],
+      [relay.pubkey, "acted"],
+      [relay.pubkey, "system"],
+      [bob.pubkey, "spoof"],
+    ]);
   });
   it("reads relay-signed thread summaries only and tolerates malformed ones", () => {
     const a = message(alice, channel, "a", 10),
@@ -340,7 +418,7 @@ describe("message fold", () => {
         name: "Aidys Cap - EU.bebe5b6f.pdf",
       },
     ]);
-    expect(row?.attachmentContentRemoved).toBe(true);
+    expect(row?.attachmentSeams).toEqual([4]);
   });
 
   it("projects attachment link references as file names", () => {

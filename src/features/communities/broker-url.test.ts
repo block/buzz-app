@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
 import { assert, expect, it, vi } from "vitest";
 import { verifyEvent } from "nostr-tools";
-import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "../relay/transport";
 import { keypair } from "../relay/testing";
 
@@ -23,6 +23,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => handler?.(req, res));
   const plugin = relayBrokerPlugin({
+    archiveFile: ":memory:",
     identity: () => identity.secret,
     socketFactory: (url) => {
       sockets.push(url);

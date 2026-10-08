@@ -121,7 +121,11 @@ fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_se
         effective(&agent, &defaults).session_policy,
         Some(SessionPolicy::Thread)
     );
-    let before = crate::restart::spawn_config(&effective(&agent, &AgentDefaults::default()));
+    let channel_defaults = AgentDefaults {
+        session_policy: SessionPolicy::Channel,
+        ..AgentDefaults::default()
+    };
+    let before = crate::restart::spawn_config(&effective(&agent, &channel_defaults));
     let after = crate::restart::spawn_config(&effective(&agent, &defaults));
     assert!(crate::restart::diff(&before, &after)
         .iter()
@@ -176,10 +180,14 @@ fn conversation_context_inherits_defaults_unless_agent_or_imported_definition_se
     );
     assert_eq!(
         AgentDefaults::default().session_policy,
-        SessionPolicy::Channel
+        SessionPolicy::Thread
     );
-    let legacy: AgentDefaults = serde_json::from_str(r#"{"harness":"buzz-agent"}"#).unwrap();
-    assert_eq!(legacy.session_policy, SessionPolicy::Channel);
+    let unset: AgentDefaults = serde_json::from_str(r#"{"harness":"buzz-agent"}"#).unwrap();
+    assert_eq!(
+        unset.session_policy,
+        SessionPolicy::Thread,
+        "saved defaults that never chose a policy pick up the thread default"
+    );
 }
 
 #[test]

@@ -179,6 +179,8 @@ mod tests {
                 "b".repeat(64)
             ),
             // The webview owns validation and failure notices beyond the scheme.
+            "buzz://join?relay=wss%3A%2F%2Frelay.example&code=v2.invite&policy_receipt=proof"
+                .to_owned(),
             "buzz://join?relay=example".to_owned(),
             "buzz:agent-activity?agent=x".to_owned(),
             "buzz:".to_owned(),

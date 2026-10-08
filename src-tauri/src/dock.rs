@@ -1,4 +1,4 @@
-//! Dock authorization is separate from the legacy banner delivery backend.
+//! Dock and banner permissions share one macOS UserNotifications settings source.
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -56,6 +56,9 @@ pub(crate) async fn dock_permission<R: tauri::Runtime>(
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) use macos::{bundled, notification_permission, notification_request};
+
+#[cfg(target_os = "macos")]
 mod macos {
     use super::Permission;
     use block2::RcBlock;
@@ -67,7 +70,7 @@ mod macos {
     };
     use std::{path::Path, ptr::NonNull, sync::mpsc, time::Duration};
 
-    fn bundled() -> bool {
+    pub(crate) fn bundled() -> bool {
         let bundle = NSBundle::mainBundle();
         bundle.bundleIdentifier().is_some()
             && bundle.executablePath().is_some_and(|executable| {
@@ -89,7 +92,7 @@ mod macos {
             && contents.file_name() == Some("Contents".as_ref())
             && contents.parent() == Some(bundle)
     }
-    fn settings() -> Result<(Authorization, Setting), String> {
+    pub(super) fn settings() -> Result<(Authorization, Setting), String> {
         // Calling UNUserNotificationCenter outside an app bundle raises an ObjC
         // exception. Check actual identity/layout, including for debug bundles.
         if !bundled() {
@@ -106,7 +109,7 @@ mod macos {
         rx.recv_timeout(Duration::from_secs(10))
             .map_err(|_| "Dock settings request timed out".into())
     }
-    fn authorize(options: Options) -> Result<(), String> {
+    pub(super) fn authorize(options: Options) -> Result<(), String> {
         if !bundled() {
             return Err("Dock permission requires a bundled macOS app".into());
         }
@@ -154,6 +157,26 @@ mod macos {
             Permission::Unavailable
         }
     }
+    pub(crate) fn notification_permission() -> Result<Authorization, String> {
+        settings().map(|(authorization, _)| authorization)
+    }
+    pub(crate) fn notification_request() -> Result<Authorization, String> {
+        request_notification(settings, authorize)
+    }
+    fn request_notification(
+        mut settings: impl FnMut() -> Result<(Authorization, Setting), String>,
+        mut authorize: impl FnMut(Options) -> Result<(), String>,
+    ) -> Result<Authorization, String> {
+        // Never re-prompt an existing denial or change interactions disabled
+        // independently in System Settings.
+        let (authorization, _) = settings()?;
+        if authorization == Authorization::NotDetermined {
+            authorize(Options::Alert | Options::Sound | Options::Badge)?;
+            Ok(settings()?.0)
+        } else {
+            Ok(authorization)
+        }
+    }
     pub(super) fn permission(explicit: bool) -> Result<Permission, String> {
         if !bundled() {
             return Ok(Permission::Unavailable);
@@ -176,6 +199,72 @@ mod macos {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn banner_request_preserves_existing_choices_and_propagates_failures() {
+            for auth in [
+                Authorization::NotDetermined,
+                Authorization::Denied,
+                Authorization::Authorized,
+                Authorization::Provisional,
+                Authorization::Ephemeral,
+            ] {
+                for badge in [Setting::NotSupported, Setting::Disabled, Setting::Enabled] {
+                    let mut reads = 0;
+                    let mut requests = Vec::new();
+                    let result = request_notification(
+                        || {
+                            reads += 1;
+                            Ok((auth, badge))
+                        },
+                        |options| {
+                            requests.push(options);
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(result, auth);
+                    assert_eq!(
+                        reads,
+                        if auth == Authorization::NotDetermined {
+                            2
+                        } else {
+                            1
+                        }
+                    );
+                    assert_eq!(
+                        requests,
+                        if auth == Authorization::NotDetermined {
+                            vec![Options::Alert | Options::Sound | Options::Badge]
+                        } else {
+                            vec![]
+                        }
+                    );
+                }
+            }
+            assert!(request_notification(
+                || Err("settings failed".into()),
+                |_| panic!("unexpected request")
+            )
+            .is_err());
+            assert!(request_notification(
+                || Ok((Authorization::NotDetermined, Setting::NotSupported)),
+                |_| Err("authorization failed".into())
+            )
+            .is_err());
+            let mut reads = 0;
+            assert!(request_notification(
+                || {
+                    reads += 1;
+                    if reads == 2 {
+                        Err("read failed".into())
+                    } else {
+                        Ok((Authorization::NotDetermined, Setting::NotSupported))
+                    }
+                },
+                |_| Ok(())
+            )
+            .is_err());
+        }
         #[test]
         fn authorization_matrix_preserves_choices_and_only_prompts_on_explicit_action() {
             for auth in [

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -10,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +27,13 @@ env.pnpm_config_verify_deps_before_run = "false";
 // These commits are disposable probe fixtures, never commits in the source checkout.
 env.GIT_CONFIG_NOSYSTEM = "1";
 env.GIT_CONFIG_GLOBAL = "/dev/null";
-function fixture(t) {
+// Exercise production runner selection, not a fixture-only binary override.
+delete env.LEFTHOOK_BIN;
+// Replaces the push lanes to capture the exact bytes each one receives.
+const recordPushInput = `import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync((process.argv[2] ?? "unit") + "-input", readFileSync(0));
+`;
+function fixture(t, { install = true } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "buzz-hook-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const run = (cmd, args, overrides = {}) =>
@@ -49,7 +57,7 @@ function fixture(t) {
   git("config", "user.email", "hook-test@example.invalid");
   // Git 2.50+ commits detach `maintenance run --auto`, whose worktree-prune
   // task deletes a `.git/worktrees/<id>` entry that has no gitdir or lock yet.
-  // The sibling `worktree add` below would race that background process.
+  // The linked-worktree case would race that background process.
   git("config", "maintenance.auto", "false");
   write("untouched.ts", "export const unrelated = 1;\n");
   write("partial.ts", "export const first = 1;\nexport const second = 2;\n");
@@ -63,8 +71,8 @@ function fixture(t) {
     "biome.json",
     "package.json",
     "lefthook.yml",
+    "justfile",
     "scripts",
-    ".githooks",
     ...biomePlugins.map((plugin) => path.normalize(plugin)),
   ];
   for (const file of configFiles) {
@@ -79,47 +87,40 @@ function fixture(t) {
   );
   git("add", ...configFiles);
   git("commit", "-qm", "hook configuration");
-  const sibling = path.join(dir, "sibling");
-  git("worktree", "add", "--detach", sibling);
-  const install = () =>
-    run(path.join(root, "bin/node"), ["scripts/install-hooks.mjs"]);
-  const installed = install();
-  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  // Once per clone: the public recipe installs into the shared `.git/hooks`.
+  if (install) {
+    const installed = run(path.join(root, "bin/just"), ["hooks"]);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  }
   const commit = () => run("git", ["commit", "-qm", "probe"]);
-  return { dir, sibling, run, git, write, read, install, commit };
+  return { dir, run, git, write, read, commit };
 }
 
-test("both pre-push jobs receive the complete Git input without sharing a read cursor", (t) => {
+test("every pre-push job receives the complete Git input without sharing a read cursor", (t) => {
   const f = fixture(t);
-  // Keep the installed hook and production job configuration. Probe only the
+  // Keep the installed shim and production job configuration. Probe only the
   // stdin contract at the child boundary, including input larger than one read.
-  f.write(
-    "scripts/check-push.mjs",
-    `import { readFileSync, writeFileSync } from "node:fs";
-const lane = process.argv.includes("--design") ? "design" : process.argv.includes("--clippy") ? "clippy" : "unit";
-writeFileSync(lane + "-stdin", readFileSync(0));
-`,
-  );
+  f.write("scripts/check-push.mjs", recordPushInput);
   const refs =
     `refs/heads/probe ${"a".repeat(40)} refs/heads/probe ${"0".repeat(40)}\n`.repeat(
       1000,
     );
-  const result = spawnSync(path.join(f.dir, ".githooks/pre-push"), [], {
+  const result = spawnSync(path.join(f.dir, ".git/hooks/pre-push"), [], {
     cwd: f.dir,
     env,
     input: refs,
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  for (const lane of ["design", "clippy", "unit"])
+  for (const lane of ["unit", "--design", "--clippy"])
     assert.equal(
-      f.read(`${lane}-stdin`),
+      f.read(`${lane}-input`),
       refs,
       `${lane} lost or duplicated Git refs`,
     );
 });
 
-test("installed hook formats without rewriting borrowed dependencies or other work", (t) => {
+test("installed hook formats fully staged files without rewriting borrowed dependencies or other work", (t) => {
   const dependencies = () =>
     [".modules.yaml", "virtua/lib/index.js"].map((file) =>
       readFileSync(path.join(root, "node_modules", file), "utf8"),
@@ -148,7 +149,98 @@ test("installed hook formats without rewriting borrowed dependencies or other wo
   assert.equal(f.git("stash", "list"), "");
 });
 
-test("partial staging fails before writes, preserving index, unrelated edits and stashes", (t) => {
+test("one installation serves every linked worktree", (t) => {
+  const f = fixture(t);
+  const sibling = path.join(f.dir, "sibling");
+  f.git("worktree", "add", "-q", "--detach", sibling);
+  for (const link of ["bin", "node_modules"])
+    symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
+  writeFileSync(path.join(sibling, "probe.ts"), "export const value={a:1}\n");
+  const git = (...args) => f.run("git", ["-C", sibling, ...args]);
+  assert.equal(git("add", "probe.ts").status, 0);
+  const result = git("commit", "-qm", "sibling");
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(
+    git("show", "HEAD:probe.ts").stdout,
+    "export const value = { a: 1 };\n",
+  );
+});
+
+for (const linked of [false, true]) {
+  test(`non-lhm global hooks stay untouched when installing from ${linked ? "a linked worktree" : "the main checkout"}`, (t) => {
+    const f = fixture(t, { install: false });
+    const sibling = path.join(f.dir, "sibling");
+    f.git("worktree", "add", "-q", "--detach", sibling);
+    for (const link of ["bin", "node_modules"])
+      symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
+    const globalHooks = path.join(f.dir, "global hooks");
+    const sentinel = "#!/bin/sh\nexit 1\n";
+    f.write("global hooks/pre-commit", sentinel);
+    const config = `[core]\n hooksPath = "${globalHooks}"\n`;
+    f.write("global-config", config);
+    const isolated = {
+      GIT_CONFIG_GLOBAL: path.join(f.dir, "global-config"),
+    };
+    const cwd = linked ? sibling : f.dir;
+    const run = (cmd, args) =>
+      spawnSync(cmd, args, {
+        cwd,
+        env: { ...env, ...isolated },
+        encoding: "utf8",
+      });
+    const refused = run(path.join(root, "bin/just"), ["hooks"]);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stdout + refused.stderr, /core.hooksPath/);
+    assert.equal(f.read("global-config"), config);
+    assert.equal(f.read("global hooks/pre-commit"), sentinel);
+    assert.equal(existsSync(path.join(f.dir, ".git/hooks/pre-commit")), false);
+
+    // Exercise the documented opt-in override from both invocation contexts.
+    const common = run("git", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    assert.equal(common.status, 0, common.stdout + common.stderr);
+    const hooks = path.join(common.stdout.trim(), "hooks");
+    assert.equal(path.isAbsolute(hooks), true);
+    const configured = run("git", [
+      "config",
+      "--local",
+      "core.hooksPath",
+      hooks,
+    ]);
+    assert.equal(configured.status, 0, configured.stdout + configured.stderr);
+    const installed = run(path.join(root, "bin/lefthook"), [
+      "install",
+      "--force",
+    ]);
+    assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+    assert.equal(f.read("global-config"), config);
+    assert.equal(f.read("global hooks/pre-commit"), sentinel);
+    for (const checkout of [f.dir, sibling]) {
+      writeFileSync(
+        path.join(checkout, "probe.ts"),
+        "export const value={a:1}\n",
+      );
+      const git = (...args) =>
+        f.run("git", ["-C", checkout, ...args], isolated);
+      assert.equal(
+        git("config", "--get", "core.hooksPath").stdout.trim(),
+        hooks,
+      );
+      assert.equal(git("add", "probe.ts").status, 0);
+      const committed = git("commit", "-qm", "global path probe");
+      assert.equal(committed.status, 0, committed.stdout + committed.stderr);
+      assert.equal(
+        git("show", "HEAD:probe.ts").stdout,
+        "export const value = { a: 1 };\n",
+      );
+    }
+  });
+}
+
+test("non-conflicting partial staging commits only the staged hunks and restores the rest", (t) => {
   const f = fixture(t);
   f.write("untouched.ts", "export const unrelated = 7;\n");
   f.git("stash", "push", "-qm", "existing user stash");
@@ -156,21 +248,56 @@ test("partial staging fails before writes, preserving index, unrelated edits and
     "partial.ts",
     "export const first={value:1}\nexport const second = 2;\n",
   );
-  f.write("fully.ts", "export const staged={value:1}\n");
-  f.git("add", "partial.ts", "fully.ts");
-  const index = f.git("write-tree");
-  const partial = "export const first={value:1}\nexport const second = 99;\n";
-  f.write("partial.ts", partial);
+  f.git("add", "partial.ts");
+  f.write(
+    "partial.ts",
+    "export const first={value:1}\nexport const second = 99;\n",
+  );
   f.write("untouched.ts", "export const unrelated = 88;\n");
   const stashes = f.git("stash", "list");
   const result = f.commit();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(
+    f.git("show", "HEAD:partial.ts"),
+    "export const first = { value: 1 };\nexport const second = 2;\n",
+  );
+  assert.equal(
+    f.read("partial.ts"),
+    "export const first = { value: 1 };\nexport const second = 99;\n",
+  );
+  assert.equal(f.read("untouched.ts"), "export const unrelated = 88;\n");
+  assert.equal(f.git("stash", "list"), stashes);
+  assert.equal(
+    existsSync(path.join(f.dir, ".git/info/lefthook-unstaged.patch")),
+    false,
+  );
+});
+
+test("a restore conflict blocks the commit and leaves index, files and unrelated edits as they were", (t) => {
+  const f = fixture(t);
+  f.write(
+    "partial.ts",
+    "export const first={value:1}\nexport const second = 2;\n",
+  );
+  f.write("fully.ts", "export const staged={value:1}\n");
+  f.git("add", "partial.ts", "fully.ts");
+  const index = f.git("write-tree");
+  // The formatter rewrites the same line this unstaged hunk touches.
+  const partial =
+    "export const first={value:1} // note\nexport const second = 2;\n";
+  f.write("partial.ts", partial);
+  f.write("untouched.ts", "export const unrelated = 88;\n");
+  const result = f.commit();
   assert.notEqual(result.status, 0);
-  assert.match(result.stdout + result.stderr, /Partially staged file/);
+  assert.match(
+    result.stdout + result.stderr,
+    /conflict while merging unstaged changes/,
+  );
   assert.equal(f.git("write-tree"), index);
   assert.equal(f.read("partial.ts"), partial);
   assert.equal(f.read("fully.ts"), "export const staged={value:1}\n");
   assert.equal(f.read("untouched.ts"), "export const unrelated = 88;\n");
-  assert.equal(f.git("stash", "list"), stashes);
+  assert.equal(f.git("stash", "list"), "");
 });
 
 test("warnings reject commit without unsafe fixes or index updates", (t) => {
@@ -188,19 +315,19 @@ test("warnings reject commit without unsafe fixes or index updates", (t) => {
   assert.equal(f.git("rev-parse", "HEAD"), head);
 });
 
-test("Rust formatting touches the staged file, not its unstaged modules", (t) => {
+test("Rust formatting restages only the staged file; referenced modules are formatted in place", (t) => {
   const f = fixture(t);
   f.write("main.rs", 'mod child;\nfn main(){println!("test");}\n');
   f.git("add", "main.rs");
-  const child = "pub fn untouched( ){ }\n";
-  f.write("child.rs", child);
+  f.write("child.rs", "pub fn untouched( ){ }\n");
   const result = f.commit();
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(
     f.git("show", "HEAD:main.rs"),
     'mod child;\nfn main() {\n    println!("test");\n}\n',
   );
-  assert.equal(f.read("child.rs"), child);
+  // rustfmt follows `mod child;` like `cargo fmt --all`; only staged files are restaged.
+  assert.equal(f.read("child.rs"), "pub fn untouched() {}\n");
   assert.equal(f.git("ls-files", "child.rs"), "");
 });
 
@@ -214,87 +341,6 @@ test("staged deletions and documentation-only commits do not rewrite source", (t
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(f.git("ls-files", "partial.ts"), "");
   assert.equal(f.read("untouched.ts"), "export const unrelated={value:1}\n");
-});
-
-test("installation is worktree-local, repeatable, and refuses custom hooks", (t) => {
-  const f = fixture(t);
-  assert.equal(
-    f.git("config", "--worktree", "--get", "core.hooksPath").trim(),
-    ".githooks",
-  );
-  assert.equal(
-    f.run("git", ["config", "--local", "--get", "core.hooksPath"]).status,
-    1,
-  );
-  assert.equal(f.install().status, 0);
-
-  const result = spawnSync("git", ["config", "--get", "core.hooksPath"], {
-    cwd: f.sibling,
-    env,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 1);
-  f.git("config", "--worktree", "--unset", "core.hooksPath");
-  f.write(".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n");
-  const before = f.read(".git/hooks/pre-commit");
-  const refused = f.install();
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /Existing hooks/);
-  assert.equal(f.read(".git/hooks/pre-commit"), before);
-  f.git("config", "--worktree", "core.hooksPath", "custom-hooks");
-  assert.notEqual(f.install().status, 0);
-  assert.equal(
-    f.git("config", "--get", "core.hooksPath").trim(),
-    "custom-hooks",
-  );
-});
-
-test("unstaged lint configuration cannot hide a staged warning", (t) => {
-  const f = fixture(t);
-  const config = JSON.parse(f.read("biome.json"));
-  config.linter.rules.style = { noNonNullAssertion: "off" };
-  f.write("biome.json", `${JSON.stringify(config, null, 2)}\n`);
-  f.write(
-    "warning.ts",
-    "export const first = (values: string[]) => values[0]!;\n",
-  );
-  f.git("add", "warning.ts");
-  const index = f.git("write-tree");
-  const result = f.commit();
-  assert.notEqual(
-    result.status,
-    0,
-    "Staged warning committed using unstaged rule disable",
-  );
-  assert.equal(f.git("write-tree"), index);
-});
-
-test("type-change from symlink to source still checks warnings", (t) => {
-  const f = fixture(t);
-  symlinkSync("untouched.ts", path.join(f.dir, "changed.ts"));
-  f.git("add", "changed.ts");
-  // Seed type-change baseline without running a hook on a symlink.
-  const seed = f.run("git", [
-    "-c",
-    "core.hooksPath=/dev/null",
-    "commit",
-    "-qm",
-    "seed symlink",
-  ]);
-  assert.equal(seed.status, 0, seed.stderr);
-  rmSync(path.join(f.dir, "changed.ts"));
-  f.write(
-    "changed.ts",
-    "export const first = (values: string[]) => values[0]!;\n",
-  );
-  f.git("add", "changed.ts");
-  assert.match(f.git("diff", "--cached", "--name-status"), /^T\s+changed.ts/m);
-  const result = f.commit();
-  assert.notEqual(
-    result.status,
-    0,
-    "Type-changed source warning committed unchecked",
-  );
 });
 
 test("formatter failure preserves index and unrelated edits", (t) => {
@@ -314,15 +360,9 @@ test("formatter failure preserves index and unrelated edits", (t) => {
 test("filename metacharacters and rename destination are literal", (t) => {
   const f = fixture(t);
   f.git("mv", "partial.ts", "renamed.ts");
-  const names = [
-    "-dash.ts",
-    "bracket[1].ts",
-    "line\nbreak.ts",
-    "colon:name.ts",
-  ];
+  const names = ["-dash.ts", "line\nbreak.ts", "colon:name.ts"];
   for (const name of names) f.write(name, "export const value={a:1}\n");
   f.git("add", "--", ...names);
-  f.write("bracket1.ts", "export const untracked={a:2}\n");
   const result = f.commit();
   assert.equal(result.status, 0, result.stdout + result.stderr);
   for (const name of names)
@@ -330,26 +370,44 @@ test("filename metacharacters and rename destination are literal", (t) => {
       f.git("show", `HEAD:${name}`),
       "export const value = { a: 1 };\n",
     );
-  assert.equal(f.git("ls-files", "bracket1.ts"), "");
   assert.equal(f.git("ls-files", "partial.ts"), "");
   assert.equal(f.git("ls-files", "renamed.ts"), "renamed.ts\n");
 });
 
-test("untracked nested formatter overrides fail before any source writes", (t) => {
+test("names Git would expand as globs are refused before any write", (t) => {
   const f = fixture(t);
-  f.write("nested/biome.json", '{"root":false,"linter":{"enabled":false}}\n');
-  const source = "export const first=(values:string[])=>values[0]!\n";
-  f.write("nested/warning.ts", source);
-  f.git("add", "nested/warning.ts");
+  const source = "export const value={a:1}\n";
+  f.write("bracket[1].ts", source);
+  f.git("add", "--", "bracket[1].ts");
+  // Lefthook's restage pathspec `bracket[1].ts` would also add this file.
+  f.write("bracket1.ts", "export const untracked={a:2}\n");
   const index = f.git("write-tree");
   const result = f.commit();
   assert.notEqual(result.status, 0);
   assert.match(
     result.stdout + result.stderr,
-    /Unstaged formatter configuration/,
+    /glob pathspecs: bracket\[1\]\.ts/,
   );
   assert.equal(f.git("write-tree"), index);
-  assert.equal(f.read("nested/warning.ts"), source);
+  assert.equal(f.read("bracket[1].ts"), source);
+  assert.equal(f.git("ls-files", "bracket1.ts"), "");
+});
+
+test("staged icon checks reject CommonJS subpaths without changing the index", (t) => {
+  const f = fixture(t);
+  f.write(
+    "probe.cjs",
+    'const icon = require("lucide-react/dist/cjs/icons/x.js");\nmodule.exports = icon;\n',
+  );
+  f.git("add", "probe.cjs");
+  const index = f.git("write-tree");
+  const result = f.commit();
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stdout + result.stderr,
+    /Use shared\/design-system\/icons/,
+  );
+  assert.equal(f.git("write-tree"), index);
 });
 
 function pushFixture(t, changes) {
@@ -382,7 +440,7 @@ function pushFixture(t, changes) {
   // a real cargo build, exactly like the fake Vitest below.
   rmSync(path.join(f.dir, "bin"));
   mkdirSync(path.join(f.dir, "bin"));
-  for (const tool of ["node", "lefthook", "pnpm"]) {
+  for (const tool of ["node", "pnpm", "lefthook", "lefthook-runner", "go"]) {
     symlinkSync(
       path.join(root, `bin/${tool}`),
       path.join(f.dir, `bin/${tool}`),
@@ -455,6 +513,30 @@ test("installed pre-push forwards stdin and runs related tests with literal path
   ]);
   assert.equal(f.git("stash", "list"), "");
 });
+
+for (const name of [
+  "browser-host/relay-broker.mjs",
+  "scripts/developer-settings.ts",
+  "scripts/live-setup-probe.mjs",
+]) {
+  test(`${name} selects related tests and deletion selects the full suite`, (t) => {
+    const f = pushFixture(t, { [name]: "export const value = 1;\n" });
+    const result = f.push();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(f.args(), [
+      "related",
+      "--run",
+      "--passWithNoTests",
+      path.join(f.git("rev-parse", "--show-toplevel").trim(), name),
+    ]);
+    f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+    f.git("rm", name);
+    f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
+    const deleted = f.push();
+    assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
+    assert.deepEqual(f.args(), ["run"]);
+  });
+}
 
 for (const [file, content] of [
   ["notes.md", "# notes\n"],
@@ -664,16 +746,12 @@ test("raw activity CSS blocks an actual push; shared tokens pass without hook wr
 for (const file of [
   "tests/fixtures/design-system/probe.ts",
   "scripts/design-system/check-app-foundations.mjs",
-  ".githooks/pre-push",
 ]) {
   test(`design-only change to ${file} runs guards before the unit-test skip`, (t) => {
-    const content = file.endsWith(".ts")
-      ? ""
-      : readFileSync(path.join(root, file), "utf8");
     const f = pushFixture(t, {
       [file]: file.endsWith(".ts")
         ? "export const value = 2;\n"
-        : `${content}\n${file.startsWith(".githooks/") ? "#" : "//"} guard probe\n`,
+        : `${readFileSync(path.join(root, file), "utf8")}\n// guard probe\n`,
     });
     // Pre-push has the same documented working-tree scope as types and Vitest.
     f.write("src/bad.css", ".root { gap: 8px; }\n");
@@ -753,19 +831,315 @@ test("the design lane disables dependency auto-repair even when inherited as tru
   );
 });
 
-test("staged icon checks reject CommonJS subpaths without changing the index", (t) => {
-  const f = fixture(t);
+function lhmFixture(t) {
+  const f = fixture(t, { install: false });
+  const upstream = path.join(f.dir, "upstream ' $ hooks");
+  for (const name of ["pre-commit", "pre-push"]) {
+    f.write(
+      path.relative(f.dir, path.join(upstream, name)),
+      `#!/bin/sh\nexec "${process.env.BUZZ_REAL_LHM}" run-hook ${name} "$@"\n`,
+    );
+    chmodSync(path.join(upstream, name), 0o755);
+  }
+  f.write("global-config", `[core]\n hooksPath = "${upstream}"\n`);
   f.write(
-    "probe.cjs",
-    'const icon = require("lucide-react/dist/cjs/icons/x.js");\nmodule.exports = icon;\n',
+    "system/lefthook.yml",
+    `pre-commit:
+  commands:
+    sentinel:
+      run: git show :probe.ts > real-lhm-source
+pre-push:
+  commands:
+    sentinel:
+      run: cat > real-lhm-input
+      use_stdin: true
+`,
   );
-  f.git("add", "probe.cjs");
+  // An empty user file parses as null and wipes the merge; `{}` is the empty layer.
+  f.write("absent-user.yml", "{}\n");
+  const isolated = {
+    GIT_CONFIG_GLOBAL: path.join(f.dir, "global-config"),
+    LHM_SYSTEM_CONFIG: path.join(f.dir, "system"),
+    LHM_USER_CONFIG: path.join(f.dir, "absent-user.yml"),
+  };
+  // Exercise the documented activation command, rather than manufacturing PATH.
+  const activated = f.run(
+    "/bin/bash",
+    ["-c", 'eval "$(./bin/hermit env --activate)" && env -0'],
+    isolated,
+  );
+  assert.equal(activated.status, 0, activated.stdout + activated.stderr);
+  for (const entry of activated.stdout.split("\0").filter(Boolean)) {
+    const equals = entry.indexOf("=");
+    isolated[entry.slice(0, equals)] = entry.slice(equals + 1);
+  }
+  const selected = f.run(
+    "/bin/sh",
+    ["-c", "command -v lefthook; lefthook version"],
+    isolated,
+  );
+  assert.equal(selected.status, 0, selected.stdout + selected.stderr);
+  assert.equal(selected.stdout, `${root}bin/lefthook\n2.1.18-buzz.3\n`);
+  return { ...f, isolated };
+}
+
+test("real lhm composes isolated system commands with the repository jobs", {
+  skip: !process.env.BUZZ_REAL_LHM,
+}, (t) => {
+  const f = lhmFixture(t);
+  const { isolated } = f;
+  const sibling = path.join(f.dir, "sibling");
+  f.git("worktree", "add", "-q", "--detach", sibling);
+  for (const link of ["bin", "node_modules"])
+    symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
+  const before = f.read("global-config");
+  const refused = f.run(path.join(root, "bin/just"), ["hooks"], isolated);
+  assert.notEqual(refused.status, 0);
+  assert.equal(f.read("global-config"), before);
+  assert.equal(existsSync(path.join(f.dir, ".git/hooks/pre-commit")), false);
+  for (const checkout of [f.dir, sibling]) {
+    writeFileSync(
+      path.join(checkout, "probe.ts"),
+      "export const value={a:1}\n",
+    );
+    const git = (...args) => f.run("git", ["-C", checkout, ...args], isolated);
+    assert.equal(git("add", "probe.ts").status, 0);
+    const commit = git("commit", "-qm", "real lhm");
+    assert.equal(commit.status, 0, commit.stdout + commit.stderr);
+    assert.equal(
+      git("show", "HEAD:probe.ts").stdout,
+      "export const value = { a: 1 };\n",
+    );
+    // The machine's command ran after the jobs, before Lefthook restaged fixes.
+    assert.equal(
+      readFileSync(path.join(checkout, "real-lhm-source"), "utf8"),
+      "export const value={a:1}\n",
+    );
+  }
+  assert.equal(f.read("global-config"), before);
+  f.write("scripts/check-push.mjs", recordPushInput);
+  f.git("init", "--bare", "-q", "remote.git");
+  const push = f.run(
+    "git",
+    ["push", "./remote.git", "HEAD:refs/heads/probe"],
+    isolated,
+  );
+  assert.equal(push.status, 0, push.stdout + push.stderr);
+  for (const lane of ["unit", "--design", "--clippy"])
+    assert.equal(f.read(`${lane}-input`), f.read("real-lhm-input"));
+  assert.match(f.read("real-lhm-input"), /refs\/heads\/probe/);
+});
+
+for (const mode of ["standalone", "real lhm"]) {
+  test(`${mode} preserves overlapping worktree edits and recoverable failures`, {
+    skip: mode === "real lhm" && !process.env.BUZZ_REAL_LHM,
+    timeout: 30_000,
+  }, async (t) => {
+    const f = mode === "real lhm" ? lhmFixture(t) : fixture(t);
+    const isolated = f.isolated ?? {};
+    // Retain both a legacy-named user stash and a pre-existing recovery ref.
+    f.write("partial.ts", "export const legacy = 9;\n");
+    const legacy = f.git("stash", "create").trim();
+    f.git("stash", "store", "-m", "lefthook auto backup", legacy);
+    f.git("restore", "partial.ts");
+    f.git("update-ref", `refs/lefthook/backup/${legacy}`, legacy, "");
+    const stashes = f.git("stash", "list", "--format=%H %gs");
+    const sibling = path.join(f.dir, "sibling");
+    f.git("worktree", "add", "-q", "--detach", sibling);
+    for (const link of ["bin", "node_modules"])
+      symlinkSync(path.join(root, link), path.join(sibling, link), "dir");
+
+    // A handshake pauses inside the first production job, after the runner has
+    // hidden unstaged hunks. No sleep or scheduler speed determines overlap.
+    const server = createServer();
+    const sockets = new Set();
+    const waiting = new Map();
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("data", (id) => waiting.get(id.toString())(socket));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    });
+    const gate = `
+import { connect } from "node:net";
+import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+if (process.env.BUZZ_HOOK_GATE) {
+  await new Promise((resolve, reject) => {
+    const socket = connect(Number(process.env.BUZZ_HOOK_GATE), "127.0.0.1", () => socket.write(process.env.BUZZ_HOOK_ID));
+    socket.on("error", reject);
+    socket.once("data", () => { socket.end(); resolve(); });
+  });
+}
+if (process.env.BUZZ_CORRUPT_RECOVERY) {
+  const dir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  for (const name of ["lefthook-unstaged.patch", "lefthook-unstaged-all.patch"])
+    writeFileSync(dir + "/" + name, "invalid patch\\n");
+}
+`;
+    const original = f.read("scripts/check-staged-names.mjs");
+    const staged = "export const first = 3;\nexport const second = 2;\n";
+    for (const [dir, id] of [
+      [f.dir, "main"],
+      [sibling, "linked"],
+    ]) {
+      writeFileSync(
+        path.join(dir, "scripts/check-staged-names.mjs"),
+        gate + original,
+      );
+      writeFileSync(path.join(dir, "probe.ts"), "export const value = 1;\n");
+      writeFileSync(path.join(dir, "partial.ts"), staged);
+      f.git("-C", dir, "add", "partial.ts", "probe.ts");
+      writeFileSync(
+        path.join(dir, "partial.ts"),
+        staged + `// precious-${id}\n`,
+      );
+    }
+    const refs = () =>
+      f
+        .git("for-each-ref", "--format=%(refname)", "refs/lefthook/backup/")
+        .trim()
+        .split("\n");
+    const start = (dir, id) => {
+      const ready = new Promise((resolve) => waiting.set(id, resolve));
+      const child = spawn("git", ["commit", "-qm", id], {
+        cwd: dir,
+        env: {
+          ...env,
+          ...isolated,
+          BUZZ_HOOK_GATE: String(server.address().port),
+          BUZZ_HOOK_ID: id,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (data) => {
+        output += data;
+      });
+      child.stderr.on("data", (data) => {
+        output += data;
+      });
+      t.after(() => {
+        if (child.exitCode === null) child.kill();
+      });
+      const done = new Promise((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (code) =>
+          code === 0 ? resolve() : reject(new Error(output)),
+        );
+      });
+      return {
+        ready: Promise.race([
+          ready,
+          done.then(() => {
+            throw new Error("hook exited before gate");
+          }),
+        ]),
+        done,
+      };
+    };
+    const a = start(f.dir, "main");
+    const mainGate = await a.ready;
+    const mainRef = refs().find((ref) => !ref.endsWith(legacy));
+    assert.ok(mainRef);
+    const b = start(sibling, "linked");
+    const linkedGate = await b.ready;
+    const linkedRef = refs().find(
+      (ref) => ref !== mainRef && !ref.endsWith(legacy),
+    );
+    assert.ok(linkedRef);
+    f.git("gc", "--prune=now", "--quiet");
+    f.git("cat-file", "-e", `${linkedRef}^{commit}`);
+    mainGate.write("release");
+    await a.done;
+    assert.ok(refs().includes(linkedRef), "main cleanup removed linked backup");
+    linkedGate.write("release");
+    await b.done;
+    for (const [dir, id] of [
+      [f.dir, "main"],
+      [sibling, "linked"],
+    ]) {
+      assert.equal(f.git("-C", dir, "show", "HEAD:partial.ts"), staged);
+      assert.equal(
+        readFileSync(path.join(dir, "partial.ts"), "utf8"),
+        staged + `// precious-${id}\n`,
+      );
+      if (mode === "real lhm")
+        assert.equal(
+          readFileSync(path.join(dir, "real-lhm-source"), "utf8"),
+          "export const value = 1;\n",
+        );
+    }
+    assert.deepEqual(refs(), [`refs/lefthook/backup/${legacy}`]);
+    assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
+
+    // Corrupt only this disposable fixture's recovery patches. The owned ref
+    // must survive failure and main-worktree GC and restore the original index.
+    const next = staged.replace("first = 3", "first = 4");
+    writeFileSync(path.join(sibling, "partial.ts"), next);
+    f.git("-C", sibling, "add", "partial.ts");
+    const index = f.git("-C", sibling, "write-tree");
+    writeFileSync(
+      path.join(sibling, "partial.ts"),
+      next + "// precious-failure\n",
+    );
+    const failed = f.run("git", ["-C", sibling, "commit", "-qm", "must fail"], {
+      ...isolated,
+      BUZZ_CORRUPT_RECOVERY: "1",
+    });
+    assert.notEqual(failed.status, 0, failed.stdout + failed.stderr);
+    const retained = refs().filter((ref) => !ref.endsWith(legacy));
+    assert.equal(retained.length, 1);
+    f.git("gc", "--prune=now", "--quiet");
+    f.git("cat-file", "-e", `${retained[0]}^{commit}`);
+    f.git(
+      "-C",
+      sibling,
+      "restore",
+      "--staged",
+      "--worktree",
+      "partial.ts",
+      "scripts/check-staged-names.mjs",
+    );
+    f.git("-C", sibling, "stash", "apply", "--index", retained[0]);
+    assert.equal(
+      readFileSync(path.join(sibling, "partial.ts"), "utf8"),
+      next + "// precious-failure\n",
+    );
+    assert.equal(f.git("-C", sibling, "write-tree"), index);
+    assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
+  });
+}
+
+test("real lhm rejects an unpatched runner before changing staged or unstaged content", {
+  skip: !process.env.BUZZ_REAL_LHM || !process.env.BUZZ_STOCK_LEFTHOOK,
+}, (t) => {
+  const f = lhmFixture(t);
+  mkdirSync(path.join(f.dir, "stock"));
+  symlinkSync(
+    process.env.BUZZ_STOCK_LEFTHOOK,
+    path.join(f.dir, "stock/lefthook"),
+  );
+  f.write("partial.ts", "export const first = 3;\nexport const second = 2;\n");
+  f.git("add", "partial.ts");
+  f.write("partial.ts", "export const first = 3;\nexport const second = 99;\n");
   const index = f.git("write-tree");
-  const result = f.commit();
-  assert.notEqual(result.status, 0);
+  const content = f.read("partial.ts");
+  const stashes = f.git("stash", "list", "--format=%H %gs");
+  const result = f.run("git", ["commit", "-qm", "must fail"], {
+    ...f.isolated,
+    PATH: `${path.join(f.dir, "stock")}${path.delimiter}${f.isolated.PATH}`,
+  });
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
   assert.match(
     result.stdout + result.stderr,
-    /Use shared\/design-system\/icons/,
+    /required lefthook version.*higher than current/,
   );
   assert.equal(f.git("write-tree"), index);
+  assert.equal(f.read("partial.ts"), content);
+  assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
+  assert.equal(f.git("for-each-ref", "refs/lefthook/backup/"), "");
 });

@@ -1,3 +1,5 @@
+import { workflowLabel } from "../../features/relay/workflow-attribution";
+import { LightningIcon } from "../../shared/design-system/icons";
 import {
   useCallback,
   useEffect,
@@ -312,6 +314,9 @@ export function InboxView({
   const profileKey = [
     ...new Set([
       ...authorIds,
+      ...visible.flatMap((item) =>
+        item.workflowOwnerId ? [item.workflowOwnerId] : [],
+      ),
       ...visible.flatMap((item) => {
         const channel = list.channels.find(
           (entry) => entry.id === item.channelId,
@@ -625,14 +630,18 @@ export function InboxView({
                   const channel = list.channels.find(
                     (candidate) => candidate.id === item.channelId,
                   );
-                  const profile = profiles.get(item.authorId);
-                  const sender = name(
-                    item.authorId,
+                  const displayId = item.workflowOwnerId ?? item.authorId;
+                  const profile = profiles.get(displayId);
+                  const resolved = name(
+                    displayId,
                     profile?.name ??
-                      formatPublicKey(item.authorId) ??
+                      formatPublicKey(displayId) ??
                       "Unknown sender",
                     channel?.members,
                   );
+                  const sender = item.workflowOwnerId
+                    ? workflowLabel(resolved)
+                    : resolved;
                   const dmName = dmLabel(
                     channel?.participants,
                     profiles,
@@ -689,12 +698,21 @@ export function InboxView({
                                 size="default"
                                 alt=""
                                 fallback={sender}
+                                fallbackContent={
+                                  item.workflowOwnerId ? (
+                                    <LightningIcon size={20} />
+                                  ) : undefined
+                                }
                                 src={
-                                  profile?.picture
+                                  !item.workflowOwnerId && profile?.picture
                                     ? session.media(profile.picture)
                                     : undefined
                                 }
-                                shape={profile?.isAgent ? "squircle" : "circle"}
+                                shape={
+                                  item.workflowOwnerId || profile?.isAgent
+                                    ? "squircle"
+                                    : "circle"
+                                }
                               />
                             }
                             label={

@@ -1,8 +1,12 @@
+import { editSidebarRecord, projectSidebarRecord } from "./sidebar-registers";
 import {
-  editSidebarRecord,
-  nextSidebarSectionOrder,
-  projectSidebarRecord,
-} from "./sidebar-registers";
+  editSidebarAssignment,
+  editSidebarSort,
+  editSidebarToggle,
+  validSidebarAssignment,
+  validSidebarChannelId,
+  validSidebarSort,
+} from "./sidebar-edits";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
 import {
@@ -183,60 +187,11 @@ export function nativeSidebar(transport: ReadTransport) {
       signal: AbortSignal,
     ): Promise<SidebarGroups> {
       const { channelId, sectionId, createSection } = intent;
-      if (
-        !channelId.trim() ||
-        channelId.length > 256 ||
-        (sectionId !== undefined &&
-          (!sectionId.trim() || sectionId.length > 256)) ||
-        (createSection &&
-          (sectionId !== undefined ||
-            !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
-              createSection.id,
-            ) ||
-            !createSection.name.trim() ||
-            createSection.name.length > 256))
-      )
+      if (!validSidebarAssignment(intent))
         throw new Error("Invalid sidebar assignment intent");
       const section = createSection?.id ?? sectionId;
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const existing = current.sections as SidebarGroups["sections"];
-        const sections = [...existing];
-        if (createSection) {
-          const name = createSection.name.trim();
-          const found = sections.find((entry) => entry.id === section);
-          if (found && found.name !== name)
-            throw new Error("The new section changed; reload and try again");
-          if (!found)
-            sections.push({
-              id: createSection.id,
-              name,
-              order: nextSidebarSectionOrder(current),
-            });
-        }
-        if (
-          section !== undefined &&
-          !sections.some((entry) => entry.id === section)
-        )
-          throw new Error("Sidebar group no longer exists");
-        const writes: [string[], unknown][] = [
-          [["a", channelId], section ?? null],
-        ];
-        if (createSection && !existing.some(({ id }) => id === section)) {
-          const added = sections.find(({ id }) => id === section);
-          if (!added) throw new Error("Sidebar group no longer exists");
-          writes.push(
-            [["s", added.id, "name"], added.name],
-            [["s", added.id, "icon"], null],
-            [["s", added.id, "order"], added.order],
-            [["s", added.id, "live"], true],
-          );
-        }
-        const next = editSidebarRecord(
-          "channel-sections",
-          current,
-          createdAt,
-          writes,
-        );
+        const next = editSidebarAssignment(current, createdAt, intent);
         const { sections: projected, assignments: mapped } = project(
           "channel-sections",
           next,
@@ -292,21 +247,10 @@ export function nativeSidebar(transport: ReadTransport) {
       sectionIds: readonly string[],
       signal: AbortSignal,
     ) {
-      if (
-        group.length > 264 ||
-        !["alpha", "recent"].includes(mode) ||
-        sectionIds.length > 100 ||
-        sectionIds.some((id) => !id.trim() || id.length > 256) ||
-        (!["starred", "channels", "forums", "dms"].includes(group) &&
-          !(
-            group.startsWith("section:") && sectionIds.includes(group.slice(8))
-          ))
-      )
+      if (!validSidebarSort(group, mode, sectionIds))
         throw new Error("Invalid sidebar sort intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const next = editSidebarRecord("channel-sort", current, createdAt, [
-          [["g", group], mode === "alpha" ? null : mode],
-        ]);
+        const next = editSidebarSort(current, createdAt, group, mode);
         return {
           next,
           result: project("channel-sort", next, sectionIds).sort ?? {},
@@ -331,44 +275,12 @@ export function nativeSidebar(transport: ReadTransport) {
   ) {
     const { channelId } = intent;
     const enabled = intent[field];
-    if (
-      !channelId.trim() ||
-      channelId.length > 256 ||
-      typeof enabled !== "boolean"
-    )
+    if (!validSidebarChannelId(channelId) || typeof enabled !== "boolean")
       throw new Error(
         `Invalid sidebar ${field === "starred" ? "star" : "mute"} intent`,
       );
     const prepare = (current: Record<string, unknown>) => {
-      const channels = current.channels as Record<
-        string,
-        Record<string, unknown>
-      >;
-      const previous = Object.hasOwn(channels, channelId)
-        ? channels[channelId]
-        : undefined;
-      if (
-        previous?.[field] === enabled ||
-        (!previous && !enabled && field === "starred")
-      )
-        return {
-          next: current,
-          result: project(coordinate, current)[
-            field === "starred" ? "starred" : "muted"
-          ],
-        };
-      const now = Date.now();
-      const next = {
-        ...current,
-        channels: {
-          ...channels,
-          [channelId]: {
-            ...previous,
-            [field]: enabled,
-            updatedAt: Math.max(now, Number(previous?.updatedAt ?? 0) + 1),
-          },
-        },
-      };
+      const next = editSidebarToggle(current, channelId, field, enabled);
       return {
         next,
         result: project(coordinate, next)[

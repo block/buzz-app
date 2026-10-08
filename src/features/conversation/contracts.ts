@@ -20,6 +20,10 @@ export type ComposerToolProps = Readonly<{
    * Prose never resolves to identities. Membership is checked by session delivery.
    * Like insertText, this command is revoked with the tool/destination lifetime. */
   insertMention(recipient: Readonly<{ pubkey: string; name: string }>): boolean;
+  /** All-or-nothing insertion of a saved selection as individual mentions. */
+  insertMentions(
+    recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+  ): boolean;
   /** Atomically insert a host-owned inline resource at the caret. The host validates
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
@@ -94,8 +98,27 @@ export type MessageRenderer = Readonly<{
   matches(message: ChannelMessage): boolean;
   component: ComponentType<{ message: ChannelMessage }>;
 }>;
+/** One ⋯ menu entry for a message. The host owns the menu, focus and row lifetime. */
+export type MessageAction = Readonly<{
+  id: string;
+  title: string;
+  icon?: ComponentType;
+  matches(message: ChannelMessage, session: RelaySession): boolean;
+  /** Mounted by the row after the menu closes; call close() to dismiss. */
+  component: ComponentType<{
+    message: ChannelMessage;
+    session: RelaySession;
+    close(): void;
+  }>;
+  /**
+   * Optional presentation beside the message timestamp, such as a state mark.
+   * Rendered only while `matches` passes: hiding the menu entry hides the mark.
+   */
+  marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
+}>;
 export type ConversationExtensions = Readonly<{
   messages?: ContributionReader<MessageRenderer>;
+  actions?: ContributionReader<MessageAction>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
@@ -120,10 +143,16 @@ export type CompletionQuery = Readonly<{
   query: string;
 }>;
 export type CompletionEdit =
-  | Readonly<{ text: string; mention?: never }>
+  | Readonly<{ text: string; mention?: never; mentions?: never }>
   | Readonly<{
       mention: Readonly<{ pubkey: string; name: string }>;
       text?: never;
+      mentions?: never;
+    }>
+  | Readonly<{
+      mentions: readonly Readonly<{ pubkey: string; name: string }>[];
+      text?: never;
+      mention?: never;
     }>;
 export type CompletionSuggestion = Readonly<{
   id: string;

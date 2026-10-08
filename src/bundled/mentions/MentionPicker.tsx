@@ -1,3 +1,4 @@
+import { TeamMentionAvatars } from "./TeamMentionAvatars";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -10,8 +11,10 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AtIcon } from "../../shared/design-system/icons/index";
 import { useEffect, useId, useRef, useState } from "react";
+import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { RelaySession } from "../../features/relay/session";
+import { outsideMentionDetail } from "./mention-candidates";
 import "../../shared/design-system/styles/scrollbars.css";
 import styles from "./Mentions.module.css";
 
@@ -24,6 +27,7 @@ export function MentionPicker({
   disabled,
   inviteAgents,
   select,
+  selectTeam,
 }: {
   session: RelaySession;
   scope: string;
@@ -31,6 +35,7 @@ export function MentionPicker({
   disabled: boolean;
   inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
+  selectTeam?: ComposerToolProps["insertMentions"];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -58,6 +63,14 @@ export function MentionPicker({
     roster: draftRoster,
     choices: candidates,
   } = model;
+  const teams = useTeamMentions(
+    session,
+    channelId,
+    inviteAgents,
+    search,
+    model,
+    open && !disabled && !!selectTeam,
+  );
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
@@ -216,7 +229,9 @@ export function MentionPicker({
               <Button
                 type="button"
                 onClick={() =>
-                  void session.agentChoices.refresh(!!inviteAgents)
+                  void session.agentChoices.refresh(
+                    !!inviteAgents || teams.includeLegacy,
+                  )
                 }
               >
                 Retry agent list
@@ -229,6 +244,14 @@ export function MentionPicker({
               >
                 Retry archive information
               </Button>
+            )}
+            {teams.status && (
+              <p role="status">
+                {teams.status}{" "}
+                {teams.canRetry && (
+                  <Button onClick={teams.retry}>Retry teams</Button>
+                )}
+              </p>
             )}
             {error && <p role="status">{error}</p>}
             {!draftRoster && list.error && (
@@ -275,7 +298,7 @@ export function MentionPicker({
                               ? parentAdmission
                                 ? "Adds to session and parent channel when you send"
                                 : "Adds to session when you send"
-                              : "Not in channel · Choose whether to add when you send"}
+                              : outsideMentionDetail(channel)}
                           </small>
                         )}
                       </span>
@@ -305,10 +328,38 @@ export function MentionPicker({
                   />
                 ),
               )}
+              {teams.choices.map((team) => (
+                <NavigationItem
+                  key={team.id}
+                  variant="option"
+                  data-mention-choice=""
+                  type="button"
+                  disabled={disabled || !!team.disabled}
+                  label={team.name}
+                  icon={
+                    <TeamMentionAvatars
+                      session={session}
+                      recipients={team.recipients}
+                    />
+                  }
+                  trailing={
+                    <span className="text-caption text-subtle">
+                      {team.detail}
+                    </span>
+                  }
+                  aria-label={`${team.name} · ${team.detail}`}
+                  onClick={() => {
+                    if (team.canSelect() && selectTeam?.(team.recipients)) {
+                      accepted.current = true;
+                      setOpen(false);
+                    }
+                  }}
+                />
+              ))}
               {model.truncated && (
                 <p>Narrow your search to see more members.</p>
               )}
-              {members && !candidates.length && (
+              {members && !candidates.length && !teams.choices.length && (
                 <p>No matching channel members.</p>
               )}
             </div>

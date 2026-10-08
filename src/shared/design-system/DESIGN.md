@@ -69,8 +69,8 @@ never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
 Avatar-only controls use `IconButton variant="avatar"` so the surrounding backdrop
 shows through their cutouts at rest, hover, press, and while a menu is open. The focus
-target stays unmasked. Its keyboard-ring recipe remains subject to the temporary focus
-appearance policy below.
+target stays unmasked. Its keyboard-ring recipe follows the focus appearance
+policy below.
 Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
 uses a semantic green, yellow, or grey role with light and dark values. Its inset
 cutout and dot scale with the existing avatar size; the dot is separate from the
@@ -152,16 +152,24 @@ Use the surface that matches the content and its position in the interface.
 
 ### Floating surfaces
 
-Menus, Select, Popover, and PreviewCard share `floating-surface`: an opaque fill,
-primary boundary, panel radius, and lift. Each component owns its content spacing
-and interaction. Shared material does not make these controls interchangeable.
+Menus, Select, Popover, and PreviewCard share `floating-surface`: a 90% opaque
+mode-aware fill, 8px backdrop blur, standard border, 16px `radius-container` corners,
+and shared lift. `popover-surface` composes this same recipe for feature-owned
+anchored content. Reduced transparency, forced colors, and browsers without blur
+support use the opaque fill.
 
-Default and wide menus, content popovers and pickers use 16px
-`radius-container` corners. Dialogs and alert dialogs use 20px `radius-panel`
-corners. Short action menus and compact account popovers opt into 8px
-`radius-row` corners and a 4px list inset. Their inner fills derive
-from that outer geometry. Choose compact
-for the content, never automatically because the viewport is narrow.
+Default menus, selects, and list popovers share a 4px list inset. Content popovers
+use 12px padding. Menu items and select options share 8px vertical / 12px
+horizontal padding and corners derived from the outer radius and inset. Their hover treatment also comes from the same rule. Use Menu for
+actions and nested submenus, Select for a value, and Popover for interactive
+content; Base UI retains each control's keyboard and focus semantics.
+
+Short action menus and compact account popovers retain 8px `radius-row`
+corners, a 2px list inset, and concentric inner rows. Choose compact for the content,
+never automatically because the viewport is narrow. Dialogs and alert dialogs
+use the same `elevated-material` fill, blur, and accessibility fallback while
+retaining their 20px `radius-panel` corners and modal backdrop. Stepped dialogs
+apply the material to each step; their shared wrapper stays transparent.
 
 ### Corner scale and nesting
 
@@ -219,18 +227,27 @@ A chrome selection can blend into a white panel; choose the appropriate variant
 instead of retinting `--bg-chrome-selected` for one caller. Keep shared behavior
 in one component and show both surface variants in its examples.
 
+A selection and a hover describe the same object, so they occupy the same box.
+The chrome pill fills its tab rather than sitting inset within it; insetting the
+selection alone draws it shorter than the hover beside it, and the two states
+stop agreeing on where a tab is. The container's own padding is the frame.
+
 Panel tabs keep labels at intrinsic width and scroll within the Base UI tablist
 when space is limited. Keyboard navigation reveals the focused tab. The surrounding
 panel grid must have a shrinkable column so tabs do not widen other content.
 
-## Temporary focus appearance
+## Focus appearance
 
-The shared global stylesheet currently hides focus outlines at the designer’s request
-while forms are being polished. The override in `styles/globals.css` takes precedence
-over the keyboard-ring recipes in this guide. This is a known visible-focus
-accessibility exception, not an accessibility pass. Keep focusability,
-Tab order, input modality, selection, and focus restoration intact. Do not add
-local replacement rings or disable keyboard interaction. Shared text fields now use
+Keyboard focus is visible, and the component recipes in this guide own the ring.
+Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
+so a pointer press leaves nothing behind. Keep focusability, Tab order, input
+modality, selection, and focus restoration intact, and do not add a local
+replacement ring where a component recipe already exists.
+
+Shared text fields are the one deliberate exception, and they replace the ring
+rather than removing it. `styles/forms.css` drops the outline for editable
+`.buzz-input`, `.buzz-textarea` and rich textboxes; read-only controls keep their
+keyboard rings. Those fields use
 a border flush with the field perimeter: surface-inset fill and a 1px
 border-prominent stroke fading over 150ms ease for pointer interaction. The
 field-scoped --border variable selects transparent, active, or error color for
@@ -239,8 +256,25 @@ focus and reduced motion change immediately. Composite fields own one stroke
 around the input and actions; error strokes retain priority. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
-and no-container-ring recipes for these fields. Existing component
-recipes remain so this temporary visual decision can be reversed in one place.
+and no-container-ring recipes for these fields.
+
+The composer is the second deliberate exception, and it is a container treatment
+rather than a control ring. `styles/composer.css` clears the textarea's own
+outline and lets `.buzz-composer:focus-within` carry focus on the shell: the 1px
+perimeter border switches to `--border-focus` and a matching 1px ring doubles
+it, so the composite reads as one focused surface instead of a ring around the
+text area inside a bordered box. Measured in the viewer, the stroke moves from
+`rgb(232, 232, 232)` to `rgb(0, 0, 0)` in light and `rgb(35, 35, 35)` to
+`rgb(255, 255, 255)` in dark — 21:1 and 17.4:1 against the panel surface, and
+17.1:1 and 15.7:1 against the resting border, so the change itself is legible.
+Unlike the text-field exception this is not modality-gated, because the shell
+also marks where typing will land. Do not copy the container pattern to a
+control that has a component ring recipe.
+
+`SearchField` is an unresolved gap, not a policy: `styles/search-field.css`
+cancels the ring on both the field and its clear button to match a global
+override that no longer exists, and its 1px perimeter border does not react to
+focus, so the control has no visible focus state. Do not copy it.
 
 ## Surface-aware interactions (proposed)
 
@@ -511,6 +545,9 @@ scrolls horizontally from a safe start edge so both ends remain reachable.
 inline layer (such as an inspector) before dismissing the dialog. Nested modal
 layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
+Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
+at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
+while changing catalog selection.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
@@ -864,9 +901,9 @@ identify and check every supported way to reach the action.
 
 The intended focus recipe requires both `html[data-keyboard-navigation]` and
 `:focus-visible`. The app-root modality owner supplies the attribute; pointer
-focus stays quiet, including programmatic focus during a drag. The shared global
-outline suppression is a temporary exception: follow
-[Temporary focus appearance](#temporary-focus-appearance) rather than adding a
+focus stays quiet, including programmatic focus during a drag. Shared text
+fields replace the ring with a perimeter stroke; see
+[Focus appearance](#focus-appearance) rather than adding a
 local replacement.
 
 Pair color with text, shape, or position. Solid avatar status badges are an explicit
@@ -896,7 +933,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles or add a `:focus-within` ring around its container. Preserve these recipes while the temporary global outline suppression is active; shared fields follow the perimeter-stroke exception documented above.
+- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 

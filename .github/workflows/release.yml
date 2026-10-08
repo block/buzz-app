@@ -318,6 +318,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Set candidate version
         run: node scripts/candidate-version.mjs
+      # Vendored OpenSSL (Goose runtime) runs Configure with `perl`. In this
+      # job's bash shell that is Git's MSYS perl, which lacks modules the
+      # Configure script needs. Use the image's Strawberry Perl instead.
+      - name: Select Strawberry Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          if (!(Test-Path $perl)) { throw "Strawberry Perl not found at $perl" }
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 1
+          if ($LASTEXITCODE -ne 0) { throw 'Strawberry Perl lacks OpenSSL Configure modules' }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
       - name: Build NSIS installer
         run: pnpm tauri build --ci --no-sign --bundles nsis --config "$RUNNER_TEMP/candidate.json" -- --locked
       - name: Install into disposable runner and verify resource payload

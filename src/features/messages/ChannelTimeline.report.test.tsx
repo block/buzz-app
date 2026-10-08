@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -64,7 +65,9 @@ vi.mock("virtua", async () => {
 const viewer = keypair(),
   other = keypair(),
   relay = keypair();
-const target = message(other, "c", "Report me", 1);
+const target = message(other, "c", "Report me", 1, [
+  ["imeta", "url https://relay.test/media/a.png", "m image/png"],
+]);
 const neighbor = message(other, "c", "Neighbor", 2);
 const owners: { dispose(): void }[] = [];
 beforeEach(() => {
@@ -82,6 +85,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -214,4 +218,102 @@ it("releases on cancel, pins again on reopen, and unmounts cleanly while open", 
   await act(() => new Promise((resolve) => setTimeout(resolve)));
   expect(screen.queryByRole("dialog", { name: "Report message" })).toBeNull();
   expect(error).not.toHaveBeenCalled();
+});
+
+it("keeps an image row mounted while its fullscreen viewer is open, then releases it after restoring focus", async () => {
+  const user = userEvent.setup();
+  const h = mount(async () => {});
+  const row = h.row();
+  if (!row) throw new Error("Missing target row");
+  const thumbnail = within(row).getByRole("link", {
+    name: "Open image attachment",
+  });
+  await user.click(thumbnail);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Image attachment",
+  });
+  // Focus inside the portal leaves the timeline's focused row unset.
+  h.evict();
+  expect(h.row()).toBe(row);
+  expect(dialog.isConnected).toBe(true);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(thumbnail));
+  h.evict();
+  expect(h.row()).toBe(row);
+  // Restored focus keeps the row; once focus leaves, the pin must be gone.
+  act(() => thumbnail.blur());
+  h.evict();
+  await waitFor(() => expect(h.row()).toBeNull());
+});
+
+// The report notice and the image viewer hold the same row; releasing either
+// must leave the other's pin in place.
+it("a report notice expiring behind the image viewer keeps the row pinned for the viewer", async () => {
+  let settle!: () => void;
+  const publish = vi.fn(
+    () => new Promise<void>((resolve) => (settle = resolve)),
+  );
+  const h = mount(publish);
+  const row = h.row();
+  if (!row) throw new Error("Missing target row");
+  const { user } = await openReport(row);
+  await user.click(screen.getByRole("radio", { name: "Spam" }));
+  await user.click(screen.getByRole("button", { name: "Submit report" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+  // The notice's five seconds start when the submission settles. Testing
+  // Library's async helpers wait on real timers, so from here events are fired
+  // directly and the clock is advanced explicitly.
+  vi.useFakeTimers();
+  await act(async () => settle());
+  const notice = () =>
+    screen.queryByText("Report submitted to community moderators");
+  expect(notice()).not.toBeNull();
+  const thumbnail = within(row).getByRole("link", {
+    name: "Open image attachment",
+  });
+  fireEvent.click(thumbnail);
+  await act(() => vi.advanceTimersByTimeAsync(50));
+  const dialog = screen.getByRole("dialog", { name: "Image attachment" });
+  expect(notice()).not.toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(notice()).toBeNull();
+  // The notice's deferred release has run; the viewer's hold must remain.
+  await act(() => vi.runOnlyPendingTimersAsync());
+  h.evict();
+  expect(h.row()).toBe(row);
+  expect(dialog.isConnected).toBe(true);
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // Focus restoration and the viewer's release each take a frame.
+  await act(() => vi.advanceTimersByTimeAsync(50));
+  expect(document.activeElement).toBe(thumbnail);
+  act(() => thumbnail.blur());
+  h.evict();
+  expect(h.row()).toBeNull();
+});
+
+it("closing the image viewer before the report notice ends keeps the row pinned for the notice", async () => {
+  const h = mount(async () => {});
+  const row = h.row();
+  if (!row) throw new Error("Missing target row");
+  const { user } = await openReport(row);
+  await user.click(screen.getByRole("radio", { name: "Spam" }));
+  await user.click(screen.getByRole("button", { name: "Submit report" }));
+  await screen.findByText("Report submitted to community moderators");
+  const thumbnail = within(row).getByRole("link", {
+    name: "Open image attachment",
+  });
+  await user.click(thumbnail);
+  await screen.findByRole("dialog", { name: "Image attachment" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.activeElement).toBe(thumbnail));
+  // The viewer releases a frame after close; wait for that frame to pass.
+  await act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  act(() => thumbnail.blur());
+  h.evict();
+  expect(h.row()).toBe(row);
+  await user.click(screen.getByRole("button", { name: /dismiss/i }));
+  await waitFor(() => expect(h.row()).toBeNull());
+  expect(h.neighborRow()).not.toBeNull();
 });

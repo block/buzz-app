@@ -1,29 +1,10 @@
-.card {
-  min-width: 0;
-  padding: var(--space-5);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: var(--surface-inset);
-}
-
-/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules targets the shared select inside Agent defaults. */
-.defaultsCard :global(.buzz-select-trigger) {
-  --border: var(--border-standard);
-  background: var(--surface-panel);
-}
-
-/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules preserves the shared select focus state. */
-.defaultsCard :global(.buzz-select-trigger:is(:focus, [data-popup-open])) {
-  --border: var(--border-prominent);
-}
-
 .rows {
   margin: var(--space-3) 0;
   padding: 0;
   list-style: none;
 }
 
-.rows li + li {
+.rows > li + li {
   border-top: 1px solid var(--border-standard);
 }
 
@@ -37,4 +18,41 @@
 .command {
   overflow-wrap: anywhere;
   user-select: all;
+}
+
+.catalog {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  gap: var(--space-6);
+  min-height: 100%;
+}
+
+.catalogSidebar {
+  border-right: 1px solid var(--border-standard);
+  padding-right: var(--space-4);
+}
+
+.catalogDetails {
+  min-width: 0;
+  padding: var(--space-6);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+}
+
+@media (max-width: 640px) {
+  .catalog {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .catalogDetails {
+    padding: var(--space-4);
+  }
+
+  .catalogSidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-standard);
+    padding-right: 0;
+    padding-bottom: var(--space-3);
+  }
 }

@@ -94,9 +94,7 @@ function setup(
         {kind === "image" ? (
           <AttachmentImage
             attachment={attachment}
-            url={attachment.url}
             source={attachment.url}
-            onOpenLink={() => false}
             onOpenReview={() => {
               opener.current = document.activeElement as HTMLElement;
               setOpen(true);
@@ -213,7 +211,7 @@ it("settles the entrance immediately when the user interacts", () => {
       screen.getByRole("link", { name: "Open image attachment" }),
       { detail: 1 },
     );
-    fireEvent.pointerDown(screen.getByRole("dialog"));
+    fireEvent.pointerDown(screen.getByRole("dialog"), { button: 2 });
     expect(cancel).toHaveBeenCalledTimes(animate.mock.calls.length);
   } finally {
     release();
@@ -492,7 +490,7 @@ it.each(["image", "video"] as const)(
     expect(animate.mock.calls[start]?.[1]).not.toHaveProperty("fill");
     expect(dialog).toHaveAttribute("data-review-resizing");
     // A zoom or seek interaction must retire the temporary layout transform.
-    fireEvent.pointerDown(media);
+    fireEvent.pointerDown(media, { button: 2 });
     expect(dialog).not.toHaveAttribute("data-review-resizing");
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }), {
       detail: 1,

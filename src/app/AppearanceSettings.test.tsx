@@ -96,9 +96,13 @@ it("shows reset only away from the default size and hides it after reset", () =>
   fireEvent.click(
     screen.getByRole("button", { name: "Increase interface size" }),
   );
-  expect(screen.getByLabelText("Interface size")).toHaveTextContent("110%");
+  expect(
+    screen.getByRole("status", { name: "Interface size" }),
+  ).toHaveTextContent("110%");
   fireEvent.click(screen.getByRole("button", { name: "Reset interface size" }));
-  expect(screen.getByLabelText("Interface size")).toHaveTextContent("100%");
+  expect(
+    screen.getByRole("status", { name: "Interface size" }),
+  ).toHaveTextContent("100%");
   expect(
     screen.queryByRole("button", { name: "Reset interface size" }),
   ).not.toBeInTheDocument();
@@ -151,16 +155,16 @@ it.each([false, true])(
         <AppearanceSettings appearance={appearance} />
       </ToastProvider>,
     );
-    const light = screen.getByRole("radio", { name: "Light" });
+    const colorMode = screen.getByRole("radio", { name: "System" });
     (focusReset
       ? screen.getByRole("button", { name: "Reset interface size" })
-      : light
+      : colorMode
     ).focus();
     act(() => appearance.setFontScale(1.3));
     expect(
       focusReset
         ? screen.getByRole("button", { name: "Reset interface size" })
-        : light,
+        : colorMode,
     ).toHaveFocus();
     act(() => {
       localStorage.setItem("buzz-font-scale.v1", "1");
@@ -178,7 +182,7 @@ it.each([false, true])(
     expect(
       focusReset
         ? screen.getByRole("button", { name: "Increase interface size" })
-        : light,
+        : colorMode,
     ).toHaveFocus();
     appearance.dispose();
   },
@@ -199,5 +203,28 @@ it("does not hand off Reset focus when the settings form unmounts", () => {
   const focus = vi.spyOn(increase, "focus");
   view.unmount();
   expect(focus).not.toHaveBeenCalled();
+  appearance.dispose();
+});
+
+it("selects and saves color mode through visual radio choices", async () => {
+  const appearance = createAppearance();
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
+  for (const [label, value] of [
+    ["Dark", "dark"],
+    ["Light", "light"],
+    ["System", "system"],
+  ] as const) {
+    const choice = screen.getByRole("radio", { name: label });
+    await user.click(choice);
+    expect(choice).toBeChecked();
+    expect(appearance.snapshot().preference).toBe(value);
+    expect(localStorage.getItem("buzz-appearance.v1")).toBe(value);
+  }
   appearance.dispose();
 });

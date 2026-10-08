@@ -215,7 +215,10 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   // Dialog actions use the floating control recipe, distinct from their surface.
   await expect(
     page.getByRole("dialog", { name: "Create workflow", exact: true }),
-  ).toHaveCSS("background-color", "rgb(40, 40, 40)");
+  ).toHaveCSS("background-color", "rgba(40, 40, 40, 0.9)");
+  await expect(
+    page.getByRole("dialog", { name: "Create workflow", exact: true }),
+  ).toHaveCSS("backdrop-filter", "blur(8px)");
   // Wait for the shared control transition before checking its final paint.
   await expect(button("Cancel")).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(button("Cancel")).toHaveCSS(
@@ -482,7 +485,8 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   ).toBe(true);
   await editor.action("Run now");
   await page.evaluate(() => window.workflowFixture.finish("unknown"));
-  await editor.expectAction("Run now", false);
+  // Like base Buzz, a lost run receipt informs but never locks the workflow.
+  await editor.expectAction("Run now", true);
   await expect(page.getByText(/The run may have started/)).toBeVisible();
   const id = await page.evaluate(
     () =>
@@ -490,8 +494,8 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   );
   await button("Close editor").click();
   await button("Message helper").click();
-  await editor.expectAction("Run now", false);
-  await expect(button("Save changes")).toBeDisabled();
+  await editor.expectAction("Run now", true);
+  await expect(button("Save changes")).toBeEnabled();
   expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
     1,
   );
@@ -1587,6 +1591,13 @@ test("a webhook save shows its one-time secret once and asks before leaving it b
   await expect(dialog.getByTestId("webhook-secret")).toHaveText("•".repeat(24));
   expect(await page.evaluate(() => window.workflowFixture.calls.take)).toBe(1);
   expect(await dialog.textContent()).not.toContain(secretValue);
+  // The dialog opens over the still-open editor, and Base UI moves focus into it
+  // on the next animation frame. Until then Escape reaches the editor and closes it.
+  await expect
+    .poll(() =>
+      dialog.evaluate((node) => node.contains(document.activeElement)),
+    )
+    .toBe(true);
   // Dismissing before revealing or copying asks first; going back keeps the dialog.
   await page.keyboard.press("Escape");
   const confirm = page.getByRole("alertdialog", {
@@ -1813,7 +1824,7 @@ test("generic Outbox offers message retry but no workflow replay", async ({
     .toBe(1);
   await page.evaluate(() => window.workflowSessionFixture.reject());
   await expect(
-    page.getByText("Run request was rejected.", { exact: true }),
+    page.getByText("Failed to trigger workflow", { exact: true }),
   ).toBeVisible();
   // The Outbox is page chrome beneath the modal editor.
   await button("Close editor").click();

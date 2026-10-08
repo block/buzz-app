@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -9,6 +10,8 @@ import {
   fireEvent,
   render as renderDom,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
 import { messageCopyText } from "./message-copy";
 import { profileTarget } from "../profiles/target";
@@ -18,6 +21,7 @@ import { keypair, message, signed, summary } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
@@ -445,7 +449,7 @@ it.each([9, 40002])(
       "@M![x](https://example.test/a.png)ic",
       "@M![x](http://example.test/a.png)ic",
       "@![x](https://example.test/a.png)Mic",
-      "Hello @Mic ![x](https://example.test/a.png)",
+      "Hello @M![x](https://example.test/a.png)ic ![y](https://example.test/b.png)",
     ]) {
       const event = signed(author, {
         kind,
@@ -458,7 +462,7 @@ it.each([9, 40002])(
       const [folded] = foldMessages("channel", relay.pubkey, [event]);
       if (!folded) throw new Error("missing message");
       expect(folded.content).toContain("@Mic");
-      expect(folded.attachmentContentRemoved).toBe(true);
+      expect(folded.attachmentSeams?.length).toBeGreaterThan(0);
       expect(folded.mentions).toEqual([recipient.pubkey]);
       const html = renderToStaticMarkup(
         <MessageRow
@@ -478,9 +482,72 @@ it.each([9, 40002])(
     const [unchanged] = foldMessages("channel", relay.pubkey, [
       message(author, "channel", "@Mic  \n", 1),
     ]);
-    expect(unchanged?.attachmentContentRemoved).toBeUndefined();
+    expect(unchanged?.attachmentSeams).toBeUndefined();
   },
 );
+
+it("binds signed names beside removed attachments that cannot join them", () => {
+  const author = keypair(),
+    person = keypair(),
+    agent = keypair(),
+    namesake = keypair(),
+    relay = keypair();
+  const media = "https://relay.test/media/shot.png";
+  const profiles = new Map([
+    [person.pubkey, { name: "kalvin" }],
+    [agent.pubkey, { name: "am", isAgent: true as const }],
+    [namesake.pubkey, { name: "kalvin chau" }],
+  ]);
+  const render = (
+    content: string,
+    mentions: string[],
+    tags: string[][] = [],
+  ) => {
+    const [folded] = foldMessages("channel", relay.pubkey, [
+      message(author, "channel", content, 1, [
+        ...mentions.map((pubkey) => ["p", pubkey]),
+        ...tags,
+      ]),
+    ]);
+    if (!folded) throw new Error("missing message");
+    return renderToStaticMarkup(
+      <MessageRow
+        row={folded}
+        profile={undefined}
+        participantProfiles={profiles}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  };
+  const chip = (kind: string, name: string) =>
+    new RegExp(
+      `data-mention-kind="${kind}"[^>]*aria-label="View ${name} profile"`,
+    );
+  expect(
+    render(
+      "@kalvin <https://github.com/block/buzz/pull/7904> :pray-for-stamp:\n![image](https://static.example/stamp.gif)",
+      [person.pubkey],
+    ),
+  ).toMatch(chip("person", "kalvin"));
+  expect(
+    render(
+      `@am i like the \`:ls\` feature\n\n![image.png](<${media}>)`,
+      [agent.pubkey],
+      [["imeta", `url ${media}`, "m image/png"]],
+    ),
+  ).toMatch(chip("agent", "am"));
+  // Removal may end a name, but a longer name must not cross the seam.
+  const joined = render("@kalvin![x](https://example.test/a.png) chau", [
+    person.pubkey,
+    namesake.pubkey,
+  ]);
+  expect(joined).toMatch(chip("person", "kalvin"));
+  expect(joined).not.toContain("View kalvin chau profile");
+});
 
 it.each([9, 40002])(
   "preserves signed kind %s code indentation through fold and render",
@@ -969,6 +1036,178 @@ it.each([
   },
 );
 
+// The desktop opener's injected listener (tauri-plugin-opener 2.5.5) launches
+// the system browser for any unprevented left click on an HTTP(S) anchor that
+// targets `_blank` or carries Ctrl/Shift, skipping only Meta/Alt; a browser tab
+// has none of the app's credentials for the raw attachment URL. Without a review
+// host every activation must still open in-app, from the same media source that
+// loaded the thumbnail.
+it.each([
+  ["plain", {}],
+  ["Shift", { shiftKey: true }],
+  ["Ctrl", { ctrlKey: true }],
+  ["Cmd", { metaKey: true }],
+])(
+  "opens a photo in-app from its media source on a %s click when no review host is present",
+  async (_, modifiers) => {
+    const external: string[] = [];
+    const opener = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.altKey
+      )
+        return;
+      const anchor = event
+        .composedPath()
+        .find(
+          (node): node is HTMLAnchorElement =>
+            node instanceof HTMLAnchorElement,
+        );
+      if (
+        !anchor?.href ||
+        (anchor.target !== "_blank" && !event.ctrlKey && !event.shiftKey)
+      )
+        return;
+      if (/^https?:$/.test(anchor.protocol)) external.push(anchor.href);
+    };
+    window.addEventListener("click", opener);
+    const view = renderMessage({
+      row: {
+        ...row,
+        attachments: [{ kind: "image", url: "https://relay.test/media/a.png" }],
+      },
+      media: (url) => `http://buzz-media.localhost/${encodeURIComponent(url)}`,
+    });
+    try {
+      const source =
+        "http://buzz-media.localhost/https%3A%2F%2Frelay.test%2Fmedia%2Fa.png";
+      const thumbnail = screen.getByRole("link", {
+        name: "Open image attachment",
+      });
+      // Middle click, drag and copy on the web yield the authenticated source.
+      expect(thumbnail).toHaveAttribute("href", source);
+      // The browser's own new-tab default, which the opener leaves to Cmd, is
+      // also cancelled.
+      expect(fireEvent.click(thumbnail, { detail: 1, ...modifiers })).toBe(
+        false,
+      );
+      const dialog = screen.getByRole("dialog", { name: "Image attachment" });
+      expect(
+        within(dialog).getByRole("img", { name: "Attachment preview" }),
+      ).toHaveAttribute("src", source);
+      expect(external).toEqual([]);
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Close fullscreen viewer" }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // The modal boundary hands focus back on the next frame.
+      await waitFor(() => expect(thumbnail).toHaveFocus());
+    } finally {
+      window.removeEventListener("click", opener);
+      view.unmount();
+    }
+  },
+);
+
+it("retires the fullscreen image viewer when its retained row is suspended", () => {
+  const tree = (active: boolean) => (
+    <ConversationPresentation value={active}>
+      <div hidden={!active} inert={!active}>
+        <MessageRow
+          row={{
+            ...row,
+            attachments: [{ kind: "image", url: "https://image.test/a.png" }],
+          }}
+          profile={undefined}
+          media={(url) => url}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </div>
+    </ConversationPresentation>
+  );
+  try {
+    const view = renderDom(tree(true));
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open image attachment" }),
+      { detail: 1 },
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Image attachment" }),
+    ).toBeInTheDocument();
+    view.rerender(tree(false));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    view.rerender(tree(true));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it.each(["peer", "own"] as const)(
+  "lists Mark unread above Copy message for a managed %s message",
+  async (author) => {
+    const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
+    const operations: never[] = [];
+    const session = {
+      viewer: author === "own" ? row.authorId : "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      messages: { report: vi.fn(async () => {}) },
+      outbox: {
+        supports: () => true,
+        subscribe: () => () => {},
+        snapshot: () => operations,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        attention: () => ({ unread: false, forced: false, viewing: true }),
+        following: () => false,
+      },
+    } as unknown as RelaySession;
+    renderDom(
+      <MessageManagement session={session} channelId={row.channelId}>
+        <MessageRow
+          row={{ ...row, threadRootId: "a".repeat(64) }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      </MessageManagement>,
+    );
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "More message actions" }),
+      );
+      await screen.findByRole("menu");
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(
+        author === "own"
+          ? [
+              "Mark unread",
+              "Copy message",
+              "Send to channel",
+              "Edit message",
+              "Delete message",
+              "Follow thread",
+              "Report",
+            ]
+          : ["Mark unread", "Copy message", "Follow thread", "Report"],
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it.each(["sending", "failed"] as const)(
   "does not leave an orphan menu separator on a %s own message",
   async (delivery) => {
@@ -977,7 +1216,12 @@ it.each(["sending", "failed"] as const)(
       viewer: row.authorId,
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: {},
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
     } as unknown as RelaySession;
     renderDom(
       <MessageRow
@@ -1292,13 +1536,16 @@ it("keeps audio and video players between their original image runs", () => {
   expect(html.match(/role="group" aria-label="1 image"/g)).toHaveLength(2);
   expect(html).toContain("<audio");
   expect(html).toContain("<video");
-  expect(html.indexOf('href="https://image.test/first.png"')).toBeLessThan(
-    html.indexOf("<audio"),
+  const first = html.indexOf(
+    'href="/api/relay/media?url=https%3A%2F%2Fimage.test%2Ffirst.png"',
   );
+  const last = html.indexOf(
+    'href="/api/relay/media?url=https%3A%2F%2Fimage.test%2Flast.png"',
+  );
+  expect(first).toBeGreaterThan(-1);
+  expect(first).toBeLessThan(html.indexOf("<audio"));
   expect(html.indexOf("<audio")).toBeLessThan(html.indexOf("<video"));
-  expect(html.indexOf("<video")).toBeLessThan(
-    html.indexOf('href="https://image.test/last.png"'),
-  );
+  expect(html.indexOf("<video")).toBeLessThan(last);
 });
 
 it.each([true, false])(
@@ -1425,7 +1672,12 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { sendToChannel: send },
       outbox: { supports: () => true },
-      unread: { subscribe: () => () => {}, snapshot: () => undefined },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
     } as unknown as RelaySession;
     const reply: ChannelMessage = {
       ...row,
@@ -1470,7 +1722,12 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
   const session = {
     messages: { report },
     channels: {},
-    unread: { subscribe: () => () => {}, snapshot: () => undefined },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
   } as unknown as RelaySession;
   const tree = (active: boolean) => (
     <ToastProvider>
@@ -1506,6 +1763,283 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
     view.rerender(tree(true));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(report).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+  }
+});
+
+it("presents automation, links the owner and discloses the separate relay signer", async () => {
+  const ownerId = "ab".repeat(32),
+    signer = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: {
+        ...row,
+        authorId: ownerId,
+        signerId: signer,
+        workflowOwnerId: ownerId,
+      },
+      profile: { name: "Wes" },
+      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    expect(screen.getByText("Workflow")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View workflow owner Wes profile" }),
+    );
+    expect(open).toHaveBeenCalledWith(profileTarget(ownerId));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Workflow message details" }),
+    );
+    expect(
+      await screen.findByText(/the owner did not sign this message/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Signed by the relay").nextElementSibling,
+    ).toHaveTextContent(npubEncode(signer));
+    expect(
+      screen.getByText("Owner public key").nextElementSibling,
+    ).toHaveTextContent(npubEncode(ownerId));
+    expect(
+      screen.queryByRole("button", { name: "View Relay profile" }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("contains a broken plugin message action to its own contribution", () => {
+  const listeners = new Set<() => void>();
+  const entry = (
+    id: string,
+    marker: () => React.ReactNode,
+    matches = () => true,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches,
+    icon: marker,
+    component: () => null,
+    marker,
+  });
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const healthy = entry("healthy", () => <span>healthy marker</span>);
+  let actions = [
+    entry(
+      "throwing-matcher",
+      () => <span>never</span>,
+      () => broken(),
+    ),
+    entry("throwing-marker", broken),
+    healthy,
+  ];
+  const store = {
+    snapshot: () => actions,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          actions: store,
+        }}
+      />,
+    );
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+    expect(screen.queryByText("never")).toBeNull();
+    // Disabling and re-enabling is a fresh installation with a fresh boundary.
+    swap([healthy]);
+    swap([entry("throwing-marker", () => <span>fixed marker</span>), healthy]);
+    expect(screen.getByText("fixed marker")).toBeInTheDocument();
+    expect(screen.getByText("healthy marker")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("contains a throwing plugin action icon and opened component", async () => {
+  const broken = () => {
+    throw new Error("broken contribution");
+  };
+  const entry = (
+    id: string,
+    icon: () => React.ReactNode,
+    component: () => React.ReactNode,
+  ) => ({
+    id,
+    title: id,
+    key: `test.plugin/${id}`,
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    icon,
+    component,
+  });
+  const actions = [
+    entry("Broken icon", broken, () => null),
+    entry("Broken component", () => <span>ok icon</span>, broken),
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: { snapshot: () => actions, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Broken icon" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Broken component/ }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByText("Root")).toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+    cleanup();
+  }
+});
+
+it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
+  const listeners = new Set<() => void>();
+  const entry = () => ({
+    id: "remind",
+    title: "Remind",
+    key: "test.plugin/remind",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => <span>action dialog</span>,
+  });
+  let actions = [entry()];
+  const swap = (next: typeof actions) => {
+    actions = next;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+  };
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: {
+            snapshot: () => actions,
+            subscribe(listener: () => void) {
+              listeners.add(listener);
+              return () => void listeners.delete(listener);
+            },
+          },
+        }}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
+    expect(await screen.findByText("action dialog")).toBeInTheDocument();
+    swap([]);
+    expect(screen.queryByText("action dialog")).toBeNull();
+    swap([entry()]);
+    expect(screen.queryByText("action dialog")).toBeNull();
   } finally {
     cleanup();
   }

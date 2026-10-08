@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   savedMessage,
@@ -6,6 +7,7 @@ import {
   type AgentDefaultSettings,
   type AgentDefaultsEdit,
   type AgentEdit,
+  type HarnessConfigurationPolicy,
 } from "../features/agents/control";
 import type { ModelCatalog } from "../features/agents/models";
 import {
@@ -15,7 +17,9 @@ import {
   harnessKind,
 } from "../bundled/agents/agent-edit";
 import { ProviderApiKeyField } from "../bundled/agents/ProviderApiKeyField";
+import { InlineHeader } from "../shared/design-system/ui/Header";
 import { Button } from "../shared/design-system/ui/Button";
+import { Accordion } from "../shared/design-system/ui/Accordion";
 import { Field } from "../shared/design-system/ui/Field";
 import { Input } from "../shared/design-system/ui/Input";
 import { Select } from "../shared/design-system/ui/Select";
@@ -27,6 +31,8 @@ const harnesses = [
   { value: "pi", label: "Pi" },
 ] as const;
 
+// Legacy suggestions only, never model capability evidence. Native policy marks
+// effort discovery unknown until the integration reports model-specific metadata.
 const effortChoices = {
   "buzz-agent": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   goose: ["off", "low", "medium", "high", "max"],
@@ -42,6 +48,15 @@ function defaultLabel(harness: AgentDefaultsEdit["harness"], value: string) {
 }
 
 type Choice = { value: string; label: string };
+
+function defaultHarness(
+  state: AgentControlState,
+  kind: AgentDefaultsEdit["harness"],
+) {
+  return state.data?.harnessOptions?.find(
+    (option) => harnessKind(option.command) === kind,
+  );
+}
 
 function environmentSet(
   current: AgentDefaultsEdit,
@@ -161,36 +176,36 @@ function ProviderChoice({
   onChange(provider: string): void;
   editSession: number;
 }) {
-  const harness = state.data?.harnessOptions?.find(
-    (option) => harnessKind(option.command) === current.harness,
-  );
-  const discovered =
-    current.harness === "pi"
-      ? [
-          ...new Set(models.map((model) => model.id.split("/")[0] ?? "")),
-        ].filter(Boolean)
-      : [];
-  const providers =
-    current.harness === "pi"
-      ? [
-          ...discovered.map((value) => ({
+  const harness = defaultHarness(state, current.harness);
+  const discoveredProviders = harness?.configurationPolicy
+    ? harness.configurationPolicy.provider === "discovered"
+    : current.harness === "pi";
+  const discovered = discoveredProviders
+    ? [...new Set(models.map((model) => model.id.split("/")[0] ?? ""))].filter(
+        Boolean,
+      )
+    : [];
+  const providers = discoveredProviders
+    ? [
+        ...discovered.map((value) => ({
+          value,
+          label: `${PI_API_KEYS[value]?.label ?? value} (available in Pi)`,
+        })),
+        ...Object.entries(PI_API_KEYS)
+          .filter(([value]) => !discovered.includes(value))
+          .map(([value, details]) => ({
             value,
-            label: `${PI_API_KEYS[value]?.label ?? value} (available in Pi)`,
+            label: `${details.label} (API key may be needed)`,
           })),
-          ...Object.entries(PI_API_KEYS)
-            .filter(([value]) => !discovered.includes(value))
-            .map(([value, details]) => ({
-              value,
-              label: `${details.label} (API key may be needed)`,
-            })),
-        ]
-      : (harness?.providers ?? []);
+      ]
+    : (harness?.providers ?? []);
   const builtInProvider = state.data?.agentDefaults?.provider ?? "";
   const builtInLabel =
     providers.find((provider) => provider.value === builtInProvider)?.label ??
     builtInProvider;
-  const overrideKey =
-    current.harness === "goose"
+  const overrideKey = harness?.configurationPolicy
+    ? harness.configurationPolicy.selectorEnvironment?.provider
+    : current.harness === "goose"
       ? "GOOSE_PROVIDER"
       : current.harness === "buzz-agent"
         ? "BUZZ_AGENT_PROVIDER"
@@ -226,7 +241,12 @@ function ProviderChoice({
   );
 }
 
-function defaultsApiKey(current: AgentDefaultsEdit, savedKeys: string[]) {
+function defaultsApiKey(
+  current: AgentDefaultsEdit,
+  savedKeys: string[],
+  policy?: HarnessConfigurationPolicy,
+) {
+  if (policy?.authentication === "external") return undefined;
   if (current.harness === "pi") return PI_API_KEYS[current.provider];
   if (current.harness !== "goose") return undefined;
   const provider = effectiveGooseProvider(
@@ -254,10 +274,11 @@ function ModelChoice({
   onModels(models: ModelCatalog["models"]): void;
   editSession: number;
 }) {
-  const harness = state.data?.harnessOptions?.find(
-    (option) => harnessKind(option.command) === current.harness,
-  );
-  const pi = current.harness === "pi";
+  const harness = defaultHarness(state, current.harness);
+  const policy = harness?.configurationPolicy;
+  const pi = policy
+    ? policy.provider === "discovered"
+    : current.harness === "pi";
   const [catalog, setCatalog] = useState<{
     key: string;
     models: ModelCatalog["models"];
@@ -312,11 +333,13 @@ function ModelChoice({
   const selected = entries.find((model) => model.id === selectedId);
   if (selected && !matching.some((model) => model.id === selected.id))
     matching.unshift(selected);
-  const modelKey = {
-    "buzz-agent": "BUZZ_AGENT_MODEL",
-    goose: "GOOSE_MODEL",
-    pi: "",
-  }[current.harness];
+  const modelKey = policy
+    ? policy.selectorEnvironment?.model
+    : {
+        "buzz-agent": "BUZZ_AGENT_MODEL",
+        goose: "GOOSE_MODEL",
+        pi: "",
+      }[current.harness];
   const savedKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   const modelOverridden =
     !!modelKey && environmentSet(current, savedKeys, modelKey);
@@ -519,12 +542,14 @@ function ModelChoice({
           Choose a Goose provider to browse its models.
         </p>
       )}
-      {pi && current.provider && !current.model && (
-        <p className="m-0 text-body-sm text-warning">
-          Choose a model for this Pi provider, or clear Provider to use Pi
-          defaults.
-        </p>
-      )}
+      {(policy ? policy.model === "withProvider" : pi) &&
+        current.provider &&
+        !current.model && (
+          <p className="m-0 text-body-sm text-warning">
+            Choose a model for this Pi provider, or clear Provider to use Pi
+            defaults.
+          </p>
+        )}
       {removingEnvironment && (
         <p className="m-0 text-body-sm text-secondary">
           Save environment removals before browsing models so lookup uses the
@@ -551,6 +576,7 @@ export function AgentDefaultsCard({
   const saved = state.data?.defaultSettings;
   const [draft, setDraft] = useState<AgentDefaultsEdit | null>(null);
   const [newKey, setNewKey] = useState("");
+  const newKeyInput = useRef<HTMLInputElement>(null);
   const [newValue, setNewValue] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -559,7 +585,8 @@ export function AgentDefaultsCard({
   if (!saved || !control.saveDefaults) return null;
   const current = draft ?? draftFrom(saved);
   const disabled = state.busy || state.status !== "ready";
-  const apiKey = defaultsApiKey(current, saved.environmentKeys);
+  const policy = defaultHarness(state, current.harness)?.configurationPolicy;
+  const apiKey = defaultsApiKey(current, saved.environmentKeys, policy);
   const gooseProvider =
     current.harness === "goose"
       ? effectiveGooseProvider(
@@ -575,7 +602,11 @@ export function AgentDefaultsCard({
     if (
       previousKey &&
       (next.harness !== current.harness ||
-        defaultsApiKey(next, saved.environmentKeys)?.env !== previousKey) &&
+        defaultsApiKey(
+          next,
+          saved.environmentKeys,
+          defaultHarness(state, next.harness)?.configurationPolicy,
+        )?.env !== previousKey) &&
       typeof next.environment[previousKey] === "string"
     ) {
       next.environment = { ...next.environment };
@@ -604,232 +635,248 @@ export function AgentDefaultsCard({
   return (
     <section
       aria-labelledby="agent-defaults-title"
-      className={`${styles.card} ${styles.defaultsCard} mt-6 space-y-4`}
+      className="mt-section-gap space-y-4"
     >
-      <div className="space-y-1">
-        <h3 id="agent-defaults-title" className="m-0 text-label">
-          Agent defaults
-        </h3>
-        <p className="m-0 text-body-sm text-secondary">
-          New agents start with this harness. Blank provider, model and effort,
-          plus inherited conversation context, use these values at each start.
-          An agent’s own choices win.
-        </p>
-      </div>
-      <Select
-        label="Default harness"
-        variant="field"
-        disabled={disabled}
-        value={current.harness}
-        groups={[{ label: "", options: harnesses }]}
-        onValueChange={(harness) => {
-          change({
-            harness: harness as AgentDefaultsEdit["harness"],
-            // Keep the provider, but clear values tied to the old harness.
-            ...(harness === current.harness ? {} : { model: "", effort: "" }),
-          });
-        }}
+      <InlineHeader
+        id="agent-defaults-title"
+        title="Agent defaults"
+        subtitle="Used when an agent starts without its own choices. Changes apply on its next start."
       />
-      <ProviderChoice
-        current={current}
-        state={state}
-        models={models}
-        disabled={disabled}
-        editSession={editSession}
-        onChange={(provider) => {
-          change({
-            provider,
-            ...(provider === current.provider ? {} : { model: "" }),
-          });
-        }}
-      />
-      {gooseProvider === null && (
-        <p role="status" className="m-0 text-body-sm text-secondary">
-          A saved GOOSE_PROVIDER override has a hidden value. Replace or remove
-          it under Environment variables to enter the matching API key here.
-        </p>
-      )}
-      {apiKey && (
-        <div className="space-y-2">
-          <ProviderApiKeyField
-            key={`${current.harness}-${current.provider}-${gooseProvider ?? ""}-${editSession}`}
-            apiKey={apiKey}
-            value={current.environment[apiKey.env]}
-            saved={saved.environmentKeys.includes(apiKey.env)}
-            disabled={disabled}
-            emptyPlaceholder={
-              current.harness === "pi"
-                ? "Paste API key or use an existing Pi sign-in"
-                : "Paste API key or use existing Goose credentials"
-            }
-            onChange={(value) => {
-              const environment = { ...current.environment };
-              if (value) environment[apiKey.env] = value;
-              else delete environment[apiKey.env];
-              change({ environment });
-            }}
-          />
-          <p className="m-0 text-body-sm text-secondary">
-            {apiKey.env} is used for model lookup and every local agent without
-            its own value, including other harnesses. Leave blank to keep a
-            saved key or use your{" "}
-            {current.harness === "pi" ? "Pi sign-in" : "Goose credentials"}.
-            Saved keys remain after provider changes; remove them under
-            Environment variables. Saved values are never shown again.
+      <SettingsGroup layout="form">
+        <Select
+          label="Default harness"
+          variant="field"
+          disabled={disabled}
+          value={current.harness}
+          groups={[{ label: "", options: harnesses }]}
+          onValueChange={(harness) => {
+            change({
+              harness: harness as AgentDefaultsEdit["harness"],
+              // Keep the provider, but clear values tied to the old harness.
+              ...(harness === current.harness ? {} : { model: "", effort: "" }),
+            });
+          }}
+        />
+        <ProviderChoice
+          current={current}
+          state={state}
+          models={models}
+          disabled={disabled}
+          editSession={editSession}
+          onChange={(provider) => {
+            change({
+              provider,
+              ...(provider === current.provider ? {} : { model: "" }),
+            });
+          }}
+        />
+        {gooseProvider === null && (
+          <p role="status" className="m-0 text-body-sm text-secondary">
+            A saved GOOSE_PROVIDER override has a hidden value. Replace or
+            remove it under Environment variables to enter the matching API key
+            here.
           </p>
-        </div>
-      )}
-      <ModelChoice
-        control={control}
-        state={state}
-        current={current}
-        disabled={disabled}
-        editSession={editSession}
-        onChange={change}
-        onModels={setModels}
-      />
-      <DefaultsChoice
-        label="Default effort"
-        value={current.effort}
-        choices={[
-          { value: "", label: "Not set (use harness default)" },
-          ...effortChoices[current.harness].map((value) => ({
-            value,
-            label:
-              value === "xhigh"
-                ? "Extra high"
-                : value.charAt(0).toUpperCase() + value.slice(1),
-          })),
-        ]}
-        disabled={disabled}
-        resetKey={`${current.harness}-${editSession}`}
-        onSelect={(effort) => change({ effort })}
-        onCustom={(effort) => change({ effort })}
-      />
-      <Select
-        label="Conversation context"
-        variant="field"
-        disabled={disabled}
-        value={current.sessionPolicy}
-        groups={[
-          {
-            label: "",
-            options: [
-              { value: "channel", label: "Entire channel" },
-              { value: "thread", label: "Each thread" },
-            ],
-          },
-        ]}
-        onValueChange={(sessionPolicy) =>
-          change({
-            sessionPolicy: sessionPolicy as AgentDefaultsEdit["sessionPolicy"],
-          })
-        }
-        description="Entire channel shares one conversation across threads. Each thread keeps a separate conversation; direct messages remain shared."
-      />
-      <fieldset disabled={disabled} className="min-w-0 space-y-3">
-        <legend className="mb-2 text-label-sm">Environment variables</legend>
-        <p className="m-0 text-body-sm text-secondary">
-          Added to every agent; an agent’s own key wins. Saved values stay on
-          this device and are never shown again.
-        </p>
-        {keys.length > 0 && (
-          <ul className={styles.rows}>
-            {keys.map((key) => {
-              const removed = current.environment[key] === null;
-              return (
-                <li
-                  key={key}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-body-sm"
-                >
-                  <code className={`${styles.command} text-mono`}>{key}</code>
-                  <span className="flex items-center gap-2">
-                    <span className="text-secondary">
-                      {removed
-                        ? "Removed on save"
-                        : typeof current.environment[key] === "string"
-                          ? "Set on save"
-                          : "Set"}
+        )}
+        {apiKey && (
+          <div className="space-y-2">
+            <ProviderApiKeyField
+              key={`${current.harness}-${current.provider}-${gooseProvider ?? ""}-${editSession}`}
+              apiKey={apiKey}
+              value={current.environment[apiKey.env]}
+              saved={saved.environmentKeys.includes(apiKey.env)}
+              disabled={disabled}
+              emptyPlaceholder={
+                current.harness === "pi"
+                  ? "Paste API key or use an existing Pi sign-in"
+                  : "Paste API key or use existing Goose credentials"
+              }
+              onChange={(value) => {
+                const environment = { ...current.environment };
+                if (value) environment[apiKey.env] = value;
+                else delete environment[apiKey.env];
+                change({ environment });
+              }}
+            />
+            <p className="m-0 text-body-sm text-secondary">
+              {apiKey.env} is used for model lookup and every local agent
+              without its own value, including other harnesses. Leave blank to
+              keep a saved key or use your{" "}
+              {current.harness === "pi" ? "Pi sign-in" : "Goose credentials"}.
+              Saved keys remain after provider changes; remove them under
+              Environment variables. Saved values are never shown again.
+            </p>
+          </div>
+        )}
+        <ModelChoice
+          control={control}
+          state={state}
+          current={current}
+          disabled={disabled}
+          editSession={editSession}
+          onChange={change}
+          onModels={setModels}
+        />
+        <DefaultsChoice
+          label="Default effort"
+          value={current.effort}
+          choices={[
+            { value: "", label: "Not set (use harness default)" },
+            ...effortChoices[current.harness].map((value) => ({
+              value,
+              label:
+                value === "xhigh"
+                  ? "Extra high"
+                  : value.charAt(0).toUpperCase() + value.slice(1),
+            })),
+          ]}
+          disabled={disabled}
+          resetKey={`${current.harness}-${editSession}`}
+          onSelect={(effort) => change({ effort })}
+          onCustom={(effort) => change({ effort })}
+        />
+        <Select
+          label="Conversation context"
+          variant="field"
+          disabled={disabled}
+          value={current.sessionPolicy}
+          groups={[
+            {
+              label: "",
+              options: [
+                { value: "channel", label: "Entire channel" },
+                { value: "thread", label: "Each thread" },
+              ],
+            },
+          ]}
+          onValueChange={(sessionPolicy) =>
+            change({
+              sessionPolicy:
+                sessionPolicy as AgentDefaultsEdit["sessionPolicy"],
+            })
+          }
+          description="Share one conversation across the channel, or keep threads separate. Direct messages stay shared."
+        />
+        <fieldset disabled={disabled} className="min-w-0 space-y-3">
+          <legend className="mb-2 text-label-sm">Environment variables</legend>
+          <p className="m-0 text-body-sm text-secondary">
+            Added to every agent; an agent’s own key wins. Saved values stay on
+            this device and are never shown again.
+          </p>
+          {keys.length > 0 && (
+            <ul className={styles.rows}>
+              {keys.map((key) => {
+                const removed = current.environment[key] === null;
+                return (
+                  <li
+                    key={key}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-body-sm"
+                  >
+                    <code className={`${styles.command} text-mono`}>{key}</code>
+                    <span className="flex items-center gap-2">
+                      <span className="text-secondary">
+                        {removed
+                          ? "Removed on save"
+                          : typeof current.environment[key] === "string"
+                            ? "Set on save"
+                            : "Set"}
+                      </span>
+                      <Button
+                        size="sm"
+                        type="button"
+                        aria-label={`${removed ? "Keep" : "Remove"} ${key}`}
+                        onClick={() => {
+                          const environment = { ...current.environment };
+                          if (removed || !saved.environmentKeys.includes(key))
+                            delete environment[key];
+                          else environment[key] = null;
+                          change({ environment });
+                        }}
+                      >
+                        {removed ? "Keep" : "Remove"}
+                      </Button>
                     </span>
-                    <Button
-                      size="sm"
-                      type="button"
-                      aria-label={`${removed ? "Keep" : "Remove"} ${key}`}
-                      onClick={() => {
-                        const environment = { ...current.environment };
-                        if (removed || !saved.environmentKeys.includes(key))
-                          delete environment[key];
-                        else environment[key] = null;
-                        change({ environment });
-                      }}
-                    >
-                      {removed ? "Keep" : "Remove"}
-                    </Button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-0 flex-1">
-            <Field label="Name">
-              <Input
-                value={newKey}
-                spellCheck={false}
-                onChange={(event) => setNewKey(event.target.value.trim())}
-              />
-            </Field>
-          </div>
-          <div className="min-w-0 flex-1">
-            <Field label="Value">
-              <Input
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                value={newValue}
-                onChange={(event) => setNewValue(event.target.value)}
-              />
-            </Field>
-          </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <Accordion
+            variant="form"
+            keepMounted
+            items={[
+              {
+                value: "add-variable",
+                title: "Add environment variable",
+                content: (
+                  <div className="grid gap-3">
+                    <Field label="Name">
+                      <Input
+                        ref={newKeyInput}
+                        value={newKey}
+                        spellCheck={false}
+                        onChange={(event) =>
+                          setNewKey(event.target.value.trim())
+                        }
+                      />
+                    </Field>
+                    <Field label="Value">
+                      <Input
+                        type="password"
+                        autoComplete="new-password"
+                        spellCheck={false}
+                        value={newValue}
+                        onChange={(event) => setNewValue(event.target.value)}
+                      />
+                    </Field>
+                    <div>
+                      <Button
+                        type="button"
+                        disabled={!newKey}
+                        onClick={() => {
+                          change({
+                            environment: {
+                              ...current.environment,
+                              [newKey]: newValue,
+                            },
+                          });
+                          setNewKey("");
+                          setNewValue("");
+                          newKeyInput.current?.focus();
+                        }}
+                      >
+                        Add variable
+                      </Button>
+                    </div>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </fieldset>
+        <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+          {(draft || newKey || newValue) && (
+            <Button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                setDraft(null);
+                setNewKey("");
+                setNewValue("");
+                setEditSession((session) => session + 1);
+              }}
+            >
+              Discard
+            </Button>
+          )}
           <Button
             type="button"
-            disabled={!newKey}
-            onClick={() => {
-              change({
-                environment: { ...current.environment, [newKey]: newValue },
-              });
-              setNewKey("");
-              setNewValue("");
-            }}
+            variant="primary"
+            disabled={disabled || !draft}
+            onClick={save}
           >
-            Add variable
+            Save defaults
           </Button>
         </div>
-      </fieldset>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          variant="primary"
-          disabled={disabled || !draft}
-          onClick={save}
-        >
-          Save defaults
-        </Button>
-        {(draft || newKey || newValue) && (
-          <Button
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              setDraft(null);
-              setNewKey("");
-              setNewValue("");
-              setEditSession((session) => session + 1);
-            }}
-          >
-            Discard
-          </Button>
-        )}
         {notice && (
           <p role="status" className="m-0 text-body-sm">
             {notice}
@@ -840,7 +887,7 @@ export function AgentDefaultsCard({
             {error}
           </p>
         )}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }

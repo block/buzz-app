@@ -1,6 +1,9 @@
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { LightningIcon } from "../../shared/design-system/icons";
+import { WorkflowByline } from "./WorkflowByline";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
-import { MessageTimestamp } from "./MessageTimestamp";
+import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -14,6 +17,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useSyncExternalStore,
   type FocusEvent,
   type ReactNode,
@@ -27,6 +31,10 @@ import { profileTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
@@ -40,7 +48,10 @@ import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
-import { MessageManagementItems } from "./MessageManagement";
+import {
+  MessageManagementItems,
+  MessageReadStateItem,
+} from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { FlagIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
@@ -207,6 +218,13 @@ export const MessageRow = memo(function MessageRow({
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
   );
+  const workflowOwnerName = row.workflowOwnerId
+    ? resolveName(
+        row.workflowOwnerId,
+        directory.profiles.get(row.workflowOwnerId)?.name ??
+          `${row.workflowOwnerId.slice(0, 10)}…`,
+      )
+    : undefined;
   const picture = profile?.picture
     ? media(profile.picture, "small")
     : undefined;
@@ -219,7 +237,9 @@ export const MessageRow = memo(function MessageRow({
       ? "squircle"
       : "circle";
   const presence = usePresenceStatus(
-    avatarShape === "squircle" ? session?.presence : undefined,
+    !row.workflowOwnerId && avatarShape === "squircle"
+      ? session?.presence
+      : undefined,
     row.authorId,
   );
   const presenceId = useId();
@@ -241,14 +261,39 @@ export const MessageRow = memo(function MessageRow({
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const active = useConversationPresentation();
   const [reporting, setReporting] = useState<"open" | "sent">();
-  const reportActive = reporting !== undefined;
+  const registeredActions = useSyncExternalStore(
+    extensions?.actions?.subscribe ?? noSubscribe,
+    extensions?.actions?.snapshot ?? noActions,
+    extensions?.actions?.snapshot ?? noActions,
+  );
+  const actions = session
+    ? registeredActions.filter((action) => {
+        try {
+          return action.matches(row, session);
+        } catch {
+          return false; // A broken optional action leaves the menu usable.
+        }
+      })
+    : [];
+  // The instance, not its key: a reinstalled plugin must not reopen a dialog.
+  const [openAction, setOpenAction] = useState<(typeof actions)[number]>();
+  const opened =
+    openAction && actions.includes(openAction) ? openAction : undefined;
+  useEffect(() => {
+    if (openAction && !opened) setOpenAction(undefined);
+  }, [openAction, opened]);
+  const keepAlive = reporting !== undefined || !!opened;
   // The dialog, pending submit and notice live in this row; eviction loses them.
   useEffect(() => {
-    const release = reportActive ? keepMounted?.(row.id) : undefined;
+    const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
     // task later lets restored focus keep the row mounted instead.
     return release && (() => void setTimeout(release));
-  }, [reportActive, keepMounted, row.id]);
+  }, [keepAlive, keepMounted, row.id]);
+  const keepRowMounted = useMemo(
+    () => keepMounted && (() => keepMounted(row.id)),
+    [keepMounted, row.id],
+  );
   const report =
     !row.membership &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -265,6 +310,18 @@ export const MessageRow = memo(function MessageRow({
       Report
     </MenuItem>
   );
+  const actionItems = actions.map((action) => (
+    <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
+      {action.icon && (
+        <MenuIcon>
+          <ContributionBoundary key={contributionKey(action)} fallback={null}>
+            <action.icon />
+          </ContributionBoundary>
+        </MenuIcon>
+      )}
+      {action.title}
+    </MenuItem>
+  ));
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
@@ -315,23 +372,26 @@ export const MessageRow = memo(function MessageRow({
   );
   return (
     <div data-message-id={row.id}>
-      {day && (
-        <div className={styles.day}>
-          <span>
-            {new Date(row.createdAt * 1000).toLocaleDateString(undefined, {
-              year: "numeric",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-      )}
+      {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (
           <span className={styles.messageGutter}>
             <MessageTimestamp createdAt={row.createdAt} compact />
           </span>
+        ) : row.workflowOwnerId ? (
+          <Avatar
+            alt="Workflow"
+            fallback="Workflow"
+            fallbackContent={<LightningIcon size={20} />}
+            shape="squircle"
+            size={
+              compactAvatar
+                ? "small"
+                : layout === "timeline"
+                  ? "large"
+                  : "default"
+            }
+          />
         ) : clickable ? (
           <IconButton
             size={layout === "timeline" ? "default" : "sm"}
@@ -364,7 +424,7 @@ export const MessageRow = memo(function MessageRow({
                   statusBadge={presence === "unknown" ? undefined : presence}
                 />
                 {presence !== "unknown" && (
-                  <span className="sr-only" id={presenceId}>
+                  <span className="sr-only select-none" id={presenceId}>
                     Presence: {presence}
                   </span>
                 )}
@@ -399,6 +459,15 @@ export const MessageRow = memo(function MessageRow({
           </span>
         )}
         <div className={styles.messageBody}>
+          {opened && session && (
+            <ContributionBoundary key={contributionKey(opened)} fallback={null}>
+              <opened.component
+                message={row}
+                session={session}
+                close={() => setOpenAction(undefined)}
+              />
+            </ContributionBoundary>
+          )}
           {report && reporting === "open" && (
             <ReportMessageDialog
               report={(type, note) => report(row.id, type, note)}
@@ -477,24 +546,58 @@ export const MessageRow = memo(function MessageRow({
                     />
                   ) : undefined)
                 }
+                leadingItems={
+                  session ? (
+                    <MessageReadStateItem row={row} session={session} />
+                  ) : undefined
+                }
                 overflowItems={
                   <>
                     {overflowItems ??
                       (session ? (
                         <MessageManagementItems row={row} session={session} />
                       ) : undefined)}
+                    {actionItems}
                     {reportItem}
                   </>
                 }
               />
             )}
+            {/* Screen-reader text stays out of selections: the clipboard carries
+                what the reader saw, so a continuation copies without a byline. */}
             <div
-              className={layout === "continuation" ? "sr-only" : styles.byline}
+              className={
+                layout === "continuation"
+                  ? "sr-only select-none"
+                  : styles.byline
+              }
             >
-              <strong className={styles.author}>{name}</strong>
+              {row.workflowOwnerId && workflowOwnerName ? (
+                <WorkflowByline
+                  ownerId={row.workflowOwnerId}
+                  ownerName={workflowOwnerName}
+                  signer={row.signerId ?? row.authorId}
+                  canOpenLink={canOpenLink}
+                  onOpenLink={onOpenLink}
+                />
+              ) : (
+                <strong className={styles.author}>{name}</strong>
+              )}
               {layout !== "continuation" && (
                 <MessageTimestamp createdAt={row.createdAt} />
               )}
+              {session &&
+                actions.map(
+                  (action) =>
+                    action.marker && (
+                      <ContributionBoundary
+                        key={contributionKey(action)}
+                        fallback={null}
+                      >
+                        <action.marker message={row} session={session} />
+                      </ContributionBoundary>
+                    ),
+                )}
             </div>
           </div>
           {row.sentFromThread && (
@@ -579,16 +682,15 @@ export const MessageRow = memo(function MessageRow({
                   <AttachmentImage
                     key={url}
                     attachment={{ ...attachment, url }}
-                    url={url}
                     source={source}
                     cached={cached}
                     thumbnail
+                    keepMounted={keepRowMounted}
                     label={
                       group.length > 1
                         ? `Open image ${index + 1} of ${group.length}`
                         : "Open image attachment"
                     }
-                    onOpenLink={onOpenLink}
                     {...(onOpenMediaReview
                       ? {
                           onOpenReview: (item, seconds) =>
@@ -769,6 +871,8 @@ function useThreadUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 const noSubscribe = () => () => {};
+const none: readonly never[] = [];
+const noActions = () => none;
 const noLibrary = () => undefined;
 // App-managed agents publish typing, not observer telemetry, while they work.
 // A joined-key snapshot keeps unrelated typing from re-rendering the row. Like

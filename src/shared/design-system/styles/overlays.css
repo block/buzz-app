@@ -25,9 +25,13 @@
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-panel);
     padding: var(--dialog-padding);
-    background: var(--surface-popover);
     color: var(--text-standard);
     box-shadow: var(--shadow-sm);
+  }
+  /* A stepped dialog paints only its visible cards, not their shared wrapper. */
+  .buzz-dialog:not([data-stepped]),
+  .buzz-dialog-step {
+    @apply elevated-material;
   }
   /* Steps share one centered popup/backdrop; overlap only for the crossfade. */
   .buzz-dialog[data-stepped] {
@@ -50,6 +54,9 @@
   }
   .buzz-dialog-step[inert] {
     pointer-events: none;
+  }
+  .buzz-dialog[data-size="wide"] {
+    width: min(56rem, calc(100vw - 2rem));
   }
   .buzz-dialog[data-size="expanded"] {
     width: calc(100vw - 3rem);
@@ -311,9 +318,9 @@
 
 /* Shared paint for anchored popups. Features retain layout and interaction. */
 @utility popover-surface {
+  @apply floating-surface;
   /* Selection must remain visible on the raised dark surface. */
   --affordance-selected: var(--affordance-popover-selected);
-  @apply floating-surface;
   color: var(--text-standard);
   z-index: var(--layer-popover);
 }

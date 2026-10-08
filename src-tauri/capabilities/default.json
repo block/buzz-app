@@ -48,6 +48,7 @@
     "allow-media-download",
     "allow-media-copy-image",
     "allow-media-stream-base",
+    "allow-media-snapshot-read",
     "allow-get-os-idle-seconds",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",

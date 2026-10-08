@@ -18,7 +18,7 @@ import {
 } from "./ManagedAgentActions";
 import { RelayAgentRemove } from "./RelayAgentRemove";
 import { Fragment, useState } from "react";
-import { AgentShareSwitch } from "./CommunityCatalog";
+import { AgentDirectShare } from "./DirectShare";
 import { AgentArchiveDialog } from "../../features/agents/AgentArchiveDialog";
 import {
   type ArchiveAction,
@@ -249,7 +249,8 @@ export function InventoryIdentityCard({
               control={control}
               imported={agent.id === importedId}
             />
-            <AgentShareSwitch
+            <AgentDirectShare
+              control={control}
               session={session}
               agent={agent}
               name={row.displayName}

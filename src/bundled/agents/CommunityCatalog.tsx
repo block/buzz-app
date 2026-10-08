@@ -281,6 +281,22 @@ async function portableTeamText(
   return { description, instructions };
 }
 
+/** Complete catalog projection shared by the catalog and direct-share dialogs. */
+export async function buildTeamCatalogContent(
+  session: RelaySession,
+  control: AgentControl,
+  kit: Pick<ChannelKit, "loadTeam">,
+  team: Team,
+) {
+  const text = await portableTeamText(kit, control, team);
+  const data = control.snapshot().data;
+  return teamCatalogContent(
+    { ...team, ...text },
+    sameCommunityAgents(data?.agents ?? [], session.scope),
+    data?.defaultSettings?.sessionPolicy,
+  );
+}
+
 /** A saved team's catalog switch. Its members are projected from this
  * community's local agent definitions when sharing, never from relay data. */
 export function TeamShareDialog({
@@ -313,15 +329,7 @@ export function TeamShareDialog({
         d={team.id}
         name={team.name}
         description={teamShareDescription}
-        content={async () => {
-          const text = await portableTeamText(kit, control, team);
-          const data = control.snapshot().data;
-          return teamCatalogContent(
-            { ...team, ...text },
-            sameCommunityAgents(data?.agents ?? [], session.scope),
-            data?.defaultSettings?.sessionPolicy,
-          );
-        }}
+        content={() => buildTeamCatalogContent(session, control, kit, team)}
       />
     </Dialog>
   );

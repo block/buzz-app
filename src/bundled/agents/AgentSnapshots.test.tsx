@@ -186,7 +186,8 @@ it("uploads an embedded reference avatar before native creation and saves its lo
     />,
   );
   choose(new File([encodeAgentSnapshot(snapshot, "json")], "agent.json"));
-  fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+  expect(await screen.findByText("Help with the project.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
   await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
   expect(uploadAvatar).toHaveBeenCalledWith(
     expect.objectContaining({ type: "image/png" }),

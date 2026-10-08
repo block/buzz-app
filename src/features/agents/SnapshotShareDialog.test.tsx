@@ -175,7 +175,10 @@ it.each(["agent", "team"] as const)(
     );
     await user.click(screen.getByRole("button", { name: "Copy link" }));
     await waitFor(() => expect(f.props.copyLink).toHaveBeenCalledTimes(1));
-    expect(f.props.encodeSnapshot).toHaveBeenCalledWith("none");
+    expect(f.props.encodeSnapshot).toHaveBeenCalledWith(
+      "none",
+      expect.any(AbortSignal),
+    );
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: `Export ${kind}` }));
     expect(f.props.onExport).toHaveBeenCalledOnce();
@@ -217,7 +220,10 @@ it("does not read or share memory until the explicit plaintext confirmation", as
     }),
   );
   await waitFor(() => expect(f.props.copyLink).toHaveBeenCalledOnce());
-  expect(f.props.encodeSnapshot).toHaveBeenCalledWith("core");
+  expect(f.props.encodeSnapshot).toHaveBeenCalledWith(
+    "core",
+    expect.any(AbortSignal),
+  );
 });
 
 it("excludes relay authority and retains the exact uncertain-send receipt", async () => {
@@ -286,7 +292,10 @@ it("confirms memory for named recipients before submitting a team", async () => 
   expect(await screen.findByText("Sent a copy of Worker")).toHaveTextContent(
     "Sent a copy of Worker",
   );
-  expect(f.props.encodeSnapshot).toHaveBeenCalledWith("everything");
+  expect(f.props.encodeSnapshot).toHaveBeenCalledWith(
+    "everything",
+    expect.any(AbortSignal),
+  );
 });
 
 it("releases failed encoding from the opening cache", async () => {
@@ -441,7 +450,10 @@ it("hides memory options for a definition without a linked agent", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Copy link" }));
   await waitFor(() =>
-    expect(f.props.encodeSnapshot).toHaveBeenCalledWith("none"),
+    expect(f.props.encodeSnapshot).toHaveBeenCalledWith(
+      "none",
+      expect.any(AbortSignal),
+    ),
   );
 });
 

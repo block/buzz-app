@@ -3552,3 +3552,25 @@ fn upload_ingress_commands_validate_raw_chunks_and_finalize_owned_bytes() {
     assert_eq!(spool.hash, format!("{:x}", Sha256::digest(b"abc")));
     app.state::<Uploads>().finish("valid");
 }
+
+#[tokio::test]
+async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() {
+    for (body, limit, expected) in [("safe", 4, Ok(())), ("large", 4, Err(413u16))] {
+        let (base, task) = fixture_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()
+        ));
+        let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
+        let response =
+            fetch_media_bounded(&IdentityHost::fixture(), url.clone(), None, limit).await;
+        assert_eq!(
+            response.as_ref().map(|_| ()).map_err(|status| *status),
+            expected
+        );
+        if let Ok(response) = response {
+            assert_eq!(response.body(), body.as_bytes());
+        }
+        let (headers, _) = task.join().unwrap();
+        let server = &url[url::Position::BeforeHost..url::Position::AfterPort];
+        assert_strict(&blossom_event(&headers), "get", server);
+    }
+}

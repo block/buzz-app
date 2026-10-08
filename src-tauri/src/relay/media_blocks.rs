@@ -84,7 +84,9 @@ async fn fetch_block(
     if upstream.status() == 200 && upstream_type(&upstream).0.starts_with("video/") {
         return Err(Uncached::Video(Box::new(upstream)));
     }
-    let response = buffer_media(upstream).await.map_err(Uncached::Status)?;
+    let response = buffer_media(upstream, super::MAX_MEDIA)
+        .await
+        .map_err(Uncached::Status)?;
     if response.status() != 206 {
         return Err(Uncached::Whole(Box::new(response)));
     }

@@ -37,7 +37,7 @@ import {
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import { TeamShareDialog } from "../agents/CommunityCatalog";
+import { TeamDirectShare } from "../agents/DirectShare";
 import { ChannelTemplatesDialog } from "./ChannelTemplatesDialog";
 import type { useTemplateCatalog } from "./useTemplateCatalog";
 import styles from "./TemplateLibrary.module.css";
@@ -370,7 +370,7 @@ export function TemplateLibrary({
           />
         )}
         {sharing && control && session && (
-          <TeamShareDialog
+          <TeamDirectShare
             session={session}
             control={control}
             kit={kit}

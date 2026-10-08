@@ -42,7 +42,7 @@ use identity::{
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    media_copy_image, media_download, media_snapshot_read, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
     relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
@@ -453,6 +453,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_download,
         media_copy_image,
         media_stream_base,
+        media_snapshot_read,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,

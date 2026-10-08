@@ -1,12 +1,23 @@
+import {
+  MAX_AGENT_SNAPSHOT_JSON_BYTES,
+  MAX_AGENT_SNAPSHOT_PNG_BYTES,
+} from "./snapshot";
+import {
+  MAX_TEAM_SNAPSHOT_JSON_BYTES,
+  MAX_TEAM_SNAPSHOT_PNG_BYTES,
+} from "./team-encoding";
 import { UploadError } from "../relay/attachments";
 import type { EncodedSnapshot } from "./snapshot-send";
 
 /** Portable snapshot policy shared by DM delivery and standalone links. */
 export function validateSnapshotFile(file: File) {
-  const maxBytes =
-    file.name.endsWith(".team.png") || file.name.endsWith(".team.json")
-      ? 50 * 1024 * 1024
-      : 10 * 1024 * 1024;
+  const maxBytes = file.name.endsWith(".team.png")
+    ? MAX_TEAM_SNAPSHOT_PNG_BYTES
+    : file.name.endsWith(".team.json")
+      ? MAX_TEAM_SNAPSHOT_JSON_BYTES
+      : file.name.endsWith(".json")
+        ? MAX_AGENT_SNAPSHOT_JSON_BYTES
+        : MAX_AGENT_SNAPSHOT_PNG_BYTES;
   if (file.size < 1 || file.size > maxBytes) throw new UploadError("size");
   if (
     !(

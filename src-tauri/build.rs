@@ -78,6 +78,7 @@ fn main() {
             "media_download",
             "media_copy_image",
             "media_stream_base",
+            "media_snapshot_read",
             "get_os_idle_seconds",
             "plugin_import_folder",
             "plugin_import_git",

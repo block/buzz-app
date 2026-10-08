@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { RecipientPicker } from "../direct-messages/RecipientPicker";
 import type { Recipient } from "../direct-messages/usePeople";
@@ -34,12 +40,19 @@ type Props = {
   excludedPubkeys: readonly string[];
   open: boolean;
   onOpenChange(open: boolean): void;
-  encodeSnapshot(level: MemoryLevel): Promise<EncodedSnapshot>;
+  encodeSnapshot(
+    level: MemoryLevel,
+    signal?: AbortSignal,
+  ): Promise<EncodedSnapshot>;
   copyLink(
     snapshot: Promise<EncodedSnapshot>,
     signal: AbortSignal,
   ): Promise<void>;
   onExport(): void;
+  beforeShare?: ReactNode;
+  catalogControls?: ReactNode;
+  actionsDisabled?: boolean;
+  preventClose?: boolean;
   catalog: {
     shared: boolean;
     description: string;
@@ -67,6 +80,10 @@ function ShareContents({
   copyLink,
   onExport,
   catalog,
+  beforeShare,
+  catalogControls,
+  actionsDisabled = false,
+  preventClose = false,
 }: Props) {
   const notify = useToastNotification();
   const outbox = session.outbox;
@@ -90,7 +107,7 @@ function ShareContents({
   const operation = useRef<AbortController | null>(null);
   const encoded = useRef(new Map<MemoryLevel, Promise<EncodedSnapshot>>());
   const sending = ["preparing", "uploading", "sending"].includes(send.phase);
-  const busy = sending || copy === "copying" || pending;
+  const busy = sending || copy === "copying" || pending || preventClose;
   const failed =
     !!send.receipt &&
     session.directMessages.delivery(send.receipt.eventId) === "failed";
@@ -158,10 +175,12 @@ function ShareContents({
     };
   }, []);
 
-  function encode(memory: MemoryLevel) {
+  function encode(memory: MemoryLevel, signal: AbortSignal) {
     const cached = encoded.current.get(memory);
     if (cached) return cached;
-    const pending = Promise.resolve().then(() => encodeSnapshot(memory));
+    const pending = Promise.resolve().then(() =>
+      encodeSnapshot(memory, signal),
+    );
     encoded.current.set(memory, pending);
     void pending.catch(() => {
       if (encoded.current.get(memory) === pending)
@@ -195,7 +214,7 @@ function ShareContents({
   }
 
   async function perform(action: "send" | "copy", memory: MemoryLevel) {
-    if (operation.current) return;
+    if (operation.current || actionsDisabled) return;
     const controller = new AbortController();
     operation.current = controller;
     setError("");
@@ -210,7 +229,7 @@ function ShareContents({
             value: snapshotRecoveryValue(recipients, memory),
           },
           recipients: recipients.map((person) => person.pubkey),
-          encode: () => encode(memory),
+          encode: () => encode(memory, controller.signal),
           signal: controller.signal,
           update: (state) => {
             if (!controller.signal.aborted) setSend(state);
@@ -224,7 +243,7 @@ function ShareContents({
         onOpenChange(false);
       } else {
         setCopy("copying");
-        await copyLink(encode(memory), controller.signal);
+        await copyLink(encode(memory, controller.signal), controller.signal);
         controller.signal.throwIfAborted();
         setCopy("copied");
       }
@@ -322,7 +341,7 @@ function ShareContents({
       <Dialog
         open
         onOpenChange={onOpenChange}
-        preventClose={busy}
+        preventClose={busy || preventClose}
         title={`Share ${displayName}`}
         description={`Anyone you share this ${snapshotKind} with will receive a copy they can add and use. Changes you make later won’t sync.`}
         actions={
@@ -331,6 +350,7 @@ function ShareContents({
           </Button>
         }
       >
+        {beforeShare}
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <RecipientPicker
@@ -345,6 +365,7 @@ function ShareContents({
             <Button
               disabled={
                 !ready ||
+                actionsDisabled ||
                 busy ||
                 send.phase === "done" ||
                 !session.directMessages.available
@@ -403,7 +424,10 @@ function ShareContents({
             </p>
           )}
           <div className="flex justify-end">
-            <Button disabled={!ready || busy} onClick={() => request("copy")}>
+            <Button
+              disabled={!ready || busy || actionsDisabled}
+              onClick={() => request("copy")}
+            >
               {copy === "copying"
                 ? "Copying…"
                 : copy === "copied"
@@ -412,18 +436,20 @@ function ShareContents({
             </Button>
           </div>
         </section>
-        <section className="flex flex-col gap-2">
-          <h3 className="m-0 text-label">Share to catalog</h3>
-          <p className="m-0 text-body-sm text-secondary">
-            {catalog.description}
-          </p>
-          <Switch
-            aria-label="Share to catalog"
-            checked={catalog.shared}
-            disabled={busy}
-            onCheckedChange={() => void changeCatalog()}
-          />
-        </section>
+        {catalogControls ?? (
+          <section className="flex flex-col gap-2">
+            <h3 className="m-0 text-label">Share to catalog</h3>
+            <p className="m-0 text-body-sm text-secondary">
+              {catalog.description}
+            </p>
+            <Switch
+              aria-label="Share to catalog"
+              checked={catalog.shared}
+              disabled={busy}
+              onCheckedChange={() => void changeCatalog()}
+            />
+          </section>
+        )}
         {error && <p role="alert">{error}</p>}
       </Dialog>
       {confirmation && (

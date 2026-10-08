@@ -1,3 +1,4 @@
+import { snapshotClipboardHtml } from "../agents/snapshot-link";
 // @vitest-environment jsdom
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -949,6 +950,7 @@ async function mountUploadComposer(
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
     editable?: boolean;
+    media?: (url: string) => string | undefined;
   } = {},
 ) {
   vi.stubGlobal(
@@ -978,7 +980,7 @@ async function mountUploadComposer(
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
-      media: (url) => url,
+      media: options.media ?? ((url) => url),
       uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
         uploadCalls.push({ file, signal, progress, result });
@@ -5765,5 +5767,49 @@ it.each(["disabled", "retarget", "unmount"])(
     else h.unmount();
     act(() => expect(insert([first, second])).toBe(false));
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["agent", "team"])(
+  "pastes a copied %s snapshot as an attachment and sends only on Send",
+  async (kind) => {
+    const h = await mountUploadComposer({
+      media: (url) => `buzz-media://localhost/${encodeURIComponent(url)}`,
+    });
+    const descriptor = {
+      name: `helper.${kind}.png`,
+      url: `https://relay.example.test/media/${"a".repeat(64)}.png`,
+      type: "image/png",
+      size: 2048,
+      sha256: "a".repeat(64),
+    };
+    const html = snapshotClipboardHtml(descriptor, "Helper");
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [],
+        getData: (type: string) =>
+          type === "text/html" ? html : descriptor.url,
+      },
+    });
+    expect(
+      await within(h.form()).findByRole("button", {
+        name: `Remove ${descriptor.name}`,
+      }),
+    ).toBeVisible();
+    expect(h.input()).toHaveValue("");
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.uploadCalls).toHaveLength(0);
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.uploadCalls).toHaveLength(0);
+    const event = h.publish.mock.calls[0]?.[0];
+    expect(event?.content).toContain(descriptor.url);
+    expect(event?.tags).toContainEqual(
+      expect.arrayContaining([
+        "imeta",
+        `filename ${descriptor.name}`,
+        `x ${descriptor.sha256}`,
+      ]),
+    );
   },
 );

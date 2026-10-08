@@ -1,26 +1,30 @@
 import { expect, it } from "vitest";
+import {
+  MAX_AGENT_SNAPSHOT_JSON_BYTES,
+  MAX_AGENT_SNAPSHOT_PNG_BYTES,
+} from "./snapshot";
+import {
+  MAX_TEAM_SNAPSHOT_JSON_BYTES,
+  MAX_TEAM_SNAPSHOT_PNG_BYTES,
+} from "./team-encoding";
+
 import { validateSnapshotFile } from "./snapshot-file";
 
-it.each(["png", "json"])("uses agent/team limits for %s", (extension) => {
-  const type = extension === "png" ? "image/png" : "application/json";
-  const bytes = new Uint8Array(10 * 1024 * 1024 + 1);
+it.each([
+  ["agent.png", MAX_AGENT_SNAPSHOT_PNG_BYTES],
+  ["agent.json", MAX_AGENT_SNAPSHOT_JSON_BYTES],
+  ["team.png", MAX_TEAM_SNAPSHOT_PNG_BYTES],
+  ["team.json", MAX_TEAM_SNAPSHOT_JSON_BYTES],
+])("uses the owner limit for %s", (format, limit) => {
+  const type = format.endsWith("png") ? "image/png" : "application/json";
   expect(() =>
     validateSnapshotFile(
-      new File([bytes], `worker.agent.${extension}`, { type }),
-    ),
-  ).toThrow();
-  expect(() =>
-    validateSnapshotFile(
-      new File([bytes], `worker.team.${extension}`, { type }),
+      new File([new Uint8Array(limit)], `worker.${format}`, { type }),
     ),
   ).not.toThrow();
   expect(() =>
     validateSnapshotFile(
-      new File(
-        [new Uint8Array(50 * 1024 * 1024 + 1)],
-        `worker.team.${extension}`,
-        { type },
-      ),
+      new File([new Uint8Array(limit + 1)], `worker.${format}`, { type }),
     ),
   ).toThrow();
 });

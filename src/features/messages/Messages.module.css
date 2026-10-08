@@ -24,8 +24,9 @@
   overflow-y: auto;
   overflow-anchor: none;
   padding: 0 var(--space-panel-inset);
-  /* Reserve typing space plus room for the floating control’s shadow. */
-  padding-bottom: calc(var(--space-6) + var(--space-3));
+  /* Keep fractional last rows reachable despite integer scroll extents. */
+  --history-bottom-inset: var(--space-half);
+  padding-bottom: var(--history-bottom-inset);
   /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.51.0.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
@@ -51,6 +52,11 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 20%, transparent);
   background-clip: padding-box;
+}
+/* Part of the final measured item, so end alignment includes breathing room.
+   The spacer scrolls away with history instead of shortening its viewport. */
+.timelineEnd {
+  height: var(--space-3);
 }
 .feed ol {
   list-style: none;
@@ -454,7 +460,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   background: var(--affordance-subtle-hover);
   color: var(--text-subtle);
 }
-/* Keep public typing and plugin accessories in one non-collapsing stack. */
+/* Optional plugin accessories use only the space they actually render. */
 .composerContext {
   position: relative;
   display: flex;
@@ -462,28 +468,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-shrink: 0;
   min-width: 0;
 }
-/* Existing conversations keep a fixed row, even while nobody is typing. */
-.composerContext[data-reserve-typing] {
-  padding-top: var(--space-6);
-}
-/* Let history continue behind the reserved typing row instead of ending at
-   a hard blank band. Its bottom padding keeps the latest message unobscured. */
-:is(.feed, .threadHistory) + .composerContext[data-reserve-typing] {
-  margin-top: calc(-1 * (var(--space-6) + var(--space-3)));
-}
+/* Soften the scroll edge without reserving a blank strip above the composer. */
 :is(.feed, .threadHistory):has(.jumpToLatest[data-visible="true"])
-  + .composerContext[data-reserve-typing]::before {
++ .composerContext::before {
   content: "";
   position: absolute;
   inset-inline: 0;
   top: calc(-1 * var(--space-3));
-  height: calc(var(--space-6) + 2 * var(--space-3));
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    var(--surface-panel) calc(100% - var(--space-3)),
-    var(--surface-panel)
-  );
+  height: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--surface-panel));
   pointer-events: none;
 }
 /* The existing editor owns text; this surface owns only composer layout. */
@@ -498,7 +491,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
-  margin: var(--space-3) var(--space-4) var(--space-4);
+  margin: 0 var(--space-4) var(--space-4);
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
@@ -520,7 +513,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     padding-inline: var(--space-3);
   }
   .composer {
-    margin: var(--space-3);
+    margin: 0 var(--space-3) var(--space-3);
   }
 }
 .composer[data-editing] {
@@ -693,7 +686,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-panel-inset);
-  padding-bottom: calc(var(--space-6) + var(--space-3));
+  /* Scrollable end padding, not a fixed strip above the composer. */
+  --history-bottom-inset: var(--space-3);
+  padding-bottom: var(--history-bottom-inset);
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -1218,6 +1213,12 @@ button.mediaPreview {
 }
 .mediaReviewComposer {
   display: contents;
+}
+/* Media comments have frame controls above the composer, not scrollback to
+   float over. Give active typing/agents their own row; idle still takes no space. */
+.mediaReviewComposer [data-conversation-activity] {
+  position: static;
+  margin: var(--space-2) var(--space-4);
 }
 .mediaReviewTimeOption {
   display: flex;
@@ -1827,9 +1828,6 @@ html[data-keyboard-input] .quickReactionGlyph {
   white-space: nowrap;
   color: var(--text-subtle);
 }
-.messageBubble > .text {
-  margin-top: 0;
-}
 /* Generous conversation measure, relative to the rendered message type size. */
 .messageBubble > :is(.text, .plainText) {
   max-width: min(90ch, 100%);
@@ -2351,11 +2349,22 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   position: sticky;
   z-index: 2;
   /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */
-  top: calc(100% + var(--space-6));
+  top: calc(100% + var(--history-bottom-inset) - var(--space-3));
   height: 0;
   display: flex;
   justify-content: center;
   pointer-events: none;
+}
+/* Leave a separate floating lane when the composer has an activity pill. */
+:is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
+.jumpToLatest {
+  top: calc(
+    100% +
+    var(--history-bottom-inset) -
+    var(--space-3) -
+    2 *
+    var(--space-6)
+  );
 }
 .jumpToLatestSurface {
   @apply glass-secondary;
@@ -2559,9 +2568,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-inline-start: var(--space-3);
 }
 
-.feed .message[data-layout="continuation"] .messageGutter {
-  flex-basis: var(--size-control);
-}
 .text pre {
   text-wrap-style: auto;
 }
@@ -2583,4 +2589,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .messageAttachments .imageCount {
   margin-top: var(--space-half);
+}
+
+.composerActions[hidden] {
+  display: none;
 }

@@ -988,3 +988,12 @@ picker results use the opt-in `buzz-thin-scrollbar` native scrollbar recipe.
 Mention choices use `NavigationItem variant="option"` with 8px padding and
 immediate hover/focus feedback. The picker owns arrow-key navigation and exact
 identity selection; rows retain ordinary button semantics.
+
+### Chrome route navigation
+
+For full-page destinations, compose native-button `NavigationItem variant="pill"`
+inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
+but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
+buttons a tablist/tabpanel relationship when selection moves focus to main content.
+The shell owns responsive overflow. Full-page `IconButton variant="chrome"` uses
+`aria-current="page"` for selection; companion toggles continue to use `aria-expanded`.

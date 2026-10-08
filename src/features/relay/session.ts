@@ -39,6 +39,7 @@ import {
   readRelayLibrary,
 } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
+import { createCommunityCatalog } from "../agents/catalog";
 import { archiveHides, createIdentityArchives } from "./identity-archives";
 import {
   createReadState,
@@ -62,6 +63,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import {
   activeSidebarAssignment,
+  activeSidebarSectionRemoval,
   readActiveSidebarGroups,
 } from "./sidebar-personal-groups";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -647,6 +649,14 @@ export function createRelaySession(
       : undefined,
     notify,
   );
+  const communityCatalog = createCommunityCatalog({
+    // Verified reads reconcile fetched heads with the outbox journal.
+    reader: transport && !options.cachedOnly ? verified : undefined,
+    viewer: transport?.viewer ?? "",
+    outbox: writes?.outbox,
+    local: writes?.local,
+    notify,
+  });
   const archives = createIdentityArchives(
     requests.reader,
     transport?.archiveAuthority,
@@ -1245,6 +1255,21 @@ export function createRelaySession(
         : undefined;
     })(),
     options.persistence,
+    (() => {
+      const remove = transport?.removeSidebarSection;
+      return remove
+        ? activeSidebarSectionRemoval(channelKit.capability, (id, signal) =>
+            remove(
+              id,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            ),
+          )
+        : undefined;
+    })(),
   );
   let groupHead: string | undefined;
   const stopSidebarGroups = channelKit.capability.subscribe(() => {
@@ -1643,6 +1668,27 @@ export function createRelaySession(
             },
           })
         : undefined,
+    // Snapshot links are community media, not channel messages or catalog publications.
+    snapshotUpload: uploadAttachment
+      ? Object.freeze({
+          async upload(
+            file: File,
+            signal: AbortSignal,
+          ): Promise<UploadedAttachment> {
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            const result = await uploadAttachment(file, combined);
+            combined.throwIfAborted();
+            if (closed) throw new UploadError("denied");
+            return result;
+          },
+        })
+      : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain
     // ordinary community-media access, matching Desktop's attachment path.
     feedbackUpload:
@@ -1786,6 +1832,7 @@ export function createRelaySession(
     emoji: emoji.queries,
     statuses: statuses.queries,
     agentLibrary: agentLibrary.queries,
+    communityCatalog: communityCatalog.queries,
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
@@ -2366,6 +2413,7 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         agentLibrary.clear();
+        communityCatalog.clear();
         archives.clear();
         workflows.interrupt();
         channels.staleHeads();
@@ -2414,6 +2462,7 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               agentLibrary.reconnect();
+              communityCatalog.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
               emoji.reconnect();
@@ -2578,6 +2627,7 @@ export function createRelaySession(
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();
+      communityCatalog.dispose();
       archives.dispose();
     },
     retainedChannels: channels.retainedChannels,

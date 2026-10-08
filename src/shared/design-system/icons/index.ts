@@ -414,3 +414,6 @@ export const HermesLogoIcon = defineIcon("custom", HermesLogoArtwork, {
 
 import TablerImageIcon from "@tabler/icons-react/dist/esm/icons/IconPhoto.mjs";
 export const ImageIcon = defineIcon("tabler", TablerImageIcon);
+
+import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
+export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);

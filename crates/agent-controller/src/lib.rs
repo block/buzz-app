@@ -49,8 +49,8 @@ pub use import::{
 pub use restart::{RestartChange, RestartDiffEntry};
 pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{
-    installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,
-    ModelContext,
+    check_owner, delete_local_agent_keys, installed, installed_npm_tool, managed_tool, Action,
+    Controller, GooseModelContext, ModelContext,
 };
 pub use secret::{validate_snapshot_memory_envelope, Credentials, Secret};
 pub use skills::ensure_buzz_cli_skill;

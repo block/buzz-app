@@ -37,6 +37,7 @@ impl AgentHost {
             }))),
             Arc::new(AtomicBool::new(false)),
             Arc::new(tokio::sync::Mutex::new(())),
+            crate::identity::IdentityHost::fixture_owner(),
         )
     }
 }
@@ -1585,7 +1586,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(synthetic_bundle(&dir.path().join("tools"))),
+                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -1654,7 +1655,7 @@ mod overlap {
             h.controller = Controller::new(
                 Store::open(dir.path().join("store"))?,
                 credentials.clone(),
-                Ok(synthetic_bundle(&dir.path().join("tools"))),
+                Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
                 dir.path().join("ownership"),
             );
             h.credentials = credentials;
@@ -2589,16 +2590,17 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let (release, held) = std::sync::mpsc::channel();
-    let host = AgentHost::initialize_with(move || {
-        held.recv().map_err(|_| "Initialization gate closed")?;
-        Host::open(
-            root.join("store"),
-            root.join("legacy"),
-            root.join("workspace"),
-            Err(RUNTIME_GATE.into()),
-            Arc::new(RejectingCredentials),
-        )
-    });
+    let host =
+        AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+            held.recv().map_err(|_| "Initialization gate closed")?;
+            Host::open(
+                root.join("store"),
+                root.join("legacy"),
+                root.join("workspace"),
+                Err(RUNTIME_GATE.into()),
+                Arc::new(RejectingCredentials),
+            )
+        });
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let executable = dir.path().join("launcher");
@@ -2626,10 +2628,11 @@ async fn protection_registration_waits_for_initialization_without_retrying() {
 async fn initialization_failure_and_shutdown_refuse_queued_registration() {
     for shutdown in [false, true] {
         let (release, held) = std::sync::mpsc::channel();
-        let host = AgentHost::initialize_with(move || {
-            held.recv().map_err(|_| "Initialization gate closed")?;
-            Err("Synthetic initialization failure".into())
-        });
+        let host =
+            AgentHost::initialize_with(crate::identity::IdentityHost::fixture_owner(), move || {
+                held.recv().map_err(|_| "Initialization gate closed")?;
+                Err("Synthetic initialization failure".into())
+            });
         let mut registration = std::pin::pin!(run::<()>(host.clone(), |_| {
             panic!("registration must not execute without a usable host")
         }));
@@ -2945,4 +2948,64 @@ async fn shell_discovery_does_not_block_native_stop_or_resurrect_cancelled_start
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn kept_agents_of_another_or_missing_owner_never_reach_their_credentials() {
+    let (dir, host, _app, _view) = fixture();
+    let id = seed(dir.path());
+    let path = dir.path().join("store/agents.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["agents"][0]["authTag"] = json!(json!(["auth", "cd".repeat(32), "", "sig"]).to_string());
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    // A usable runtime, so only the owner check can stop the start.
+    host.with(|h| {
+        let credentials = h.credentials.clone();
+        h.controller = Controller::new(
+            Store::open(dir.path().join("replacement"))?,
+            credentials.clone(),
+            Err("placeholder".into()),
+            dir.path().join("ownership"),
+        );
+        h.controller = Controller::new(
+            Store::open(dir.path().join("store"))?,
+            credentials,
+            Ok(overlap::synthetic_bundle(&dir.path().join("tools"))),
+            dir.path().join("ownership"),
+        );
+        h.legacy_check = || Ok(());
+        Ok(())
+    })
+    .unwrap();
+    let start = |host: AgentHost| {
+        tauri::async_runtime::block_on(start_guarded(
+            host,
+            id.clone(),
+            Action::Start,
+            false,
+            None,
+            None,
+        ))
+        .unwrap()
+        .data
+        .agents[0]
+            .error
+            .clone()
+            .unwrap()
+    };
+    // RejectingCredentials answers IMPORT_GATE, so any credential read would show here.
+    let mismatched = start(host.clone());
+    assert!(
+        mismatched.contains("different Buzz identity"),
+        "{mismatched}"
+    );
+    // No signed-in human (test OsStore is unreadable) is refused the same way.
+    let signed_out = AgentHost(
+        host.0.clone(),
+        host.1.clone(),
+        host.2.clone(),
+        crate::identity::IdentityHost::default(),
+    );
+    let missing = start(signed_out);
+    assert!(missing.contains("different Buzz identity"), "{missing}");
 }

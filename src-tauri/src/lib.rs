@@ -37,6 +37,7 @@ mod window_controls;
 mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
+mod sign_out;
 use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
@@ -538,11 +539,31 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_resize,
         terminal_close,
         terminal_close_owner,
-        update_restart
+        update_restart,
+        sign_out::sign_out,
+        sign_out::sign_out_wipe_refusal
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = app_context();
+    // A pending Sign out finishes before any window, webview storage, service or
+    // identity read; if it can't, Buzz explains and exits without opening.
+    let instance = sign_out::Paths::resolve(&context.config().identifier).map(|paths| {
+        sign_out::boot(
+            &paths,
+            |registry| {
+                buzz_agent_controller::delete_local_agent_keys(
+                    registry.to_path_buf(),
+                    &buzz_agent_controller::PlatformCredentials::default(),
+                )
+            },
+            identity::remove_saved_key,
+        )
+        .unwrap_or_else(|message| sign_out::exit_with(&message))
+    });
+    let identity = IdentityHost::default();
+    let agent_identity = identity.clone();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -562,7 +583,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
                     eprintln!("Could not restore Buzz window: {error}");
@@ -625,7 +646,7 @@ pub fn run() {
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources));
+            app.manage(AgentHost::initialize(paths, resources, agent_identity));
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -640,9 +661,13 @@ pub fn run() {
     } else {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
+    let builder = match instance {
+        Some(instance) => builder.manage(instance),
+        None => builder,
+    };
     builder
         .manage(image_clipboard::ImageClipboard::default())
-        .manage(IdentityHost::default())
+        .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
@@ -702,7 +727,7 @@ pub fn run() {
             }
             browser::window_event(window, event);
         })
-        .build(app_context())
+        .build(context)
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
@@ -717,19 +742,25 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<relay::Spools>().cancel_all(&app.state::<relay::Uploads>());
-                app.state::<image_clipboard::ImageClipboard>().release();
-                app.state::<HarnessSetup>().shutdown();
-                browser::shutdown();
-                if let Err(error) = app.state::<Terminals>().shutdown() {
-                    eprintln!("Terminal shutdown failed: {error}");
-                }
-                app.state::<ModelHost>().shutdown();
-                if app.state::<AgentHost>().shutdown().is_err() {
-                    eprintln!("Native agent shutdown could not be confirmed");
-                }
+                shut_down(app);
             }
         });
+}
+
+/// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
+pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<relay::Spools>()
+        .cancel_all(&app.state::<relay::Uploads>());
+    app.state::<image_clipboard::ImageClipboard>().release();
+    app.state::<HarnessSetup>().shutdown();
+    browser::shutdown();
+    if let Err(error) = app.state::<Terminals>().shutdown() {
+        eprintln!("Terminal shutdown failed: {error}");
+    }
+    app.state::<ModelHost>().shutdown();
+    if app.state::<AgentHost>().shutdown().is_err() {
+        eprintln!("Native agent shutdown could not be confirmed");
+    }
 }
 
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {

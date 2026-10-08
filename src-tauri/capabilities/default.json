@@ -13,6 +13,8 @@
     "allow-identity-import",
     "allow-identity-create",
     "allow-identity-export",
+    "allow-sign-out",
+    "allow-sign-out-wipe-refusal",
     "allow-enterprise-login-gate",
     "allow-relay-sign",
     "allow-identity-prepare-remote-agent-authorization",

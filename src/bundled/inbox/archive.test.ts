@@ -167,3 +167,60 @@ it("ignores malformed archive records", () => {
     ),
   ).toEqual([]);
 });
+
+it("reconciles duplicate reopening effects without reporting a failed save", () => {
+  const h = fixture();
+  updateArchive(h.scope, h.item, true);
+  const revision = viewRevision(h.scope, archiveKey);
+  const tag = message(h.alice, "room", "New request", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reopened = {
+    ...h.item,
+    messageIds: [...h.item.messageIds, tag.id],
+    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+  };
+  reopenArchives(h.scope, [reopened], revision);
+  expect(() => reopenArchives(h.scope, [reopened], revision)).not.toThrow();
+  expect(readArchives(viewRevision(h.scope, archiveKey))).toEqual([]);
+});
+
+it("does not overwrite a newer archive intent when reopening an older revision", () => {
+  const h = fixture();
+  updateArchive(h.scope, h.item, true);
+  const revision = viewRevision(h.scope, archiveKey);
+  const tag = message(h.alice, "room", "New request", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reopened = {
+    ...h.item,
+    messageIds: [...h.item.messageIds, tag.id],
+    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+  };
+  updateArchive(h.scope, reopened, true);
+  const latest = viewRevision(h.scope, archiveKey);
+  expect(() => reopenArchives(h.scope, [reopened], revision)).not.toThrow();
+  expect(viewRevision(h.scope, archiveKey)).toBe(latest);
+  expect(h.archived(reopened)).toBe(true);
+});
+
+it("reports a genuine reopening write failure without retiring the archive", () => {
+  const h = fixture();
+  updateArchive(h.scope, h.item, true);
+  const revision = viewRevision(h.scope, archiveKey);
+  const tag = message(h.alice, "room", "New request", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const reopened = {
+    ...h.item,
+    messageIds: [...h.item.messageIds, tag.id],
+    mentions: [...h.item.mentions, { id: tag.id, createdAt: 30 }],
+  };
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("disk full");
+  });
+  expect(() => reopenArchives(h.scope, [reopened], revision)).toThrow(
+    "Could not save the reopened Inbox conversation",
+  );
+  expect(viewRevision(h.scope, archiveKey)).toBe(revision);
+});

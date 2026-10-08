@@ -135,7 +135,8 @@ export function reopenArchives(
     retained.every((archive, index) => archive === archives[index])
   )
     return;
-  if (replaceView(scope, archiveKey, revision, retained) !== "saved")
+  // A newer revision is reconciled by the view subscription, not this stale effect.
+  if (replaceView(scope, archiveKey, revision, retained) === "failed")
     throw new Error(
       "Could not save the reopened Inbox conversation on this device. Try again.",
     );

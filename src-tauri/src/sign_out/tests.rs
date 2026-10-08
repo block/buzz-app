@@ -7,6 +7,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
         marker: root.join(marker_name("app", service)),
         lock: root.join(LOCK),
         key_lock: root.join(key_lock_name(service)),
+        ownership: root.join(AGENT_OWNERSHIP),
         app_data: root.join("app"),
         others: vec![root.join("webkit")],
     }
@@ -478,7 +479,7 @@ fn a_sign_out_committed_while_recovery_hands_the_lock_back_is_finished_too() {
 }
 
 #[test]
-fn a_sign_out_committed_while_a_refused_one_lets_go_requires_reopening() {
+fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
     let (dir, paths) = fixture();
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
@@ -489,7 +490,19 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_requires_reopening() {
         assert_eq!(child.go(), "child: signing out");
         child.finish();
     })));
-    assert_eq!(instance.begin(PLAIN), Err(reopen()));
+    let exited = Cell::new(false);
+    let result = run(attempt(
+        &instance,
+        &paths,
+        PLAIN,
+        || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
+        || {
+            exited.set(true);
+            async { Err(refuse("exited")) }
+        },
+    ));
+    assert!(exited.get());
+    assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
     assert_eq!(instance.begin(WIPE), Err(refuse(ALREADY)));
@@ -854,20 +867,71 @@ fn a_marker_write_failure_stops_nothing() {
 }
 
 #[test]
-fn a_shutdown_failure_keeps_the_marker_and_asks_to_reopen() {
+fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
     let (_dir, paths) = fixture();
-    let failure = run(prepare(&paths, choices(false), || async {
-        Err("controller stuck".to_owned())
-    }))
-    .unwrap_err();
-    assert_eq!(
-        failure,
-        Failure {
-            message: REOPEN.into(),
-            reopen: true
-        }
-    );
+    let instance = boot(&paths, no_agents, || panic!("no marker"))
+        .ok()
+        .unwrap();
+    let exited = Cell::new(false);
+    let result = run(attempt(
+        &instance,
+        &paths,
+        choices(false),
+        || async { Err("controller stuck".to_owned()) },
+        || {
+            exited.set(true);
+            async { Err(refuse("exited")) }
+        },
+    ));
+    assert!(exited.get());
+    assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
+}
+
+#[test]
+fn a_pending_erase_waits_for_every_agent_supervisor_to_let_go() {
+    let (_dir, paths) = fixture();
+    mark(&paths, true, true);
+    fs::create_dir_all(&paths.ownership).unwrap();
+    let held = File::create(paths.ownership.join("agent-community.lock")).unwrap();
+    #[allow(clippy::incompatible_msrv)]
+    held.lock().unwrap();
+    let before = data(paths.app_data.parent().unwrap());
+    let refused = boot(
+        &paths,
+        |_| panic!("agent keys must stay"),
+        || panic!("the key must stay"),
+    );
+    assert_eq!(refused.err(), Some(AGENT_STOPPING.to_owned()));
+    assert_eq!(data(paths.app_data.parent().unwrap()), before);
+    drop(held);
+    let removed = Cell::new(0);
+    let finished = boot(
+        &paths,
+        |_| {
+            removed.set(removed.get() + 1);
+            Ok(())
+        },
+        || {
+            removed.set(removed.get() + 1);
+            Ok(())
+        },
+    );
+    assert!(finished.is_ok());
+    assert_eq!(removed.get(), 2);
+    assert!(!paths.marker.exists());
+}
+
+#[test]
+fn a_plain_sign_out_does_not_wait_for_agent_supervisors() {
+    let (_dir, paths) = fixture();
+    mark(&paths, false, false);
+    fs::create_dir_all(&paths.ownership).unwrap();
+    let held = File::create(paths.ownership.join("agent-community.lock")).unwrap();
+    #[allow(clippy::incompatible_msrv)]
+    held.lock().unwrap();
+    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(!paths.marker.exists());
 }
 
 /// An outside folder holding `files`, for links to point at.
@@ -1024,8 +1088,7 @@ fn production_acl_lets_sign_out_reach_native_validation() {
     assert_eq!(
         error,
         serde_json::json!({
-            "message": "Removing agents is part of erasing this device",
-            "reopen": false
+            "message": "Removing agents is part of erasing this device"
         })
     );
     // Refused before any agent was stopped.

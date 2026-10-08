@@ -3,6 +3,7 @@
 //! its key (and, for a wipe, the lock every Buzz shares), does every deletion before any window, service or identity read:
 //! agent keys (when asked), the wipe, then the human key. Each step is safe to
 //! repeat; any failure keeps the marker and Buzz exits, so the next launch retries.
+//! An erase also waits for every agent's supervisor to let go of its ownership lock.
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
@@ -23,11 +24,16 @@ const OTHERS_ALL: &str =
     "Quit every other Buzz window, then sign out and erase again. Nothing was removed.";
 const SIGNING_OUT: &str = "Buzz is signing out in another window. Open Buzz again in a moment.";
 const NOT_PREPARED: &str = "Couldn't prepare sign out; nothing was removed. Try again.";
-const REOPEN: &str = "Quit and reopen Buzz to finish signing out.";
+const FENCED: &str = "Buzz had to quit to sign out safely. Open Buzz again to continue.";
+const AGENT_STOPPING: &str =
+    "Erasing didn't finish because an agent is still stopping; nothing was removed. Open Buzz again to retry.";
 const ALREADY: &str = "Buzz is already signing out.";
 const LINKED: &str = "Erasing is unavailable because a Buzz storage folder is a link or couldn't be checked; nothing was removed";
 const DEV_WIPE: &str = "Erasing is unavailable in development builds because they share agent keys and plugin storage with the installed Buzz";
 const KEPT: &str = "agent-controller";
+/// One lock per running agent, held by its supervisor until the agent has
+/// stopped, even after Buzz exits. Shared by every Buzz, under the user data folder.
+pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// What a kept agent needs to be identified and start again: the agent list
 /// with each agent's settings, and the shared agent defaults. Its keys live in
 /// the keychain. Anything else in `KEPT` (saved logins, logs, run folders, and
@@ -57,6 +63,8 @@ pub(crate) struct Paths {
     lock: PathBuf,
     /// Held shared by every Buzz using this human key store, alone to sign out of it.
     key_lock: PathBuf,
+    /// Agent ownership locks; an erase waits until none is held.
+    ownership: PathBuf,
     app_data: PathBuf,
     /// Other app-owned folders: local data and WebView storage, caches.
     others: Vec<PathBuf>,
@@ -88,6 +96,7 @@ impl Paths {
             )),
             lock: data.join(LOCK),
             key_lock: data.join(key_lock_name(buzz_credential_store::HUMAN_SERVICE)),
+            ownership: data.join(AGENT_OWNERSHIP),
             app_data,
             others,
         })
@@ -140,7 +149,7 @@ fn real_dir(path: &Path) -> std::io::Result<bool> {
 /// alone, so no copy using shared storage runs. Locks are taken key first, then
 /// all-Buzz, and released in reverse, never waiting while holding one alone.
 /// `started` admits one sign-out per instance: after it commits, Buzz restarts
-/// or must be reopened, so it is never cleared.
+/// or exits, so it is never cleared.
 pub(crate) struct Instance {
     locks: Mutex<Locks>,
     marker: PathBuf,
@@ -198,25 +207,25 @@ impl Instance {
     /// let go too. Another process may have committed a sign-out meanwhile; only
     /// with none pending can this instance carry on.
     fn share(&self, locks: &Locks, all: bool, message: &str) -> Failure {
-        // Bounded: a stuck owner must not hang the refusal; not sharing again means reopening.
+        // Bounded: a stuck owner must not hang the refusal; not sharing again means exiting.
         if !wait_for(|| locks.key.try_lock_shared())
             || (all && !wait_for(|| locks.all.try_lock_shared()))
         {
-            return reopen();
+            return fenced();
         }
         match self.marker.try_exists() {
             Ok(false) => {
                 self.started.store(false, Ordering::SeqCst);
                 refuse(message)
             }
-            Ok(true) => reopen(),
+            Ok(true) => fenced(),
             Err(error) => lost(error),
         }
     }
 }
 fn lost(error: std::io::Error) -> Failure {
     eprintln!("buzz: instance lock: {error}");
-    reopen()
+    fenced()
 }
 // Test seam: runs wherever ownership is briefly let go, and after the first
 // failed attempt to take it while waiting.
@@ -318,11 +327,17 @@ pub(crate) fn boot(
         match pending(&paths.marker)? {
             // Now a wipe: let go and loop to take every lock.
             Some(choices) if choices.wipe && !wipe => {}
-            Some(choices) => finish(paths, choices, &mut remove_agent_keys, &mut remove_key)
-                .map_err(|error| {
-                    eprintln!("buzz: sign out did not finish: {error}");
-                    FAILED.to_owned()
-                })?,
+            Some(choices) => {
+                if choices.wipe {
+                    agents_stopped(&paths.ownership)?;
+                }
+                finish(paths, choices, &mut remove_agent_keys, &mut remove_key).map_err(
+                    |error| {
+                        eprintln!("buzz: sign out did not finish: {error}");
+                        FAILED.to_owned()
+                    },
+                )?
+            }
             None => {}
         }
         if wipe {
@@ -336,6 +351,35 @@ pub(crate) fn boot(
         marker: paths.marker.clone(),
         started: AtomicBool::new(false),
     })
+}
+
+/// An erase deletes storage agents use, so it waits until no supervisor holds an
+/// agent's ownership lock. A plain sign-out removes only the human key and skips
+/// this: the folder is shared with every Buzz, so another copy's agents would block it.
+#[allow(clippy::incompatible_msrv)] // `File` locking; see `Instance`.
+fn agents_stopped(ownership: &Path) -> Result<(), String> {
+    let failed = |error: std::io::Error| {
+        eprintln!("buzz: agent ownership: {error}");
+        FAILED.to_owned()
+    };
+    let entries = match fs::read_dir(ownership) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        other => other.map_err(failed)?,
+    };
+    for entry in entries {
+        let path = entry.map_err(failed)?.path();
+        if path.extension() != Some("lock".as_ref()) {
+            continue;
+        }
+        // Closing the file releases a lock taken here.
+        let file = File::open(&path).map_err(failed)?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(AGENT_STOPPING.into()),
+            Err(fs::TryLockError::Error(error)) => return Err(failed(error)),
+        }
+    }
+    Ok(())
 }
 
 /// Whether a pending sign-out wipes, to choose the locks; `None` when none is
@@ -536,23 +580,25 @@ fn write_marker(path: &Path, choices: Choices) -> std::io::Result<()> {
     fs::rename(&staged, path)
 }
 
-/// `reopen` means this instance can't continue (agents may be stopped); the UI
-/// asks the user to reopen Buzz instead of retrying.
+/// A refusal the dialog shows. `fenced` means this instance can't continue (its
+/// locks or agents are in an unknown state): Buzz exits natively instead, and
+/// it never reaches the dialog.
 #[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Failure {
     message: String,
-    reopen: bool,
+    #[serde(skip)]
+    fenced: bool,
 }
 fn refuse(message: &str) -> Failure {
     Failure {
         message: message.into(),
-        reopen: false,
+        fenced: false,
     }
 }
-fn reopen() -> Failure {
+fn fenced() -> Failure {
     Failure {
-        message: REOPEN.into(),
-        reopen: true,
+        message: FENCED.into(),
+        fenced: true,
     }
 }
 
@@ -575,8 +621,52 @@ where
     })?;
     shutdown().await.map_err(|error| {
         eprintln!("buzz: agents did not stop: {error}");
-        reopen()
+        fenced()
     })
+}
+
+/// Admit, commit and stop agents. A refusal before the marker withdraws; any
+/// fenced failure, before or after it, goes to `exit` and never to the dialog.
+async fn attempt<S, E>(
+    instance: &Instance,
+    paths: &Paths,
+    choices: Choices,
+    shutdown: impl FnOnce() -> S,
+    exit: impl FnOnce() -> E,
+) -> Result<(), Failure>
+where
+    S: Future<Output = Result<(), String>>,
+    E: Future<Output = Result<(), Failure>>,
+{
+    let result = match instance.begin(choices) {
+        Ok(()) => prepare(paths, choices, shutdown).await.map_err(|failure| {
+            if failure.fenced {
+                failure
+            } else {
+                instance.abort(choices, failure)
+            }
+        }),
+        Err(failure) => Err(failure),
+    };
+    match result {
+        Err(failure) if failure.fenced => exit().await,
+        other => other,
+    }
+}
+
+/// Tear down as Quit does, however that goes, then explain and exit. Supervisors
+/// stop their agents when Buzz exits; a pending erase waits for them at launch.
+async fn exit_fenced<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), Failure> {
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        crate::shut_down(&handle);
+        exit_with(FENCED)
+    }) {
+        eprintln!("buzz: could not reach the main thread: {error}");
+        exit_with(FENCED)
+    }
+    // The dialog waits while the main thread tears down and exits.
+    std::future::pending().await
 }
 
 /// Why this build can't sign out, if it can't.
@@ -641,25 +731,21 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         wipe,
         remove_agents,
     };
-    instance.begin(choices)?;
     let stop = app.clone();
-    let result = prepare(&paths, choices, || async move {
+    let shutdown = || async move {
         tauri::async_runtime::spawn_blocking(move || {
             stop.state::<crate::agent_models::ModelHost>().shutdown();
             stop.state::<crate::AgentHost>().shutdown()
         })
         .await
         .map_err(|error| error.to_string())?
+    };
+    attempt(&instance, &paths, choices, shutdown, || {
+        exit_fenced(app.clone())
     })
-    .await;
-    match result {
-        Err(failure) if !failure.reopen => Err(instance.abort(choices, failure)),
-        Err(failure) => Err(failure),
-        Ok(()) => {
-            app.request_restart();
-            Ok(())
-        }
-    }
+    .await?;
+    app.request_restart();
+    Ok(())
 }
 
 #[cfg(test)]

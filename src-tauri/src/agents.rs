@@ -497,7 +497,7 @@ impl Host {
             store,
             credentials.clone(),
             bundle,
-            legacy_parent.join("dev.local.buzz.agent-ownership"),
+            legacy_parent.join(crate::sign_out::AGENT_OWNERSHIP),
         );
         controller.protect_control_paths(
             crate::Manager::from_env().map(|manager| vec![manager.storage_root().to_path_buf()]),

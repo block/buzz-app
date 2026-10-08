@@ -22,7 +22,7 @@ export function signOutReady(state: {
   );
 }
 
-/** Native refusals carry `{ message, reopen }`; anything else is a plain error. */
+/** Native refusals carry `{ message }`; anything else is a plain error. */
 function signOutFailure(reason: unknown) {
   if (
     typeof reason === "object" &&
@@ -30,11 +30,8 @@ function signOutFailure(reason: unknown) {
     "message" in reason &&
     typeof reason.message === "string"
   )
-    return {
-      message: reason.message,
-      reopen: "reopen" in reason && reason.reopen === true,
-    };
-  return { message: String(reason), reopen: false };
+    return reason.message;
+  return String(reason);
 }
 
 export function SignOutDialog({
@@ -51,8 +48,6 @@ export function SignOutDialog({
   const [phrase, setPhrase] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  // Agents may already be stopped; only reopening Buzz can finish or recover.
-  const [reopen, setReopen] = useState(false);
   // Asked of the native side, which enforces it; wipe stays off until it answers.
   const [wipeRefusal, setWipeRefusal] = useState<string | null>();
   useEffect(() => {
@@ -74,10 +69,8 @@ export function SignOutDialog({
     try {
       await identity.signOut({ wipe, removeAgents: wipe && removeAgents });
     } catch (reason) {
-      const failure = signOutFailure(reason);
-      setError(failure.message);
-      setReopen(failure.reopen);
-      setPending(failure.reopen);
+      setError(signOutFailure(reason));
+      setPending(false);
     }
   }
   return (
@@ -85,15 +78,15 @@ export function SignOutDialog({
       title="Sign out of Buzz?"
       description="Signing out removes your private key from this device. Your key is how you sign in, so save it before you continue. You’ll need it to sign back in as this identity."
       onClose={onClose}
-      pending={pending && !reopen}
+      pending={pending}
       actions={
         <>
-          <Button type="button" disabled={pending && !reopen} onClick={onClose}>
+          <Button type="button" disabled={pending} onClick={onClose}>
             Cancel
           </Button>
           <Button
             type="button"
-            disabled={!ready || pending || reopen}
+            disabled={!ready || pending}
             onClick={() => void confirm()}
           >
             {wipe ? "Sign out and erase" : "Sign out"}

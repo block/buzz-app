@@ -436,7 +436,7 @@ it("keeps the dialog open and shows the error when native sign out refuses", asy
   identity.dispose();
 });
 
-it("asks to reopen Buzz instead of offering a retry once agents may be stopped", async () => {
+it("shows a native refusal's message and offers a retry", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();
   await identity.ready;
@@ -447,14 +447,13 @@ it("asks to reopen Buzz instead of offering a retry once agents may be stopped",
   await user.click(screen.getByRole("button", { name: "Reveal private key" }));
   await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
   vi.mocked(invoke).mockRejectedValueOnce({
-    message: "Quit and reopen Buzz to finish signing out.",
-    reopen: true,
+    message: "Quit every other Buzz window using this sign-in.",
   });
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Quit and reopen Buzz",
+    "Quit every other Buzz window using this sign-in.",
   );
-  expect(screen.getByRole("button", { name: "Sign out" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   identity.dispose();
 });

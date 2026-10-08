@@ -106,8 +106,9 @@ all-Buzz, released in reverse, and never waited for while one is held alone.
 Whenever an instance takes its locks shared again (after finishing a pending
 sign-out, or after a refused sign-out), it looks for the marker again: at launch
 a new marker is finished in turn; in a running instance it means another process
-committed a sign-out, and the user is asked to reopen Buzz. Retaking them
-shared is bounded too; on timeout the user is asked to reopen Buzz. These locks
+committed a sign-out, and Buzz exits natively (see below). Retaking them
+shared is bounded too; on timeout, or if a lock can't be let go, Buzz exits the
+same way. These locks
 coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
 human key without them, and older Buzz versions don't take them, so close those
 before signing out. The native
@@ -116,13 +117,26 @@ unless it can hold the locks it needs alone, writes a marker beside (not inside)
 app data recording the wipe and agent choices, stops agents as Quit does, and
 restarts. The marker is named for the exact human key store (debug or release),
 so another build never acts on it. If the marker can't be written nothing has
-changed; if agents can't be stopped, the user is asked to reopen Buzz, which
+changed; if agents can't be stopped, Buzz exits natively, and the next launch
 finishes the sign-out.
+
+A native exit runs the same best-effort teardown as Quit, then shows a native
+alert and exits however that went; the dialog never offers a retry or Cancel
+once this instance's locks or agents are in an unknown state. Agents don't
+outlive Buzz: each runs under a supervisor that stops it when Buzz's socket
+closes, holding that agent's ownership lock (`dev.local.buzz.agent-ownership`
+in the user data folder) until it has stopped. A supervisor that can't stop its
+agent keeps the lock.
 
 A launch that finds the marker takes its key lock alone, and for a wipe the
 all-Buzz lock too, waiting briefly for the exiting instance, then reads the
 marker once more and runs only choices those locks cover: if it has meanwhile
-become a wipe, the launch lets go and starts over to take every lock. A marker
+become a wipe, the launch lets go and starts over to take every lock. Before a
+wipe, it tries every agent ownership lock; if any is still held, it removes
+nothing and exits with a native alert that an agent is still stopping, so a
+later launch retries. A plain sign-out skips this: it removes only the human
+key, and the ownership folder is shared with every Buzz, so another copy's
+running agents would block it. A marker
 that can't be read or parsed fails closed. It finishes before any window,
 webview storage, service or identity read:
 

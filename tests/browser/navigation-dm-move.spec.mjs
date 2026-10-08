@@ -73,6 +73,10 @@ test("Move conversation saves a DM in a section and restores it there after relo
     ).blob.assignments,
   ).toEqual({ beta: "work", "dm-move": "work" });
 
+  await page.reload();
+  await expect(work).toBeVisible();
+  await expect(directMessages).toHaveCount(0);
+
   await work.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move conversation" }).focus();
   await page.keyboard.press("ArrowRight");

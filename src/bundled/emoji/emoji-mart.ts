@@ -74,12 +74,16 @@ export function mountEmojiMart({
     const id = `${prefix}${encodeURIComponent(scope)}/${shortcode}`;
     const literal = `:${shortcode}:`;
     values.set(id, { literal, shortcode });
-    // Match Mart's first-hyphen query normalization as well as individual words.
-    const terms = [shortcode, literal].flatMap((name) => [
-      name,
-      ...name.replace(/(\w)-/, "$1 ").split(/[\s|,]+/),
-      ...name.split(/[-_]+/),
-    ]);
+    // Match Mart's first-hyphen query normalization. Mart matches term prefixes,
+    // so joining from each word start also finds run-together words (`bufop`).
+    const terms = [shortcode, literal].flatMap((name) => {
+      const words = name.split(/[-_]+/);
+      return [
+        name,
+        ...name.replace(/(\w)-/, "$1 ").split(/[\s|,]+/),
+        ...words.map((_, index) => words.slice(index).join("")),
+      ];
+    });
     return [
       {
         id,

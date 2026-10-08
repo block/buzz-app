@@ -1209,7 +1209,8 @@ with local ephemeral signing keys; it does not contact the deployed relay.
 
 The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
-and search load only when opened. Search by name/shortcode, then choose an emoji
+and search load only when opened. Search by name/shortcode (community shortcodes
+also match run-together words, such as `bufop` for `bufo-pray`), then choose an emoji
 to insert at the cursor; Enter selects a search result and Escape closes the picker
 and returns focus. You can also type `:shortcode:`: the closing colon after one
 exact Unicode or community shortcode, such as `:+1:` or `:-1:`, replaces it with

@@ -6,6 +6,7 @@
 pub(crate) mod attachment;
 mod net;
 pub(crate) mod route;
+mod shape;
 #[cfg(test)]
 mod tests;
 
@@ -124,7 +125,7 @@ async fn execute(
     let origin = expected_origin(host, context, discovered).await?;
     let built = request.build(&origin).map_err(Failure::not_sent)?;
     let response = dispatch(net, host, context, &origin, &built).await?;
-    classify(response, built.success_cap).await
+    classify(response, built.success_cap, Some(request)).await
 }
 
 /// Refuses unless the signed-in identity and a fresh discovery still match
@@ -236,9 +237,22 @@ fn intercepted(response: &reqwest::Response) -> bool {
             .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("text/html"))
 }
 
-async fn classify(mut response: reqwest::Response, success_cap: usize) -> Result<Value, Failure> {
+/// `request` is `None` for attachment errors. Once a write has been sent, only
+/// a complete answer from the relay itself is certain: gateway pages, 5xx,
+/// cut-off bodies and unexpected success shapes all stay `Ambiguous`, so the
+/// retry reuses the frozen request ID.
+async fn classify(
+    mut response: reqwest::Response,
+    success_cap: usize,
+    request: Option<&StaffRequest>,
+) -> Result<Value, Failure> {
     let status = response.status().as_u16();
+    let write = request.is_some_and(StaffRequest::is_write);
     if intercepted(&response) {
+        let message = "A sign-in page or gateway answered instead of the admin API";
+        if write {
+            return Err(Failure::ambiguous(Some(status), false, message));
+        }
         return Err(Failure {
             category: Category::Intercepted,
             status: Some(status),
@@ -246,7 +260,7 @@ async fn classify(mut response: reqwest::Response, success_cap: usize) -> Result
             body_empty: false,
             code: None,
             not_sent: false,
-            message: "A sign-in page or gateway answered instead of the admin API".into(),
+            message: message.into(),
         });
     }
     let success = response.status().is_success();
@@ -269,12 +283,29 @@ async fn classify(mut response: reqwest::Response, success_cap: usize) -> Result
         }
     };
     if success {
-        if body.is_empty() {
-            return Ok(Value::Null);
-        }
-        return serde_json::from_slice(&body).map_err(|_| {
-            Failure::ambiguous(Some(status), true, "The admin response was not valid JSON")
-        });
+        let value = if body.is_empty() {
+            None
+        } else {
+            serde_json::from_slice::<Value>(&body).ok()
+        };
+        let valid = match request {
+            Some(request) => {
+                (body.is_empty() || value.is_some()) && shape::valid(request, value.as_ref())
+            }
+            None => false,
+        };
+        return match value {
+            _ if !valid => Err(Failure {
+                body_empty: body.is_empty(),
+                ..Failure::ambiguous(
+                    Some(status),
+                    true,
+                    "The admin API returned an unexpected response",
+                )
+            }),
+            Some(value) => Ok(value),
+            None => Ok(Value::Null),
+        };
     }
     let envelope = serde_json::from_slice::<Value>(&body).ok();
     let field = |name: &str| {
@@ -289,6 +320,8 @@ async fn classify(mut response: reqwest::Response, success_cap: usize) -> Result
         403 => Category::Forbidden,
         404 | 405 if body.is_empty() => Category::Unsupported,
         500.. => Category::Ambiguous,
+        // A write is only definitively refused by the relay's own error envelope.
+        _ if write && field("code").is_none() => Category::Ambiguous,
         _ => Category::Rejected,
     };
     Err(Failure {

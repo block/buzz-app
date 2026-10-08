@@ -261,7 +261,7 @@ export type StaffResults = {
   setFeedbackStatus: { status: FeedbackStatus };
   listOperators: OperatorDto[];
   putOperator: OperatorDto;
-  deleteOperator: null;
+  deleteOperator: { deleted: string };
   listRestrictions: Page<RestrictionDto>;
   liftRestriction: null;
   directAction: DirectActionDto;

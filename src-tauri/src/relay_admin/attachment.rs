@@ -81,7 +81,7 @@ pub(super) async fn fetch(
     let mut response = dispatch(net, host, context, &origin, &built).await?;
     let status = response.status().as_u16();
     if !response.status().is_success() {
-        return Err(classify(response, 0)
+        return Err(classify(response, 0, None)
             .await
             .expect_err("non-2xx is a failure"));
     }
@@ -185,20 +185,25 @@ pub(crate) async fn relay_admin_save_attachment<R: tauri::Runtime>(
         .save_file(move |path| {
             let _ = sender.send(path);
         });
-    let Some(path) = receiver.await.ok().flatten() else {
-        return Ok(json!({ "state": "cancelled" }));
+    let chosen = receiver.await.ok().flatten().map(|path| {
+        path.into_path()
+            .map_err(|_| "The chosen location is not a file path".to_string())
+    });
+    Ok(save_to(chosen, &bytes))
+}
+
+/// `None` is a cancelled dialog.
+pub(super) fn save_to(chosen: Option<Result<std::path::PathBuf, String>>, bytes: &[u8]) -> Value {
+    let Some(path) = chosen else {
+        return json!({ "state": "cancelled" });
     };
-    let written = path
-        .into_path()
-        .map_err(|_| "The chosen location is not a file path".to_string())
-        .and_then(|path| std::fs::write(path, bytes).map_err(|e| e.to_string()));
-    Ok(match written {
+    match path.and_then(|path| std::fs::write(path, bytes).map_err(|e| e.to_string())) {
         Ok(()) => json!({ "state": "saved" }),
         Err(message) => json!({
             "state": "failed",
             "failure": Failure::not_sent(format!("Could not save the attachment: {message}")),
         }),
-    })
+    }
 }
 
 /// `attachment-<hash prefix>.<ext>`; unknown types save as `.bin`.

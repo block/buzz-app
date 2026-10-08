@@ -79,7 +79,13 @@ impl PiContext {
                 command.parent().unwrap().to_path_buf(),
             ]
             .into_iter()
-            .chain(std::env::split_paths(&crate::runtime::path::tools_path()?)),
+            .chain(std::env::split_paths(&crate::runtime::path::tools_path()?))
+            .chain(
+                environment
+                    .get("PATH")
+                    .into_iter()
+                    .flat_map(std::env::split_paths),
+            ),
         )?;
         let mut environment = environment.clone();
         environment.insert(

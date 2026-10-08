@@ -3547,3 +3547,58 @@ done
         format!("discovered\n{KEY}\n{KEY}\nwss://relay.example\n")
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn pi_saved_tool_path_is_shared_by_context_and_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = dir.path().join("saved tools");
+    fs::create_dir(&tools).unwrap();
+    crate::test_executable::write_executable(
+        &tools.join("saved-path-helper"),
+        "#!/bin/sh\nprintf '0.99.1\\n'\n",
+    );
+    let runtime = bundle(dir.path());
+    for name in ["node", "buzz-pi-acp"] {
+        crate::test_executable::write_executable(&dir.path().join(name), "#!/bin/sh\nexit 0\n");
+    }
+    crate::test_executable::write_executable(
+        &dir.path().join("pi"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let mut selected = agent(dir.path());
+    selected.harness.command = dir.path().join("buzz-pi-acp").display().to_string();
+    selected
+        .environment
+        .insert("PATH".into(), tools.display().to_string());
+    let context = crate::pi::PiContext::new(
+        &selected.harness,
+        &selected.workspace,
+        &selected.environment,
+    )
+    .unwrap();
+    let paths = std::env::split_paths(&context.path).collect::<Vec<_>>();
+    assert_eq!(paths[0], dir.path());
+    assert!(paths.contains(&tools), "Pi context omitted saved PATH");
+    let version = context.version_command().output().unwrap();
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8_lossy(&version.stdout), "0.99.1\n");
+    let mut command = runtime
+        .command(&selected, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    crate::test_executable::write_executable(
+        &dir.path().join("buzz-acp"),
+        "#!/bin/sh\nsaved-path-helper\n",
+    );
+    let result = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "0.99.1\n");
+}

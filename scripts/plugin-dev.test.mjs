@@ -51,6 +51,19 @@ test("builds an ordinary alternate artifact with CSS and host checks, without co
       `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
     ),
   ).rejects.toThrow("different Buzz host");
+  // A host whose fingerprint could not be computed must never match an artifact.
+  const previousHost = globalThis.__BUZZ_HOST_MODULES__;
+  try {
+    globalThis.__BUZZ_HOST_MODULES__ = { buildId: null, modules: {} };
+    await expect(
+      import(
+        `data:text/javascript;base64,${Buffer.from(code).toString("base64")}#unavailable-host`
+      ),
+    ).rejects.toThrow("different Buzz host");
+  } finally {
+    if (previousHost === undefined) delete globalThis.__BUZZ_HOST_MODULES__;
+    else globalThis.__BUZZ_HOST_MODULES__ = previousHost;
+  }
   // Rebuilds reuse the output folder but refuse to remove unrelated files.
   await buildInboxDev({ out, id: "test.inbox-dev" });
   await writeFile(join(out, "precious.txt"), "keep");
@@ -69,6 +82,41 @@ test("refuses bundled identities and destructive output destinations", async () 
     buildInboxDev({ out: join(root, "src/bundled/inbox") }),
   ).rejects.toThrow("source checkout");
 });
+
+test.each([
+  { message: "spawnSync git ENOENT", code: "ENOENT" },
+  { message: "fatal: not a git repository", status: 128 },
+])(
+  "host builds survive unavailable Git metadata: $message",
+  async (failure) => {
+    vi.doMock("node:child_process", async (original) => ({
+      ...(await original()),
+      execFileSync: () => {
+        throw Object.assign(new Error(failure.message), failure);
+      },
+    }));
+    try {
+      vi.resetModules();
+      const source = await import("./plugin-dev.mjs");
+      const warn = vi.fn();
+      const generated = await source
+        .inboxHostPlugin()
+        .load.call({ warn }, "\0virtual:buzz-inbox-host");
+      expect(generated).toContain("buildId: null");
+      expect(generated).toContain('"features/messages/MessageComposer"');
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Inbox Dev compatibility is unavailable"),
+      );
+      // An external artifact still requires a real fingerprint; null never matches.
+      await expect(
+        source.buildInboxDev({ out: join(directory, "without-git") }),
+      ).rejects.toThrow(failure.message);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  },
+);
 
 // Exercise Windows filesystem semantics on every host without a Windows-only job.
 test("generates portable host imports with Windows filesystem paths", async () => {

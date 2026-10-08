@@ -170,7 +170,15 @@ export function inboxHostPlugin(directory = root) {
         }
         entries.push(`${JSON.stringify(key)}: ${value}`);
       }
-      return `${imports.join("\n")}\nglobalThis.${registry} = Object.freeze({ buildId: ${JSON.stringify(await hostBuildId(directory))}, modules: Object.freeze({ ${entries.join(",\n")} }) });`;
+      let buildId = null;
+      try {
+        buildId = await hostBuildId(directory);
+      } catch (error) {
+        this.warn(
+          `Inbox Dev compatibility is unavailable; the host will reject development artifacts. ${error.message}`,
+        );
+      }
+      return `${imports.join("\n")}\nglobalThis.${registry} = Object.freeze({ buildId: ${JSON.stringify(buildId)}, modules: Object.freeze({ ${entries.join(",\n")} }) });`;
     },
     transform(code, id) {
       if (
@@ -218,7 +226,7 @@ export async function buildInboxDev({
   const entry = vitePath(resolve(directory, ".inbox-dev-entry.js"));
   const owned = resolve(directory, pluginDirectory);
   const shimPrefix = "\0buzz-host:";
-  const check = `const host = globalThis.${registry}; if (!host || host.buildId !== ${JSON.stringify(buildId)}) throw new Error("Inbox Dev targets a different Buzz host. Build it from the source for your installed app.");`;
+  const check = `const host = globalThis.${registry}; if (!host || host.buildId !== ${JSON.stringify(buildId)}) throw new Error("Inbox Dev targets a different Buzz host. Build it from the source for your installed app. If host source changed under the dev server, restart the host and rebuild Inbox Dev.");`;
   const result = await build({
     root: directory,
     configFile: false,

@@ -523,7 +523,15 @@ limited to the modules and selected exports it consumes, including the host Reac
 instance. The external build reads those running modules rather than copying shared
 components or state. This is a **private, unstable Inbox development interface**,
 not a public SDK or a replacement-plugin contract. The existing loader, injection
-API, reserved IDs, import preview, toggles and routing are unchanged.
+API, reserved IDs, import preview, toggles and routing are unchanged. Host dependencies
+must use static imports; dynamic host imports are not collected and fail the external
+build unless that module is already in the static dependency map.
+
+The map is included in packaged builds so Inbox Dev can run in released Buzz.
+Fingerprinting requires Git and checkout metadata; a shallow checkout is sufficient.
+If fingerprinting fails, the host build warns and continues with an unavailable
+fingerprint, so Inbox Dev is rejected while bundled Inbox remains usable. Building an
+external artifact still requires a valid fingerprint.
 
 A source/dependency fingerprint excludes Inbox-owned files and tests, but includes
 host source, build scripts and locked dependencies. Module evaluation refuses a

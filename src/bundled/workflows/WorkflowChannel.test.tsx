@@ -94,3 +94,133 @@ it("keeps loaded configurations visible without a refresh banner", async () => {
     screen.getByRole("button", { name: "Refresh configurations" }),
   ).toBeEnabled();
 });
+
+it("releases a mounted run latch after unknown delivery without replaying it", async () => {
+  const fixture = createWorkflowFixture();
+  const remove = vi.fn();
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onDelete={remove}
+    />,
+  );
+  const user = userEvent.setup();
+  const action = async (name: string) => {
+    await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+    await user.click(await screen.findByRole("menuitem", { name }));
+  };
+  await action("Run now");
+  const confirm = screen.queryByRole("alertdialog");
+  if (confirm)
+    await user.click(within(confirm).getByRole("button", { name: "Run now" }));
+  expect(fixture.calls.trigger).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Run now" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
+  expect(fixture.calls.trigger).toBe(1);
+  act(() => fixture.finish("unknown"));
+  expect(fixture.calls.trigger).toBe(1);
+  expect(screen.getByText(/The run may have started/)).toBeVisible();
+  await action("Run now");
+  const retryConfirm = screen.queryByRole("alertdialog");
+  if (retryConfirm)
+    await user.click(
+      within(retryConfirm).getByRole("button", { name: "Run now" }),
+    );
+  expect(fixture.calls.trigger).toBe(2);
+  act(() => fixture.finish("unknown"));
+  await action("Delete workflow");
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Delete workflow",
+    }),
+  );
+  expect(remove).toHaveBeenCalledExactlyOnceWith(fixtureDefinition);
+});
+
+it("runs despite a lost earlier run receipt, opens history on success and reports rejection", async () => {
+  const fixture = createWorkflowFixture();
+  // A journaled run whose receipt was lost (e.g. across a restart).
+  act(() => {
+    fixture.capability.trigger(fixtureDefinition);
+    fixture.finish("unknown");
+  });
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onDelete={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  const run = async () => {
+    await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+    const item = await screen.findByRole("menuitem", { name: "Run now" });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(item);
+    const confirm = screen.queryByRole("alertdialog");
+    if (confirm)
+      await user.click(
+        within(confirm).getByRole("button", { name: "Run now" }),
+      );
+  };
+  await run();
+  expect(fixture.calls.trigger).toBe(2);
+  expect(fixture.calls.runs).toBe(0);
+  act(() => fixture.finish("succeeded"));
+  expect(fixture.calls.runs).toBe(1);
+  await run();
+  expect(fixture.calls.trigger).toBe(3);
+  act(() => fixture.finish("rejected"));
+  expect(screen.getByText("Failed to trigger workflow")).toBeVisible();
+  expect(screen.getByText("Fixture conflict")).toBeVisible();
+  // Delete stays available for the owner.
+  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Delete workflow" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+});
+
+it("runs once a newer head supersedes a save whose receipt was lost", async () => {
+  const fixture = createWorkflowFixture();
+  act(() => {
+    fixture.capability.save({
+      channelId: fixtureChannel,
+      existing: fixtureDefinition,
+      yaml: fixtureDefinition.yaml,
+    });
+    fixture.finish("unknown");
+  });
+  const head = {
+    ...fixtureDefinition,
+    revision: "bb".repeat(32),
+    createdAt: fixtureDefinition.createdAt + 100,
+  };
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={head}
+      initialAction="run"
+      onDelete={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Run now",
+    }),
+  );
+  expect(fixture.calls.trigger).toBe(1);
+});

@@ -102,6 +102,7 @@ export function InventoryView({
   onUseHere,
   onImport,
   children,
+  teams,
 }: {
   state: AgentControlState;
   control: AgentControl;
@@ -138,6 +139,7 @@ export function InventoryView({
   ): void;
   onImport(pubkey: string, source?: ImportSource): void;
   children?: ReactNode;
+  teams?: ReactNode;
 }) {
   const [selectedSources, setSelectedSources] = useState<
     Record<string, ImportSource>
@@ -180,7 +182,9 @@ export function InventoryView({
     const CommunityHeading = nested ? "h4" : "h3";
     return orderedGroups(entries).map(([group, identities]) => (
       <section key={group} aria-label={group} className="flex flex-col gap-3">
-        <GroupHeading className="m-0 text-heading">{group}</GroupHeading>
+        <GroupHeading className="m-0 text-label-sm">
+          {group === localHereGroup ? "Individual agents" : group}
+        </GroupHeading>
         {communitySections(group, identities).map(
           ({ community, identities }) => (
             <section
@@ -197,7 +201,7 @@ export function InventoryView({
                 className={
                   group !== localHereGroup
                     ? `overflow-hidden rounded-xl border border-primary ${group === relayGroup ? "agent-relay-inventory" : ""}`
-                    : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] items-start gap-4"
+                    : "agent-grid"
                 }
               >
                 {identities.map(({ row, decision }) => (
@@ -258,7 +262,13 @@ export function InventoryView({
       {children}
       {!rows.size && <p>No agents yet. Add an agent to get started.</p>}
       {allArchived && <p>All your agents are archived in this community.</p>}
-      {renderGroups(active)}
+      {renderGroups(
+        active.filter((entry) => entry.decision.group === localHereGroup),
+      )}
+      {teams}
+      {renderGroups(
+        active.filter((entry) => entry.decision.group !== localHereGroup),
+      )}
       {!!archived.length && (
         <section
           aria-label="Archived agents"
@@ -288,7 +298,7 @@ export function InventoryView({
       {!!profiles.length && (
         <section aria-label="Profiles without identities" className="space-y-3">
           <h2 className="text-heading">Profiles without identities</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+          <div className="agent-grid">
             {profiles.map((profile) => (
               <AgentCard
                 key={profile.id}

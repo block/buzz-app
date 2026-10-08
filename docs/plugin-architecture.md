@@ -47,6 +47,7 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
+bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/projects/       repository/project pages, issue/PR details and Git views
 features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
@@ -82,7 +83,7 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` gives a page a row in the
 shell's page navigation. Pages without it are still listed in search and reachable
-by deep link or from another page; Channels and Sessions are bundled examples.
+by deep link or from another page; Channels is a bundled example.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
@@ -113,9 +114,9 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-All 22 plugins remain bundled. **Channels is the only required plugin.** Bestie,
+All 24 plugins are bundled. **Channels is the only required plugin.** Bestie,
 Todos, and Templates & teams are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Channel Usage, Terminal, Profiles, Links, Mentions, Emoji, GitHub, Inbox,
 Projects, Agents, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
@@ -137,6 +138,21 @@ pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
 
+### Optional channel menu panels
+
+A panel can register `channelMenu: { label, eligible(channel, session) }` for
+placement in Channels → Channel actions. Channels owns the menu, selected channel,
+tab geometry, focus, and close behavior; it opens the **exact active contribution**
+without resolving a target matcher. Eligibility is evaluated again at activation
+against the current connected session, selected non-cached channel and membership.
+Disabling or replacing a plugin retires its open tab; a channel change or loss of
+eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
+stale tab. Eligibility and `channelContext` are presentation, **not authority**:
+the panel must independently verify access before reading any sensitive data and
+fence asynchronous reads on revocation. Channel Usage owns this panel and its
+archive projection; the session continues to own archive capture, access and
+retention. Plugin enablement controls visibility without changing capture settings.
+
 ### Optional channel templates and Settings cards
 
 `ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
@@ -150,7 +166,7 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 
 Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
-Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
+Settings → Plugins, then manage templates under Settings → Messages → Templates and saved teams on Agents. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
@@ -171,7 +187,7 @@ so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Add a community dialog; the card only copies the new relay address. Its
 account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`dev/builderlab.mjs`), which keep the session
+broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
 credential and signing key in Node. Desktop builds use `native.ts`, the same routes
 over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
 `https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
@@ -188,7 +204,8 @@ provider components must check `active()` before accepting delayed work or start
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
 
 Normal Create selects a saved template without a customization disclosure or raw
-setup dump. Templates & teams settings retain lineup/Canvas editing. Disabling
+setup dump. Templates settings retain recipe lineup/Canvas editing; saved-team
+lineups and instructions are edited on Agents. Disabling
 preserves saved group default references but does not apply them to new intent.
 Accepted drafts get a compact summary and Clear action only when the provider is
 unavailable or fails;
@@ -406,7 +423,27 @@ Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
 `ctx.host.request({ url, method, headers, body })`. Command calls name a declared
 ID; the program and arguments come only from the plugin's manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
-UTF-8 stdout. The direct command invocation has a five-second deadline;
+UTF-8 stdout by default. A command may declare `maxOutputBytes`, an integer from
+1 through 1048576 (1 MiB), to request a different bound. Output exceeding that
+bound returns `null` without truncation. Existing declarations retain the 4 KiB
+default. Hosts that do not support this field reject manifests that declare it.
+
+For example, a plugin querying tools available to an agent may need room for a
+JSON inventory containing tool names and descriptions:
+
+```json
+{
+  "id": "agent-tools",
+  "program": "agent-tools",
+  "args": ["list", "--json"],
+  "maxOutputBytes": 65536
+}
+```
+
+This is a command entry inside `host.commands`. The plugin parses the inventory;
+the host only enforces the declared byte limit.
+
+The direct command invocation has a five-second deadline;
 cancellation or timeout kills its process group on Unix or its job process tree
 on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
@@ -440,6 +477,20 @@ main WebView and can invoke app commands directly, so the declarations do not
 isolate a malicious plugin. Load only trusted plugin code.
 
 ### Loading from folders and repositories
+
+Authors can sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`
+after `buzzodz plugin build`. The command reads the saved Buzz human identity
+from the same OS credential slot as the desktop app; it never exports or creates
+a key. Use the same OS account and matching debug or release build. Missing or
+locked storage fails. It writes `plugin.artifact.json` and
+`plugin.signature.json` as the local [NIP-PS](nips/NIP-PS.md) file pair. No relay
+or URL is needed. Include both files in the imported folder or Git repository.
+Buzz checks the event ID, signature and exact artifact bytes before install and
+each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
+local development.
+A signed installation can only update from the same publisher; remove and
+reinstall to choose a different publisher. Signing identifies an author, but
+does not sandbox plugin code or make a publisher trustworthy.
 
 Desktop Settings → Plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
@@ -534,6 +585,8 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+For kind 30177 publication, follow the
+[managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
 The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
 Shared message UI opens exact public-key targets through ordinary page callbacks;
@@ -641,7 +694,7 @@ Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets an
 Slides use distinct file-type icons; unknown websites use a globe. Host matching
 does not fetch metadata or infer a service from names in paths or query strings.
 It does not fetch titles. Messages currently recognize
-credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
@@ -788,7 +841,12 @@ intent survives optional plugin removal and remains subject to session validatio
 
 One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
 the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
-plain Enter/forward Tab accept, and Escape dismisses pending results. A rejected
+plain Enter/forward Tab accept, and Escape dismisses pending results. A typed
+terminator accepts the provider-verified unique exact match: plain Space for a
+mention, the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
+only after both Unicode and community catalogs successfully settle. The editor refuses
+typed terminators in rich or raw Markdown literal ranges; colon conversion records the
+typed source first so undo restores the closing colon and collapsed caret. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
 keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.

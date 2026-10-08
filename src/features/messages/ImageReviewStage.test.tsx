@@ -11,14 +11,18 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import * as imageCopy from "./image-copy";
+import * as nativeImageCopy from "./native-image-copy";
 import { ImageReviewStage } from "./ImageReviewStage";
 
+// jsdom does not implement pointer capture.
+HTMLElement.prototype.setPointerCapture ??= () => {};
+HTMLElement.prototype.releasePointerCapture ??= () => {};
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-function setup() {
+function setup(width = 1000, height = 800) {
   render(
     <ImageReviewStage
       attachments={[{ url: "https://fixture.test/photo.png", kind: "image" }]}
@@ -32,14 +36,28 @@ function setup() {
   const stage = image.parentElement;
   if (!stage) throw new Error("Missing stage");
   Object.defineProperties(image, {
-    naturalWidth: { value: 1000 },
-    naturalHeight: { value: 800 },
+    naturalWidth: { value: width },
+    naturalHeight: { value: height },
   });
   vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 500, 400),
   );
   return { stage, image };
 }
+// Presses and releases the primary pointer, optionally dragging between them.
+function press(target: HTMLElement, from: { x: number; y: number }, to = from) {
+  fireEvent.pointerDown(target, {
+    pointerId: 1,
+    button: 0,
+    isPrimary: true,
+    clientX: from.x,
+    clientY: from.y,
+  });
+  fireEvent.pointerMove(target, { pointerId: 1, clientX: to.x, clientY: to.y });
+  fireEvent.pointerUp(target, { pointerId: 1, clientX: to.x, clientY: to.y });
+}
+const percent = () =>
+  screen.getByRole("button", { name: /^Image zoom:/ }).textContent;
 function gesture(stage: HTMLElement, type: string, scale: number) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.assign(event, { scale, clientX: 250, clientY: 200 });
@@ -496,8 +514,11 @@ function stubImageCopy({ supported = true } = {}) {
   return copy;
 }
 
-it("shows the copy image button only when browser-proxy image copy is supported", () => {
-  stubImageCopy({ supported: true });
+it("offers native copy independently of browser clipboard support", async () => {
+  const broker = stubImageCopy({ supported: false });
+  const native = vi
+    .spyOn(nativeImageCopy, "copyNativeImage")
+    .mockResolvedValue();
   const attachments = [
     { url: "proxy", kind: "image" as const },
     { url: "external", kind: "image" as const },
@@ -524,24 +545,36 @@ it("shows the copy image button only when browser-proxy image copy is supported"
     );
   }
   render(<SourcesGallery />);
-  expect(screen.getByRole("button", { name: "Copy image" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Copy image" }),
+  ).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
   expect(
     screen.queryByRole("button", { name: "Copy image" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Next image" }));
-  expect(
-    screen.queryByRole("button", { name: "Copy image" }),
-  ).not.toBeInTheDocument();
+  const button = screen.getByRole("button", { name: "Copy image" });
+  fireEvent.click(button);
+  expect(native).toHaveBeenCalledWith(
+    "buzz-media://localhost/https%3A%2F%2Ffixture.test%2Fmedia%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  expect(broker).not.toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent("Image copied");
+
+  native.mockRejectedValueOnce(new Error("clipboard denied"));
+  fireEvent.click(button);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't copy image",
+  );
+  expect(broker).not.toHaveBeenCalled();
 
   cleanup();
   vi.restoreAllMocks();
-  stubImageCopy({ supported: false });
+  const supportedBroker = stubImageCopy({ supported: true });
   setup();
-  expect(
-    screen.queryByRole("button", { name: "Copy image" }),
-  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+  expect(supportedBroker).toHaveBeenCalledTimes(1);
 });
 
 it("ignores duplicate copy presses while a clipboard write is pending", async () => {
@@ -619,3 +652,183 @@ it("does not show copy feedback when a stale copy finishes after switching image
   expect(screen.queryByText("Image copied")).not.toBeInTheDocument();
   expect(screen.queryByText("Couldn't copy image")).not.toBeInTheDocument();
 });
+
+it.each([
+  ["a large landscape image to actual pixels", 4000, 3000, "800%"],
+  ["a large portrait image to actual pixels", 3000, 4000, "1000%"],
+  ["a small image to twice its fitted size", 100, 80, "200%"],
+  ["a nearly fitted image to twice its fitted size", 600, 480, "200%"],
+])("clicks %s and clicks back to fit", (_, width, height, zoomed) => {
+  const { image } = setup(width, height);
+  fireEvent.load(image);
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe(zoomed);
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("100%");
+  expect(image.style.transform).toBe("none");
+});
+
+it("anchors click zoom at the pointer and returns to a centered fit", () => {
+  const { image } = setup(4000, 3000);
+  fireEvent.load(image);
+  press(image, { x: 300, y: 250 });
+  // Fit is 1/8, so the click point (50, 50) from center stays under the cursor.
+  expect(image.style.transform).toBe("translate(-350px, -350px) scale(8)");
+  press(image, { x: 10, y: 10 });
+  expect(image.style.transform).toBe("none");
+  fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("100%");
+});
+
+it("pans across extreme aspect ratios after click zoom without toggling zoom", () => {
+  const { image } = setup(10000, 100);
+  fireEvent.load(image);
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("2000%");
+  // Dragging pans to the far edge and leaves the zoom alone.
+  press(image, { x: 250, y: 200 }, { x: -10000, y: 0 });
+  expect(percent()).toBe("2000%");
+  expect(image.style.transform).toBe("translate(-4750px, 0px) scale(20)");
+  // Jitter inside the click slop still counts as a click.
+  press(image, { x: 250, y: 200 }, { x: 253, y: 202 });
+  expect(percent()).toBe("100%");
+});
+
+it("does not click-zoom from the toolbar or secondary buttons", () => {
+  const { image } = setup(4000, 3000);
+  fireEvent.load(image);
+  fireEvent.pointerDown(image, { pointerId: 1, button: 2 });
+  fireEvent.pointerUp(image, { pointerId: 1, button: 2 });
+  press(screen.getByRole("button", { name: "Zoom in" }), { x: 250, y: 380 });
+  expect(percent()).toBe("100%");
+});
+
+it("lets large images reach twice their actual pixels and reclamps on resize", () => {
+  const { stage, image } = setup(4000, 3000);
+  fireEvent.load(image);
+  const zoomIn = screen.getByRole("button", { name: "Zoom in" });
+  fireEvent.wheel(stage, { ctrlKey: true, deltaY: -10000 });
+  expect(percent()).toBe("1600%");
+  expect(zoomIn).toBeDisabled();
+  vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 1000, 800),
+  );
+  fireEvent(window, new Event("resize"));
+  expect(percent()).toBe("800%");
+  expect(zoomIn).toBeDisabled();
+});
+
+it("describes click zoom and resets it when the gallery changes image", () => {
+  gallery();
+  const image = screen.getByRole("img", { name: "Attachment preview" });
+  expect(image).toHaveAccessibleDescription("Click the image to zoom.");
+  Object.defineProperties(image, {
+    naturalWidth: { value: 100 },
+    naturalHeight: { value: 100 },
+  });
+  press(image, { x: 0, y: 0 });
+  expect(percent()).toBe("200%");
+  expect(screen.getByText("1 / 3")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("2 / 3")).toBeVisible();
+  expect(percent()).toBe("100%");
+  expect(
+    screen.getByRole("img", { name: "Attachment preview" }),
+  ).toHaveAccessibleDescription("Click the image to zoom.");
+});
+
+it("does not zoom any gallery image with a press held across navigation", () => {
+  gallery();
+  const image = screen.getByRole("img", { name: "Attachment preview" });
+  const stage = image.parentElement;
+  if (!stage) throw new Error("Missing stage");
+  fireEvent.pointerDown(image, { pointerId: 1, button: 0, isPrimary: true });
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("2 / 3")).toBeVisible();
+  fireEvent.pointerUp(stage, { pointerId: 1 });
+  expect(percent()).toBe("100%");
+  // Returning to the original image does not revive the stale press.
+  fireEvent.pointerDown(
+    screen.getByRole("img", { name: "Attachment preview" }),
+    {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+    },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+  expect(screen.getByText("1 / 3")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+  expect(screen.getByText("2 / 3")).toBeVisible();
+  fireEvent.pointerUp(stage, { pointerId: 1 });
+  expect(percent()).toBe("100%");
+  press(screen.getByRole("img", { name: "Attachment preview" }), {
+    x: 0,
+    y: 0,
+  });
+  expect(percent()).toBe("200%");
+});
+
+it.each([
+  ["second", [2, 1]],
+  ["first", [1, 2]],
+])(
+  "treats overlapping contacts as a gesture when the %s contact lifts first",
+  (_, order) => {
+    const { stage, image } = setup();
+    for (const pointerId of [1, 2])
+      fireEvent.pointerDown(image, {
+        pointerId,
+        button: 0,
+        isPrimary: pointerId === 1,
+        clientX: 250,
+      });
+    for (const pointerId of order)
+      fireEvent.pointerUp(stage, { pointerId, clientX: 250 });
+    expect(percent()).toBe("100%");
+    press(image, { x: 250, y: 200 });
+    expect(percent()).toBe("200%");
+  },
+);
+
+it("does not click-zoom a non-primary image contact without a stage-owned press", () => {
+  const { stage, image } = setup();
+  // The primary contact may be on the toolbar or outside this stage.
+  fireEvent.pointerDown(image, {
+    pointerId: 2,
+    button: 0,
+    isPrimary: false,
+    clientX: 250,
+    clientY: 200,
+  });
+  fireEvent.pointerUp(stage, { pointerId: 2, clientX: 250, clientY: 200 });
+  expect(percent()).toBe("100%");
+  press(image, { x: 250, y: 200 });
+  expect(percent()).toBe("200%");
+});
+
+it.each(["pointerCancel", "lostPointerCapture"] as const)(
+  "ends only the owning press on %s",
+  (type) => {
+    const { stage, image } = setup();
+    fireEvent.pointerDown(image, {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+      clientX: 250,
+    });
+    fireEvent[type](stage, { pointerId: 2 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
+    expect(percent()).toBe("200%");
+    fireEvent.pointerDown(image, {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+      clientX: 250,
+    });
+    fireEvent[type](stage, { pointerId: 1 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 250 });
+    expect(percent()).toBe("200%");
+  },
+);

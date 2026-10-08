@@ -1,10 +1,14 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.12,
+The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.1.18-buzz.3,
 and Rust 1.98.1
 (including Cargo, rustfmt, and Clippy) with [Hermit](https://cashapp.github.io/hermit/).
 No global tool installation is required: `bin/hermit` bootstraps Hermit and tools
-are downloaded on first use. Desktop development still requires the
+are downloaded on first use. The temporary Lefthook package builds once from
+checksum-pinned upstream source plus our worktree-recovery patch using pinned
+Go 1.27.0; this first use needs network access for Go modules and takes longer.
+The small `bin/lefthook` launcher provisions Go before entering Hermit’s package
+unpack lock, then executes the pinned `bin/lefthook-runner`. Desktop development still requires the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 From the repository root:
@@ -157,9 +161,11 @@ ports must be integers from 1 to 65535. Browser dev
 prints its selected URL and can use a later port when the requested port is
 occupied. Port selection does not isolate credentials or native plugin data;
 use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
-Both run the development broker with your identity when the public
-`BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
-identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
+A public `BUZZ_DEV_VIEWER` pin enables the legacy development broker for either
+command. Without it, browser development has no live broker identity, while
+supported desktop development can use native identity and relay access. See
+[host modes below](#shared-logic-and-host-boundaries) and
+[the broker setup requirements](../README.md#relay-channels).
 
 After creating a worktree, bootstrap it from the checkout whose local development
 configuration it should inherit:
@@ -173,8 +179,7 @@ without overwriting an existing target, then uses the new worktree's Hermit prox
 to run `bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
 repository. Keychain credentials and pnpm's package cache remain machine-shared;
 do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
-files. Install hooks separately as described below so existing custom hooks are
-never silently replaced.
+files. Git hooks need no per-worktree step; see [Git hooks](#git-hooks).
 
 ### Worktree Dock labels (macOS)
 
@@ -194,14 +199,132 @@ Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existi
 icons. This does not change the app identifier, credentials, profiles, or
 notification settings.
 
+## Shared logic and host boundaries
+
+Browser and desktop share the React application, community sessions, durable
+outbox, protocol models and live scheduler. **The goal is one code path per feature
+in development and release:** desktop development uses the same shared frontend
+and Rust host as packaged desktop, not a Node implementation of the feature.
+`browser-host/` supplies browser-development host support and broker tests, not a second
+owner of feature logic. **Preserve supported browser capabilities:** reduce
+duplicate implementations, not available workflows. Reuse shared feature owners
+rather than add parallel Node feature logic; native-only capabilities do not
+require speculative browser parity. Develop and test those with
+`BUZZ_DEV_VIEWER= just desktop`. Node code does not run in a browser merely because
+it serves one, and packaged desktop has no Node backend.
+
+| Mode | Identity and relay host |
+| --- | --- |
+| `just web`, public `BUZZ_DEV_VIEWER` pin | Node broker using the pinned existing legacy identity (macOS/Linux) |
+| `just web`, no pin | Shell/fixtures; no live broker identity |
+| `just desktop`, public pin | Legacy broker identity/relay access inside the native window; native identity is disabled (not an acceptance mode) |
+| `just desktop`, no pin | Native identity/relay access on supported macOS, Windows and Linux |
+| Packaged desktop | Native host; production builds exclude the dev broker regardless of the pin |
+
+A static frontend build does not supply a standalone browser login/backend.
+The public pin does not migrate keys. Native debug worktrees share a credential
+namespace distinct from release and legacy broker credentials; ports and plugin
+profiles do not isolate those keys. Removing the pin may change the active
+identity, not just the transport. Do not change defaults, credentials or a running
+app as incidental cleanup. See [identity custody and acceptance](identity.md).
+
+### Where behavior belongs
+
+- Put platform-neutral models, edits and protocol policy in their existing
+  `src/features/*` owner, with current callers rather than speculative adapter
+  parity. The Node host and native frontend adapter can reuse dependency-free
+  TypeScript where appropriate;
+  [sidebar edits](../src/features/relay/sidebar-edits.ts) and
+  [community commands](../src/features/communities/admin-protocol.ts) are examples.
+  Shared modules must not depend on Node, Tauri or a dev-host implementation.
+- Keep signing keys, decryption, secure storage, subprocesses and host I/O in the
+  host. Shipped Rust IPC boundaries retain their own validation, signing policy,
+  destination/identity binding, resource limits, cancellation and lifecycle
+  ownership. Moving checks into shared frontend code is not a substitute for Rust
+  enforcement. The relay remains the access-control authority. Existing broker
+  endpoints keep their safety checks while they remain callable; this does not
+  require a Node endpoint or signing-policy copy for a new feature.
+- **Frontend TypeScript checks + Rust enforcement:** both ship. Shared concrete
+  contract cases are the long-term pattern for necessary cross-language logic,
+  not a universal adapter or code generator. Existing JSON fixtures can be read by
+  Vitest and Rust `include_str!`.
+- **Node browser host + Rust native host:** only Rust ships in packaged desktop,
+  but browser workflows still need host support. Share application policy where
+  practical; retain necessary host enforcement and I/O. Shared cases check drift
+  wherever both hosts implement the same contract, without requiring automatic
+  parity. Document intentional or unresolved differences with separate expected
+  outcomes; neither implementation automatically defines intended policy.
+  Changing outcomes is a behavior decision, not a refactor. Do not add a second
+  source of feature policy in `browser-host/`.
+
+### Review and evidence
+
+A cross-host change names its feature owner/current consumers, supported modes,
+behavior preserved or explicitly approved differences, and the duplicate code it
+removes. Update the feature's contract cases and relevant wiring tests in the
+same change. Reuse existing runners and CI; this is not an extra full-suite gate
+for each edit. Keep feature details with their owner, not copied into this guide.
+
+[Canvas shape cases](../src/features/channel-templates/canvas-signing-contract.json)
+check the existing Node/Rust contract for kind-40100 tag shape, including an
+explicitly rejected native deserialization case; each host separately tests the
+UTF-8 content limit. This is not whole endpoint parity: broker freshness checks,
+native serialized-event limits, HTTP/IPC authorization and publication outcomes
+are separate layers. Keep host-specific checks and regression coverage while the
+corresponding boundary is callable, including after any adapter replacement.
+
+**Manual testing of anything that ships uses `BUZZ_DEV_VIEWER= just desktop`.**
+The explicit empty value overrides a pin inherited from `.env.local`; merely
+unsetting the shell variable does not. This selects the shipped native code path,
+not the release credential namespace or a release bundle. Packaging, OS integration
+and release-specific behavior still need the appropriate packaged-build checks.
+Broker-backed runs, including pinned native windows, do not count as acceptance.
+They remain useful for browser diagnostics and existing broker tests, but do not
+prove native signing, OS storage, networking or filesystem behavior.
+
+Report the exact snapshot and host/mode exercised. Native/live acceptance needs an
+agreed isolated identity/data setup; browser fixtures and test identities must
+never use real keys. Do not launch a native app or switch someone's active identity
+merely to follow this testing guidance.
+
+### Broker consolidation and completion
+
+The behavior-preserving cleanup pass shares status text/emoji limits, DM
+participant-set policy, and sidebar intent rules with their existing
+`src/features/relay` owners. The broker still executes those checks host-side and
+retains its stricter untrusted-envelope checks; native Rust enforcement is
+unchanged. Status reads still validate raw text before trimming, while local edits
+trim first. Star and mute commands share one broker implementation in
+`sidebar-toggle.mjs`; their distinct absent-unstar/unmute behavior stays in the
+shared edit owner. This does not make broker and native signing policies identical.
+
+There is no follow-up retirement queue. Further consolidation needs a demonstrated
+duplicate responsibility, a current shared owner or justified replacement, and
+preserved browser and native behavior. Necessary host-specific enforcement and
+I/O are not duplication to remove merely because two hosts implement them.
+
+A broker endpoint/module can be removed only after a replacement preserves its
+supported browser workflow and custody guarantees, all callers move, and relevant
+regression coverage follows. Native acceptance alone does not prove a browser
+replacement works. Capability retirement is a separate explicit product decision,
+not part of this cleanup; do not weaken a callable endpoint to reduce line count.
+
+Developer tools live in `scripts/` (`developer-settings.ts`,
+`live-setup-probe.mjs`), separate from `browser-host/`; they are not Rust feature
+mirrors. Legacy library and hosted-community helpers (`agent-library.mjs`,
+`builderlab.mjs`) are not automatically replaced by native identity. A transport
+replacement or new backend needs a separate design decision. This cleanup changes
+no runtime defaults or credentials.
+
 ## Interactive product iteration
 
 While shaping the first version, default to **edit → human tries the running app
 → adjust**. A manual feedback handoff is not a review or shipping gate.
 
 - Reuse the agreed development worktree and branch, with one owner of product
-  edits. Keep one dev server running: `just web` for shared frontend work, or
-  `just desktop` when native behavior matters. Vite handles supported frontend
+  edits. Keep one dev server running: `BUZZ_DEV_VIEWER= just desktop` for manual
+  testing of shipped behavior. `just web` remains useful for browser-only
+  diagnostics and fixtures, not acceptance. Vite handles supported frontend
   updates without a package rebuild. State when a reload/restart is needed;
   coordinate native launches with the human rather than restarting their app.
 - Make small, coherent changes and hand them back as **ready to try**, naming
@@ -264,37 +387,123 @@ into an ever-growing full test suite.
 
 ### Pre-commit checks
 
-Install once **per worktree** after `pnpm install --frozen-lockfile`:
+`lefthook.yml` declares ordinary `pre-commit` and `pre-push` hooks. On a machine
+with [lhm](https://github.com/block/lhm) there is nothing to install: lhm's global
+hooks discover this file and merge it with the machine policy each time a hook
+runs; `lhm dry-run` from the repository root prints the merged result. Without
+lhm, install once per clone (linked worktrees share the installed hooks):
 
 ```sh
-bin/pnpm hooks:install
+just hooks # or bin/just hooks without Hermit activation
 ```
 
-The installer enables pre-commit and pre-push using Git's worktree-local
-`core.hooksPath`, leaves sibling worktrees
-alone, and refuses existing custom hooks rather than overwriting them. Repeat
-installation is safe. Do not run `lefthook install`: the tracked Git hook calls a
-custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
+Existing standalone clones must rerun `just hooks` once after pulling this change
+to replace old shims; their old stock runner cannot self-update past the version
+gate. Do this in every clone, not every linked worktree.
 
-Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
-JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. The staged
-icon check also rejects known alternate icon families, direct upstream imports
-outside the design-system gateway, and whole-catalog imports. Deletions and
-unsupported formats (including Markdown, HTML and YAML) are not formatted here.
-The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
-`just iterate` remains the optional whole-tree fix/build command; `just scan` is
-an opt-in broad diagnostic. Both reject remaining Biome warnings.
+This recipe runs the pinned `bin/lefthook install`; it never changes Git config.
+If installation refuses because of a global `core.hooksPath`, **do not follow
+Lefthook's suggested fixes**: `--reset-hooks-path` and
+`git config --unset-all --global core.hooksPath` can disable machine hooks in
+other repositories. Running `lefthook install --force` **without first setting a
+clone-local path** can replace hooks in the global directory, affecting every
+repository that uses it. Under lhm, install nothing.
 
-Before writing, the hook refuses partially staged supported files, non-regular
-files, and differing/untracked formatter configuration in their ancestor paths.
-Format and reselect partial hunks, or stage/restore configuration, then retry.
-Only checked paths are restaged after all checks succeed; a failed check can leave
-safe fixes visible for review but does not update the index. Unrelated changes and
-existing stashes are left alone. Do not edit/stage concurrently with a commit.
-This is a developer guardrail, not a security boundary or a substitute for CI
-and risk-appropriate behavior checks. Tool/config dependency changes require
+For a **non-lhm** global path, if you explicitly want this clone to use its own
+hooks instead, first remove any stale worktree-local overrides as described
+below. Then set the clone-local path before running `--force`, from either
+checkout:
+
+```sh
+git config --local core.hooksPath "$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
+bin/lefthook install --force
+```
+
+The absolute path works in the main checkout and linked worktrees; the global
+setting is unchanged, but its hooks no longer run in this clone. Do not use this
+override for lhm.
+
+The installed hooks fail rather than silently skip when they cannot find
+Lefthook; `bin/lefthook uninstall` removes them. The repository pins a temporary
+patched runner, `2.1.18-buzz.3`, to fix concurrent linked-worktree recovery.
+Standalone shims select `bin/lefthook`. **Under lhm, activate Hermit before
+committing or pushing** (`source bin/activate-hermit`), since lhm selects
+`lefthook` from `PATH` and does not read the repo's `lefthook:` setting. A
+nonactivated GUI/agent shell using stock 2.1.17 or older is rejected by
+`min_version` before any unstaged edits are hidden. **If no Lefthook exists on
+PATH, lhm 0.14.1 can silently skip hooks instead** (especially in linked worktrees);
+the repository config cannot prevent that fallback. Use Git from an activated
+shell, or a client that actually inherits that shell’s environment, and verify
+`command -v lefthook` resolves to this checkout’s `bin/lefthook`. Do not bypass
+hooks or change machine policy. Upgrading Homebrew's stock runner is not this fix.
+
+This version gate is temporary, not a capability check: future stock 2.1.18+
+would pass it. Reassess the gate at the next upstream release and adopt only a
+release verified to preserve the recovery guarantees. Source, license,
+revalidation commands, and removal criteria are in
+[`bin/packages/lefthook-recovery.md`](../bin/packages/lefthook-recovery.md).
+
+Pre-commit runs these jobs in order and stops at the first failure: refuse staged
+names containing `*`, `?`, `[` or `\`, which Git would expand as globs when
+Lefthook restages them; the staged icon policy (known alternate icon families,
+direct upstream imports outside the design-system gateway, whole-catalog
+imports); pinned Biome formatting and safe lint fixes on staged JS/TS/JSON/CSS;
+and rustfmt on staged Rust files. Remaining warnings/errors block the commit; no
+unsafe lint fixes are applied. Deletions and unsupported formats (including
+Markdown, HTML and YAML) are not formatted here. The hook does **not** run types,
+tests, builds, Clippy, or a whole-tree formatter. `just iterate` remains the
+optional whole-tree fix/build command; `just scan` is an opt-in broad diagnostic.
+Both reject remaining Biome warnings.
+
+Lefthook owns partial staging: it hides the unstaged hunks of partially staged
+files while the jobs run, restages the formatted files, then restores the hunks,
+so unstaged hunks never enter the commit. The patched runner isolates patches
+per worktree and uses owned `refs/lefthook/backup/<hash>` recovery refs instead
+of modifying the shared stash list. A failed restore retains the backup:
+`git for-each-ref refs/lefthook/backup/` lists them; preserve current edits, then
+use `git stash apply --index <ref>` in a clean worktree at the original base.
+After verifying recovery, delete only that ref with
+`git update-ref -d <ref> <hash>`. Legacy stashes remain untouched; recovery refs
+are not automatically expired and can be included by `git push --mirror`.
+When a formatter changes the same lines
+as an unstaged hunk, the commit is blocked with "conflict while merging unstaged
+changes" and the index, the files and unrelated edits are left as they were;
+format the file first (`just iterate` or the editor), then reselect your hunks.
+A failing read-only check leaves the index untouched; a failing formatter stages
+nothing of its own, while an earlier formatter's restage stands. rustfmt follows
+`mod` declarations into the working tree like `cargo fmt --all`; only staged
+files are restaged. Do not edit or stage concurrently with a commit. This is a
+developer guardrail, not a security boundary or a substitute for CI and
+risk-appropriate behavior checks. Tool/config dependency changes require
 relevant integration evidence, not an automatic local full scan.
+
+### Machine policy under lhm
+
+lhm runs the repository jobs first, then the machine's commands in the same hook:
+`sadscan` after the pre-commit jobs and `check-push-org` after the push lanes. A
+policy rejection still blocks the push, after the project checks have run. The
+machine policy skips pre-commit during merges and rebases; CI remains the gate.
+
+Checkouts set up by the previous Buzz installer carry a worktree-local
+`core.hooksPath` that now points at deleted files, so Git either runs no hooks
+there or fails every commit. In each such worktree run
+`git config --worktree --unset core.hooksPath` and leave
+`extensions.worktreeConfig` set.
+
+Verify the wiring with:
+
+```sh
+git config --show-origin --get core.hooksPath # lhm's hooks directory, or unset
+bin/node --test tests/integration/hooks.test.mjs
+# Optional bounded probe, with isolated lhm system/user configuration:
+BUZZ_REAL_LHM="$(command -v lhm)" bin/node --test --test-name-pattern='real lhm' tests/integration/hooks.test.mjs
+```
+
+For human acceptance, in a disposable checkout: commit a fully staged unformatted
+source file and confirm it lands formatted; stage half of a file and confirm only
+the staged hunks are committed with `git stash list` unchanged; introduce a Biome
+warning and confirm the commit is blocked with the index unchanged. Automated
+probes do not replace this confirmation before PR readiness.
 
 ### Fast pre-push feedback
 
@@ -311,9 +520,8 @@ types/unit tests. A separate **rust-clippy** job runs the pinned Clippy over the
 whole Cargo workspace with the same invocation as the `native` CI lane
 (`cargo clippy --workspace --locked --all-targets -- -D warnings`); Rust-only
 changes do not run the JS/test lane, and its first cold build can take minutes.
-The jobs are serialized because pinned Lefthook 2.1.12 shares
-a mutable stdin reader: parallel consumers can lose Git refs and silently skip
-checks. Source CSS/JS/TS, design viewer/guard files, shared
+The jobs are serialized because Lefthook shares a mutable stdin reader between
+jobs: parallel consumers can lose Git refs and silently skip checks. Source CSS/JS/TS, design viewer/guard files, shared
 configuration/dependencies and hook-runner changes select this job; a missing base
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. The Clippy lane is likewise
@@ -417,11 +625,12 @@ default resource path. Keep the manifest aligned when upgrading Tauri.
 Keep component and service tests beside their owner, including integration tests
 that belong to one subsystem. Use Vitest for these tests (`*.test.ts`,
 `*.test.tsx`, or existing `*.test.mjs`); JavaScript tests do not need a TypeScript
-rewrite just to move. `vitest.config.ts` discovers tests under `src/` and `dev/`.
+rewrite just to move. `vitest.config.ts` discovers tests under `src/`,
+`browser-host/` and `scripts/`. Tooling tests stay beside their scripts.
 
 - `src/app/pages.integration.test.mjs` exercises the actual bundled app composition;
   `src/plugins/runtime.test.mjs` covers plugin activation and disposal.
-- `dev/relay-broker.test.mjs` lives beside the Node-only development broker. Other
+- `browser-host/relay-broker.test.mjs` lives beside the Node-only development broker. Other
   broker integration tests remain with the community/relay behavior they exercise.
 - `tests/integration/` is for cross-system journeys. The plugin CLI test keeps
   Node's runner because it builds the Rust CLI, scaffolds a separate project, runs

@@ -3,15 +3,24 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 export const MAX_MARKDOWN_LENGTH = 100_000;
 export const MAX_MARKDOWN_DEPTH = 100;
 
-export function safeMessageUrl(value: string): string | undefined {
+/** Active links accept credential-free HTTP(S) destinations. */
+export function safeLinkUrl(value: string): string | undefined {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      !url.username &&
+      !url.password
       ? url.href
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Projected attachments and imeta media stay HTTPS-only. */
+export function safeMessageUrl(value: string): string | undefined {
+  const url = safeLinkUrl(value);
+  return url?.startsWith("https:") ? url : undefined;
 }
 
 type MarkdownNode = {
@@ -100,10 +109,12 @@ function resolvedNodeUrl(
       : undefined;
 }
 
+/** Seams are the stripped body's offsets where removed text once separated its
+ * neighbors; only interior ones can join text that was not adjacent. */
 function stripRanges(
   content: string,
   ranges: readonly { start: number; end: number }[],
-): string {
+): { content: string; seams: readonly number[] } {
   const merged: Array<{ start: number; end: number }> = [];
   for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
     const previous = merged.at(-1);
@@ -114,13 +125,21 @@ function stripRanges(
     merged.push({ ...range });
   }
 
-  let stripped = content;
-  for (let index = merged.length - 1; index >= 0; index--) {
-    const range = merged[index];
-    if (range)
-      stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
+  let stripped = "";
+  let offset = 0;
+  const seams: number[] = [];
+  for (const range of merged) {
+    stripped += content.slice(offset, range.start);
+    seams.push(stripped.length);
+    offset = range.end;
   }
-  return stripped.trimEnd();
+  stripped = (stripped + content.slice(offset)).trimEnd();
+  return {
+    content: stripped,
+    seams: Object.freeze(
+      seams.filter((seam) => seam > 0 && seam < stripped.length),
+    ),
+  };
 }
 
 function nodeText(node: MarkdownNode): string {
@@ -148,6 +167,7 @@ export function projectMarkdownAttachments(
   attachmentUrls: ReadonlySet<string>,
 ): {
   content: string;
+  seams: readonly number[];
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
 } {
@@ -155,6 +175,7 @@ export function projectMarkdownAttachments(
   if (tooDeep)
     return {
       content,
+      seams: Object.freeze([]),
       urls: Object.freeze([]),
       names: Object.freeze([]),
     };
@@ -195,7 +216,7 @@ export function projectMarkdownAttachments(
   }
 
   return {
-    content: stripRanges(content, ranges),
+    ...stripRanges(content, ranges),
     urls: Object.freeze(urls),
     names: Object.freeze(names),
   };

@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
@@ -19,6 +19,14 @@ import {
 } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
+
+// jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -174,7 +182,20 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   expect(dialog.querySelector("kbd")).toBeNull();
   await user.keyboard("{ArrowDown}");
   expect(messages).toHaveAttribute("aria-selected", "true");
-  fireEvent.pointerEnter(settings, { pointerType: "mouse" });
+  // A replayed event at a resting position is not a hover.
+  const at = (clientX: number) =>
+    fireEvent.pointerMove(settings, {
+      pointerType: "mouse",
+      clientX,
+      clientY: 10,
+      // Linux WebKit's screen coordinates do not follow the pointer.
+      screenX: 0,
+      screenY: 0,
+    });
+  at(10);
+  at(10);
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  at(12);
   expect(settings).toHaveAttribute("aria-selected", "true");
   expect(messages).toHaveAttribute("aria-selected", "false");
   expect(input).toHaveAttribute("aria-activedescendant", settings.id);
@@ -188,57 +209,45 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   expect(select).toHaveBeenCalledExactlyOnceWith("settings");
 });
 
-it("invalidates selection when result identities change, even at the same index", async () => {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
-  });
+it("selects the first typed result and keeps it as results change", async () => {
   const select = vi.fn();
   const user = userEvent.setup();
-  const page = (key: string): RegisteredPage => ({
+  const page = (key: string, title: string): RegisteredPage => ({
     key,
     pluginId: "test",
     id: key,
-    title: "Target",
+    title,
     revision: "bundled",
     component: () => null,
   });
-  const first = page("test/first");
-  const second = page("test/second");
+  const first = page("test/first", "Target");
+  const second = page("test/second", "Target ahead");
   const { rerender } = render(<PageSearch pages={[first]} onSelect={select} />);
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+  // An empty query selects nothing, so Enter alone opens nothing.
+  expect(input).not.toHaveAttribute("aria-activedescendant");
   await user.type(input, "Target");
-  await user.keyboard("{ArrowDown}");
-  expect(screen.getByRole("option", { name: "Target" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  // Late arrivals may reorder results, but cannot redirect the selected destination.
-  rerender(
-    <PageSearch
-      pages={[{ ...second, title: "Target ahead" }, first]}
-      onSelect={select}
-    />,
-  );
+  const target = screen.getByRole("option", { name: /^Target$/ });
+  expect(target).toHaveAttribute("aria-selected", "true");
+  expect(input).toHaveAttribute("aria-activedescendant", target.id);
+  // A later row above the selection cannot redirect Enter.
+  rerender(<PageSearch pages={[second, first]} onSelect={select} />);
   expect(screen.getByRole("option", { name: /^Target$/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  // When the selected row leaves, the new first result takes over and stays
+  // selected when the old row returns.
+  rerender(<PageSearch pages={[second]} onSelect={select} />);
+  rerender(<PageSearch pages={[first, second]} onSelect={select} />);
+  expect(input).toHaveFocus();
   expect(input).toHaveAttribute(
     "aria-activedescendant",
-    screen.getByRole("option", { name: /^Target$/ }).id,
+    screen.getByRole("option", { name: "Target ahead" }).id,
   );
-  rerender(<PageSearch pages={[second]} onSelect={select} />);
-  expect(input).toHaveFocus();
-  expect(input).toHaveValue("Target");
-  expect(input).not.toHaveAttribute("aria-activedescendant");
   await user.keyboard("{Enter}");
-  expect(select).not.toHaveBeenCalled();
-  rerender(<PageSearch pages={[first]} onSelect={select} />);
-  expect(input).not.toHaveAttribute("aria-activedescendant");
-  await user.keyboard("{ArrowUp}{Enter}");
-  expect(select).toHaveBeenCalledExactlyOnceWith("test/first");
+  expect(select).toHaveBeenCalledExactlyOnceWith("test/second");
 });
 
 it("shows the live search shortcut in the trigger hint and follows a rebind", async () => {
@@ -337,6 +346,67 @@ it("opens conversation-scoped search with Command F and returns to overall searc
       }),
     );
     expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
+  } finally {
+    cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("ranks pages by match when no community is connected", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const connection = { status: "disconnected", generation: 0 };
+  const community = { selected: null, viewer: null };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  const page = (key: string, title: string): RegisteredPage => ({
+    key,
+    pluginId: "test",
+    id: key,
+    title,
+    revision: "bundled",
+    component: () => null,
+  });
+  const select = vi.fn();
+  const user = userEvent.setup();
+  try {
+    render(
+      <PageSearch
+        pages={[
+          page("buzz.channels/channels", "Messages"),
+          page("test/sessions", "Sessions"),
+        ]}
+        onSelect={select}
+        services={services}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+    // "ses" starts Sessions, appears inside Messages, and only fuzzily
+    // matches Settings.
+    await user.type(input, "ses");
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Sessions", "Messages", "Settings"]);
+    await user.keyboard("{Enter}");
+    expect(select).toHaveBeenCalledExactlyOnceWith("test/sessions");
   } finally {
     cleanup();
     bindings.dispose();

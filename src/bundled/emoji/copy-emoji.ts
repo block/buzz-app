@@ -1,5 +1,11 @@
+import {
+  serializeSelection,
+  unselectable,
+} from "../../features/messages/selection-copy";
+
 /** Preserve event-local shortcodes when copying selected custom emoji images. */
 export function copyEmoji(event: ClipboardEvent) {
+  // Message surfaces serialize their own selections first (selection-copy.ts).
   if (event.defaultPrevented || !event.clipboardData) return;
   // Editable controls already copy their source text, including shortcodes.
   if (
@@ -14,68 +20,28 @@ export function copyEmoji(event: ClipboardEvent) {
     return;
   const selection = document.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-  const fragments = Array.from({ length: selection.rangeCount }, (_, index) =>
-    selection.getRangeAt(index).cloneContents(),
+  const ranges = Array.from({ length: selection.rangeCount }, (_, index) =>
+    selection.getRangeAt(index),
   );
-  if (
-    !fragments.some((fragment) =>
-      fragment.querySelector("img[data-copy-emoji]"),
-    )
-  )
-    return;
-  const values = fragments.map((fragment) => {
-    for (const emoji of fragment.querySelectorAll<HTMLImageElement>(
-      "img[data-copy-emoji]",
-    )) {
-      emoji.replaceWith(
-        document.createTextNode(emoji.dataset.copyEmoji ?? emoji.alt),
-      );
-    }
-    return selectedText(fragment);
-  });
-  event.clipboardData.setData("text/plain", values.join("\n"));
+  // Emoji inside excluded chrome leave the engine's own copy in place.
+  if (!ranges.some(copiesEmoji)) return;
+  event.clipboardData.setData(
+    "text/plain",
+    serializeSelection(selection, "text"),
+  );
   event.preventDefault();
 }
 
-// Walk the detached selection only: no hidden DOM insertion, image loads or
-// changes to the user's selection. Preserve explicit breaks, blocks, and the
-// tab/newline boundaries browsers use for table cells and rows.
-function selectedText(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-  if (node instanceof Element && node.tagName === "BR") return "\n";
-  let text = "";
-  let previous: Node | undefined;
-  for (const child of node.childNodes) {
-    const value = selectedText(child);
-    const separator = previous && siblingSeparator(previous, child);
-    if (separator === "\t") text += separator;
-    else if (
-      text &&
-      value &&
-      separator &&
-      !text.endsWith(separator) &&
-      !value.startsWith(separator)
-    )
-      text += separator;
-    text += value;
-    previous = child;
-  }
-  return text;
-}
-
-function siblingSeparator(previous: Node | undefined, current: Node) {
-  const previousTag = previous instanceof Element ? previous.tagName : "";
-  const currentTag = current instanceof Element ? current.tagName : "";
-  if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
-    return "\t";
-  if (
-    /^(TR|THEAD|TBODY|TFOOT)$/.test(previousTag) ||
-    /^(TR|THEAD|TBODY|TFOOT)$/.test(currentTag) ||
-    /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6])$/.test(
-      previousTag,
-    ) ||
-    /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6])$/.test(currentTag)
-  )
-    return "\n";
-  return "";
+// Check the live range: detached clones have no computed `user-select`.
+function copiesEmoji(range: Range): boolean {
+  const root = range.commonAncestorContainer;
+  const scope = root instanceof Element ? root : root.parentElement;
+  return [...(scope?.querySelectorAll("img[data-copy-emoji]") ?? [])].some(
+    (emoji) => {
+      if (!range.intersectsNode(emoji)) return false;
+      for (let node: Element | null = emoji; node; node = node.parentElement)
+        if (unselectable(node)) return false;
+      return true;
+    },
+  );
 }

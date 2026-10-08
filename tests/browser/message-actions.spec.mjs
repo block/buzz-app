@@ -183,8 +183,9 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   await expect(actions).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   await expect(menu).toBeVisible();
+  // Keyboard opening focuses the first item; Mark unread leads a managed row.
   await expect(
-    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+    page.getByRole("menuitem", { name: "Mark unread", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();

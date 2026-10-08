@@ -7,7 +7,7 @@ import {
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
 import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
@@ -22,8 +22,11 @@ import {
   flush,
   bounds,
 } from "./testing";
-// @ts-expect-error Test the production Node codec with disposable identities.
-import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -37,6 +40,7 @@ function setup(
   options: ChannelStoreOptions = {},
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
+  workflowAuthority = false,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -96,6 +100,7 @@ function setup(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      ...(workflowAuthority ? { archiveAuthority: relay.pubkey } : {}),
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
@@ -371,7 +376,7 @@ it("promotes mentions, broadcasts and participating-thread replies without promo
   ).toMatchObject({ status: "unknown", unread: true });
 });
 
-it("counts replies only in the viewer's conversations; nested threads stay quiet until joined or mentioned", async () => {
+it("counts replies only in the viewer's conversations and threads; others stay quiet until joined or mentioned", async () => {
   const h = setup();
   h.grant("room");
   const reply = (
@@ -402,35 +407,44 @@ it("counts replies only in the viewer's conversations; nested threads stay quiet
     unread: true,
   });
   expect(unread(answer.id)).toMatchObject({ category: "thread", unread: true });
-  expect(unread(nested.id)).toMatchObject({ unread: false });
-  expect(unread(nested.id).category).toBeUndefined();
+  // Replying anywhere under a root joins its whole thread.
+  expect(unread(nested.id)).toMatchObject({ category: "thread", unread: true });
   expect(unread(unjoined.id)).toMatchObject({ unread: false });
-  // Top-level root + other root + sibling + answer.
-  expect(h.snapshot()).toMatchObject({ observedCount: 4, attentionCount: 2 });
+  expect(unread(unjoined.id).category).toBeUndefined();
+  // Top-level root + other root + sibling + answer + nested.
+  expect(h.snapshot()).toMatchObject({ observedCount: 5, attentionCount: 3 });
   expect(
     h.session.unread.snapshot({
       kind: "thread",
       channelId: "room",
       rootId: root.id,
     }).observedCount,
-  ).toBe(2);
+  ).toBe(3);
   expect(h.session.unread.activity("room").items).toEqual([
-    expect.objectContaining({ rootId: root.id, unreadCount: 2 }),
+    expect.objectContaining({ rootId: root.id, unreadCount: 3 }),
   ]);
 
-  const mention = reply(h.alice, "nested mention", 17, root.id, answer.id, [
-    ["p", h.viewer.pubkey],
-  ]);
+  const mention = reply(
+    h.alice,
+    "unjoined mention",
+    17,
+    otherRoot.id,
+    unjoined.id,
+    [["p", h.viewer.pubkey]],
+  );
   h.emit([mention]);
   expect(unread(mention.id)).toMatchObject({
     category: "mention",
     unread: true,
   });
 
-  // Joining the nested conversation makes its replies count.
-  h.emit([reply(h.viewer, "joining", 18, root.id, answer.id)]);
-  expect(unread(nested.id)).toMatchObject({ category: "thread", unread: true });
-  expect(h.snapshot()).toMatchObject({ observedCount: 6, attentionCount: 4 });
+  // Joining the other thread makes its replies count.
+  h.emit([reply(h.viewer, "joining", 18, otherRoot.id, unjoined.id)]);
+  expect(unread(unjoined.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 7, attentionCount: 5 });
 });
 
 it("late DM metadata updates an existing attention selector without expiring reading intent", async () => {
@@ -464,7 +478,8 @@ it("late DM metadata updates an existing attention selector without expiring rea
   expect(h.snapshot()).not.toBe(before);
   expect(changed).toHaveBeenCalledTimes(1);
   await reading.observe([row.id]);
-  expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBe(11);
+  // Reading a DM reads all of it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 11 });
 });
 
 it.each(["lowercase", "uppercase reply", "uppercase root", "last valid"])(
@@ -1124,6 +1139,116 @@ it.each([5, 9005])(
     expect(seen).toEqual([[0, 0]]);
   },
 );
+
+it.each([
+  { scenario: "owner attribution", owner: true, mentioned: false },
+  {
+    scenario: "explicit owner mention",
+    owner: true,
+    explicit: true,
+    mentioned: true,
+  },
+  { scenario: "rendered non-owner mention", owner: false, mentioned: true },
+  {
+    scenario: "forged workflow metadata",
+    owner: true,
+    forged: true,
+    mentioned: true,
+  },
+  {
+    scenario: "ordinary relay message",
+    owner: true,
+    workflow: false,
+    mentioned: true,
+  },
+  { scenario: "non-workflow kind", owner: true, kind: 40002, mentioned: true },
+  {
+    scenario: "provenance without recipient",
+    owner: true,
+    explicit: true,
+    recipient: false,
+    mentioned: false,
+  },
+])(
+  "classifies $scenario without confusing workflow ownership and mentions",
+  (test) => {
+    const h = setup();
+    h.grant("room");
+    const row = signed(test.forged ? h.alice : h.relay, {
+      kind: test.kind ?? 9,
+      created_at: 11,
+      content: "Workflow output",
+      tags: [
+        ["h", "room"],
+        ...(test.recipient === false ? [] : [["p", h.viewer.pubkey]]),
+        ...(test.workflow === false ? [] : [["buzz:workflow", "true"]]),
+        ["buzz:workflow-owner", test.owner ? h.viewer.pubkey : h.alice.pubkey],
+        ...(test.explicit ? [["buzz:workflow-mention", h.viewer.pubkey]] : []),
+      ],
+    });
+    h.emit([row]);
+    const attention = h.session.unread.attention("room", row.id);
+    expect(attention.status).toBe(test.mentioned ? "eligible" : "ineligible");
+    expect(attention.category).toBe(test.mentioned ? "mention" : undefined);
+    expect(attention.mentioned).toBe(test.mentioned ? true : undefined);
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 1,
+      attentionCount: test.mentioned ? 1 : 0,
+    });
+    expect(h.session.unread.inbox().items).toHaveLength(test.mentioned ? 1 : 0);
+  },
+);
+
+it("does not make an unrelated workflow reply relevant to its owner", async () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.alice, "room", "someone else's conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id).unread).toBe(false);
+  await flush();
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    status: "ineligible",
+    unread: false,
+  });
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+});
+
+it("keeps workflow-owner thread participation and DM attention without inventing a mention", () => {
+  const h = setup();
+  h.grant("room");
+  const parent = message(h.viewer, "room", "my conversation", 11);
+  const row = message(h.relay, "room", "workflow reply", 12, [
+    ["p", h.viewer.pubkey],
+    ["buzz:workflow", "true"],
+    ["buzz:workflow-owner", h.viewer.pubkey],
+    ["e", parent.id, "", "reply"],
+  ]);
+  h.emit([parent, row]);
+  expect(h.session.unread.attention("room", row.id)).toMatchObject({
+    category: "thread",
+    unread: true,
+  });
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      created_at: 20,
+      content: "",
+      tags: [
+        ["d", "room"],
+        ["t", "dm"],
+      ],
+    }),
+  ]);
+  expect(h.session.unread.attention("room", row.id).category).toBe("direct");
+  expect(h.session.unread.attention("room", row.id).mentioned).toBeUndefined();
+});
 
 it("projects event attention through the same mention, DM, participation and frontier policy", async () => {
   const h = setup();
@@ -2022,27 +2147,74 @@ it("bottom catch-up preserves mentions, broadcasts, participating threads and la
   lease.dispose();
 });
 
-it("ordinary catch-up never clears DM attention", async () => {
+it.each(["catchUp", "observe"] as const)(
+  "reading a DM (%s) reads all of it and ends its manual unread",
+  async (step) => {
+    const h = setup();
+    h.grant("room");
+    const first = message(h.alice, "room", "first", 11);
+    const reply = message(h.alice, "room", "reply", 14, [
+      ["e", first.id, "", "reply"],
+    ]);
+    const row = message(h.alice, "room", "direct", 12);
+    h.emit([
+      first,
+      reply,
+      row,
+      signed(h.relay, {
+        kind: 39000,
+        created_at: 20,
+        content: "",
+        tags: [
+          ["d", "room"],
+          ["name", "DM"],
+          ["t", "dm"],
+        ],
+      }),
+    ]);
+    await h.session.unread.markUnreadLocal(h.target);
+    const lease = h.session.unread.reading("room");
+    if (step === "catchUp") await lease.catchUp(row.id);
+    else await lease.observe([row.id]);
+    // One channel mark through the newest message, replies included.
+    expect(h.journal()?.state.frontiers).toEqual({ room: 14 });
+    expect(h.snapshot()).toMatchObject({
+      observedCount: 0,
+      attentionCount: 0,
+      manual: "none",
+    });
+    lease.dispose();
+  },
+);
+
+it("bottom catch-up ends a manual channel unread but keeps marked messages", async () => {
   const h = setup();
   h.grant("room");
-  const row = message(h.alice, "room", "direct", 11);
-  h.emit([
-    row,
-    signed(h.relay, {
-      kind: 39000,
-      created_at: 20,
-      content: "",
-      tags: [
-        ["d", "room"],
-        ["name", "DM"],
-        ["t", "dm"],
-      ],
-    }),
-  ]);
+  const marked = message(h.alice, "room", "marked", 11);
+  const bottom = message(h.alice, "room", "bottom", 12);
+  h.emit([marked, bottom]);
+  const markedTarget = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: marked.id,
+  };
+  await h.session.unread.markUnreadLocal(markedTarget);
+  await h.session.unread.markUnreadLocal(h.target);
   const lease = h.session.unread.reading("room");
-  await lease.catchUp(row.id);
-  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  // Reading rows away from the bottom keeps the manual unread.
+  await lease.observe([bottom.id]);
+  expect(h.snapshot().manual).toBe("local-only");
+  await lease.catchUp(bottom.id);
+  expect(h.journal()?.state.frontiers).toMatchObject({ "activity:room": 12 });
+  expect(h.journal()?.localUnread).not.toHaveProperty("room");
+  expect(h.session.unread.snapshot(markedTarget).manual).toBe("local-only");
   lease.dispose();
+  // Already caught up: reaching the bottom again still ends a new manual unread.
+  await h.session.unread.markUnreadLocal(h.target);
+  const again = h.session.unread.reading("room");
+  await again.catchUp(bottom.id);
+  expect(h.journal()?.localUnread).not.toHaveProperty("room");
+  again.dispose();
 });
 
 it("thread bottom catch-up clears only its thread and preserves local and remote manual intent", async () => {
@@ -2553,9 +2725,18 @@ it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
   },
 );
 
-it("catch-up keeps the message marks older clients read; only a channel mark replaces them", async () => {
+const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
+  signed(h.relay, {
+    kind: 39000,
+    content: "",
+    created_at: 20,
+    tags: [["d", "room"], ["name", "room"], ...(type ? [["t", type]] : [])],
+  });
+
+it("catch-up replaces the ordinary message marks it reads; attention marks stay", async () => {
   const h = setup();
   h.grant("room");
+  h.emit([channelMetadata(h, "stream")]);
   const first = message(h.alice, "room", "first", 11);
   const mention = message(h.alice, "room", "mention", 12, [
     ["p", h.viewer.pubkey],
@@ -2564,26 +2745,75 @@ it("catch-up keeps the message marks older clients read; only a channel mark rep
   h.emit([first, mention, bottom]);
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id, mention.id]);
-  // Older clients ignore `activity:`; they read these messages through
-  // their own marks, so catch-up must not replace them.
+  // Catch-up reads the ordinary message, so its own mark goes. The timeline
+  // does not prove the mention was seen, so the mention keeps its mark.
   await lease.catchUp(bottom.id);
   expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${first.id}`]: 11,
     [`msg:${mention.id}`]: 12,
     "activity:room": 13,
   });
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   lease.dispose();
-  // A channel mark covers everything, including its own catch-up mark.
-  clock(30);
-  await h.session.unread.markChannelRead("room");
-  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
   // Reading a covered message again saves nothing new.
   const revision = h.journal()?.revision;
   const again = h.session.unread.reading("room");
   await again.observe([first.id, mention.id]);
   again.dispose();
   expect(h.journal()?.revision).toBe(revision);
+  // A channel mark covers everything, including its own catch-up mark.
+  clock(30);
+  await h.session.unread.markChannelRead("room");
+  expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
+});
+
+it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([channelMetadata(h, "dm")]);
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBe("dm");
+  const first = message(h.alice, "room", "first", 11);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // A DM never gets an `activity:` mark; its own channel mark covers it.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
+  lease.dispose();
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", bottom.id).unread).toBe(false);
+});
+
+it("catch-up keeps message marks while the channel type is unknown", async () => {
+  const h = setup();
+  // The roster lists the channel before its metadata says it is a DM.
+  h.grant("room");
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBeUndefined();
+  const first = message(h.alice, "room", "first", 11);
+  const second = message(h.alice, "room", "second", 12);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([first, second, bottom]);
+  const lease = h.session.unread.reading("room");
+  await lease.observe([first.id]);
+  await lease.catchUp(bottom.id);
+  // Pruning keeps the existing mark, and a later read still writes its own.
+  await lease.observe([second.id]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${first.id}`]: 11,
+    [`msg:${second.id}`]: 12,
+    "activity:room": 13,
+  });
+  h.emit([channelMetadata(h, "dm")]);
+  expect(h.session.unread.attention("room", first.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", second.id).unread).toBe(false);
 });
 
 it("pruning keeps every mark that still reads something, and unread does not change", async () => {
@@ -2791,10 +3021,189 @@ it("evicted DM receipts survive pressure while unseen messages and manual unread
   const dmReading = unread.reading("dm");
   await dmReading.observe([read.id]);
   dmReading.dispose();
+  // Reading a DM reads all of it, but a message marked unread stays unread.
   expect(unread.snapshot(target).manual).toBe("local-only");
   expect(unread.attention("dm", read.id).unread).toBe(true);
+  expect(unread.attention("dm", unseen.id).unread).toBe(false);
   await unread.markMessageRead("dm", read.id);
   expect(unread.snapshot(target).manual).toBe("none");
   expect(unread.attention("dm", read.id).unread).toBe(false);
-  expect(unread.attention("dm", unseen.id).unread).toBe(true);
 });
+
+/**
+ * Two windows of one viewer over one read-state partition, as two tabs share
+ * IndexedDB. Each owner keeps its own cached journal; `hold` pauses the next
+ * save of one owner before its transaction reads the shared journal.
+ */
+function sharedWindows(preloaded: (journal: ReadJournal) => ReadJournal) {
+  const viewer = keypair(),
+    relay = keypair(),
+    alice = keypair();
+  let journal: ReadJournal = preloaded(newReadJournal());
+  const window = () => {
+    let hold: Promise<void> | undefined;
+    let started = () => {};
+    const storage: ReadStateStorage = {
+      async update(change) {
+        if (hold) {
+          const wait = hold;
+          hold = undefined;
+          started();
+          await wait;
+        }
+        journal = readJournal(change(journal), viewer.pubkey);
+        return journal;
+      },
+      close() {},
+    };
+    let incoming: (events: readonly RelayEvent[]) => void = () => {};
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        readState: {
+          decode: async (events: readonly RelayEvent[]) =>
+            decodeReadState(events, viewer.secret),
+          sign: async (intent: ReadStateSigning) =>
+            signReadState(intent, viewer.secret),
+          publish: async () => {},
+        },
+        subscribe(callbacks) {
+          incoming = callbacks.receive;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      {
+        readStateStorage: storage,
+        readPublisherLock: async (_signal, work) => work(),
+      },
+    );
+    owners.push(owner);
+    return {
+      unread: owner.session.unread,
+      emit: (events: readonly RelayEvent[]) => incoming(events),
+      holdSave() {
+        let release = () => {};
+        const reached = new Promise<void>((resolve) => {
+          started = resolve;
+        });
+        hold = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { started: reached, release };
+      },
+    };
+  };
+  return {
+    viewer,
+    relay,
+    alice,
+    a: window(),
+    b: window(),
+    journal: () => journal,
+  };
+}
+
+it.each(["dm", "frontier and clear", "clear only"] as const)(
+  "an older window's dwell cannot erase a newer Mark unread from another window (%s)",
+  async (path) => {
+    const w = sharedWindows((journal) => ({
+      ...journal,
+      revision: 1,
+      acceptedRevision: 1,
+      // Both windows load manual revision 1. "clear only" is already caught
+      // up, so bottom catch-up only ends the manual unread.
+      localUnread: { room: 1 },
+      state: {
+        frontiers: path === "clear only" ? { room: 12 } : {},
+        overrides: {},
+      },
+    }));
+    const bottom = message(w.alice, "room", "bottom", 12);
+    for (const side of [w.a, w.b]) {
+      side.emit([
+        roster(w.relay, "room", [w.viewer.pubkey], 10),
+        metadata(
+          w.relay,
+          "room",
+          "room",
+          10,
+          path === "dm" ? [["t", "dm"]] : [],
+        ),
+        message(w.alice, "room", "earlier", 11),
+        bottom,
+      ]);
+      await side.unread.ensure();
+    }
+    const target = { kind: "channel" as const, channelId: "room" };
+    expect(w.b.unread.snapshot(target).manual).toBe("local-only");
+    // B earns a bottom dwell; its save waits before reading the journal.
+    const lease = w.b.unread.reading("room");
+    const held = w.b.holdSave();
+    const dwell = lease.catchUp(bottom.id).then(
+      () => "saved",
+      () => "expired",
+    );
+    await held.started;
+    // Meanwhile A marks the channel unread again: manual revision 2.
+    await w.a.unread.markUnreadLocal(target);
+    const marked = w.journal().localUnread.room;
+    expect(marked).toBeGreaterThan(1);
+    held.release();
+    expect(await dwell).toBe("expired");
+    lease.dispose();
+    expect(w.journal().localUnread.room).toBe(marked);
+    expect(w.journal().state.frontiers).toEqual(
+      path === "clear only" ? { room: 12 } : {},
+    );
+  },
+);
+
+it("a DM dwell with no verified message does not read the DM", async () => {
+  const h = setup();
+  h.grant("dm");
+  h.emit([
+    metadata(h.relay, "dm", "DM", 11, [["t", "dm"]]),
+    message(h.alice, "dm", "unseen", 12),
+  ]);
+  await h.session.unread.ensure();
+  const lease = h.session.unread.reading("dm");
+  await lease.observe([]);
+  await lease.observe(["f".repeat(64)]);
+  lease.dispose();
+  expect(h.journal()?.state.frontiers.dm).toBeUndefined();
+});
+
+it.each([false, true])(
+  "projects workflow ownership into Inbox/activity only with explicit authority: %s",
+  (trusted) => {
+    const h = setup({}, true, undefined, trusted);
+    h.grant("room");
+    const parent = eventDto(message(h.viewer, "room", "my thread", 11));
+    const reply = eventDto(
+      message(h.relay, "room", "workflow output", 12, [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", h.viewer.pubkey],
+        ["p", h.viewer.pubkey],
+        ["e", parent.id, "", "reply"],
+      ]),
+    );
+    h.emit([parent, reply]);
+    for (const item of [
+      h.session.unread.inbox().items[0],
+      h.session.unread.activity("room").items?.[0],
+    ]) {
+      expect(item?.authorId).toBe(h.relay.pubkey);
+      expect(item?.workflowOwnerId).toBe(trusted ? h.viewer.pubkey : undefined);
+    }
+    expect(h.session.unread.attention("room", reply.id)).toMatchObject({
+      category: "thread",
+      unread: true,
+    });
+    expect(
+      h.session.unread.attention("room", reply.id).mentioned,
+    ).toBeUndefined();
+  },
+);

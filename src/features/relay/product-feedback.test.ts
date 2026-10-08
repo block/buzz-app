@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { validProductFeedback } from "../../../dev/relay-broker.mjs";
+import { validProductFeedback } from "../../../browser-host/relay-broker.mjs";
 import { createOutbox } from "./outbox";
 import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { keypair, signed } from "./testing";

@@ -31,8 +31,8 @@ Do not start development before bootstrap completes. The script copies the
 git-ignored `.env.local` without overwriting an existing target, then uses that
 worktree's Hermit proxy to run `bin/pnpm install --frozen-lockfile`. Do not copy
 other ignored paths: Keychain credentials and pnpm's package cache are
-machine-shared, while dependencies and build output are regenerated. Follow the
-per-worktree hook setup in `docs/contributing.md` before committing or pushing.
+machine-shared, while dependencies and build output are regenerated. Git hooks
+need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).
 
 ## Engineering standard
 
@@ -40,6 +40,12 @@ Before editing, state the intended outcome and non-goals. Read the owning code,
 callers, and relevant design docs; preserve documented product decisions and
 ownership boundaries. Resolve answerable questions from evidence; ask before
 deviating from agreed scope or product behavior.
+
+For cross-host changes, follow [shared logic and host boundaries](docs/contributing.md#shared-logic-and-host-boundaries).
+Name the existing feature owner/current callers, preserved behavior or approved
+host differences, and which host the validation actually exercises. Keep shared
+contracts executable in the existing tests; frontend checks do not replace host
+signing or IPC enforcement.
 
 Agent selection must consume `session.agentChoices`, not independently reconstruct
 native/legacy inventories. Keep usable partial choices distinct from complete
@@ -203,8 +209,8 @@ confirmation, not app runs.
 ## Before pushing
 
 - Use the agreed feature worktree and pinned `bin/` tools. Follow
-  [hook setup](docs/contributing.md#pre-commit-checks) once per worktree;
-  preserve custom hooks and never bypass failures.
+  [hook setup](docs/contributing.md#pre-commit-checks) once per clone where lhm
+  is absent; never bypass failures.
 - Refresh remote refs; confirm destination, base, and head. Review `git status`,
   the full PR diff, and `git diff --check` against the base. Include only intended
   files: no credentials, local configuration, or raw agent/session data.

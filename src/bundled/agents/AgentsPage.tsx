@@ -1,3 +1,5 @@
+import type { TemplateProviders } from "../../features/channel-templates/provider";
+import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { UnifiedInventory } from "./UnifiedInventory";
 import type { CommunityReader } from "../../features/communities/service";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -33,10 +35,18 @@ import { AgentLibrary } from "./AgentLibrary";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard, type ProfileResolver } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
-import { ManagedAgentActions } from "./ManagedAgentActions";
+import {
+  ManagedAgentActions,
+  useManagedAgentActions,
+} from "./ManagedAgentActions";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
+const noTemplates = {
+  subscribe: () => () => {},
+  snapshot: () => emptyTemplates,
+};
+const emptyTemplates = Object.freeze([]);
 const noPanels = Object.freeze([]) as readonly RegisteredPanel[];
 const noPanelSnapshot = () => noPanels;
 const noPanelSubscribe = () => () => {};
@@ -51,10 +61,12 @@ export function AgentsPage({
   companion,
   companionOpening,
   communities,
+  templates,
 }: PageProps & {
   relay: RelayData;
   control?: AgentControl;
   panels?: Panels;
+  templates?: TemplateProviders;
   communities?: CommunityReader;
   open?: (
     target: OpenTarget,
@@ -65,6 +77,29 @@ export function AgentsPage({
     null,
   );
   const connection = useRelayConnection(relay);
+  const providers = templates ?? noTemplates;
+  const templateProviders = useSyncExternalStore(
+    providers.subscribe,
+    providers.snapshot,
+    providers.snapshot,
+  );
+  const provider =
+    templateProviders.length === 1 ? templateProviders[0] : undefined;
+  const teams =
+    provider?.teams && connection.status === "ready" ? (
+      <OwnedContribution
+        key={`${connection.scope}:${connection.generation}`}
+        entry={provider}
+        registry={providers}
+      >
+        {(entry, active) => {
+          const Teams = entry.teams;
+          return Teams ? (
+            <Teams session={connection.session} active={active} />
+          ) : null;
+        }}
+      </OwnedContribution>
+    ) : null;
   const pageSurface = useRef<HTMLElement>(null);
   const registeredPanels = useSyncExternalStore(
     panels?.subscribe ?? noPanelSubscribe,
@@ -233,13 +268,19 @@ export function AgentsPage({
           <div className="flex h-full min-h-0 flex-col">
             <PanelHeader
               title="Agents"
-              actions={<div ref={setHeaderActions} />}
+              actions={
+                <div
+                  ref={setHeaderActions}
+                  className="flex items-center gap-2"
+                />
+              }
             />
             <div className="min-h-0 flex-1 overflow-auto p-panel-inset text-body">
-              <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
+              <div className="mx-auto flex w-full max-w-6xl flex-col gap-section-gap">
                 {control ? (
                   <AgentControlPanel
                     control={control}
+                    headerActions={headerActions}
                     editTarget={editTarget}
                     onOpenHarnesses={
                       open
@@ -289,10 +330,15 @@ export function AgentsPage({
                       onImport,
                     ) =>
                       state.status === "unavailable" ? (
-                        library
+                        <>
+                          {teams}
+                          {library}
+                        </>
                       ) : state.data?.parked !== undefined ? (
                         <UnifiedInventory
                           key={connection.viewer ?? "offline"}
+                          teams={teams}
+                          headerActions={headerActions}
                           state={state}
                           edit={edit}
                           duplicate={duplicate}
@@ -328,6 +374,7 @@ export function AgentsPage({
                           destination={importDestination}
                           resolveProfile={resolveProfile}
                           headerActions={headerActions}
+                          teams={teams}
                         />
                       )
                     }
@@ -338,6 +385,7 @@ export function AgentsPage({
                       Open the desktop app to import and run agents. You can
                       still mention existing channel members.
                     </p>
+                    {teams}
                     {library}
                   </>
                 )}
@@ -362,6 +410,7 @@ function ManagedAgents({
   resolveProfile,
   headerActions,
   onUseHere,
+  teams,
 }: {
   label(agent: AgentView): string;
   state: AgentControlState;
@@ -374,8 +423,10 @@ function ManagedAgents({
   destination: string;
   resolveProfile: ProfileResolver;
   headerActions: HTMLElement | null;
+  teams: React.ReactNode;
   onUseHere(pubkey: string, action: "use" | "clone"): void;
 }) {
+  const actions = useManagedAgentActions(state, control);
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
@@ -384,7 +435,7 @@ function ManagedAgents({
   );
   return (
     <section aria-label="My agents" className="flex flex-col gap-4">
-      <h2 className="sr-only">My agents</h2>
+      <h2 className="m-0 text-label-sm">Individual agents</h2>
       <p className="m-0 text-body-sm text-secondary">
         Set up an imported agent with Use here, then start it separately. Before
         starting the same identity here, stop the old agent and disable its
@@ -393,7 +444,7 @@ function ManagedAgents({
       {state.data?.agents.length === 0 && (
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
       )}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+      <div className="agent-grid">
         {state.data?.agents.map((agent) => {
           const identity = snapshot.identities.find(
             (entry) => entry.pubkey === agent.pubkey,
@@ -406,6 +457,13 @@ function ManagedAgents({
               identities={[agent]}
               session={connection.session}
               editable={[agent]}
+              imported={agent.id === importedId}
+              revealControls={
+                agent.id === importedId ||
+                !!agent.error ||
+                !!agent.profilePending ||
+                !!actions(agent).notice
+              }
               onEdit={edit}
               onDuplicate={duplicate}
               onDelete={control.delete ? remove : undefined}
@@ -416,6 +474,7 @@ function ManagedAgents({
               }
             >
               <ManagedAgentActions
+                action={actions(agent)}
                 agent={agent}
                 onUseHere={onUseHere}
                 state={state}
@@ -430,6 +489,7 @@ function ManagedAgents({
           );
         })}
       </div>
+      {teams}
       {connection.status === "ready" && (
         <AgentLibrary
           session={connection.session}

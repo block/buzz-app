@@ -14,8 +14,11 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import { createWorkflows } from "../../features/workflows/capability";
-import { WorkflowLanding } from "./WorkflowLanding";
-import type { WorkflowDefinition } from "../../features/workflows/types";
+import { WorkflowLanding, workflowOperationLocked } from "./WorkflowLanding";
+import type {
+  WorkflowDefinition,
+  WorkflowOperation,
+} from "../../features/workflows/types";
 import { fixtureDefinition, fixtureViewer, fixtureYaml } from "./fixtures";
 
 afterEach(() => {
@@ -617,4 +620,51 @@ it("shows stale cached cards on remount while refreshing and retrying", async ()
   } finally {
     fixture.close();
   }
+});
+
+it("locks configuration only for in-flight writes, deletions and unconfirmed newest saves", () => {
+  const op = (
+    action: WorkflowOperation["action"],
+    outcome: WorkflowOperation["outcome"],
+    eventId = "cc".repeat(32),
+    createdAt = fixtureDefinition.createdAt,
+  ): WorkflowOperation => ({
+    eventId,
+    workflow: fixtureDefinition,
+    action,
+    createdAt,
+    delivery: outcome === "pending" ? "sending" : "accepted",
+    outcome,
+  });
+  const locked = (...operations: WorkflowOperation[]) =>
+    workflowOperationLocked(operations, fixtureDefinition);
+  // Journaled run requests lose their receipt across restarts; they never lock.
+  expect(locked(op("trigger", "unknown"), op("trigger", "succeeded"))).toBe(
+    false,
+  );
+  expect(locked(op("trigger", "rejected"), op("save", "rejected"))).toBe(false);
+  expect(locked(op("trigger", "pending"))).toBe(true);
+  expect(locked(op("delete", "unknown"))).toBe(true);
+  expect(locked(op("delete", "succeeded"))).toBe(true);
+  // A save awaiting readback locks until its revision, or a newer head, is read.
+  expect(locked(op("save", "succeeded"))).toBe(true);
+  expect(locked(op("save", "unknown", fixtureDefinition.revision))).toBe(false);
+  expect(
+    locked(
+      op("save", "unknown", "cc".repeat(32), fixtureDefinition.createdAt - 1),
+    ),
+  ).toBe(false);
+  // Only the newest save matters, and other workflows never lock this one.
+  expect(
+    locked(
+      op("save", "succeeded"),
+      op("save", "succeeded", fixtureDefinition.revision),
+    ),
+  ).toBe(false);
+  expect(
+    locked({
+      ...op("save", "pending"),
+      workflow: { ...fixtureDefinition, id: "other" },
+    }),
+  ).toBe(false);
 });

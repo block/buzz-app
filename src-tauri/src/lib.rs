@@ -9,6 +9,7 @@ use oauth_callback::{
 };
 #[cfg(test)]
 mod browser_permissions_tests;
+mod pairing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
@@ -28,9 +29,12 @@ mod enterprise_relay_url;
 mod host_command;
 mod host_request;
 mod identity;
+mod image_clipboard;
 
 mod notifications;
 mod os_idle;
+mod window_controls;
+mod window_state;
 use os_idle::get_os_idle_seconds;
 mod relay;
 use identity::{
@@ -38,20 +42,24 @@ use identity::{
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    media_download, relay_agent_library, relay_agent_log_proof, relay_agent_memories_read,
-    relay_agent_observer, relay_agent_resolve, relay_channel_publish, relay_channel_sign,
-    relay_decode_read_state, relay_decode_sidebar, relay_direct_message, relay_git_authorization,
-    relay_http, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_sidebar, relay_upload, relay_upload_cancel, relay_workflow_runs,
+    media_copy_image, media_download, media_stream_base, relay_agent_library,
+    relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
+    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_sidebar,
+    relay_direct_message, relay_git_authorization, relay_http, relay_kit_decode, relay_kit_prepare,
+    relay_kit_sign, relay_project_git, relay_project_git_cancel, relay_publish_read_state,
+    relay_sign, relay_sign_read_state, relay_sign_sidebar, relay_upload, relay_upload_begin,
+    relay_upload_cancel, relay_upload_chunk, relay_workflow_runs,
 };
 mod terminal;
+#[cfg(test)]
+mod test_executable;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 mod goose_models;
 mod harness_setup;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod managed_pi;
+mod managed_npm;
 mod pi_models;
+use agents::claude_auth_status;
 use agents::{
     agent_control_action, agent_control_attach_mention, agent_control_clone_settings,
     agent_control_create_authorize, agent_control_create_commit, agent_control_create_prepare,
@@ -67,7 +75,7 @@ use buzzodz_plugins::{
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
-use harness_setup::{pi_install, HarnessSetup};
+use harness_setup::{claude_install, pi_install, HarnessSetup};
 use host_command::plugin_host_run_command;
 use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
@@ -397,6 +405,12 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        pairing::pairing_account,
+        pairing::pairing_start,
+        pairing::pairing_status,
+        pairing::pairing_confirm,
+        pairing::pairing_deny,
+        pairing::pairing_cancel,
         identity_restore,
         identity_import,
         identity_create,
@@ -427,9 +441,13 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_agent_observer,
         relay_agent_memories_read,
         relay_agent_library,
+        relay_upload_begin,
+        relay_upload_chunk,
         relay_upload,
         relay_upload_cancel,
         media_download,
+        media_copy_image,
+        media_stream_base,
         get_os_idle_seconds,
         plugin_import_folder,
         plugin_import_git,
@@ -453,6 +471,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_log_challenge,
         agent_control_read_log,
         pi_install,
+        claude_install,
+        claude_auth_status,
         agent_control_use_here,
         agent_control_local_clone_settings,
         agents::agent_security,
@@ -504,13 +524,44 @@ pub fn run() {
         builder
     };
     let builder = builder
+        .plugin(window_controls::init())
+        .plugin(window_state::builder().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_window("main") {
+                if let Err(error) = window_state::restore(&window) {
+                    eprintln!("Could not restore Buzz window: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
             deep_links::setup(app.handle());
+            app.manage(relay::Spools::new(
+                app.path()
+                    .app_cache_dir()
+                    .map(|path| path.join("upload-spools"))
+                    .map_err(|_| "Media preparation could not access temporary storage".to_owned()),
+            ));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
+                    handle
+                        .state::<relay::Spools>()
+                        .reap(&handle.state::<relay::Uploads>());
+                }
+            });
+            // Relay `<video>` and `<audio>` load from this listener; without it
+            // they show as unavailable.
+            match relay::MediaStream::start(app.state::<IdentityHost>().inner().clone()) {
+                Ok(stream) => {
+                    app.manage(stream);
+                }
+                Err(error) => eprintln!("Could not start the media listener: {error}"),
+            }
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -557,8 +608,10 @@ pub fn run() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
     builder
+        .manage(image_clipboard::ImageClipboard::default())
         .manage(IdentityHost::default())
         .manage(archive::ArchiveHost::default())
+        .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -594,9 +647,15 @@ pub fn run() {
             {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                webview.state::<pairing::Pairing>().cancel_all();
+                webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
+            }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -625,6 +684,8 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<relay::Spools>().cancel_all(&app.state::<relay::Uploads>());
+                app.state::<image_clipboard::ImageClipboard>().release();
                 app.state::<HarnessSetup>().shutdown();
                 browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {

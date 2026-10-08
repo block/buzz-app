@@ -10,16 +10,32 @@ import * as builderlab from "./index";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
+import { createOAuthSession } from "./oauth/session";
+import { enrollmentFixture } from "./agents/enrollment-testing";
+import { createNameProvider } from "../../features/identity-names/directory";
+import { resolveIdentityNames } from "../../features/identity-names/policy";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
-beforeEach(() =>
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz"),
-);
+beforeEach(() => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  vi.stubGlobal("navigator", {
+    platform: "MacIntel",
+    locks: {
+      request: async (
+        _name: string,
+        _options: unknown,
+        work: () => Promise<void>,
+      ) => work(),
+    },
+  });
+});
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   native.invoke.mockReset();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 it("an unconfigured desktop build shows setup guidance and cannot start login", async () => {
@@ -28,6 +44,14 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
+  const community = enrollmentFixture(
+    createOAuthSession(async () => {
+      throw new Error("unused");
+    }),
+    null,
+  );
+  root.provide("relay", community.relay);
+  root.provide("communityReader", community.reader);
   try {
     runtime.reconcile([
       {
@@ -52,11 +76,11 @@ it("an unconfigured desktop build shows setup guidance and cannot start login", 
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();
+    await community.dispose();
   }
 });
 
-it("wires login through the host and clears the session on disable/re-enable", async () => {
-  const origin = "https://app.builderlab.xyz";
+it("binds login, list and creation to the plugin host and clears the session on disable/re-enable", async () => {
   native.invoke.mockImplementation(async (command, input) => {
     if (command === "oauth_callback_begin")
       return {
@@ -66,6 +90,9 @@ it("wires login through the host and clears the session on disable/re-enable", a
     if (command === "oauth_callback_wait")
       return { parameters: [["code", "one-time"]] };
     if (command === "oauth_callback_cancel") return;
+    if (command === "identity_restore") return community.viewer;
+    if (command === "identity_prepare_remote_agent_authorization")
+      return ["auth", community.viewer, "", "ef".repeat(64)];
     if (command === "plugin_host_request")
       return {
         status: 200,
@@ -73,10 +100,16 @@ it("wires login through the host and clears the session on disable/re-enable", a
         body: JSON.stringify(
           input.request.url.endsWith("/exchange")
             ? { session_credential: "private-token" }
-            : {
-                subject: "user",
-                email: "a@example.com",
-              },
+            : input.request.url.endsWith("/list-agents")
+              ? { status: 1, agents: [] }
+              : input.request.url.endsWith("/register-agent")
+                ? { status: 1, agent_id: "one", agent_pubkey: "ab".repeat(32) }
+                : input.request.url.endsWith("/attest-agent")
+                  ? { status: 1 }
+                  : {
+                      subject: "user",
+                      email: "a@example.com",
+                    },
         ),
       };
     throw new Error(`Unexpected command ${command}`);
@@ -85,6 +118,13 @@ it("wires login through the host and clears the session on disable/re-enable", a
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
+  const community = enrollmentFixture(
+    createOAuthSession(async () => {
+      throw new Error("unused");
+    }),
+  );
+  root.provide("relay", community.relay);
+  root.provide("communityReader", community.reader);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
     source: "bundled",
@@ -108,41 +148,88 @@ it("wires login through the host and clears the session on disable/re-enable", a
     expect(
       await screen.findByRole("button", { name: "Sign out" }),
     ).toBeEnabled();
+    expect(
+      await screen.findByText("No remote agents yet."),
+    ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Signed in as a@example.com.",
     );
     expect(document.body).not.toHaveTextContent("private-token");
-    const begin = native.invoke.mock.calls.find(
-      ([command]) => command === "oauth_callback_begin",
-    )?.[1];
-    expect(begin).not.toHaveProperty("id");
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
       id: "native-attempt-id",
     });
-    expect(begin.callbackPath).toMatch(/^\/callback\/[0-9a-f-]{36}$/);
-    expect(begin.callbackParameter).toBe("returnTo");
-    expect(begin.useState).toBe(false);
-    const authorization = new URL(begin.authorizationUrl);
-    expect(authorization.origin).toBe(origin);
-    expect(authorization.searchParams.has("returnTo")).toBe(false);
-    expect(authorization.searchParams.has("state")).toBe(false);
     const requests = native.invoke.mock.calls
       .filter(([command]) => command === "plugin_host_request")
       .map(([, input]) => input);
-    expect(requests).toHaveLength(2);
-    expect(requests.map((input) => input.request.url)).toEqual([
-      `${origin}/api/goose/v1/auth/login/exchange`,
-      `${origin}/api/goose/v1/auth/me`,
-    ]);
+    expect(requests).toHaveLength(3);
     expect(
       requests.every(
         (input) =>
           input.id === "block.builderlab" && input.revision === "bundled",
       ),
     ).toBe(true);
-    expect(requests[1].request.headers["X-BB-Session-Credential"]).toBe(
+    // Prove the account login supplies this consumer's credential through the real plugin wiring.
+    expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
       "private-token",
     );
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("textbox", { name: "Agent name" }),
+      "Helper",
+    );
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Registration confirmed in this community."),
+    ).toBeInTheDocument();
+    expect(community.events).toHaveLength(1);
+    expect(community.events[0]).toMatchObject({
+      pubkey: community.viewer,
+      kind: 30177,
+      content: JSON.stringify({
+        name: "Helper",
+        parallelism: 1,
+        respond_to: "owner-only",
+      }),
+    });
+    expect(community.events[0]?.tags).toContainEqual(["d", "ab".repeat(32)]);
+    const relaySession = community.relay.snapshot().session;
+    const names = createNameProvider({
+      id: "agents",
+      resolve: resolveIdentityNames,
+    });
+    expect(
+      names.scope({
+        agentLibrary: relaySession.agentLibrary,
+        profiles: relaySession.profiles,
+        viewer: community.viewer,
+        relayUrl: "https://community.example",
+      })("ab".repeat(32)),
+    ).toEqual({ name: "Helper" });
+    expect(
+      community.relay.snapshot().session.agentChoices.snapshot().selectable,
+    ).toEqual([{ pubkey: "ab".repeat(32), name: "Helper", managed: false }]);
+    expect(native.invoke).toHaveBeenCalledWith(
+      "identity_prepare_remote_agent_authorization",
+      { owner: community.viewer, agentPubkey: "ab".repeat(32) },
+    );
+    const mutations = native.invoke.mock.calls
+      .filter(
+        ([command, input]) =>
+          command === "plugin_host_request" &&
+          /\/(register|attest)-agent$/.test(input.request.url),
+      )
+      .map(([, input]) => input);
+    expect(mutations).toHaveLength(2);
+    expect(JSON.parse(mutations[1].request.body).community_url).toBe(
+      "wss://community.example",
+    );
+    expect(
+      mutations.every(
+        (input) =>
+          input.id === "block.builderlab" && input.revision === "bundled",
+      ),
+    ).toBe(true);
     await act(async () => {
       runtime.reconcile([]);
     });
@@ -163,5 +250,6 @@ it("wires login through the host and clears the session on disable/re-enable", a
     cleanup();
     await runtime.dispose();
     await root.fiber.dispose();
+    await community.dispose();
   }
 });

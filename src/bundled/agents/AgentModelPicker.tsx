@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
+  HarnessConfigurationPolicy,
 } from "../../features/agents/control";
 import type { ModelCatalog } from "../../features/agents/models";
 import {
@@ -29,7 +30,12 @@ export function AgentModelPicker({
   onPiProviders,
   onChange,
   disabled = false,
+  policy,
+  providerSelection = 0,
 }: {
+  /** Incremented by a committed dropdown choice; custom typing never loads. */
+  providerSelection?: number;
+  policy?: HarnessConfigurationPolicy | undefined;
   disabled?: boolean;
   /** Pi's signed-in providers, or null while its catalog is loading. */
   onPiProviders?(providers: string[] | null): void;
@@ -45,8 +51,12 @@ export function AgentModelPicker({
 }) {
   const statusId = useId();
   const goose = isGoose(draft.command);
-  const pi = draft.command.split("/").at(-1) === "buzz-pi-acp";
-  const external = goose || pi;
+  const pi = policy
+    ? policy.provider === "discovered"
+    : draft.command.split("/").at(-1) === "buzz-pi-acp";
+  const external = policy
+    ? policy.authentication === "harnessWithOverrides"
+    : goose || pi;
   // An inherited Agent defaults value wins over the compiled floor at launch;
   // leave it blank here so native resolves the same hidden value.
   const host =
@@ -63,6 +73,10 @@ export function AgentModelPicker({
   const [query, setQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const attempted = useRef<string | null>(null);
+  // The settings form survives while presets temporarily unmount this picker.
+  // Treat its current counter as already consumed when mounting so only a new
+  // committed provider choice can initiate Goose discovery.
+  const consumedProviderSelection = useRef(providerSelection);
   // Native resolves absolute executables and write-only provider overrides.
   const supported = !!control.models;
   const highlighted = useRef<ModelCatalog["models"][number] | null>(null);
@@ -240,6 +254,14 @@ export function AgentModelPicker({
   useEffect(() => {
     if (pi) void run("connect");
   }, [pi, draft.command]);
+  // Provider selection loads Goose's catalog. Credential/context edits retire
+  // that request but wait for Browse or Retry, never signing in per keystroke.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only selecting a Goose provider triggers automatic discovery.
+  useEffect(() => {
+    if (providerSelection === consumedProviderSelection.current) return;
+    consumedProviderSelection.current = providerSelection;
+    if (providerSelection && goose && draft.provider) void run("connect");
+  }, [providerSelection]);
   const fresh = catalog?.key === key ? catalog.data : null;
   const reportedProviders = JSON.stringify(
     !pi
@@ -505,12 +527,14 @@ export function AgentModelPicker({
             </Button>
           )
         )}
-        {pi && draft.provider && !draft.model && (
-          <p className="text-body-sm text-warning">
-            Choose a model for this provider before starting, or clear Provider
-            to use Pi defaults.
-          </p>
-        )}
+        {(policy ? policy.model === "withProvider" : pi) &&
+          draft.provider &&
+          !draft.model && (
+            <p className="text-body-sm text-warning">
+              Choose a model for this provider before starting, or clear
+              Provider to use Pi defaults.
+            </p>
+          )}
         {pi && fresh && entries.length === 0 && draft.provider && (
           <p className="text-body-sm text-secondary">{piNoModelsMessage}</p>
         )}
@@ -542,8 +566,9 @@ export function AgentModelPicker({
           )}
         {goose && (
           <p className="text-body-sm text-secondary">
-            Browse to check this Goose provider’s models using the credentials
-            entered above or already configured in Goose.
+            Models load for the selected provider using credentials entered
+            above or already configured in Goose. You can also enter a custom
+            model ID.
           </p>
         )}
       </div>

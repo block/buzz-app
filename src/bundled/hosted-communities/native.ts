@@ -1,4 +1,4 @@
-// Packaged-desktop Builderlab account backend, mirroring dev/builderlab.mjs route for
+// Packaged-desktop Builderlab account backend, mirroring browser-host/builderlab.mjs route for
 // route. The session credential lives only in this plugin's memory; native code owns
 // the browser callback, host HTTP, and the kind 24243 binding signature.
 import { invoke } from "@tauri-apps/api/core";
@@ -57,9 +57,7 @@ async function awaitCode(bridge: Native, signal: AbortSignal) {
   const { id } = await command<{ id: string }>(bridge, "oauth_callback_begin", {
     authorizationUrl: login.href,
     callbackPath: `/callback/${crypto.randomUUID().replaceAll("-", "")}`,
-    callbackParameter: "returnTo",
-    // Builderlab's custom protocol carries no state; the random path binds the attempt.
-    useState: false,
+    useState: true,
   });
   const cancel = () =>
     void bridge.invoke("oauth_callback_cancel", { id }).catch(() => {});

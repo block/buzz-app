@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { Dialog } from "@base-ui/react/dialog";
 import type { useIdentityNames } from "../../features/identity-names/react";
 import {
@@ -6,7 +7,7 @@ import {
 } from "../../features/agents/control-react";
 import { sameCommunityAgents } from "../../features/agents/choices";
 import type { PageNavigation } from "../../features/navigation/service";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -37,7 +38,9 @@ export function AgentControlPanel({
   editRequest,
   onCloseTarget,
   onOpenHarnesses,
+  headerActions,
 }: {
+  headerActions?: HTMLElement | null;
   resolveName?: ReturnType<typeof useIdentityNames>;
   onOpenHarnesses?: (() => void) | undefined;
   control: AgentControl;
@@ -87,6 +90,9 @@ export function AgentControlPanel({
     name: string;
     source?: ImportSource;
   } | null>(null);
+  // Success hands focus to the card. Suppress the popup's queued return before
+  // unmount; it resolves its target before the card's focus effect runs.
+  const importCompleted = useRef(false);
   useEffect(() => {
     setImportSelection((current) =>
       current?.destination === importDestination ? current : null,
@@ -220,36 +226,42 @@ export function AgentControlPanel({
           : undefined
       }
       onImported={(agents) => {
+        importCompleted.current = true;
         setImportedId(agents[0]?.id ?? null);
         setImportSections([]);
         setImportSelection(null);
       }}
     />
   ) : null;
+  const createButton = (
+    <Button
+      variant="subtle"
+      size="sm"
+      aria-haspopup="dialog"
+      disabled={localPending}
+      onClick={() =>
+        setAdding({
+          destination: importDestination,
+          owner: createOwner ?? "",
+        })
+      }
+    >
+      <PlusIcon size={16} aria-hidden="true" />
+      Create agent
+    </Button>
+  );
   return (
     <section
       data-buzz-ui=""
       aria-label="Local agent controls"
       className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      {state.data && (
-        <div className="flex justify-end">
-          <Button
-            variant="primary"
-            aria-haspopup="dialog"
-            disabled={localPending}
-            onClick={() =>
-              setAdding({
-                destination: importDestination,
-                owner: createOwner ?? "",
-              })
-            }
-          >
-            <PlusIcon size={16} aria-hidden="true" />
-            Add agent
-          </Button>
-        </div>
-      )}
+      {state.data &&
+        (headerActions ? (
+          createPortal(createButton, headerActions)
+        ) : (
+          <div className="flex justify-end">{createButton}</div>
+        ))}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
       )}
@@ -283,6 +295,7 @@ export function AgentControlPanel({
               ...(source ? { source } : {}),
             }),
           (pubkey, source) => {
+            importCompleted.current = false;
             setImportSelection({
               destination: importDestination,
               trigger:
@@ -358,7 +371,9 @@ export function AgentControlPanel({
               <Dialog.Popup
                 data-buzz-ui=""
                 className="buzz-dialog agent-controls text-body"
-                finalFocus={() => importSelection.trigger}
+                finalFocus={() =>
+                  importCompleted.current ? false : importSelection.trigger
+                }
                 aria-modal={!state.pendingCredentialWrite}
               >
                 {importForm}

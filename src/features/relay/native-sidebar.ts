@@ -3,6 +3,9 @@ import {
   editSidebarAssignment,
   editSidebarSort,
   editSidebarToggle,
+  validSidebarAssignment,
+  validSidebarChannelId,
+  validSidebarSort,
 } from "./sidebar-edits";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
@@ -147,19 +150,7 @@ export function nativeSidebar(transport: ReadTransport) {
       signal: AbortSignal,
     ): Promise<SidebarGroups> {
       const { channelId, sectionId, createSection } = intent;
-      if (
-        !channelId.trim() ||
-        channelId.length > 256 ||
-        (sectionId !== undefined &&
-          (!sectionId.trim() || sectionId.length > 256)) ||
-        (createSection &&
-          (sectionId !== undefined ||
-            !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
-              createSection.id,
-            ) ||
-            !createSection.name.trim() ||
-            createSection.name.length > 256))
-      )
+      if (!validSidebarAssignment(intent))
         throw new Error("Invalid sidebar assignment intent");
       const section = createSection?.id ?? sectionId;
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
@@ -219,16 +210,7 @@ export function nativeSidebar(transport: ReadTransport) {
       sectionIds: readonly string[],
       signal: AbortSignal,
     ) {
-      if (
-        group.length > 264 ||
-        !["alpha", "recent"].includes(mode) ||
-        sectionIds.length > 100 ||
-        sectionIds.some((id) => !id.trim() || id.length > 256) ||
-        (!["starred", "channels", "forums", "dms"].includes(group) &&
-          !(
-            group.startsWith("section:") && sectionIds.includes(group.slice(8))
-          ))
-      )
+      if (!validSidebarSort(group, mode, sectionIds))
         throw new Error("Invalid sidebar sort intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
         const next = editSidebarSort(current, createdAt, group, mode);
@@ -256,11 +238,7 @@ export function nativeSidebar(transport: ReadTransport) {
   ) {
     const { channelId } = intent;
     const enabled = intent[field];
-    if (
-      !channelId.trim() ||
-      channelId.length > 256 ||
-      typeof enabled !== "boolean"
-    )
+    if (!validSidebarChannelId(channelId) || typeof enabled !== "boolean")
       throw new Error(
         `Invalid sidebar ${field === "starred" ? "star" : "mute"} intent`,
       );

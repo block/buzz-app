@@ -162,21 +162,22 @@ await shot(
   "Typing name compares with channel members, even if writer is a historical/outside identity",
 );
 await fetch("http://127.0.0.1:1435/demo/activity", { method: "POST" });
+const channelActivity = p.getByRole("region", {
+  name: "Agent activity in this channel",
+  exact: true,
+});
+await expect(channelActivity).toBeVisible();
+await channelActivity.locator("summary").click();
 await expect(
-  p.getByRole("region", {
-    name: "Agent activity in this channel",
-    exact: true,
+  channelActivity.getByRole("button", {
+    name: /View activity for Wes’s Honey/,
   }),
 ).toBeVisible();
 await shot(
   "surface-activity-accessory",
   "Channel agent-activity accessory readable conflict labels",
 );
-await p
-  .getByRole("region", { name: "Agent activity in this channel", exact: true })
-  .getByRole("button")
-  .last()
-  .click();
+await channelActivity.getByRole("button").last().click();
 await expect(
   p.getByRole("region", { name: "Agent activity", exact: true }),
 ).toBeVisible();

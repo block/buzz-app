@@ -159,17 +159,18 @@ export function MessageReactionControls(props: Props) {
               aria-pressed={mine}
               onClick={() => select(content)}
               icon={
-                <span className={styles.quickReactionGlyph}>
-                  <ReactionLabel
-                    row={row}
-                    inline={inline}
-                    session={session}
-                    reaction={{
-                      content,
-                      ...(emoji ? { emoji } : {}),
-                      events: [],
-                    }}
-                  />
+                <span
+                  className={styles.quickReactionGlyph}
+                  data-emoji={emoji ? undefined : content}
+                >
+                  {emoji && (
+                    <ReactionLabel
+                      row={row}
+                      inline={inline}
+                      session={session}
+                      reaction={{ content, emoji, events: [] }}
+                    />
+                  )}
                 </span>
               }
             />

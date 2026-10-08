@@ -140,7 +140,7 @@ it.each([
   },
 );
 
-it("switching Pi, Goose and Buzz resets incompatible selections and uses each harness arguments", async () => {
+it("switching external harnesses and Buzz resets incompatible selections and uses each harness arguments", async () => {
   let current = {
     ...agentDraft(controlFixture().agent),
     command: "buzz-agent",
@@ -171,6 +171,12 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
             command: "/local/buzz-pi-acp",
             label: "Pi",
             providers: [{ value: "anthropic", label: "Anthropic" }],
+            defaultArgs: [],
+          },
+          {
+            command: "/local/hermes-acp",
+            label: "Hermes Agent",
+            providers: [],
             defaultArgs: [],
           },
         ]}
@@ -209,6 +215,15 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
   await user.click(extension);
   expect(current.provider).toBe("extension");
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Hermes Agent" }));
+  expect(current).toMatchObject({
+    command: "/local/hermes-acp",
+    args: "[]",
+    provider: "",
+    model: "",
+  });
+  expect(screen.queryByRole("combobox", { name: /Provider/ })).toBeNull();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Goose" }));
   expect(current).toMatchObject({
     command: "goose",
@@ -225,6 +240,109 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
     model: "",
   });
 });
+
+it.each([
+  {
+    label: "Hermes Agent",
+    command: "/local/hermes-acp",
+    defaultArgs: ["--hermes-default"],
+  },
+  {
+    label: "Claude Code",
+    command: "/local/claude-agent-acp",
+    defaultArgs: ["--claude-default"],
+  },
+])(
+  "uses native-shaped defaults between Buzz Agent and $label",
+  async ({ label, command, defaultArgs }) => {
+    const externalPolicy = {
+      authentication: "external" as const,
+      provider: "external" as const,
+      supportedModes: [],
+      model: "optional" as const,
+      effortDiscovery: "unknown" as const,
+      selectorEnvironment: null,
+    };
+    let current = {
+      ...agentDraft(controlFixture().agent),
+      command: "buzz-agent",
+      provider: "databricks_v2",
+      model: "old-model",
+      args: '["old-argument"]',
+    };
+    function Editor() {
+      const [draft, setDraft] = useState(current);
+      current = draft;
+      return (
+        <>
+          <AgentHarnessEditor
+            draft={draft}
+            options={[
+              {
+                command: "buzz-agent",
+                label: "Buzz Agent",
+                providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+                defaultArgs: [],
+                configurationPolicy: {
+                  ...externalPolicy,
+                  authentication: "provider",
+                  provider: "selector",
+                  selectorEnvironment: {
+                    model: "BUZZ_AGENT_MODEL",
+                    provider: "BUZZ_AGENT_PROVIDER",
+                  },
+                },
+              },
+              {
+                command,
+                label,
+                providers: [],
+                defaultArgs,
+                configurationPolicy: externalPolicy,
+              },
+            ]}
+            onChange={(patch) => setDraft((draft) => ({ ...draft, ...patch }))}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              setDraft((draft) => ({
+                ...draft,
+                args: '["custom-preset-argument"]',
+                provider: "old-provider",
+                model: "old-model",
+              }))
+            }
+          >
+            Set incompatible preset values
+          </button>
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Editor />);
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(await screen.findByRole("option", { name: label }));
+    expect(current).toMatchObject({
+      command,
+      args: JSON.stringify(defaultArgs),
+      provider: "",
+      model: "",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Set incompatible preset values" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
+    expect(current).toMatchObject({
+      command: "buzz-agent",
+      args: "[]",
+      provider: "databricks_v2",
+      model: "",
+    });
+  },
+);
 
 it("disables Pi's provider list while signed-in providers load and keeps the current choice", () => {
   const f = controlFixture();
@@ -254,4 +372,61 @@ it("disables Pi's provider list while signed-in providers load and keeps the cur
     "Loading signed-in providers…",
   );
   expect(screen.queryByLabelText("Custom provider")).toBeNull();
+});
+
+it("shows missing preset setup only for the selected harness", () => {
+  const draft = agentDraft(controlFixture().agent);
+  const missing = {
+    command: "hermes-acp",
+    label: "Hermes Agent",
+    available: false,
+    providers: [],
+  };
+  const onChange = () => {};
+  const onOpenHarnesses = () => {};
+  const { rerender } = render(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "buzz-agent" }}
+      options={[missing]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.queryByText(/needs its ACP launcher/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open Harnesses in Settings" }),
+  ).not.toBeInTheDocument();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[missing]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.getByText(/Hermes Agent needs its ACP launcher/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open Harnesses in Settings" }),
+  ).toBeVisible();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.getByText(/Hermes Agent needs its ACP launcher/)).toBeVisible();
+  rerender(
+    <AgentHarnessEditor
+      draft={{ ...draft, command: "/old/hermes-acp" }}
+      options={[{ ...missing, command: "/new/hermes-acp", available: true }]}
+      onChange={onChange}
+      onOpenHarnesses={onOpenHarnesses}
+    />,
+  );
+  expect(screen.queryByText(/needs its ACP launcher/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open Harnesses in Settings" }),
+  ).not.toBeInTheDocument();
 });

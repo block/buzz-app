@@ -15,7 +15,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
@@ -44,6 +44,7 @@ export const test = base.extend({
   threadUnreadOwnedRoot: [true, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
+  searchAuthor: [false, { option: true }],
   sessionChannels: [[], { option: true }],
   sessionWriteKinds: [null, { option: true }],
   sessionParents: [{}, { option: true }],
@@ -76,6 +77,7 @@ export const test = base.extend({
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   agentManagement: [false, { option: true, scope: "worker" }],
+  pairingFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -96,6 +98,7 @@ export const test = base.extend({
       threadUnreadOwnedRoot,
       exactMessages,
       openSearch,
+      searchAuthor,
       sessionChannels,
       sessionWriteKinds,
       sessionParents,
@@ -1061,6 +1064,44 @@ export const test = base.extend({
         });
         return [];
       }
+      if (
+        searchAuthor &&
+        filter.kinds?.includes(0) &&
+        filter.search_mode === "prefix"
+      )
+        return [profiles.get(community)].filter((event) =>
+          JSON.parse(event.content)
+            .name.toLowerCase()
+            .startsWith(filter.search.toLowerCase()),
+        );
+      if (
+        searchAuthor &&
+        filter.kinds?.includes(9) &&
+        filter.search === undefined &&
+        filter.authors
+      )
+        return [];
+      if (filter.search !== undefined)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.content
+                .toLowerCase()
+                .includes(filter.search.toLowerCase()) &&
+              (!filter["#h"] ||
+                event.tags.some(
+                  ([key, value]) => key === "h" && filter["#h"].includes(value),
+                )) &&
+              (!filter.authors || filter.authors.includes(event.pubkey)) &&
+              (filter.since === undefined ||
+                event.created_at >= filter.since) &&
+              (filter.until === undefined || event.created_at <= filter.until),
+          )
+          .slice(0, filter.limit);
       if (filter.kinds?.includes(0))
         return [
           ...[...servedProfiles.values()].filter((event) =>
@@ -1130,17 +1171,6 @@ export const test = base.extend({
           )
           .slice(0, filter.limit);
       }
-      if (filter.search !== undefined)
-        return [...histories.entries()]
-          .filter(([key]) => key.startsWith(`${community}/`))
-          .flatMap(([, events]) => events)
-          .concat(community === "primary" ? targetEvents : [])
-          .filter(
-            (event) =>
-              filter.kinds.includes(event.kind) &&
-              event.content.toLowerCase().includes(filter.search.toLowerCase()),
-          )
-          .slice(0, filter.limit);
       if (filter.ids)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -1773,7 +1803,11 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (filter.until !== undefined && filter["#h"]?.length) {
+        if (
+          filter.search === undefined &&
+          filter.until !== undefined &&
+          filter["#h"]?.length
+        ) {
           pending.push({
             community,
             channel: filter["#h"][0],
@@ -1955,6 +1989,7 @@ export const test = base.extend({
           ? testInfo.outputPath("archive.sqlite3")
           : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
           return sign(13534, [["member", viewer, role]], "", relayKey);

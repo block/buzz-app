@@ -80,3 +80,22 @@ it("provides chrome during a later restore without a parser overlay", () => {
     "true",
   );
 });
+
+it("applies the native policy on the very first launch render", () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  vi.stubGlobal("__BUZZ_WINDOW_CONTROLS__", {
+    minimize: false,
+    maximize: false,
+  });
+  document.body.innerHTML =
+    '<div id="buzz-launch"></div><div id="root" inert aria-hidden="true"></div>';
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Missing test root");
+  render(<LaunchWindowControls />, { container: root });
+  expect(screen.getAllByRole("button")).toHaveLength(1);
+  expect(
+    screen.getByRole("button", { name: "Close window" }),
+  ).toBeInTheDocument();
+  expect(root.querySelector("header")).toBeNull();
+});

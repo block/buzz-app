@@ -4,7 +4,12 @@ mod agent_defaults;
 mod bundle;
 mod community;
 mod config;
+mod harness_policy;
 pub use community::CommunityResolution;
+pub use harness_policy::{
+    AuthenticationPolicy, ConfigurationMode, EffortDiscovery, HarnessConfigurationPolicy,
+    ModelRequirement, ProviderPolicy, SelectorEnvironment,
+};
 pub mod connection;
 mod create;
 mod credentials;
@@ -38,6 +43,7 @@ pub use import::{
     CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
 };
 pub use restart::{RestartChange, RestartDiffEntry};
+pub use runtime::path::{prepare_tools_path, tools_path, warm_tools_path};
 pub use runtime::{
     installed, installed_npm_tool, managed_tool, Action, Controller, GooseModelContext,
     ModelContext,

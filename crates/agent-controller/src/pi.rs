@@ -73,15 +73,20 @@ impl PiContext {
             resolve("node")
         }
         .ok_or("Install Node.js for the Pi ACP adapter")?;
-        let path = std::env::join_paths([
-            node.parent().unwrap(),
-            command.parent().unwrap(),
-            Path::new("/usr/bin"),
-            Path::new("/bin"),
-            Path::new("/usr/sbin"),
-            Path::new("/sbin"),
-        ])
-        .map_err(|_| "Invalid Pi tools path")?;
+        let path = crate::runtime::path::compose(
+            [
+                node.parent().unwrap().to_path_buf(),
+                command.parent().unwrap().to_path_buf(),
+            ]
+            .into_iter()
+            .chain(std::env::split_paths(&crate::runtime::path::tools_path()?))
+            .chain(
+                environment
+                    .get("PATH")
+                    .into_iter()
+                    .flat_map(std::env::split_paths),
+            ),
+        )?;
         let mut environment = environment.clone();
         environment.insert(
             "PI_ACP_PI_COMMAND".into(),
@@ -314,12 +319,8 @@ fn version_output(mut probe: Command) -> Result<String> {
 /// Selection constraints shared by catalog discovery and ACP launch.
 /// Empty selectors retain Pi defaults; model IDs may contain namespace slashes.
 pub fn validate_selection(provider: &str, model: &str) -> Result<()> {
-    if !provider.is_empty() && model.is_empty() {
-        return Err(
-            "Choose a Pi model for the selected provider, or clear both fields to use Pi defaults"
-                .into(),
-        );
-    }
+    crate::HarnessConfigurationPolicy::for_command("buzz-pi-acp")
+        .validate_selection(provider, model)?;
     if provider.contains('/') {
         return Err("Invalid Pi provider or model ID".into());
     }

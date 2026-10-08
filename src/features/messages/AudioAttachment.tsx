@@ -14,6 +14,7 @@ import {
 } from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
+import { useMediaElementSource } from "./use-media-element-source";
 
 let playing: HTMLAudioElement | null = null;
 const ENDED_DURATION_CORRECTION_MIN_SECONDS = 0.05;
@@ -50,7 +51,9 @@ export function AudioAttachment({
   );
   const [isPlaying, setIsPlaying] = useState(false);
   const [failedSource, setFailedSource] = useState<string | null>(null);
-  const failed = failedSource === source;
+  const element = useMediaElementSource(source);
+  const elementSource = element.src;
+  const failed = failedSource === source || element.unavailable;
   const playLabel = attachment.name ? `Play ${attachment.name}` : "Play audio";
   const pauseLabel = attachment.name
     ? `Pause ${attachment.name}`
@@ -107,7 +110,7 @@ export function AudioAttachment({
       {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
       <audio
         ref={setAudio}
-        src={source}
+        src={elementSource}
         preload="metadata"
         onLoadedMetadata={(event) => syncDuration(event.currentTarget)}
         onDurationChange={(event) => syncDuration(event.currentTarget)}

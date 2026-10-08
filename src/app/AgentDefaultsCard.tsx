@@ -7,6 +7,7 @@ import {
   type AgentDefaultSettings,
   type AgentDefaultsEdit,
   type AgentEdit,
+  type HarnessConfigurationPolicy,
 } from "../features/agents/control";
 import type { ModelCatalog } from "../features/agents/models";
 import {
@@ -30,6 +31,8 @@ const harnesses = [
   { value: "pi", label: "Pi" },
 ] as const;
 
+// Legacy suggestions only, never model capability evidence. Native policy marks
+// effort discovery unknown until the integration reports model-specific metadata.
 const effortChoices = {
   "buzz-agent": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   goose: ["off", "low", "medium", "high", "max"],
@@ -45,6 +48,15 @@ function defaultLabel(harness: AgentDefaultsEdit["harness"], value: string) {
 }
 
 type Choice = { value: string; label: string };
+
+function defaultHarness(
+  state: AgentControlState,
+  kind: AgentDefaultsEdit["harness"],
+) {
+  return state.data?.harnessOptions?.find(
+    (option) => harnessKind(option.command) === kind,
+  );
+}
 
 function environmentSet(
   current: AgentDefaultsEdit,
@@ -164,36 +176,36 @@ function ProviderChoice({
   onChange(provider: string): void;
   editSession: number;
 }) {
-  const harness = state.data?.harnessOptions?.find(
-    (option) => harnessKind(option.command) === current.harness,
-  );
-  const discovered =
-    current.harness === "pi"
-      ? [
-          ...new Set(models.map((model) => model.id.split("/")[0] ?? "")),
-        ].filter(Boolean)
-      : [];
-  const providers =
-    current.harness === "pi"
-      ? [
-          ...discovered.map((value) => ({
+  const harness = defaultHarness(state, current.harness);
+  const discoveredProviders = harness?.configurationPolicy
+    ? harness.configurationPolicy.provider === "discovered"
+    : current.harness === "pi";
+  const discovered = discoveredProviders
+    ? [...new Set(models.map((model) => model.id.split("/")[0] ?? ""))].filter(
+        Boolean,
+      )
+    : [];
+  const providers = discoveredProviders
+    ? [
+        ...discovered.map((value) => ({
+          value,
+          label: `${PI_API_KEYS[value]?.label ?? value} (available in Pi)`,
+        })),
+        ...Object.entries(PI_API_KEYS)
+          .filter(([value]) => !discovered.includes(value))
+          .map(([value, details]) => ({
             value,
-            label: `${PI_API_KEYS[value]?.label ?? value} (available in Pi)`,
+            label: `${details.label} (API key may be needed)`,
           })),
-          ...Object.entries(PI_API_KEYS)
-            .filter(([value]) => !discovered.includes(value))
-            .map(([value, details]) => ({
-              value,
-              label: `${details.label} (API key may be needed)`,
-            })),
-        ]
-      : (harness?.providers ?? []);
+      ]
+    : (harness?.providers ?? []);
   const builtInProvider = state.data?.agentDefaults?.provider ?? "";
   const builtInLabel =
     providers.find((provider) => provider.value === builtInProvider)?.label ??
     builtInProvider;
-  const overrideKey =
-    current.harness === "goose"
+  const overrideKey = harness?.configurationPolicy
+    ? harness.configurationPolicy.selectorEnvironment?.provider
+    : current.harness === "goose"
       ? "GOOSE_PROVIDER"
       : current.harness === "buzz-agent"
         ? "BUZZ_AGENT_PROVIDER"
@@ -229,7 +241,12 @@ function ProviderChoice({
   );
 }
 
-function defaultsApiKey(current: AgentDefaultsEdit, savedKeys: string[]) {
+function defaultsApiKey(
+  current: AgentDefaultsEdit,
+  savedKeys: string[],
+  policy?: HarnessConfigurationPolicy,
+) {
+  if (policy?.authentication === "external") return undefined;
   if (current.harness === "pi") return PI_API_KEYS[current.provider];
   if (current.harness !== "goose") return undefined;
   const provider = effectiveGooseProvider(
@@ -257,10 +274,11 @@ function ModelChoice({
   onModels(models: ModelCatalog["models"]): void;
   editSession: number;
 }) {
-  const harness = state.data?.harnessOptions?.find(
-    (option) => harnessKind(option.command) === current.harness,
-  );
-  const pi = current.harness === "pi";
+  const harness = defaultHarness(state, current.harness);
+  const policy = harness?.configurationPolicy;
+  const pi = policy
+    ? policy.provider === "discovered"
+    : current.harness === "pi";
   const [catalog, setCatalog] = useState<{
     key: string;
     models: ModelCatalog["models"];
@@ -315,11 +333,13 @@ function ModelChoice({
   const selected = entries.find((model) => model.id === selectedId);
   if (selected && !matching.some((model) => model.id === selected.id))
     matching.unshift(selected);
-  const modelKey = {
-    "buzz-agent": "BUZZ_AGENT_MODEL",
-    goose: "GOOSE_MODEL",
-    pi: "",
-  }[current.harness];
+  const modelKey = policy
+    ? policy.selectorEnvironment?.model
+    : {
+        "buzz-agent": "BUZZ_AGENT_MODEL",
+        goose: "GOOSE_MODEL",
+        pi: "",
+      }[current.harness];
   const savedKeys = state.data?.defaultSettings?.environmentKeys ?? [];
   const modelOverridden =
     !!modelKey && environmentSet(current, savedKeys, modelKey);
@@ -522,12 +542,14 @@ function ModelChoice({
           Choose a Goose provider to browse its models.
         </p>
       )}
-      {pi && current.provider && !current.model && (
-        <p className="m-0 text-body-sm text-warning">
-          Choose a model for this Pi provider, or clear Provider to use Pi
-          defaults.
-        </p>
-      )}
+      {(policy ? policy.model === "withProvider" : pi) &&
+        current.provider &&
+        !current.model && (
+          <p className="m-0 text-body-sm text-warning">
+            Choose a model for this Pi provider, or clear Provider to use Pi
+            defaults.
+          </p>
+        )}
       {removingEnvironment && (
         <p className="m-0 text-body-sm text-secondary">
           Save environment removals before browsing models so lookup uses the
@@ -563,7 +585,8 @@ export function AgentDefaultsCard({
   if (!saved || !control.saveDefaults) return null;
   const current = draft ?? draftFrom(saved);
   const disabled = state.busy || state.status !== "ready";
-  const apiKey = defaultsApiKey(current, saved.environmentKeys);
+  const policy = defaultHarness(state, current.harness)?.configurationPolicy;
+  const apiKey = defaultsApiKey(current, saved.environmentKeys, policy);
   const gooseProvider =
     current.harness === "goose"
       ? effectiveGooseProvider(
@@ -579,7 +602,11 @@ export function AgentDefaultsCard({
     if (
       previousKey &&
       (next.harness !== current.harness ||
-        defaultsApiKey(next, saved.environmentKeys)?.env !== previousKey) &&
+        defaultsApiKey(
+          next,
+          saved.environmentKeys,
+          defaultHarness(state, next.harness)?.configurationPolicy,
+        )?.env !== previousKey) &&
       typeof next.environment[previousKey] === "string"
     ) {
       next.environment = { ...next.environment };

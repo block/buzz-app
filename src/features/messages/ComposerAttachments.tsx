@@ -13,6 +13,7 @@ import {
 import type { DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useAttachmentPoof } from "./AttachmentPoof";
+import { useMediaElementSource } from "./use-media-element-source";
 
 export function ComposerAttachments({
   items,
@@ -70,7 +71,7 @@ function AttachmentItem({
   const presented = useRef(active);
   presented.current = active;
   const [source, setSource] = useState<string>();
-  const [failed, setFailed] = useState(false);
+  const [previewFailed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
   if (!active && open) setOpen(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -83,6 +84,9 @@ function AttachmentItem({
   const video =
     type.startsWith("video/") ||
     (!item.uploaded && /\.(mp4|mov|webm|m4v)$/i.test(item.file.name));
+  const element = useMediaElementSource(video ? source : undefined);
+  const videoSource = element.src;
+  const failed = previewFailed || element.unavailable;
   useEffect(() => {
     setFailed(false);
     if (!image && !video) {
@@ -134,7 +138,7 @@ function AttachmentItem({
             ) : (
               <video
                 key={source}
-                src={source}
+                src={videoSource}
                 muted
                 playsInline
                 preload="metadata"
@@ -236,7 +240,7 @@ function AttachmentItem({
               // biome-ignore lint/a11y/useMediaCaption: user-selected video has no caption track.
               <video
                 className={styles.fullPreview}
-                src={source}
+                src={videoSource}
                 controls
                 playsInline
               />

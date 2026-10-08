@@ -104,7 +104,20 @@ platforms retain Tauri's native drag-region behavior. The main-window capability
 grants titlebar dragging and the internal maximize action used by that
 handler. A Linux and Windows main-webview capability also grants minimize,
 maximize/restore and close for the integrated controls. These actions do not
-change the app’s existing close lifecycle. On Windows, the custom maximize
+change the app’s existing close lifecycle. A native document-start policy hides
+Minimize in Hyprland sessions and also hides Maximize on Omarchy (identified by
+a nonempty `OMARCHY_PATH` within a Hyprland session), whose default window rules
+suppress application maximize requests. Close remains available throughout launch,
+identity setup and the shell. Other desktops retain their controls; non-Omarchy
+Hyprland retains Maximize because its user-owned rules may permit it (Hyprland's
+example configuration suppresses it too). This is a session-default policy, not
+live compositor capability detection: customized Omarchy rules that re-enable
+maximize are not inspected.
+`XDG_CURRENT_DESKTOP` identifies the session (colon-separated names supported),
+with `XDG_SESSION_DESKTOP` as a fallback when absent/empty. Tauri's Linux
+`isMinimizable`/`isMaximizable` methods do not report compositor support.
+No compositor configuration or window-action semantics are changed.
+On Windows, the custom maximize
 button does not expose native maximize-hover Snap Layouts, and right-clicking
 the custom header does not open the native system menu. Keyboard and edge-snap
 behavior remain native and require per-platform acceptance testing.

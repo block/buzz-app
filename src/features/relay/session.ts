@@ -100,6 +100,7 @@ import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
+import { createReminders } from "./reminders";
 import {
   retainEvents,
   matchesEvent,
@@ -1150,6 +1151,16 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
+  const reminders =
+    transport?.reminders && writer
+      ? createReminders({
+          viewer: transport.viewer,
+          host: transport.reminders,
+          query: (filters, signal) => transport.query(filters, signal),
+          publish: (event, signal) => writer.publish(event, signal),
+          signal: lifetime.signal,
+        })
+      : undefined;
   const sidebarPreferences = createSidebarPreferencesStore(
     async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -1619,6 +1630,7 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
+    reminders: reminders?.capability,
     live,
     profiling,
     attachments:
@@ -2246,6 +2258,7 @@ export function createRelaySession(
     captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
+      reminders?.receive(events);
       const candidates = new Set(
         provenance?.phase === "live" && provenance.channelId
           ? events
@@ -2359,6 +2372,8 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       ) {
         liveGeneration++;
+        // Reminder catch-up waits for the recovery read after re-establishment.
+        reminders?.stale();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();
@@ -2409,6 +2424,7 @@ export function createRelaySession(
         if (refreshedGeneration !== liveGeneration) {
           refreshedGeneration = liveGeneration;
           refreshRoster();
+          const generation = liveGeneration;
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
@@ -2419,6 +2435,9 @@ export function createRelaySession(
               statuses.reconnect();
               unread.reconnect();
               inboxFeed.reconnect();
+              // Only while this same connection is still up.
+              if (generation === liveGeneration && memoryConnected)
+                void reminders?.recover();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);

@@ -75,6 +75,7 @@ struct HarnessOption {
     update_supported: Option<bool>,
     default_args: Vec<String>,
     providers: &'static [ProviderOption],
+    configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy,
 }
 
 #[derive(Serialize)]
@@ -150,16 +151,21 @@ pub(crate) async fn claude_auth_status<R: tauri::Runtime>(
 ) -> Option<bool> {
     use tauri::Manager as _;
     let app_data = app.path().app_data_dir().ok()?;
+    prepare_tools_path().await;
     let setup = claude_setup(&app_data);
-    let cli = setup.cli?;
-    let mut path = crate::host_command::effective_path();
+    let path = claude_auth_path(&setup)?;
+    probe_claude_auth(setup.cli.as_ref()?, &path).await
+}
+
+fn claude_auth_path(setup: &ClaudeSetup) -> Option<std::ffi::OsString> {
+    let mut path = buzz_agent_controller::tools_path().ok()?;
     if let Some(node_bin) = setup.node.as_ref().and_then(|node| node.parent()) {
         path = std::env::join_paths(
             std::iter::once(node_bin.to_path_buf()).chain(std::env::split_paths(&path)),
         )
         .ok()?;
     }
-    probe_claude_auth(&cli, &path).await
+    Some(path)
 }
 
 async fn probe_claude_auth(cli: &std::path::Path, path: &std::ffi::OsStr) -> Option<bool> {
@@ -309,55 +315,62 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
             node: buzz_agent_controller::managed_tool(app_data, "node"),
         },
     );
-    let mut options = vec![
-        HarnessOption {
-            command: "buzz-agent".into(),
-            label: "Buzz Agent",
-            available: true,
-            status: "ready",
-            install_supported: None,
-            update_supported: None,
-            default_args: vec![],
-            // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
-            providers: &[
-                ProviderOption {
-                    value: "databricks_v2",
-                    label: "Databricks v2",
-                },
-                ProviderOption {
-                    value: "openai",
-                    label: "OpenAI",
-                },
-            ][usize::from(cfg!(windows))..],
-        },
-        HarnessOption {
-            command: "goose".into(),
-            label: "Goose",
-            available: true,
-            status: "ready",
-            install_supported: None,
-            update_supported: None,
-            default_args: vec![],
-            providers: GOOSE_PROVIDERS,
-        },
-        HarnessOption {
-            command: pi.map_or_else(
-                || "buzz-pi-acp".into(),
-                |p| p.to_string_lossy().into_owned(),
-            ),
-            label: "Pi",
-            available: pi_status == "ready",
-            status: pi_status,
-            install_supported: Some(cfg!(all(
-                any(target_os = "macos", target_os = "linux"),
-                any(target_arch = "x86_64", target_arch = "aarch64")
-            ))),
-            update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
-            default_args: vec![],
-            // Pi reports signed-in providers through its model catalog.
-            providers: &[],
-        },
-    ];
+    let mut options =
+        vec![
+            HarnessOption {
+                command: "buzz-agent".into(),
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-agent"),
+                label: "Buzz Agent",
+                available: true,
+                status: "ready",
+                install_supported: None,
+                update_supported: None,
+                default_args: vec![],
+                // Windows refuses Databricks sign-in (DATABRICKS_WINDOWS): omit it.
+                providers: &[
+                    ProviderOption {
+                        value: "databricks_v2",
+                        label: "Databricks v2",
+                    },
+                    ProviderOption {
+                        value: "openai",
+                        label: "OpenAI",
+                    },
+                ][usize::from(cfg!(windows))..],
+            },
+            HarnessOption {
+                command: "goose".into(),
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("goose"),
+                label: "Goose",
+                available: true,
+                status: "ready",
+                install_supported: None,
+                update_supported: None,
+                default_args: vec![],
+                providers: GOOSE_PROVIDERS,
+            },
+            HarnessOption {
+                configuration_policy:
+                    buzz_agent_controller::HarnessConfigurationPolicy::for_command("buzz-pi-acp"),
+                command: pi.map_or_else(
+                    || "buzz-pi-acp".into(),
+                    |p| p.to_string_lossy().into_owned(),
+                ),
+                label: "Pi",
+                available: pi_status == "ready",
+                status: pi_status,
+                install_supported: Some(cfg!(all(
+                    any(target_os = "macos", target_os = "linux"),
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                ))),
+                update_supported: Some(pi_managed && pi_status == "ready" && !pi_current(app_data)),
+                default_args: vec![],
+                // Pi reports signed-in providers through its model catalog.
+                providers: &[],
+            },
+        ];
     options.extend(
         buzz_agent_controller::harness_presets()
             .iter()
@@ -366,6 +379,9 @@ fn harness_options(app_data: &std::path::Path) -> Vec<HarnessOption> {
     );
     let claude = claude_setup(app_data);
     options.push(HarnessOption {
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+            "claude-agent-acp",
+        ),
         command: claude.adapter.map_or_else(
             || "claude-agent-acp".into(),
             |path| path.to_string_lossy().into_owned(),
@@ -386,6 +402,9 @@ fn preset_option(
     command: Option<PathBuf>,
 ) -> HarnessOption {
     HarnessOption {
+        configuration_policy: buzz_agent_controller::HarnessConfigurationPolicy::for_command(
+            &preset.command,
+        ),
         available: command.is_some(),
         status: if command.is_some() {
             "ready"
@@ -642,6 +661,7 @@ impl AgentHost {
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
     ) -> Self {
+        buzz_agent_controller::warm_tools_path();
         Self::initialize_with(move || {
             let bundle = resources.and_then(RuntimeBundle::new);
             paths.and_then(|(root, legacy, workspace)| {
@@ -839,6 +859,7 @@ impl AgentHost {
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::GooseModelContext, String> {
+        prepare_tools_path().await;
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.goose_model_context(id, revision, edit),
@@ -855,6 +876,7 @@ impl AgentHost {
         revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::pi::PiContext, String> {
+        prepare_tools_path().await;
         let id = id.map(str::to_owned);
         run(self.clone(), move |host| match (id.as_deref(), revision) {
             (Some(id), Some(revision)) => host.controller.pi_model_context(id, revision, edit),
@@ -876,6 +898,11 @@ impl AgentHost {
         }
         Ok(())
     }
+}
+async fn prepare_tools_path() {
+    // Shell startup may take seconds; neither the controller nor FIFO admission
+    // is held while this shared, bounded attempt runs.
+    let _ = tauri::async_runtime::spawn_blocking(buzz_agent_controller::prepare_tools_path).await;
 }
 async fn run<T: Send + 'static>(
     state: AgentHost,
@@ -922,6 +949,7 @@ pub(crate) async fn agent_control_read_log(
 pub(crate) async fn agent_control_snapshot(
     state: tauri::State<'_, AgentHost>,
 ) -> Result<Snapshot, String> {
+    prepare_tools_path().await;
     run(state.inner().clone(), |host| host.snapshot()).await
 }
 #[tauri::command]
@@ -1199,11 +1227,20 @@ async fn start_guarded(
                 replay_floor,
             },
         );
-        let pi = host.controller.pi_launch_context(&id, request.2);
-        Ok((request, ticket, host.credentials.clone(), pi))
+        Ok((request, ticket, host.credentials.clone()))
     })
     .await?;
-    let ((credential, pubkey, revision, _workspace), ticket, credentials, pi) = prepared;
+    let ((credential, pubkey, revision, _workspace), ticket, credentials) = prepared;
+    prepare_tools_path().await;
+    let target = id.clone();
+    let pi = run(owner.clone(), move |host| {
+        host.starts
+            .get(&target)
+            .filter(|pending| pending.ticket == ticket)
+            .ok_or(START_CANCELLED)?;
+        Ok(host.controller.pi_launch_context(&target, revision))
+    })
+    .await?;
     let probed_pi = matches!(&pi, Ok(Some(_)));
     let preflight = match pi {
         Ok(Some(pi)) => crate::pi_models::verify(pi)

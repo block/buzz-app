@@ -102,7 +102,11 @@ export function Reports({ communityId }: { communityId?: string }) {
     return (
       <ReportDetail
         id={selected}
-        onBack={() => setSelected(null)}
+        onBack={() => {
+          // Returning to the list shows fresh statuses.
+          setSelected(null);
+          reload();
+        }}
         onChanged={reload}
       />
     );

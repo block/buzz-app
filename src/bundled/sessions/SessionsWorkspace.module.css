@@ -239,15 +239,9 @@
 .organizedRow:has([aria-current="page"]) {
   background: var(--interaction-selected);
 }
-.organizedRow > button:first-child {
-  background: transparent;
-}
 
 .organizedRow {
   margin-bottom: var(--space-half);
-}
-.sidebar .organizedRow > button:first-child[data-variant="row"] {
-  background: transparent;
 }
 .historyLabel {
   min-width: 0;
@@ -295,8 +289,8 @@
 }
 
 /* Match row text to the actual folder artwork inside its centered icon slot. */
-.sidebar .organizedRow > button:first-child[data-variant="row"] {
-  padding-inline-start: calc(
+.organizedRow {
+  --space-control-inset: calc(
     var(--space-2) +
     (var(--space-5) - var(--section-icon-size)) /
     2
@@ -314,11 +308,6 @@
     [data-disabled]
   ) {
   color: var(--text-standard);
-}
-
-/* Use the brighter foreground red for this destructive menu action. */
-[data-delete-session-section]:not([data-disabled]) {
-  color: var(--red-11);
 }
 
 /* Activity and the row menu share a fixed trailing slot. */

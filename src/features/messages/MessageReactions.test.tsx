@@ -499,7 +499,7 @@ it("opens the reactor preview after a short hover, not a long dwell", async () =
   try {
     render(<h.Controls />);
     fireEvent.mouseEnter(screen.getByRole("button", { name: "👍: 1 person" }));
-    await act(() => vi.advanceTimersByTimeAsync(REACTION_PREVIEW_DELAY_MS - 1));
+    await act(() => vi.advanceTimersByTimeAsync(99));
     expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByRole("tooltip")).toBeTruthy();

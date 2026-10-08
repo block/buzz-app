@@ -25,8 +25,8 @@ export type Held<R extends StaffRequest = StaffRequest, M = unknown> = {
 function settles(outcome: StaffOutcome<unknown>, uncertain: boolean) {
   if (unresolved(outcome)) return false;
   if (!uncertain || outcome.ok) return true;
-  const { notSent, category } = outcome.failure;
-  return !notSent && category !== "unauthorized" && category !== "forbidden";
+  const { notSent, authLost } = outcome.failure;
+  return !notSent && !authLost;
 }
 
 /**

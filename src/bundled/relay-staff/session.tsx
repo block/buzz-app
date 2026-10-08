@@ -57,11 +57,7 @@ export function createSession(
   probe: ProbeDto,
 ): Session {
   const checked = (failure: StaffFailure | null) => {
-    if (
-      failure?.category === "unauthorized" ||
-      failure?.category === "forbidden"
-    )
-      void staff.probe(context, true);
+    if (failure?.authLost) void staff.probe(context, true);
   };
   return {
     staff,

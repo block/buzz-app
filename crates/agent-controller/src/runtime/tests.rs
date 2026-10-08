@@ -2008,7 +2008,7 @@ fn bundled_goose_launch_and_model_lookup_share_the_verified_sidecar() {
 
 #[test]
 #[cfg(unix)]
-fn only_buzz_agent_receives_the_developer_mcp() {
+fn opted_in_harnesses_receive_the_developer_mcp() {
     for (selection, bundled, expects_mcp) in [
         ("buzz-agent", true, true),
         ("buzz-agent", false, true),
@@ -2019,7 +2019,10 @@ fn only_buzz_agent_receives_the_developer_mcp() {
         ("buzz-pi-acp", false, false),
         ("claude-agent-acp", false, false),
         ("codex-acp", false, false),
-        ("hermes-acp", false, false),
+        ("hermes-acp", false, true),
+        ("hermes-acp.exe", false, true),
+        ("hermes-acp.cmd", false, true),
+        ("hermes-acp.bat", false, true),
         ("custom-acp", false, false),
     ] {
         let dir = tempfile::tempdir().unwrap();

@@ -246,6 +246,22 @@ fn intercepted(response: &reqwest::Response) -> bool {
 /// cut-off bodies and unexpected success shapes all stay `Ambiguous`, so the
 /// retry reuses the frozen request ID.
 async fn classify(
+    response: reqwest::Response,
+    success_cap: usize,
+    request: Option<&StaffRequest>,
+) -> Result<Value, Failure> {
+    // One rule for every exit: any 401/403, however its body looked, means
+    // access must be re-checked. It never makes a sent write certain.
+    let auth_lost = matches!(response.status().as_u16(), 401 | 403);
+    classify_body(response, success_cap, request)
+        .await
+        .map_err(|failure| Failure {
+            auth_lost,
+            ..failure
+        })
+}
+
+async fn classify_body(
     mut response: reqwest::Response,
     success_cap: usize,
     request: Option<&StaffRequest>,
@@ -336,7 +352,7 @@ async fn classify(
         body_empty: body.is_empty(),
         code,
         not_sent: false,
-        auth_lost: matches!(status, 401 | 403),
+        auth_lost: false,
         message: message.unwrap_or_else(|| default_message(category).into()),
     })
 }

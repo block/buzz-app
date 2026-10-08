@@ -22,6 +22,20 @@ fn fixture() -> (tempfile::TempDir, Paths) {
     fs::write(paths.others[0].join("localstorage"), "prefs").unwrap();
     (dir, paths)
 }
+/// What a launch runs once it owns the locks: the pending sign-out, if any.
+fn finish_pending(
+    paths: &Paths,
+    remove_agent_keys: impl FnOnce(&Path) -> Result<(), String>,
+    remove_key: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let Some(choices) = pending(&paths.marker)? else {
+        return Ok(());
+    };
+    finish(paths, choices, remove_agent_keys, remove_key).map_err(|error| {
+        eprintln!("buzz: sign out did not finish: {error}");
+        FAILED.to_owned()
+    })
+}
 fn no_agents(_: &Path) -> Result<(), String> {
     panic!("agent keys must not be touched")
 }
@@ -302,20 +316,26 @@ fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
 const CHILD: &str = "BUZZ_SIGN_OUT_TEST_CHILD";
 /// Set when the child signs out without wiping.
 const CHILD_PLAIN: &str = "BUZZ_SIGN_OUT_TEST_CHILD_PLAIN";
+/// The child's key service; `identity` when unset.
+const CHILD_SERVICE: &str = "BUZZ_SIGN_OUT_TEST_CHILD_SERVICE";
 /// Another Buzz process: boots, then on "go" tries to sign out and, if admitted,
-/// holds on until the parent says (or closes its input).
+/// holds on until the parent says (or closes its input). Closing its input
+/// before "go" just exits, so it is a copy that only runs.
 #[test]
 fn child_instance() {
     let Some(root) = std::env::var_os(CHILD) else {
         return;
     };
-    let paths = paths_for(Path::new(&root), "identity");
+    let service = std::env::var(CHILD_SERVICE).unwrap_or_else(|_| "identity".into());
+    let paths = paths_for(Path::new(&root), &service);
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     println!("child: booted");
     let mut input = std::io::stdin().lines();
-    input.next();
+    if input.next().is_none() {
+        return;
+    }
     let choices = if std::env::var_os(CHILD_PLAIN).is_some() {
         PLAIN
     } else {
@@ -340,8 +360,16 @@ impl Child {
         Self::spawn_with(root, WIPE)
     }
     fn spawn_with(root: &Path, choices: Choices) -> Self {
+        Self::spawn_as(root, "identity", choices)
+    }
+    /// A copy that only runs, signed in with `service`'s key.
+    fn running(root: &Path, service: &str) -> Self {
+        Self::spawn_as(root, service, WIPE)
+    }
+    fn spawn_as(root: &Path, service: &str, choices: Choices) -> Self {
         use std::io::BufRead;
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.env(CHILD_SERVICE, service);
         if !choices.wipe {
             command.env(CHILD_PLAIN, "1");
         }
@@ -516,45 +544,43 @@ fn every_identifier_shares_the_all_buzz_lock_and_each_key_has_its_own() {
 }
 
 /// Another build signed in with a different key, e.g. a dev build beside the installed app.
-fn other_key(dir: &Path) -> Instance {
-    let other = paths_for(dir, "identity.debug");
-    boot(&other, no_agents, || panic!("no marker"))
-        .ok()
-        .unwrap()
-}
+const OTHER_KEY: &str = "identity.debug";
 
 #[test]
 fn plain_sign_out_needs_only_copies_using_the_same_key_closed() {
     let (dir, paths) = fixture();
-    let _other = other_key(dir.path());
+    let other = Child::running(dir.path(), OTHER_KEY);
     let signing_out = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     assert_eq!(signing_out.begin(PLAIN), Ok(()));
+    other.finish();
 }
 
 #[test]
 fn plain_sign_out_is_refused_while_a_copy_using_the_same_key_runs() {
-    let (_dir, paths) = fixture();
-    let _same = boot(&paths, no_agents, || panic!("no marker"))
-        .ok()
-        .unwrap();
+    let (dir, paths) = fixture();
+    let same = Child::running(dir.path(), "identity");
     let signing_out = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
     assert_eq!(signing_out.begin(PLAIN), Err(refuse(OTHERS)));
+    drop(signing_out);
     // A pending plain sign-out waits for that copy too.
     mark(&paths, false, false);
     assert_eq!(
         boot(&paths, no_agents, || panic!("the key stays")).err(),
         Some(BUSY.into())
     );
+    same.finish();
+    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(!paths.marker.exists());
 }
 
 #[test]
 fn wipe_is_refused_while_any_copy_runs() {
     let (dir, paths) = fixture();
-    let other = other_key(dir.path());
+    let other = Child::running(dir.path(), OTHER_KEY);
     let signing_out = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
@@ -569,7 +595,44 @@ fn wipe_is_refused_while_any_copy_runs() {
     mark(&paths, false, false);
     assert!(boot(&paths, no_agents, || Ok(())).is_ok());
     assert!(!paths.marker.exists());
-    drop(other);
+    other.finish();
+}
+
+/// A launch chose its locks for a plain sign-out; while it let go, another
+/// process replaced it with a wipe and a copy with another key started. The
+/// launch must not wipe holding only its key lock.
+#[test]
+fn a_sign_out_escalated_to_a_wipe_during_recovery_waits_for_every_copy() {
+    let (dir, paths) = fixture();
+    let mut wiping = Child::spawn(dir.path());
+    mark(&paths, false, false);
+    let before = data(dir.path());
+    // The launch's first exclusive try fails (the child shares the key), then:
+    let other = std::rc::Rc::new(Cell::new(None));
+    let started = other.clone();
+    let root = dir.path().to_path_buf();
+    HANDOFF.set(Some(Box::new(move || {
+        assert_eq!(wiping.go(), "child: signing out");
+        wiping.finish();
+        started.set(Some(Child::running(&root, OTHER_KEY)));
+    })));
+    assert_eq!(
+        boot(&paths, no_agents, || panic!("the key stays")).err(),
+        Some(BUSY_ALL.into())
+    );
+    assert_eq!(data(dir.path()), before);
+    assert_eq!(pending(&paths.marker), Ok(Some(WIPE)));
+    other.take().unwrap().finish();
+    assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+    assert!(!paths.marker.exists());
+    assert_eq!(
+        data(dir.path()),
+        [
+            "app/",
+            "app/agent-controller/",
+            "app/agent-controller/agents.json"
+        ]
+    );
 }
 
 #[cfg(unix)]

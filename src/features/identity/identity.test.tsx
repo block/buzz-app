@@ -371,6 +371,34 @@ it("offers wipe once the native side says it's available", async () => {
   identity.dispose();
 });
 
+it("keeps wipe disabled while the native answer is pending", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockReturnValueOnce(new Promise(() => {}));
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(invoke).toHaveBeenLastCalledWith("sign_out_wipe_refusal");
+  expect(
+    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  identity.dispose();
+});
+
+it("keeps wipe disabled when the native check fails", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("ipc failed"));
+  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  expect(
+    await screen.findByText(/Couldn’t check whether wipe is available/),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: "Also wipe this device’s Buzz data" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  identity.dispose();
+});
+
 it("keeps the dialog open and shows the error when native sign out refuses", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(viewer);
   const identity = createIdentity();

@@ -198,17 +198,13 @@ impl Instance {
     /// let go too. Another process may have committed a sign-out meanwhile; only
     /// with none pending can this instance carry on.
     fn share(&self, locks: &Locks, all: bool, message: &str) -> Failure {
-        let shared =
-            locks.key.lock_shared().and_then(
-                |()| {
-                    if all {
-                        locks.all.lock_shared()
-                    } else {
-                        Ok(())
-                    }
-                },
-            );
-        match shared.and_then(|()| self.marker.try_exists()) {
+        // Bounded: a stuck owner must not hang the refusal; not sharing again means reopening.
+        if !wait_for(|| locks.key.try_lock_shared())
+            || (all && !wait_for(|| locks.all.try_lock_shared()))
+        {
+            return reopen();
+        }
+        match self.marker.try_exists() {
             Ok(false) => {
                 self.started.store(false, Ordering::SeqCst);
                 refuse(message)
@@ -299,8 +295,18 @@ pub(crate) fn boot(
         if !taken {
             return Err(busy.into());
         }
-        // Read again under exclusive ownership; another launch may have finished it.
-        finish_pending(paths, &mut remove_agent_keys, &mut remove_key)?;
+        // Read again under exclusive ownership and run only what these locks
+        // cover: another launch may have finished it or committed a wipe since.
+        match pending(&paths.marker)? {
+            // Now a wipe: let go and loop to take every lock.
+            Some(choices) if choices.wipe && !wipe => {}
+            Some(choices) => finish(paths, choices, &mut remove_agent_keys, &mut remove_key)
+                .map_err(|error| {
+                    eprintln!("buzz: sign out did not finish: {error}");
+                    FAILED.to_owned()
+                })?,
+            None => {}
+        }
         if wipe {
             locks.all.unlock().map_err(failed)?;
         }
@@ -314,8 +320,9 @@ pub(crate) fn boot(
     })
 }
 
-/// Whether a pending sign-out wipes; `None` when none is pending. An unreadable
-/// marker counts as a wipe, taking every lock before `finish_pending` reports it.
+/// Whether a pending sign-out wipes, to choose the locks; `None` when none is
+/// pending. Malformed JSON counts as a wipe, so every lock is taken before
+/// `pending` reports it; a read error returns at once and nothing is deleted.
 fn pending_wipe(marker: &Path) -> std::io::Result<Option<bool>> {
     match fs::read(marker) {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -432,19 +439,16 @@ fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Run a pending sign-out, if any. The error is the message shown before exiting.
-fn finish_pending(
-    paths: &Paths,
-    remove_agent_keys: impl FnOnce(&Path) -> Result<(), String>,
-    remove_key: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    let raw = match fs::read(&paths.marker) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+/// The pending sign-out's choices, if any. Unreadable or malformed is the
+/// message shown before exiting, never absence.
+fn pending(marker: &Path) -> Result<Option<Choices>, String> {
+    let raw = match fs::read(marker) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         other => other,
     };
     raw.map_err(|error| error.to_string())
-        .and_then(|raw| serde_json::from_slice::<Choices>(&raw).map_err(|e| e.to_string()))
-        .and_then(|choices| finish(paths, choices, remove_agent_keys, remove_key))
+        .and_then(|raw| serde_json::from_slice(&raw).map_err(|e| e.to_string()))
+        .map(Some)
         .map_err(|error| {
             eprintln!("buzz: sign out did not finish: {error}");
             FAILED.to_owned()

@@ -102,7 +102,11 @@ all-Buzz, released in reverse, and never waited for while one is held alone.
 Whenever an instance takes its locks shared again (after finishing a pending
 sign-out, or after a refused sign-out), it looks for the marker again: at launch
 a new marker is finished in turn; in a running instance it means another process
-committed a sign-out, and the user is asked to reopen Buzz. The native
+committed a sign-out, and the user is asked to reopen Buzz. Retaking them
+shared is bounded too; on timeout the user is asked to reopen Buzz. These locks
+coordinate running Buzz 1.0 app copies only: `buzzodz plugin sign` reads the
+human key without them, and older Buzz versions don't take them, so close those
+before signing out. The native
 `sign_out` command deletes nothing: it admits one sign-out per instance, refuses
 unless it can hold the locks it needs alone, writes a marker beside (not inside)
 app data recording the wipe and agent choices, stops agents as Quit does, and
@@ -112,7 +116,10 @@ changed; if agents can't be stopped, the user is asked to reopen Buzz, which
 finishes the sign-out.
 
 A launch that finds the marker takes its key lock alone, and for a wipe the
-all-Buzz lock too, waiting briefly for the exiting instance, reads the marker again, and finishes before any window,
+all-Buzz lock too, waiting briefly for the exiting instance, then reads the
+marker once more and runs only choices those locks cover: if it has meanwhile
+become a wipe, the launch lets go and starts over to take every lock. A marker
+that can't be read or parsed fails closed. It finishes before any window,
 webview storage, service or identity read:
 
 1. With remove agents, every local agent's key is deleted, read from the agent

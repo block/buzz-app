@@ -342,8 +342,6 @@ export function createSidebarPreferencesStore(
       !writeSort
     )
       throw new Error("Sidebar section removal is unavailable");
-    const section = confirmed.sections.find(({ id }) => id === sectionId);
-    if (!section) throw new Error("Sidebar section no longer exists");
     const source = confirmed.groupSource ?? "legacy";
     const writeGeneration = generation;
     const writeSignal = AbortSignal.any([
@@ -362,6 +360,8 @@ export function createSidebarPreferencesStore(
           throw new Error(
             "The active group source changed; refresh your sidebar before removing this section",
           );
+        if (!confirmed.sections.some(({ id }) => id === sectionId))
+          throw new Error("Sidebar section no longer exists");
         const group = `section:${sectionId}`;
         // Local Alpha can be stale while another device has saved an override.
         // Reset while the section is live, so a failed write leaves removal

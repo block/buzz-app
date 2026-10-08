@@ -381,3 +381,61 @@ it("does not offer removal without a sort writer even when local sorting is Alph
     store.dispose();
   }
 });
+it.each([true, false])(
+  "settles pending section creation before removal (creation succeeds: %s)",
+  async (succeeds) => {
+    const entered = gate<void>();
+    const held = gate<{
+      sections: SidebarPreferences["sections"];
+      assignments: SidebarPreferences["assignments"];
+    }>();
+    const created = { id: "new-work", name: "New work", order: 1 };
+    const remove = vi.fn<SidebarSectionRemovalMutator>(async () => ({
+      sections: data.sections,
+      assignments: data.assignments,
+    }));
+    const store = createSidebarPreferencesStore(
+      async () => data,
+      true,
+      async () => {
+        entered.resolve();
+        const next = await held.promise;
+        if (!succeeds) throw new Error("creation failed");
+        return next;
+      },
+      async () => data.starred,
+      undefined,
+      undefined,
+      async () => data.sort ?? {},
+      undefined,
+      remove,
+    );
+    try {
+      await store.queries.ensure();
+      const creating = store.queries.createAndAssign("beta", created);
+      await entered.promise;
+      expect(store.queries.snapshot().data?.sections).toContainEqual(created);
+      const removal = store.queries.removeSection(created.id);
+      const creationResult = succeeds
+        ? creating
+        : expect(creating).rejects.toThrow("creation failed");
+      const result = succeeds
+        ? expect(removal).resolves.toMatchObject({ sections: data.sections })
+        : expect(removal).rejects.toThrow("Sidebar section no longer exists");
+      expect(remove).not.toHaveBeenCalled();
+      held.resolve({
+        sections: [...data.sections, created],
+        assignments: { ...data.assignments, beta: created.id },
+      });
+      await creationResult;
+      await result;
+      expect(remove).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+    } finally {
+      held.resolve({
+        sections: [...data.sections, created],
+        assignments: { ...data.assignments, beta: created.id },
+      });
+      store.dispose();
+    }
+  },
+);

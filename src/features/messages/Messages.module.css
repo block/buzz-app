@@ -460,17 +460,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   background: var(--affordance-subtle-hover);
   color: var(--text-subtle);
 }
-/* Keep public typing and plugin accessories in one non-collapsing stack. */
+/* Optional plugin accessories use only the space they actually render. */
 .composerContext {
   position: relative;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   min-width: 0;
-}
-/* Existing conversations keep a fixed row, even while nobody is typing. */
-.composerContext[data-reserve-typing] {
-  padding-top: var(--space-6);
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -484,7 +480,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
-  margin: var(--space-3) var(--space-4) var(--space-4);
+  margin: 0 var(--space-4) var(--space-4);
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
@@ -506,7 +502,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     padding-inline: var(--space-3);
   }
   .composer {
-    margin: var(--space-2) var(--space-3) var(--space-3);
+    margin: 0 var(--space-3) var(--space-3);
   }
 }
 .composer[data-editing] {
@@ -2322,6 +2318,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   display: flex;
   justify-content: center;
   pointer-events: none;
+}
+/* Leave a separate floating lane when the composer has an activity pill. */
+:is(.feed, .threadHistory):has(~ .composerContext [data-agent-activity-trigger])
+.jumpToLatest {
+  top: calc(100% - var(--size-control-sm) - 2 * var(--space-6));
 }
 .jumpToLatestSurface {
   @apply glass-secondary;

@@ -1200,18 +1200,16 @@ function Composer({
   }
   const readingOnly = !outbox?.supports(9) && !cached;
   const context = (
-    <div
-      className={styles.composerContext}
-      data-reserve-typing={!submission || readingOnly || undefined}
-    >
-      {readingOnly || (!disabled && !submission && !editing.target) ? (
+    <div className={styles.composerContext}>
+      {!cached && !submission && (
         <TypingIndicator
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
           canOpenActivity={canOpenLink}
+          openActivity={onOpenLink}
         />
-      ) : null}
+      )}
       {extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}

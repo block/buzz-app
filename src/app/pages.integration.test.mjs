@@ -273,11 +273,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .find((panel) => panel.pluginId === "buzz.agent-activity");
     assert.equal(activity.title, "Agent Activity");
     assert.equal(activity.launcher, undefined);
-    assert.equal(services.conversation.accessories.snapshot().length, 1);
-    assert.equal(
-      services.conversation.accessories.snapshot()[0].pluginId,
-      "buzz.agent-activity",
-    );
+    assert.equal(services.conversation.accessories.snapshot().length, 0);
     assert.match(
       renderToStaticMarkup(createElement(activity.component)),
       /Connect to a community/,

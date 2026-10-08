@@ -145,6 +145,16 @@ export function formatFullTimestamp(unixSeconds: number): string {
   return dateFormats().full.format(new Date(unixSeconds * 1_000));
 }
 
+/** A continuation clock without the day period, sharing the full date's settings. */
+export function formatCompactTime(unixSeconds: number): string {
+  return dateFormats()
+    .time.formatToParts(unixSeconds * 1_000)
+    .filter((part) => part.type !== "dayPeriod")
+    .map((part) => part.value)
+    .join("")
+    .trim();
+}
+
 /** Local midnight of the calendar day containing `date`. */
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());

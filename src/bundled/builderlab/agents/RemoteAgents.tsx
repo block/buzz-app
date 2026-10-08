@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
@@ -65,8 +71,23 @@ function AgentList({
   const [deleting, setDeleting] = useState<RemoteAgent>();
   const [removing, setRemoving] = useState<readonly string[]>([]);
   const operation = useRef<AbortController | null>(null);
+  const focusRequested = useRef<string | null>(null);
+  const focusTargets = useRef(new Map<string, HTMLElement>());
+  const focusTarget = (pubkey: string, node: HTMLElement | null) => {
+    if (node) focusTargets.current.set(pubkey, node);
+    else focusTargets.current.delete(pubkey);
+  };
+  // Each row's target is its textarea while editing, otherwise its Edit button.
+  // Wait for saving to finish so the target is enabled before handing off focus.
+  useLayoutEffect(() => {
+    if (focusRequested.current && !busy && !loading) {
+      if (active()) focusTargets.current.get(focusRequested.current)?.focus();
+      focusRequested.current = null;
+    }
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: Account changes and explicit refreshes must restart the read.
   useEffect(() => {
+    focusRequested.current = null;
     const controller = new AbortController();
     operation.current = controller;
     setBusy(false);
@@ -163,11 +184,13 @@ function AgentList({
   };
   const saveDraft = (agent: RemoteAgent) => {
     const value = drafts[agent.pubkey];
-    if (value !== undefined)
+    if (value !== undefined) {
+      focusRequested.current = agent.pubkey;
       return run(
         (signal, current) => saveInstructions(agent, value, signal, current),
         "Could not save agent instructions.",
       );
+    }
   };
   const change = (agent?: RemoteAgent) =>
     run(async (signal, current) => {
@@ -365,6 +388,7 @@ function AgentList({
                       style={{ width: "100%" }}
                     >
                       <Textarea
+                        ref={(node) => focusTarget(agent.pubkey, node)}
                         value={drafts[agent.pubkey]}
                         onChange={(event) =>
                           setDraft(agent.pubkey, event.target.value)
@@ -388,7 +412,10 @@ function AgentList({
                       </Button>
                       <Button
                         disabled={busy || loading}
-                        onClick={() => discardDraft(agent.pubkey)}
+                        onClick={() => {
+                          focusRequested.current = agent.pubkey;
+                          discardDraft(agent.pubkey);
+                        }}
                       >
                         Cancel
                       </Button>
@@ -400,11 +427,13 @@ function AgentList({
                   !removing.includes(agent.pubkey) &&
                   drafts[agent.pubkey] === undefined && (
                     <Button
+                      ref={(node) => focusTarget(agent.pubkey, node)}
                       variant="outline"
                       disabled={busy || loading}
-                      onClick={() =>
-                        setDraft(agent.pubkey, agent.instructions ?? "")
-                      }
+                      onClick={() => {
+                        focusRequested.current = agent.pubkey;
+                        setDraft(agent.pubkey, agent.instructions ?? "");
+                      }}
                     >
                       Edit
                     </Button>

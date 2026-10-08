@@ -4929,6 +4929,7 @@ describe("project resource picker", () => {
   function picker(
     home: () => Promise<unknown> = () =>
       Promise.resolve({ status: "home", project }),
+    issues: readonly (typeof item)[] = [item],
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -4938,7 +4939,7 @@ describe("project resource picker", () => {
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
         if (route.type === "project")
           return Promise.resolve({
-            items: route.tab === "prs" ? [] : [item],
+            items: route.tab === "prs" ? [] : issues,
             repositories: [repository],
             truncated: route.tab === "prs",
           });
@@ -5006,13 +5007,18 @@ describe("project resource picker", () => {
     for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
       fireEvent.keyDown(search, { key: "ArrowDown", ...composition });
       expect(search).toHaveFocus();
-      fireEvent.keyDown(search, { key: "Enter", ...composition });
+      // fireEvent returns false when a handler cancelled the default.
+      expect(fireEvent.keyDown(search, { key: "Enter", ...composition })).toBe(
+        true,
+      );
       expect(p.validations).toHaveLength(0);
     }
-    // Keyboard: ArrowDown moves from search to the row; Enter in search chooses it.
+    // Keyboard: focus stays in search with the row highlighted; Enter
+    // chooses it.
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
     await p.h.user.keyboard("{ArrowDown}");
-    expect(choice).toHaveFocus();
-    await p.h.user.click(screen.getByRole("searchbox"));
+    expect(search).toHaveFocus();
+    expect(choice).toHaveAttribute("data-selected");
     await p.h.user.keyboard("{Enter}");
     expect(p.validations).toHaveLength(1);
     expect(choice).toHaveTextContent("Checking…");
@@ -5024,6 +5030,145 @@ describe("project resource picker", () => {
     expect(p.h.messages.send.mock.calls[0]?.[1]).toBe(
       `[Fix login](${resource.uri}) `,
     );
+  });
+
+  it("orders titles by match: prefix, then word start, then the rest", async () => {
+    const issue = (id: string, title: string, created_at: number) => ({
+      ...item,
+      id: id.repeat(64),
+      created_at,
+      content: title,
+      tags: [
+        ["a", repository.address],
+        ["subject", title],
+      ],
+    });
+    const p = picker(undefined, [
+      issue("a", "Relogin bug", 9),
+      item,
+      issue("b", "Login page", 1),
+    ]);
+    await p.open();
+    const titles = async () =>
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((choice) => choice.getAttribute("aria-label")?.split(",")[0]);
+    expect(await titles()).toEqual(["Relogin bug", "Fix login", "Login page"]);
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "login");
+    expect(await titles()).toEqual(["Login page", "Fix login", "Relogin bug"]);
+    const choice = screen.getByRole("button", { name: /^Login page,/ });
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
+    expect(choice.querySelector("mark")).toHaveTextContent(/^login$/i);
+    // Up wraps to the last row; Shift+Enter is not a choice.
+    await p.h.user.keyboard("{ArrowUp}");
+    expect(search).toHaveAttribute(
+      "aria-activedescendant",
+      screen.getByRole("button", { name: /^Relogin bug,/ }).id,
+    );
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    expect(p.validations).toHaveLength(0);
+    await p.h.user.keyboard("{ArrowDown}{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+  });
+
+  it("highlights and announces the row that Tab focuses", async () => {
+    const p = picker(undefined, [
+      item,
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: 1,
+        content: "Login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Login page"],
+        ],
+      },
+    ]);
+    await p.open();
+    const second = await screen.findByRole("button", { name: /^Login page,/ });
+    const search = screen.getByRole("searchbox");
+    const list = document.getElementById(
+      search.getAttribute("aria-controls") ?? "",
+    );
+    expect(list).toContainElement(second);
+    for (let i = 0; i < 10 && document.activeElement !== second; i += 1)
+      await p.h.user.tab();
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("data-selected");
+    expect(screen.getByRole("button", { name: row })).not.toHaveAttribute(
+      "data-selected",
+    );
+    expect(search).toHaveAttribute("aria-activedescendant", second.id);
+    expect(
+      screen.getByText("Login page. Press Enter to add.", { exact: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("puts an exact title before a newer title that starts with it", async () => {
+    const p = picker(undefined, [
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: item.created_at + 1,
+        content: "Fix login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Fix login page"],
+        ],
+      },
+      item,
+    ]);
+    await p.open();
+    const search = screen.getByRole("searchbox");
+    await p.h.user.type(search, "fix login");
+    const choice = screen.getByRole("button", { name: row });
+    expect(
+      (
+        await screen.findAllByRole("button", { name: /, Issue in Game repo$/ })
+      ).map((option) => option.getAttribute("aria-label")?.split(",")[0]),
+    ).toEqual(["Fix login", "Fix login page"]);
+    expect(search).toHaveAttribute("aria-activedescendant", choice.id);
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(choice).toHaveTextContent("Checking…");
+  });
+
+  it("keeps focus on the highlighted row after Tab, for arrows and pointer", async () => {
+    const p = picker(undefined, [
+      item,
+      {
+        ...item,
+        id: "b".repeat(64),
+        created_at: 1,
+        content: "Login page",
+        tags: [
+          ["a", repository.address],
+          ["subject", "Login page"],
+        ],
+      },
+    ]);
+    await p.open();
+    const first = await screen.findByRole("button", { name: row });
+    const second = screen.getByRole("button", { name: /^Login page,/ });
+    for (let i = 0; i < 10 && document.activeElement !== first; i += 1)
+      await p.h.user.tab();
+    expect(first).toHaveFocus();
+    // Down on a focused row moves the highlight and focus together.
+    await p.h.user.keyboard("{ArrowDown}");
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("data-selected");
+    expect(first).not.toHaveAttribute("data-selected");
+    // A pointer highlight moves focus too, so Enter adds the highlighted row.
+    fireEvent.pointerMove(first, { clientX: 1, clientY: 1 });
+    fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
+    expect(first).toHaveAttribute("data-selected");
+    expect(first).toHaveFocus();
+    await p.h.user.keyboard("{Enter}");
+    expect(p.validations).toHaveLength(1);
+    expect(first).toHaveTextContent("Checking…");
   });
 
   it("keeps focus in the popover while a clicked row is checked", async () => {

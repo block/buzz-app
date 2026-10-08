@@ -9,7 +9,8 @@ import {
 
 /** The keyboard highlight of a search picker. Focus stays in the search
  * field: Up and Down move the highlight, and Enter chooses the highlighted
- * row. Typed text highlights the first row, so Enter chooses it without an
+ * row. If Tab moves focus to a row, focus follows the highlight instead, so
+ * Enter on the focused row still chooses the highlighted one. Typed text highlights the first row, so Enter chooses it without an
  * arrow key. The highlight follows a row's key, not its position, as late
  * results arrive: a row inserted above cannot redirect Enter. When the
  * highlighted row leaves, the highlight returns to the first row rather than
@@ -20,6 +21,8 @@ export function useSearchHighlight({
   onChoose,
   open = true,
   onOpen,
+  highlightEmpty = false,
+  wrap = false,
 }: {
   query: string;
   /** Row keys, in display order. */
@@ -31,6 +34,12 @@ export function useSearchHighlight({
   /** Called when Up or Down opens a closed popup. The key highlights the
    * first or last row. */
   onOpen?: () => void;
+  /** Highlight the first row before anything is typed, for a picker whose
+   * unfiltered list is already the list to choose from. */
+  highlightEmpty?: boolean;
+  /** Up from the first row goes to the last, and Down from the last row
+   * goes to the first. */
+  wrap?: boolean;
 }) {
   const id = useId();
   const [selection, setSelection] = useState({
@@ -42,7 +51,7 @@ export function useSearchHighlight({
     moves: 0,
   });
   const valid = selection.query === query && keys.includes(selection.key);
-  const fallback = query.trim() ? (keys[0] ?? "") : "";
+  const fallback = highlightEmpty || query.trim() ? (keys[0] ?? "") : "";
   if (!valid && (selection.query !== query || selection.key !== fallback))
     setSelection({ query, key: fallback, pointer: false, moves: 0 });
   const active = valid ? selection.key : fallback;
@@ -54,6 +63,22 @@ export function useSearchHighlight({
       pointer: false,
       moves: previous.moves + 1,
     }));
+  /** The row an arrow key moves the highlight to. */
+  const step = (down: boolean) => {
+    const index = keys.indexOf(active);
+    const next = index + (down ? 1 : -1);
+    return (
+      keys[
+        index < 0
+          ? down
+            ? 0
+            : keys.length - 1
+          : wrap
+            ? (next + keys.length) % keys.length
+            : Math.max(0, Math.min(keys.length - 1, next))
+      ] ?? ""
+    );
+  };
   // WebKit replays a pointer event when rows move under a resting cursor.
   // Only a real move may highlight a row, or new results would steal Enter.
   // Compare viewport coordinates: Linux WebKit reports screen coordinates
@@ -98,18 +123,54 @@ export function useSearchHighlight({
     /** Spread on each row. */
     rowProps: (key: string) => ({
       id: rowId(key),
-      onPointerMove(event: PointerEvent) {
-        if (
-          event.pointerType !== "touch" &&
-          pointerMoved(event) &&
-          active !== key
-        )
+      // Tab can focus a row. Enter then chooses that row, so highlight it
+      // and announce it. The row is already in view, so do not scroll.
+      onFocus() {
+        if (active !== key)
           setSelection((previous) => ({
             ...previous,
             query,
             key,
             pointer: true,
           }));
+      },
+      // Up and Down on a focused row move the highlight, and focus with it,
+      // so Enter still chooses the highlighted row.
+      onKeyDown(event: KeyboardEvent) {
+        if (
+          (event.key !== "ArrowDown" && event.key !== "ArrowUp") ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.altKey ||
+          event.shiftKey ||
+          !keys.length
+        )
+          return;
+        event.preventDefault();
+        // Keep the key from the composer behind a popup.
+        event.stopPropagation();
+        const next = step(event.key === "ArrowDown");
+        select(next);
+        document.getElementById(rowId(next))?.focus();
+      },
+      onPointerMove(event: PointerEvent) {
+        if (
+          event.pointerType !== "touch" &&
+          pointerMoved(event) &&
+          active !== key &&
+          keys.includes(key)
+        ) {
+          setSelection((previous) => ({
+            ...previous,
+            query,
+            key,
+            pointer: true,
+          }));
+          // While a row has focus, Enter activates that row, so focus must
+          // follow the highlight. The row is under the pointer; do not scroll.
+          if (document.activeElement?.id.startsWith(`${id}-`))
+            document.getElementById(rowId(key))?.focus({ preventScroll: true });
+        }
       },
     }),
     /** Call from the search field's keydown handler. Returns whether the key
@@ -141,13 +202,7 @@ export function useSearchHighlight({
       }
       if (arrow && keys.length) {
         event.preventDefault();
-        const next =
-          index < 0
-            ? down
-              ? 0
-              : keys.length - 1
-            : Math.max(0, Math.min(keys.length - 1, index + (down ? 1 : -1)));
-        select(keys[next] ?? "");
+        select(step(down));
         return true;
       }
       return false;

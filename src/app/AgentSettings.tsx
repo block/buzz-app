@@ -30,10 +30,7 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
-import {
-  setChannelUsagePreference,
-  useChannelUsagePreference,
-} from "../features/agents/channel-usage-preference";
+
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import type { ReactNode } from "react";
@@ -73,8 +70,6 @@ export function AgentSettings({
   archive?: ReactNode;
 }) {
   const preference = useRememberAgentsPreference();
-  const showUsage = useChannelUsagePreference();
-  const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [authCheck, setAuthCheck] = useState(0);
@@ -530,33 +525,6 @@ export function AgentSettings({
       </Dialog>
       <AgentDefaultsCard control={control} state={state} />
       {archive}
-      <div className="mt-section-gap">
-        <InlineHeader title="Channel usage" />
-        <SettingsGroup>
-          <SwitchPreferenceRow
-            label="Show channel session usage"
-            description="Show a Usage tab for saved token and cost metrics in channel actions. Hiding this display does not stop recording metrics; use Saved agent activity to change capture."
-            checked={showUsage}
-            onCheckedChange={(enabled) =>
-              setUsageError(setChannelUsagePreference(enabled))
-            }
-          />
-        </SettingsGroup>
-      </div>
-      {active && usageError && (
-        <ToastNotice
-          title="Channel usage preference wasn’t saved"
-          description={usageError}
-        >
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setUsageError(setChannelUsagePreference(showUsage))}
-          >
-            Retry saving
-          </Button>
-        </ToastNotice>
-      )}
       <div className="mt-section-gap">
         <InlineHeader title="Messages" />
         <SettingsGroup>

@@ -28,7 +28,6 @@ type State = {
   paneOpen: boolean;
   thread: { channelId: string; messageId: string } | undefined;
   settings: { id: string; channelId: string | undefined } | undefined;
-  usage: boolean;
 };
 const empty: State = {
   entries: [],
@@ -37,7 +36,6 @@ const empty: State = {
   paneOpen: true,
   thread: undefined,
   settings: undefined,
-  usage: false,
 };
 export const panelTabId = (entry: PanelOpening) =>
   `${entry.panel.key}:${entry.target}`;
@@ -130,15 +128,6 @@ export function useChannelTabState(
       })),
     [update],
   );
-  const setUsage = useCallback(
-    (usage: boolean) =>
-      update((s) => ({
-        ...s,
-        usage,
-        ...(usage ? { selected: "usage", paneOpen: true } : {}),
-      })),
-    [update],
-  );
   const setPaneOpen = useCallback(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
@@ -150,7 +139,6 @@ export function useChannelTabState(
     select,
     setThread,
     setSettings,
-    setUsage,
     setPaneOpen,
   };
 }

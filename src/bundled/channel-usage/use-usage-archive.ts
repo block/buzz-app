@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ArchiveHost, ArchivePage } from "../archive/types";
-import { projectUsageWithUnreadable } from "./usage";
+import type { ArchiveHost, ArchivePage } from "../../features/archive/types";
+import { projectUsageWithUnreadable } from "../../features/agents/usage";
 
 const MAX_RECORDS = 2000;
 export function useUsageArchive(

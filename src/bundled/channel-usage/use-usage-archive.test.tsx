@@ -5,7 +5,7 @@ import type {
   ArchiveHost,
   ArchivePage,
   ArchiveSettings,
-} from "../archive/types";
+} from "../../features/archive/types";
 import { useUsageArchive } from "./use-usage-archive";
 
 const deferred = <T,>() => {

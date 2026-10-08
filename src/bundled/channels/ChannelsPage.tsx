@@ -61,7 +61,6 @@ import {
 } from "react";
 import {
   SidebarRightIcon,
-  InfoIcon,
   PlugIcon,
   ChatCircleIcon,
   GearIcon,
@@ -88,8 +87,6 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import { ChannelUsage } from "./ChannelUsage";
-import { useChannelUsagePreference } from "../../features/agents/channel-usage-preference";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
@@ -203,7 +200,6 @@ function ChannelWorkspace({
   panels: Panels;
   sessionsEnabled: boolean;
 }) {
-  const showUsage = useChannelUsagePreference();
   const composingMessage =
     navigation?.target.kind === "page" &&
     navigation.target.route?.params === "new-message";
@@ -525,21 +521,6 @@ function ChannelWorkspace({
     setSettings(undefined);
     afterClose("settings");
   };
-  const usageAvailable =
-    showUsage &&
-    !!current &&
-    !current.cached &&
-    !current.readOnly &&
-    !!current.members?.includes(queries.viewer ?? "") &&
-    !!queries.agentActivity?.archive;
-  const showingUsage = usageAvailable && tabState.usage;
-  useEffect(() => {
-    if (!usageAvailable && tabState.usage) tabState.setUsage(false);
-  }, [usageAvailable, tabState.usage, tabState.setUsage]);
-  const closeUsage = () => {
-    tabState.setUsage(false);
-    afterClose("usage");
-  };
   const canStartSession =
     !!current &&
     sessionsEnabled &&
@@ -803,9 +784,27 @@ function ChannelWorkspace({
     current?.id,
     panels,
   ]);
+  // Menu panels belong to one visit. Channel switches cannot resurrect them.
+  useEffect(() => {
+    if (!currentId) return;
+    return () => {
+      const retained = entryList.current.filter(
+        (entry) => !entry.panel.channelMenu,
+      );
+      if (retained.length !== entryList.current.length) {
+        entryList.current = retained;
+        setEntries(retained);
+      }
+    };
+  }, [currentId, setEntries]);
   const panelTabs = entries.filter(
     (entry) =>
       available.includes(entry.panel) &&
+      (!entry.panel.channelMenu ||
+        (current &&
+          current.id === entry.channelId &&
+          !cached &&
+          entry.panel.channelMenu.eligible(current, queries))) &&
       (!entry.channelContext ||
         (current &&
           !current.readOnly &&
@@ -1192,7 +1191,6 @@ function ChannelWorkspace({
   };
   const rootTabIds = [
     ...(settings ? ["settings"] : []),
-    ...(showingUsage ? ["usage"] : []),
     ...(showingThread ? ["thread"] : []),
     ...tabState.tabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
@@ -1297,7 +1295,6 @@ function ChannelWorkspace({
   const hasChannelPanel =
     !composingMessage &&
     (settings ||
-      showingUsage ||
       tabState.tabs.length > 0 ||
       panelTabs.length > 0 ||
       showingThread ||
@@ -1583,14 +1580,44 @@ function ChannelWorkspace({
                           setSettings({ channelId: currentId });
                         }}
                         openCanvas={openCanvas}
-                        openUsage={
-                          usageAvailable
-                            ? () => {
-                                drawer.close();
-                                tabState.setUsage(true);
-                              }
-                            : undefined
+                        menuPanels={
+                          current && !cached
+                            ? available.filter((panel) =>
+                                panel.channelMenu?.eligible(current, queries),
+                              )
+                            : []
                         }
+                        openMenuPanel={(panel) => {
+                          const connection = relay.snapshot();
+                          const channel = queries.channels
+                            .list()
+                            .channels.find((item) => item.id === currentId);
+                          if (
+                            connection.status !== "ready" ||
+                            connection.cached ||
+                            connection.session !== queries ||
+                            !drawerContext ||
+                            drawerContext.channelId !== channel?.id ||
+                            !channel ||
+                            channel.cached ||
+                            channel.readOnly ||
+                            !channel.members?.includes(queries.viewer ?? "") ||
+                            !panels.snapshot().includes(panel) ||
+                            !panel.channelMenu?.eligible(channel, queries)
+                          )
+                            return;
+                          drawer.close();
+                          panelTrigger.current = settingsTrigger.current;
+                          open(
+                            {
+                              panel,
+                              channelId: channel.id,
+                              target: channel.id,
+                              channelContext: drawerContext,
+                            },
+                            true,
+                          );
+                        }}
                       />
                       {current && (
                         <IconButton
@@ -1753,7 +1780,6 @@ function ChannelWorkspace({
             {hasChannelPanel &&
               (settings ||
                 showingThread ||
-                showingUsage ||
                 panelTabs.length > 0 ||
                 tabState.tabs.length > 0) && (
                 <div
@@ -1781,23 +1807,6 @@ function ChannelWorkspace({
                               icon: <GearIcon size="1rem" />,
                               close: closeSettings,
                               content: settingsContent,
-                            },
-                          ]
-                        : []),
-                      ...(showingUsage && current
-                        ? [
-                            {
-                              id: "usage",
-                              label: "Usage",
-                              icon: <InfoIcon size="1rem" />,
-                              close: closeUsage,
-                              content: (
-                                <ChannelUsage
-                                  key={`${scope}:${current.id}`}
-                                  session={queries}
-                                  channelId={current.id}
-                                />
-                              ),
                             },
                           ]
                         : []),

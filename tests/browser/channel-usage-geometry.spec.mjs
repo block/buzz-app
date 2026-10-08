@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { openPage } from "./navigation.mjs";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -144,19 +145,45 @@ test("channel usage opens a separate tab and leaves thread history usable", asyn
   await expect(
     pane.getByRole("textbox", { name: "Reply to thread" }),
   ).toHaveCount(0);
-  // A hidden display removes the tab and prevents reopening it from the menu.
-  await page.evaluate(() => {
-    localStorage.setItem("buzz-show-channel-session-usage.v1", "off");
-    window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: "buzz-show-channel-session-usage.v1",
-      }),
-    );
-  });
+});
+
+test("disabling the Channel Usage plugin retires the tab and re-enabling does not revive it", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const actions = page.getByRole("button", { name: "Channel actions" });
+  await actions.click();
+  await page.getByRole("menuitem", { name: "View channel usage" }).click();
+  await expect(page.getByRole("tab", { name: "Usage" })).toBeVisible();
+  await page.getByRole("button", { name: "Your profile" }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  const toggle = page.getByRole("switch", { name: "Enable Channel Usage" });
+  await expect(toggle).toBeChecked();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await openPage(page, "Messages");
   await expect(page.getByRole("tab", { name: "Usage" })).toHaveCount(0);
   await actions.click();
   await expect(
     page.getByRole("menuitem", { name: "View channel usage" }),
   ).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page.getByRole("menu", { name: "Channel actions" }).press("Escape");
+  await expect(
+    page.getByRole("menu", { name: "Channel actions" }),
+  ).not.toBeVisible();
+  await page.getByRole("button", { name: "Your profile" }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await openPage(page, "Messages");
+  await expect(page.getByRole("tab", { name: "Usage" })).toHaveCount(0);
+  await actions.click();
+  await expect(
+    page.getByRole("menuitem", { name: "View channel usage" }),
+  ).toBeVisible();
+  await page.getByRole("menuitem", { name: "View channel usage" }).click();
+  await expect(page.getByRole("tab", { name: "Usage" })).toBeVisible();
 });

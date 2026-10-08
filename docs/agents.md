@@ -749,9 +749,9 @@ archive history.
 
 The channel's **Channel actions → View channel usage** item opens a dedicated
 **Usage** tab in the channel's side pane. It is available only while this
-account has positive access to the current channel and Settings → Agents →
-Show channel session usage is on (the default). Closing the tab unmounts its
-archive reader; turning the preference off removes the tab and stops reads. It
+account has positive access to the current channel and the default-on Channel Usage
+plugin is enabled under Settings → Plugins. Closing the tab unmounts its
+archive reader; disabling the plugin removes the tab and stops reads. It
 does not change metric capture or retention. Opening the Usage tab reads archive
 pages automatically until exhaustion or the 2,000-record limit; an early page
 without channel matches does not prove the archive has none. **Refresh** starts

@@ -5,7 +5,7 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
-import { useUsageArchive } from "../../features/agents/use-usage-archive";
+import { useUsageArchive } from "./use-usage-archive";
 import { aggregateSessionUsage } from "../../features/agents/usage";
 import type {
   Counters,
@@ -133,6 +133,7 @@ export function ChannelUsage({
     !!channel &&
     !channel.cached &&
     !channel.readOnly &&
+    !channel.archived &&
     !!channel.members?.includes(session.viewer ?? "");
   const usage = useUsageArchive(
     session.agentActivity?.archive,
@@ -197,7 +198,9 @@ export function ChannelUsage({
               size="xs"
               variant="ghost"
               onClick={() => {
-                agentPicker.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+                agentPicker.current
+                  ?.querySelector<HTMLElement>('[role="combobox"]')
+                  ?.focus();
                 setAgent(null);
               }}
             >

@@ -445,7 +445,7 @@ fn remove_key_deletes_then_confirms_absence() {
     assert!(store.saved.lock().unwrap().is_some());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn closing_refuses_every_key_operation_including_jobs_queued_before_it() {
     let host = IdentityHost::fixture();
     let owner = host.viewer().await.unwrap();
@@ -459,10 +459,13 @@ async fn closing_refuses_every_key_operation_including_jobs_queued_before_it() {
     // Queued while another operation holds the identity, run after it closes.
     let queued = {
         let mut running = host.0.lock().unwrap();
-        let queued = tokio::spawn({
-            let host = host.clone();
-            async move { host.sign(template()).await }
-        });
+        let task = host.clone();
+        let queued = tokio::spawn(async move { task.sign(template()).await });
+        // `sign` takes its own handle as it submits the blocking job, which then
+        // holds it while waiting on this lock: the test's, the task's, and the job's.
+        while Arc::strong_count(&host.0) < 3 {
+            std::thread::yield_now();
+        }
         running.close();
         queued
     };

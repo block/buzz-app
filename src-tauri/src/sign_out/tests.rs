@@ -490,19 +490,20 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
         assert_eq!(child.go(), "child: signing out");
         child.finish();
     })));
-    let (closed, exited) = (Cell::new(false), Cell::new(false));
+    let (closes, exited) = (Cell::new(0), Cell::new(false));
     let result = run(attempt(
         &instance,
         &paths,
         PLAIN,
-        || closed.set(true),
+        || closes.set(closes.get() + 1),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
+            assert_eq!(closes.get(), 1, "signing closes before the exit");
             exited.set(true);
             async { Err(refuse("exited")) }
         },
     ));
-    assert!(closed.get() && exited.get());
+    assert!(exited.get());
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
@@ -881,19 +882,21 @@ fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
     let instance = boot(&paths, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    let (closed, exited) = (Cell::new(false), Cell::new(false));
+    let (closes, exited) = (Cell::new(0), Cell::new(false));
     let result = run(attempt(
         &instance,
         &paths,
         choices(false),
-        || closed.set(true),
+        || closes.set(closes.get() + 1),
         || async { Err("controller stuck".to_owned()) },
         || {
+            // Once on commit, and again on the fenced path before the exit.
+            assert_eq!(closes.get(), 2, "signing closes before the exit");
             exited.set(true);
             async { Err(refuse("exited")) }
         },
     ));
-    assert!(closed.get() && exited.get());
+    assert!(exited.get());
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
 }

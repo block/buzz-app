@@ -620,7 +620,7 @@ where
         eprintln!("buzz: could not write sign-out marker: {error}");
         refuse(NOT_PREPARED)
     })?;
-    // Committed: the key is removed at the next launch, so it signs nothing more.
+    // Committed: the key is removed at the next launch, so it signs or pairs nothing more.
     close();
     shutdown().await.map_err(|error| {
         eprintln!("buzz: agents did not stop: {error}");
@@ -751,14 +751,15 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         .map_err(|error| error.to_string())?
     };
     let identity = app.state::<crate::identity::IdentityHost>().inner().clone();
-    attempt(
-        &instance,
-        &paths,
-        choices,
-        || identity.close(),
-        shutdown,
-        || exit_fenced(app.clone()),
-    )
+    let pairing = app.state::<crate::pairing::Pairing>().inner().clone();
+    // Close the signer and any pairing that already holds a copy of the key.
+    let close = || {
+        identity.close();
+        pairing.close();
+    };
+    attempt(&instance, &paths, choices, close, shutdown, || {
+        exit_fenced(app.clone())
+    })
     .await?;
     app.request_restart();
     Ok(())

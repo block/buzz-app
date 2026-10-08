@@ -163,6 +163,7 @@ function mount(
   const outboxListeners = new Set<() => void>();
   let pending: readonly OutgoingEvent[] = [];
   let rows: readonly ChannelMessage[] = [];
+  const rowListeners = new Set<() => void>();
   const setPending = (next: readonly OutgoingEvent[]) => {
     pending = next;
     for (const listener of outboxListeners) listener();
@@ -257,6 +258,10 @@ function mount(
     },
     channels: {
       window: () => ({ rows }),
+      subscribeWindow(_id: string, listener: () => void) {
+        rowListeners.add(listener);
+        return () => rowListeners.delete(listener);
+      },
       list: () => channelList,
       subscribeList: () => () => {},
     },
@@ -345,7 +350,10 @@ function mount(
       view.rerender(tree());
     },
     setRows(next: readonly ChannelMessage[]) {
-      rows = next;
+      act(() => {
+        rows = next;
+        for (const listener of rowListeners) listener();
+      });
     },
     setDelivery(delivery: OutgoingEvent["delivery"]) {
       act(() =>
@@ -640,7 +648,7 @@ it("keeps unpublished completions invisible but lets Escape revoke pending work"
   const pending = h.completionRequests.length - 1;
   expect(pending).toBeGreaterThanOrEqual(0);
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status", { name: "" })).not.toBeInTheDocument();
   expect(input).not.toHaveAttribute("aria-controls");
   expect(input).not.toHaveAttribute("aria-haspopup");
   fireEvent.keyDown(input, { key: "Escape" });
@@ -664,7 +672,9 @@ it("shows provider-owned pending and retry states and hides an empty publication
   act(() => {
     publish({ items: [], status: "Searching fixture…" });
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Searching fixture…");
+  expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+    "Searching fixture…",
+  );
   const retry = vi.fn(() =>
     publish({
       items: [

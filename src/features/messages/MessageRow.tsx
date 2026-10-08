@@ -178,7 +178,9 @@ export const MessageRow = memo(function MessageRow({
     row.threadRootId ?? row.id,
   );
   const threadAgents = useThreadAgents(
-    row.replyCount > 0 && onOpenThread ? session : undefined,
+    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
+      ? session
+      : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
   );
@@ -216,6 +218,11 @@ export const MessageRow = memo(function MessageRow({
         .map(({ pubkey, name }) => resolveName(pubkey, name))
         .join(", ")} working`
     : undefined;
+  const firstThreadAgent = threadAgents[0];
+  const threadWorkingLabel =
+    threadAgents.length === 1 && firstThreadAgent
+      ? `${resolveName(firstThreadAgent.pubkey, firstThreadAgent.name)} is working`
+      : `${threadAgents.length} agents are working`;
   const name = resolveName(
     row.authorId,
     profile?.name ?? row.authorId.slice(0, 10),
@@ -818,45 +825,56 @@ export const MessageRow = memo(function MessageRow({
               </div>
             )
           )}
-          {row.replyCount > 0 && onOpenThread && (
-            <Button
-              variant="ghost"
-              size="sm"
-              data-thread-summary=""
-              data-first-participant-shape={
-                agentPubkeys?.has(row.participants[0] ?? "")
-                  ? "squircle"
-                  : "circle"
-              }
-              type="button"
-              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`}
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onOpenThread(row.id, row.threadRootId ?? row.id);
-              }}
-            >
-              <ReplySummary
-                count={row.replyCount}
-                participants={row.participants}
-                profiles={participantProfiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={media}
-                unreadLabel={unreadLabel}
-              />
-              {threadAgents.length > 0 && (
-                <span
-                  className={styles.threadWorking}
-                  data-thread-working=""
-                  aria-hidden="true"
-                >
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              )}
-            </Button>
-          )}
+          {(row.replyCount > 0 ||
+            (!row.threadRootId && threadAgents.length > 0)) &&
+            onOpenThread && (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-thread-summary=""
+                data-first-participant-shape={
+                  agentPubkeys?.has(row.participants[0] ?? "")
+                    ? "squircle"
+                    : "circle"
+                }
+                type="button"
+                aria-label={
+                  row.replyCount > 0
+                    ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`
+                    : `View thread: ${threadWorkingLabel}`
+                }
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onOpenThread(row.id, row.threadRootId ?? row.id);
+                }}
+              >
+                {row.replyCount > 0 && (
+                  <ReplySummary
+                    count={row.replyCount}
+                    participants={row.participants}
+                    profiles={participantProfiles}
+                    agentPubkeys={agentPubkeys}
+                    resolveName={resolveName}
+                    media={media}
+                    unreadLabel={unreadLabel}
+                  />
+                )}
+                {threadAgents.length > 0 && (
+                  <span
+                    className={styles.threadWorking}
+                    data-thread-working=""
+                    aria-hidden="true"
+                  >
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                )}
+                {threadAgents.length > 0 && row.replyCount === 0 && (
+                  <span>View thread</span>
+                )}
+              </Button>
+            )}
         </div>
       </div>
     </div>

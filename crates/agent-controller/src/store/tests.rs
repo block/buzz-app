@@ -874,34 +874,27 @@ fn cleanup_cuts_beta_imports_once_at_the_last_delimiter() {
     assert_eq!(again[0].revision, after[0].revision);
 }
 #[test]
-fn cleanup_leaves_fresh_imports_and_later_owner_edits_alone() {
+fn cleanup_leaves_later_owner_edits_alone() {
     let dir = tempfile::tempdir().unwrap();
-    let kept = format!("role{D}kept");
     let mut store = Store::open(dir.path().to_owned()).unwrap();
     store
-        .insert(vec![
-            // A fresh import is cut at import time and marked cleaned.
-            beta_agent(
-                "01",
-                &kept,
-                serde_json::json!({"global": {}, CLEANED: true}),
-            ),
-            beta_agent("02", "role", serde_json::json!({"global": {}})),
-        ])
+        .insert(vec![beta_agent(
+            "01",
+            "role",
+            serde_json::json!({"global": {}}),
+        )])
         .unwrap();
     drop(store);
-    let (first, _) = cleaned(dir.path());
-    assert_eq!(first[0].system_prompt, kept);
+    cleaned(dir.path());
     let mut store = Store::open(dir.path().to_owned()).unwrap();
-    let saved = store.agents().unwrap()[1].clone();
+    let saved = store.agents().unwrap()[0].clone();
     assert_eq!(saved.imported[CLEANED], true);
     let mut update = edit();
     update.system_prompt = format!("mine{D}also mine");
     store.save(&saved.id, saved.revision, update).unwrap();
     drop(store);
     let (after, _) = cleaned(dir.path());
-    assert_eq!(after[0].system_prompt, kept);
-    assert_eq!(after[1].system_prompt, format!("mine{D}also mine"));
+    assert_eq!(after[0].system_prompt, format!("mine{D}also mine"));
 }
 #[test]
 fn failed_cleanup_write_warns_and_sets_no_mark() {
@@ -921,7 +914,7 @@ fn failed_cleanup_write_warns_and_sets_no_mark() {
     let (agents, warning) = cleaned(dir.path());
     assert!(warning
         .unwrap()
-        .contains("Could not remove old Buzz team text"));
+        .contains("Could not finish removing old Buzz team text"));
     assert_eq!(agents[0].system_prompt, baked);
     assert!(agents[0].imported.get(CLEANED).is_none());
     fs::remove_dir(dir.path().join("agents.previous.json")).unwrap();

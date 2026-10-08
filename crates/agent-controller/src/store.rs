@@ -174,13 +174,12 @@ impl Store {
             return Ok(None);
         };
         eprintln!("buzz: could not clean imported agent prompts: {error}");
-        // The replace may have landed before the error; trust the saved file.
-        if serde_json::to_value(self.read()?.agents).ok() == serde_json::to_value(&doc.agents).ok()
-        {
-            return Ok(None);
-        }
+        // The new file may have landed before a later step such as the
+        // directory sync failed. Either way the saved file must still read
+        // back cleanly, and the error (which says which case) is shown.
+        self.read()?;
         Ok(Some(format!(
-            "Could not remove old Buzz team text from imported agent prompts: {error}"
+            "Could not finish removing old Buzz team text from imported agent prompts: {error}"
         )))
     }
     pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {

@@ -1126,7 +1126,8 @@ fn import_strips_baked_team_suffix_from_the_copy_and_flags_it_in_preview() {
         .join(LegacySource::Installed.app_directory())
         .join("agents/managed-agents.json");
     let mut records: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    records[0]["system_prompt"] = json!("role\n\n---\n# Team Instructions\nbaked team");
+    let kept = "role\n\n---\n# Team Instructions\nkept";
+    records[0]["system_prompt"] = json!(format!("{kept}\n\n---\n# Team Instructions\nbaked team"));
     fs::write(&path, serde_json::to_vec(&records).unwrap()).unwrap();
     let before = fs::read(&path).unwrap();
     let mut imports = Imports::default();
@@ -1136,7 +1137,7 @@ fn import_strips_baked_team_suffix_from_the_copy_and_flags_it_in_preview() {
         .unwrap()
         .contains("baked team"));
     let clone = Imports::clone_settings(LegacySource::Installed, old.path().into(), PUB).unwrap();
-    assert_eq!(clone.system_prompt, "role");
+    assert_eq!(clone.system_prompt, kept);
     let mut store = Store::open(dest.path().into()).unwrap();
     imports
         .commit(
@@ -1146,8 +1147,13 @@ fn import_strips_baked_team_suffix_from_the_copy_and_flags_it_in_preview() {
             &Memory::default(),
         )
         .unwrap();
-    assert_eq!(store.agents().unwrap()[0].system_prompt, "role");
+    assert_eq!(store.agents().unwrap()[0].system_prompt, kept);
     assert_eq!(fs::read(&path).unwrap(), before);
+    // Reopening never cuts the fresh import a second time.
+    drop(store);
+    let mut store = Store::open(dest.path().into()).unwrap();
+    assert_eq!(store.clean_imported_prompts().unwrap(), None);
+    assert_eq!(store.agents().unwrap()[0].system_prompt, kept);
 }
 #[test]
 fn preview_does_not_flag_a_prompt_without_the_baked_suffix() {

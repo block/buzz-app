@@ -3198,5 +3198,5 @@ fn failed_imported_prompt_cleanup_still_opens_the_controller_with_a_warning() {
     assert!(value["inventoryWarnings"][0]
         .as_str()
         .unwrap()
-        .contains("Could not remove old Buzz team text"));
+        .contains("Could not finish removing old Buzz team text"));
 }
